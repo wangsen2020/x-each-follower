@@ -15,11 +15,17 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
 const analysisStatus = text => { $('analysisStatus').textContent = text; };
+function setTab(tab) {
+  document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
+}
+document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 const persist = (key, value) => durableSet(key, value).catch(() => {});
 function renderQueue() {
   const filter = $('queueFilter').value;
   const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
   const queue = [...(monitor.queue || [])].filter(user => filter === 'all' ? true : filter === 'danger' ? user.status === 'danger' : user.status === 'pending').sort((a,b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
+  $('queueCount').textContent = String((monitor.queue || []).filter(user => user.status === 'pending').length);
   const root = $('queueList'); root.replaceChildren();
   if (!queue.length) { const empty = document.createElement('p'); empty.className='note'; empty.textContent='当前没有符合筛选条件的账号。'; root.append(empty); return; }
   for (const user of queue) {
@@ -432,6 +438,8 @@ try {
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try { const savedAnalysis = await chrome.storage.local.get('analysisRows'); analysisRows = savedAnalysis.analysisRows || []; if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`); } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
+
+setTab('candidates');
 
 try {
   const [savedRows, savedMonitor, savedAnalysis] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows')]);
