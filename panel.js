@@ -1,5 +1,5 @@
 import { normalizeHandle, parseCount, assess, csv } from './scoring.js';
-import { collectVisible, readProfile } from './page-reader.js';
+import { collectVisible, readProfile, scanFollowers, clickFollowBack } from './page-reader.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -7,8 +7,10 @@ let running = false;
 let stopped = false;
 let inspectionTab;
 let options;
+let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue:[], lastScan:null};
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
+const monitorStatus = text => { $('monitorStatus').textContent = text; };
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
 function settings() {
@@ -164,6 +166,64 @@ $('export').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 $('clear').addEventListener('click', async () => { rows = []; await chrome.storage.local.remove('rows'); render(); status('本地检查记录已清空。'); });
+
+async function saveMonitorSettings() {
+  const next = {enabled:$('monitorEnabled').checked, every:Number($('monitorEvery').value), batch:Number($('followBatch').value), batchEvery:Number($('batchEvery').value)};
+  if (![next.every,next.batch,next.batchEvery].every(Number.isFinite) || next.every < 10 || next.batch < 1 || next.batch > 20 || next.batchEvery < 5) throw new Error('检查间隔至少 10 分钟，每批 1–20 个，批次间隔至少 5 分钟。');
+  monitor = {...monitor, ...next};
+  await chrome.storage.local.set({monitor});
+  await chrome.alarms.clear('x-followers-scan');
+  if (monitor.enabled) await chrome.alarms.create('x-followers-scan', {periodInMinutes:monitor.every});
+}
+
+async function followerTab() {
+  const tabs = await chrome.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+  const existing = tabs.find(tab => { try { return /\/followers\/?$/.test(new URL(tab.url).pathname); } catch { return false; } });
+  const tab = existing || await chrome.tabs.create({url:'https://x.com/followers', active:true});
+  await chrome.tabs.update(tab.id, {url:'https://x.com/followers'});
+  await sleep(2500);
+  return tab.id;
+}
+
+async function scanFollowerList() {
+  const tabId = await followerTab();
+  const found = new Map(); let idle = 0;
+  for (let i=0; i<100 && found.size<500 && idle<8; i++) {
+    const result = (await chrome.scripting.executeScript({target:{tabId}, func:scanFollowers}))[0]?.result;
+    const before = found.size;
+    for (const user of result?.users || []) found.set(user.handle.toLowerCase(), user);
+    idle = before === found.size ? idle + 1 : 0;
+    await sleep(1200);
+  }
+  const users = [...found.values()];
+  const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
+  const queue = users.filter(user => user.state === 'follow_back').map(user => ({...user, discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+  monitor = {...monitor, users, queue, lastScan:new Date().toISOString()};
+  await chrome.storage.local.set({monitor});
+  monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个。`);
+}
+
+async function processFollowBack() {
+  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) { monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`); return; }
+  const pending = (monitor.queue || []).filter(user => user.status === 'pending').slice(0, monitor.batch);
+  if (!pending.length) { monitorStatus('没有待回关账号，请先扫描粉丝列表。'); return; }
+  const tabId = await followerTab(); let completed = 0;
+  for (const user of pending) {
+    const result = (await chrome.scripting.executeScript({target:{tabId}, func:clickFollowBack, args:[user.handle]}))[0]?.result;
+    if (result?.reason === 'rate_limited') { monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString(); monitorStatus('检测到 X 限制，已暂停本批，约一小时后再提醒。'); break; }
+    if (!result?.ok) { user.status = result?.reason || 'unreadable'; continue; }
+    user.status = 'followed'; user.followedAt = new Date().toISOString(); completed++;
+    await sleep(Math.max(15000, monitor.batchEvery * 60000 / pending.length));
+  }
+  monitor.queue = monitor.queue.map(item => pending.find(user => user.handle === item.handle) || item);
+  await chrome.storage.local.set({monitor});
+  monitorStatus(`本批已处理 ${completed} 个，剩余 ${monitor.queue.filter(user => user.status === 'pending').length} 个。`);
+}
+
+$('scanFollowers').addEventListener('click', async () => { try { monitorStatus('正在打开粉丝列表并滚动收集账号…'); await scanFollowerList(); } catch (error) { monitorStatus(`扫描失败：${error.message}`); } });
+$('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
+$('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
+for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 window.addEventListener('beforeunload', event => { if (running) { event.preventDefault(); event.returnValue = ''; } });
 try {
   const saved = await chrome.storage.local.get(['rows', 'options']);
@@ -178,3 +238,13 @@ try {
   if (rows.length) status(`已恢复 ${rows.length} 条本地记录。未完成的检查需重新开始。`);
   render();
 } catch (error) { status(`本地记录加载失败：${error.message}`); }
+
+try {
+  const savedMonitor = await chrome.storage.local.get('monitor');
+  monitor = {...monitor, ...(savedMonitor.monitor || {})};
+  $('monitorEnabled').checked = !!monitor.enabled;
+  $('monitorEvery').value = monitor.every;
+  $('followBatch').value = monitor.batch;
+  $('batchEvery').value = monitor.batchEvery;
+  if (monitor.lastScan) monitorStatus(`上次扫描 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
+} catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
