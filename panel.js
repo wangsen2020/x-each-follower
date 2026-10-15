@@ -13,6 +13,19 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
 const analysisStatus = text => { $('analysisStatus').textContent = text; };
+function renderQueue() {
+  const filter = $('queueFilter').value;
+  const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
+  const queue = [...(monitor.queue || [])].filter(user => filter === 'all' ? true : filter === 'danger' ? user.status === 'danger' : user.status === 'pending').sort((a,b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
+  const root = $('queueList'); root.replaceChildren();
+  if (!queue.length) { const empty = document.createElement('p'); empty.className='note'; empty.textContent='当前没有符合筛选条件的账号。'; root.append(empty); return; }
+  for (const user of queue) {
+    const item = document.createElement('div'); item.className = `queue-item ${user.status === 'danger' ? 'queue-danger' : ''}`;
+    const text = document.createElement('div'); const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener'; link.textContent=`${user.name || user.handle} · @${user.handle}`; const detail=document.createElement('small'); detail.textContent=user.risk?.level === 'danger' ? `危险：${user.risk.hits.join('、')}` : (user.bio || '').slice(0,120); text.append(link, detail);
+    const statusEl=document.createElement('span'); statusEl.className='queue-status'; statusEl.textContent={pending:'Follow back',danger:'危险',followed:'已回关',changed:'状态变化',unreadable:'需复核'}[user.status] || user.status;
+    item.append(text,statusEl); root.append(item);
+  }
+}
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
 function settings() {
@@ -200,8 +213,10 @@ async function scanFollowerList() {
   const users = [...found.values()];
   const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
   const queue = users.filter(user => user.state === 'follow_back').map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+  queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
   monitor = {...monitor, users, queue, lastScan:new Date().toISOString()};
   await chrome.storage.local.set({monitor});
+  renderQueue();
   monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个（已排除）。`);
 }
 
@@ -219,6 +234,7 @@ async function processFollowBack() {
   }
   monitor.queue = monitor.queue.map(item => pending.find(user => user.handle === item.handle) || item);
   await chrome.storage.local.set({monitor});
+  renderQueue();
   monitorStatus(`本批已处理 ${completed} 个，剩余 ${monitor.queue.filter(user => user.status === 'pending').length} 个。`);
 }
 
@@ -226,6 +242,7 @@ $('scanFollowers').addEventListener('click', async () => { try { monitorStatus('
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+$('queueFilter').addEventListener('change', renderQueue);
 
 function grokPrompt() {
   const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `本地危险信号：${row.risk?.level === 'danger' ? `危险（${row.risk.hits.join('、')}）` : '未命中规则'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
@@ -315,6 +332,7 @@ try {
   $('followBatch').value = monitor.batch;
   $('batchEvery').value = monitor.batchEvery;
   if (monitor.lastScan) monitorStatus(`上次扫描 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
+  renderQueue();
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try { const savedAnalysis = await chrome.storage.local.get('analysisRows'); analysisRows = savedAnalysis.analysisRows || []; if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`); } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }

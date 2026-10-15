@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>X 互关线索筛选</title><link rel="stylesheet" href="panel.css"></head>
 <body>
 <main>
-  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.2.0</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，逐个查看个人资料，找到互关线索。</p></header>
+  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.3.0</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，逐个查看个人资料，找到互关线索。</p></header>
   <section class="controls" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -14,6 +14,7 @@
     <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
     <div class="actions"><button id="start">开始查看资料</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
   </section>
+  <section class="queue-card" aria-label="待回关列表"><div class="queue-head"><div><span class="eyebrow">FOLLOW-BACK QUEUE</span><h2>待回关</h2></div><select id="queueFilter"><option value="pending">待处理优先</option><option value="all">全部状态</option><option value="danger">危险标记</option></select></div><div id="queueList" class="queue-list"><p class="note">扫描粉丝后，Follow back 会优先显示在这里。</p></div></section>
   <p class="note">使用前先在此浏览器登录 X。会打开一个检查标签页，先滚动 following，再逐个访问 profile。请保持本工具页开启。所有结果仅保存在本机，不自动关注或取消关注。</p>
   <section class="monitor-card" aria-label="定时回关检查">
     <div><span class="eyebrow">FOLLOW-BACK WATCH</span><h2>定时检查我的粉丝</h2><p>扫描粉丝列表，识别显示为 Follow back 的账号，并按批次处理。</p></div>
