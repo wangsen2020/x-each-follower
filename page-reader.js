@@ -83,9 +83,36 @@ export function clickFollowBack(handle) {
   return {ok:false, reason:'not_visible'};
 }
 
+function profileActionLabel(item) {
+  return `${item.innerText || ''} ${item.getAttribute('aria-label') || ''}`.trim();
+}
+
+// Individual pending 回关 only. Exact "Follow back"; Following and Pending are non-click.
+export function clickFollowBackOnProfile(handle) {
+  const path = location.pathname.replaceAll('/', '').toLowerCase();
+  if (path !== handle.toLowerCase()) return {ok:false, reason:'wrong_profile'};
+  if (profileRateLimited()) return {ok:false, reason:'rate_limited'};
+  const root = document.querySelector('[data-testid="primaryColumn"]');
+  const buttons = [...(root?.querySelectorAll('button') || [])];
+  const button = buttons.find(item => /^follow back$/i.test(profileActionLabel(item)));
+  if (!button) {
+    const settled = buttons.some(item => /^(following|pending|unfollow)$/i.test(profileActionLabel(item)));
+    if (settled) return {ok:false, reason:'already_following'};
+    return {ok:false, reason:'follow_button_unavailable'};
+  }
+  button.click();
+  if (profileRateLimited()) return {ok:false, reason:'rate_limited'};
+  return {ok:true};
+}
+
+function profileRateLimited() {
+  return /unable to follow|rate limit|try again in an hour|too quickly/i.test(document.body?.innerText || '');
+}
+
 export function clickFollowOnProfile(handle) {
   const path = location.pathname.replaceAll('/', '').toLowerCase();
   if (path !== handle.toLowerCase()) return {ok:false, reason:'wrong_profile'};
+  if (profileRateLimited()) return {ok:false, reason:'rate_limited'};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   const buttons = [...(root?.querySelectorAll('button') || [])];
   const button = buttons.find(item => {
@@ -98,5 +125,6 @@ export function clickFollowOnProfile(handle) {
     return {ok:false, reason:'follow_button_unavailable'};
   }
   button.click();
+  if (profileRateLimited()) return {ok:false, reason:'rate_limited'};
   return {ok:true};
 }

@@ -24,6 +24,7 @@ let drawerUser = null;
 let drawerLoading = false;
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null};
 let mutualNetworkRunning = false;
+const followBackBusy = new Set();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { const root = $('status') || $('networkStatus'); if (root) root.textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -78,9 +79,15 @@ function renderMonitorList() {
     const select = document.createElement('input'); select.type='checkbox'; select.checked=selectedFollowerHandles.has(key); select.title='选择后可提交给 Grok 分析'; select.addEventListener('change', () => { if (select.checked && selectedFollowerHandles.size >= 20) { select.checked=false; monitorStatus('一次最多选择 20 个账号。'); return; } if (select.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); renderMonitorList(); });
     const info = document.createElement('div'); const link = document.createElement('a'); link.href = `https://x.com/${user.handle}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${user.name || user.handle} · @${user.handle}`;
     const detail = document.createElement('small'); detail.textContent = (user.bio || '暂无简介').slice(0, 140); info.append(link, detail);
+    const actions = document.createElement('div'); actions.className = 'monitor-actions';
+    if (activeFollowerTab === 'followBack' && user.status === 'pending') {
+      const follow = document.createElement('button'); follow.className = 'secondary'; follow.textContent = followBackBusy.has(key) ? '回关中' : '回关'; follow.disabled = followBackBusy.has(key); follow.title = '在最小化、不抢焦点的窗口打开主页，只点击精确的 Follow'; follow.addEventListener('click', () => followBackOne(user, follow));
+      actions.append(follow);
+    }
     const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在右侧抽屉查看资料；可继续采集或收集关系'; action.addEventListener('click', () => openProfileDrawer(user));
+    actions.append(action);
     const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = {danger:'风险',followed:'已回关',pending:'待回关',saved:'已保存'}[user.status] || '已保存';
-    item.append(select, info, action, badge); fragment.append(item);
+    item.append(select, info, actions, badge); fragment.append(item);
   }
   list.append(fragment);
 }
@@ -370,6 +377,75 @@ async function processExplorerQueue() {
       await saveExplorer(); renderExplorer();
     }
   } finally { explorerRunning=false; }
+}
+
+async function markQueueFollowed(user) {
+  const key = user.handle.toLowerCase();
+  const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
+  if (item) { item.status = 'followed'; item.followedAt = new Date().toISOString(); }
+  await chrome.storage.local.set({monitor});
+  persist('monitor', monitor);
+  renderMonitorList();
+}
+async function followBackOne(user, button) {
+  const key = String(user.handle || '').toLowerCase();
+  if (!key || user.status !== 'pending' || followBackBusy.has(key)) return;
+  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
+    await chrome.storage.local.set({monitor});
+    persist('monitor', monitor);
+    monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`);
+    return;
+  }
+  followBackBusy.add(key);
+  button.disabled = true;
+  button.textContent = '回关中';
+  let win;
+  try {
+    monitorStatus(`正在后台打开 @${user.handle}，不会切换当前窗口…`);
+    win = await chrome.windows.create({url:`https://x.com/${user.handle}`, type:'popup', state:'minimized', focused:false});
+    const tab = win.tabs?.[0];
+    if (!tab?.id) throw new Error('后台窗口创建失败');
+    const deadline = Date.now() + 30000;
+    let lastReason = '主页尚未准备好';
+    while (Date.now() < deadline) {
+      await sleep(800);
+      const current = await chrome.tabs.get(tab.id);
+      if (current.status !== 'complete') continue;
+      const result = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:clickFollowBackOnProfile, args:[user.handle]}))[0]?.result;
+      if (result?.reason === 'rate_limited') {
+        monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
+        await chrome.storage.local.set({monitor});
+        persist('monitor', monitor);
+        renderMonitorList();
+        button.disabled = false;
+        button.textContent = '回关';
+        monitorStatus(`@${user.handle} 触发关注限制（rate limit），未记为已回关，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
+        return;
+      }
+      if (result?.ok) {
+        await markQueueFollowed(user);
+        monitorStatus(`已回关 @${user.handle}。`);
+        return;
+      }
+      lastReason = result?.reason || lastReason;
+      if (lastReason === 'already_following') {
+        await markQueueFollowed(user);
+        monitorStatus(`@${user.handle} 已是关注状态，未再次点击，已从待回关移出。`);
+        return;
+      }
+      if (lastReason === 'follow_button_unavailable') break;
+    }
+    button.disabled = false;
+    button.textContent = '回关';
+    monitorStatus(`@${user.handle} 未执行回关：${lastReason}。`);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = '回关';
+    monitorStatus(`打开 @${user.handle} 失败：${error.message}`);
+  } finally {
+    followBackBusy.delete(key);
+    if (win?.id) await chrome.windows.remove(win.id).catch(() => {});
+  }
 }
 
 async function followCandidate(row, button) {

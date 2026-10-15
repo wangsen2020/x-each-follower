@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectVisible, readProfile, clickFollowOnProfile} from '../page-reader.js';
+import {collectVisible, readProfile, clickFollowOnProfile, clickFollowBackOnProfile} from '../page-reader.js';
 
 const link = (path, text) => ({href:`https://x.com${path}`,innerText:text});
 test('collection uses only following user cells, deduplicates and checks target route', () => {
@@ -41,4 +41,30 @@ test('profile follow action only clicks an exact Follow button', () => {
   assert.equal(clicked,1);
   globalThis.document = {querySelector:()=>({querySelectorAll:()=>[{innerText:'Following',getAttribute:()=>''}]})};
   assert.deepEqual(clickFollowOnProfile('alice'), {ok:false, reason:'already_following'});
+  const followBack = {innerText:'Follow back', getAttribute:()=>'', click:()=>{clicked++;}};
+  globalThis.document = {querySelector:()=>({querySelectorAll:()=>[followBack]})};
+  assert.deepEqual(clickFollowOnProfile('alice'), {ok:false, reason:'already_following'});
+  assert.equal(clicked,1);
+});
+test('profile follow-back action only clicks an exact Follow back button', () => {
+  globalThis.location = {pathname:'/alice',origin:'https://x.com'};
+  let clicked = 0;
+  const button = {innerText:'Follow back', getAttribute:()=>'', click:()=>{clicked++;}};
+  globalThis.document = {querySelector:()=>({querySelectorAll:()=>[button]})};
+  assert.deepEqual(clickFollowBackOnProfile('alice'), {ok:true});
+  assert.equal(clicked,1);
+  for (const innerText of ['Follow', 'Following', 'Pending', 'Following back', 'Followed back', 'Unfollow back']) {
+    const decoy = {innerText, getAttribute:()=>'', click:()=>{clicked++;}};
+    globalThis.document = {querySelector:()=>({querySelectorAll:()=>[decoy]})};
+    const result = clickFollowBackOnProfile('alice');
+    assert.equal(result.ok, false, innerText);
+    assert.notEqual(result.reason, undefined);
+    assert.equal(clicked, 1, innerText);
+  }
+  globalThis.document = {querySelector:()=>({querySelectorAll:()=>[{innerText:'Following',getAttribute:()=>''}]})};
+  assert.deepEqual(clickFollowBackOnProfile('alice'), {ok:false, reason:'already_following'});
+  globalThis.document = {querySelector:()=>({querySelectorAll:()=>[{innerText:'Pending',getAttribute:()=>''}]})};
+  assert.deepEqual(clickFollowBackOnProfile('alice'), {ok:false, reason:'already_following'});
+  globalThis.document = {querySelector:()=>({querySelectorAll:()=>[{innerText:'Follow',getAttribute:()=>''}]})};
+  assert.deepEqual(clickFollowBackOnProfile('alice'), {ok:false, reason:'follow_button_unavailable'});
 });
