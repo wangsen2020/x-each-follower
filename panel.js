@@ -118,7 +118,13 @@ $('start').addEventListener('click', async () => {
     const handles = new Map();
     let idleRounds = 0;
     let ready = false;
-    for (let round = 0; !stopped && round < 150 && handles.size < options.limit && idleRounds < 8; round++) {
+    const networkHandles = await scanFollowingFromNetwork(inspectionTab, options.target, options.limit).catch(() => null);
+    if (networkHandles?.length) {
+      for (const handle of networkHandles) handles.set(handle.toLowerCase(), handle);
+      ready = true;
+      status(`已通过 X 网络接口静默读取 ${handles.size} 个 following 账号。`);
+    }
+    for (let round = 0; !stopped && !networkHandles?.length && round < 150 && handles.size < options.limit && idleRounds < 8; round++) {
       const result = await invoke(collectVisible, [options.target]);
       ready ||= result.ready;
       const before = handles.size;
@@ -204,6 +210,21 @@ async function followerTab() {
 async function readOwnHandle(tabId) {
   const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:() => document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replace(/^\//,'').split('/')[0] || ''});
   return result?.[0]?.result || '';
+}
+
+async function scanFollowingFromNetwork(tabId, target, limit) {
+  const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:target});
+  if (profile.status !== 200) return null;
+  const owner = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === target.toLowerCase());
+  if (!owner?.id) return null;
+  const found = new Map(); let cursor = '';
+  for (let page=0; page<10 && found.size<limit; page++) {
+    const response = await networkFetch(tabId, 'Following', {userId:owner.id, count:100, ...(cursor ? {cursor} : {})});
+    if (response.status !== 200) return null;
+    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== target.toLowerCase()) found.set(user.handle.toLowerCase(), user.handle);
+    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+  }
+  return [...found.values()].slice(0, limit);
 }
 
 async function scanFollowersFromNetwork(tabId) {
