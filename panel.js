@@ -1,5 +1,5 @@
 import { normalizeHandle, parseCount, assess, csv } from './scoring.js';
-import { collectVisible, readProfile, scanFollowers, clickFollowBack } from './page-reader.js';
+import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack } from './page-reader.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -8,9 +8,11 @@ let stopped = false;
 let inspectionTab;
 let options;
 let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue:[], lastScan:null};
+let analysisRows = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
+const analysisStatus = text => { $('analysisStatus').textContent = text; };
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
 function settings() {
@@ -224,6 +226,33 @@ $('scanFollowers').addEventListener('click', async () => { try { monitorStatus('
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+
+function grokPrompt() {
+  const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
+  return `你是 X 账号筛选助手。下面是同一批 ${analysisRows.length} 个账号的公开 profile 和最近帖子。请逐个输出：\n1. 账号主题与真实活跃方向；\n2. 是否像普通交流账号、营销号、互关号或可疑账号；\n3. 关注/粉丝比例与简介承诺是否一致；\n4. 最近帖子质量、原创性和明显风险；\n5. 是否值得人工回关（值得 / 谨慎 / 不建议）及一句理由。\n最后按“值得回关优先级”给出排序。不要把简介里的“互关/回关”当成事实，要结合最近帖子判断。\n\n${items}`;
+}
+
+async function collectAnalysisBatch() {
+  const count = Math.max(1, Math.min(20, Number($('analysisBatch').value) || 15));
+  const recentLimit = Math.max(1, Math.min(5, Number($('recentPosts').value) || 5));
+  const pending = (monitor.queue || []).filter(user => user.status === 'pending');
+  const candidates = pending.length ? pending : rows.filter(row => row.verdict === '候选').map(row => ({handle:row.handle, name:row.name, bio:row.bio, url:row.url}));
+  if (!candidates.length) throw new Error('没有待分析账号，请先扫描粉丝或完成 profile 检查。');
+  analysisRows = []; inspectionTab = await followerTab();
+  for (const user of candidates.slice(0, count)) {
+    analysisStatus(`正在收集 @${user.handle} 的 profile 和最近帖子（${analysisRows.length + 1}/${Math.min(count, candidates.length)}）…`);
+    await navigate(`https://x.com/${user.handle}`);
+    let data = {pending:true}; const deadline = Date.now() + 18000;
+    while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, recentLimit]); if (data.pending) await sleep(700); }
+    analysisRows.push({...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || []});
+  }
+  await chrome.storage.local.set({analysisRows});
+  analysisStatus(`已收集 ${analysisRows.length} 个账号，每个包含最多 ${recentLimit} 条最近帖子。可以复制到 Grok。`);
+}
+
+$('collectAnalysis').addEventListener('click', async () => { try { await collectAnalysisBatch(); } catch (error) { analysisStatus(`收集失败：${error.message}`); } });
+$('copyGrok').addEventListener('click', async () => { try { if (!analysisRows.length) await collectAnalysisBatch(); await navigator.clipboard.writeText(grokPrompt()); analysisStatus(`已复制 ${analysisRows.length} 个账号的 Grok 分析包，打开 Grok 后粘贴一次即可。`); } catch (error) { analysisStatus(`复制失败：${error.message}`); } });
+$('openGrok').addEventListener('click', async () => { await chrome.tabs.create({url:'https://x.com/i/grok', active:true}); });
 window.addEventListener('beforeunload', event => { if (running) { event.preventDefault(); event.returnValue = ''; } });
 try {
   const saved = await chrome.storage.local.get(['rows', 'options']);
@@ -248,3 +277,5 @@ try {
   $('batchEvery').value = monitor.batchEvery;
   if (monitor.lastScan) monitorStatus(`上次扫描 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
+
+try { const savedAnalysis = await chrome.storage.local.get('analysisRows'); analysisRows = savedAnalysis.analysisRows || []; if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`); } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }

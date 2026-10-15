@@ -31,6 +31,25 @@ export function readProfile(handle) {
   return { pending: false, name: name.split('\n')[0], bio, followersText: followers.innerText, followingText: following.innerText, status: 'ok' };
 }
 
+export function readProfileBundle(handle, recentLimit = 5) {
+  if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return {pending:true};
+  const root = document.querySelector('[data-testid="primaryColumn"]');
+  if (!root) return {pending:true};
+  const name = root.querySelector('[data-testid="UserName"]')?.innerText || '';
+  const bio = root.querySelector('[data-testid="UserDescription"]')?.innerText || '';
+  const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => suffixes.some(suffix => new URL(link.href, location.origin).pathname.toLowerCase() === `/${handle.toLowerCase()}/${suffix}`));
+  const following = countLink(['following']);
+  const followers = countLink(['followers', 'verified_followers']);
+  if (!name || !following || !followers) return {pending:true, name, bio};
+  const posts = [...(root?.querySelectorAll('article') || [])].slice(0, recentLimit).map(article => {
+    const text = (article.innerText || '').replace(/\s+/g, ' ').trim();
+    const time = article.querySelector('time')?.getAttribute('datetime') || '';
+    const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
+    return {text, time, url: link ? new URL(link.href, location.origin).href : ''};
+  });
+  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, status:'ok', posts};
+}
+
 export function scanFollowers() {
   if (!/\/followers\/?$/i.test(location.pathname)) throw new Error('当前页面不是粉丝列表。');
   const root = document.querySelector('[data-testid="primaryColumn"]');

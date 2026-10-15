@@ -20,6 +20,11 @@
     <div class="monitor-controls"><label>检查间隔（分钟）<input id="monitorEvery" type="number" value="60" min="10" max="1440"></label><label>每批最多回关<input id="followBatch" type="number" value="10" min="1" max="20"></label><label>批次间隔（分钟）<input id="batchEvery" type="number" value="10" min="5" max="180"></label><label class="check"><input id="monitorEnabled" type="checkbox">启用定时提醒</label><div class="actions"><button id="scanFollowers">立即扫描粉丝</button><button id="processFollowBack" class="secondary">处理待回关</button></div></div>
     <p id="monitorStatus" class="note">尚未扫描。首次扫描会建立本地状态。</p>
   </section>
+  <section class="monitor-card" aria-label="批量 Grok 分析">
+    <div><span class="eyebrow">BATCH PROFILE REVIEW</span><h2>批量提交给 Grok</h2><p>一次收集 15–20 个账号的 profile、粉丝/关注数据和最近 5 条帖子，生成一份统一分析包。</p></div>
+    <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
+    <p id="analysisStatus" class="note">优先使用待回关队列；没有队列时使用当前筛选结果中的账号。</p>
+  </section>
   <div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>承诺与比例不符</option><option>需复核</option></select></label></div>
   <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div>
   <footer>比例接近、简介承诺都不等于实际回关。这里的“承诺与比例不符”仅表示公开数据不满足阈值，不能据此认定骗关注。X 显示的缩写人数可能有误差；受限、未加载或不可读的资料会标记为需复核。</footer>
