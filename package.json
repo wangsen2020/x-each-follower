@@ -1,7 +1,8 @@
 {
   "name": "x-each-follower",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "scripts": {"test": "node --test", "check": "node --check panel.js && node --check page-reader.js && node --check scoring.js && node --check background.js"}
 }
+

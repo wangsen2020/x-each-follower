@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FollowBack Radar · 回关雷达",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "本地监测 X followers、non-followers 和 mutuals，管理 follow-back 队列并检查粉丝质量。",
   "permissions": ["scripting", "storage", "alarms", "notifications", "tabs", "windows", "clipboardWrite"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
@@ -10,5 +10,8 @@
     {"matches":["https://x.com/*","https://twitter.com/*"],"js":["bridge.js"],"run_at":"document_start"},
     {"matches":["https://x.com/*","https://twitter.com/*"],"js":["net-hook.js"],"run_at":"document_start","world":"MAIN"}
   ],
-  "action": {"default_title": "打开 X 互关线索筛选"}
+  "icons": {"128": "icon128.png"},
+  "action": {"default_title": "打开 XFollower 回关雷达"}
 }
+
+
