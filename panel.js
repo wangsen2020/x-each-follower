@@ -22,8 +22,10 @@ let followerPageSize = 20;
 let followerSearch = '';
 let drawerUser = null;
 let drawerLoading = false;
+let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null};
+let mutualNetworkRunning = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const status = text => { $('status').textContent = text; };
+const status = text => { const root = $('status') || $('networkStatus'); if (root) root.textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
 const analysisStatus = text => monitorStatus(text);
 function setTab(tab) {
@@ -199,6 +201,7 @@ function settings() {
 }
 
 function render() {
+  if ($('mutualResults')) { renderMutualNetwork(); return; }
   const body = $('results');
   body.replaceChildren();
   const visible = rows.map(row => assess(row, options || { minRatio: 0.7, maxRatio: 1.4, minCount: 50, requirePromise: true })).filter(row => $('filter').value === 'all' || row.verdict === $('filter').value);
@@ -261,7 +264,7 @@ async function backgroundProfileTab(handle) {
   throw new Error('后台标签页加载超时');
 }
 
-async function collectRelations(handle) {
+async function collectRelations(handle, perSideLimit = 500) {
   const tabId = await backgroundProfileTab(handle);
   try {
     await sleep(1200);
@@ -271,19 +274,75 @@ async function collectRelations(handle) {
     if (!owner?.id) throw new Error('没有读取到该账号的用户 ID。');
     const collect = async operation => {
       const found = new Map(); let cursor = '';
-      for (let page=0; page<10 && found.size<500; page++) {
+      for (let page=0; page<10 && found.size<perSideLimit; page++) {
         const response = await networkFetch(tabId, operation, {userId:owner.id, count:100, ...(cursor ? {cursor} : {})});
         if (response.status !== 200) throw new Error(response.error || `${operation} 网络请求失败（${response.status}）`);
         for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
         const next=findCursor(response.json); if (!next || next === cursor) break; cursor=next;
       }
-      return [...found.values()];
+      return [...found.values()].slice(0, perSideLimit);
     };
     return {handle, following:await collect('Following'), followers:await collect('Followers'), checkedAt:new Date().toISOString()};
   } finally { await chrome.tabs.remove(tabId).catch(() => {}); }
 }
 
 async function saveExplorer() { await chrome.storage.local.set({explorer}); persist('explorer', explorer); }
+
+async function saveMutualNetwork() { await chrome.storage.local.set({mutualNetwork}); persist('mutualNetwork', mutualNetwork); }
+function networkStatus(text) { $('networkStatus').textContent = text; }
+function mutualRelation(user) { return user.mutualAnchors?.length ? '双向互关' : user.followingAnchors?.length ? '锚点关注' : '锚点粉丝'; }
+function renderMutualNetwork() {
+  const body = $('mutualResults'); if (!body) return;
+  body.replaceChildren();
+  const users = [...(mutualNetwork.users || [])].sort((a,b) => Number((b.mutualAnchors || []).length > 0) - Number((a.mutualAnchors || []).length > 0) || String(a.name || a.handle).localeCompare(String(b.name || b.handle)));
+  $('mutualNetworkCount').textContent = String(users.length);
+  $('networkAnchor').value = mutualNetwork.anchor || '';
+  for (const user of users) {
+    const row = document.createElement('tr'); const account = document.createElement('td');
+    const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent=`${user.name || user.handle} · @${user.handle}`;
+    const bio = document.createElement('p'); bio.textContent=user.bio || '暂无简介'; account.append(link,bio); row.append(account);
+    const relation = document.createElement('td'); const badge = document.createElement('span'); badge.className=`badge ${(user.mutualAnchors || []).length ? 'candidate' : ''}`; badge.textContent=mutualRelation(user); relation.append(badge); row.append(relation);
+    for (const text of [user.followersText || '未读取', user.followingText || '未读取']) { const cell=document.createElement('td'); cell.textContent=text; row.append(cell); }
+    const actions = document.createElement('td'); const profile = document.createElement('button'); profile.className='secondary'; profile.textContent='资料'; profile.addEventListener('click', () => openProfileDrawer(user));
+    const expand = document.createElement('button'); expand.className='secondary'; expand.style.marginLeft='7px'; expand.textContent='以此扩展'; expand.title='以该账号为新锚点，合并去重后的互粉网络'; expand.addEventListener('click', () => collectMutualNetwork(user.handle, false)); actions.append(profile, expand); row.append(actions); body.append(row);
+  }
+  $('mutualEmpty').hidden = users.length > 0;
+  $('mutualEmpty').textContent = mutualNetwork.anchor ? '该锚点尚未读取到可展示的账号。' : '还没有互粉网络记录。';
+}
+
+async function collectMutualNetwork(rawAnchor, reset = false) {
+  if (mutualNetworkRunning) return;
+  let anchor;
+  try { anchor = normalizeHandle(rawAnchor); } catch (error) { networkStatus(error.message); return; }
+  mutualNetworkRunning = true; $('collectNetwork').disabled = true; networkStatus(`正在以 @${anchor} 为锚点，静默读取 following 与 followers…`);
+  try {
+    if (reset) mutualNetwork = {anchor, anchors:[], users:[], lastCollected:null};
+    const limit = Number($('networkLimit').value) || 500;
+    const result = await collectRelations(anchor, limit);
+    const next = new Map((mutualNetwork.users || []).map(user => [user.handle.toLowerCase(), {...user, sourceAnchors:[...(user.sourceAnchors || [])]}]));
+    const relationMap = new Map();
+    for (const user of result.following) relationMap.set(user.handle.toLowerCase(), {...user, inFollowing:true, inFollowers:false});
+    for (const user of result.followers) { const key=user.handle.toLowerCase(); relationMap.set(key, {...relationMap.get(key), ...user, inFollowing:relationMap.get(key)?.inFollowing || false, inFollowers:true}); }
+    for (const [key, user] of relationMap) {
+      const old = next.get(key) || {}; const sources = new Set([...(old.sourceAnchors || []), anchor]);
+      const followingAnchors = new Set([...(old.followingAnchors || []), ...(user.inFollowing ? [anchor] : [])]);
+      const followerAnchors = new Set([...(old.followerAnchors || []), ...(user.inFollowers ? [anchor] : [])]);
+      const mutualAnchors = new Set([...(old.mutualAnchors || []), ...(user.inFollowing && user.inFollowers ? [anchor] : [])]);
+      next.set(key, {...old, ...user, inFollowing:followingAnchors.size > 0, inFollowers:followerAnchors.size > 0, sourceAnchors:[...sources], followingAnchors:[...followingAnchors], followerAnchors:[...followerAnchors], mutualAnchors:[...mutualAnchors], discoveredAt:old.discoveredAt || new Date().toISOString()});
+    }
+    mutualNetwork = {...mutualNetwork, anchor, anchors:[...new Set([...(mutualNetwork.anchors || []), anchor])], users:[...next.values()], lastCollected:new Date().toISOString()};
+    await saveMutualNetwork(); renderMutualNetwork();
+    const both=[...relationMap.values()].filter(user => user.inFollowing && user.inFollowers).length;
+    networkStatus(`@${anchor}：following ${result.following.length}，followers ${result.followers.length}，其中双向互关 ${both}；网络累计去重 ${mutualNetwork.users.length} 个账号。`);
+  } catch (error) { networkStatus(`@${anchor} 收集失败：${error.message}`); }
+  finally { mutualNetworkRunning=false; $('collectNetwork').disabled=false; }
+}
+$('start').addEventListener('click', event => {
+  event.preventDefault(); event.stopImmediatePropagation();
+  $('networkAnchor').value = $('target').value;
+  setTab('candidates');
+  collectMutualNetwork($('target').value, true);
+}, true);
 async function exploreProfile(userOrHandle) {
   const handle = typeof userOrHandle === 'string' ? userOrHandle : userOrHandle.handle;
   setTab('explorer'); explorerStatus(`正在后台打开 @${handle}，不会切换当前窗口…`);
@@ -438,7 +497,7 @@ $('start').addEventListener('click', async () => {
   }
 });
 $('stop').addEventListener('click', () => { stopped = true; status('正在停止，已完成的记录会保留。'); });
-$('filter').addEventListener('change', render);
+$('filter')?.addEventListener('change', render);
 for (const key of ['minRatio', 'maxRatio', 'minCount', 'requirePromise']) $(key).addEventListener('change', () => {
   try { options = settings(); render(); chrome.storage.local.set({ options }); } catch (error) { status(error.message); }
 });
@@ -602,6 +661,8 @@ $('followerSearch').addEventListener('input', event => { followerSearch=event.ta
 $('followerPageSize').addEventListener('change', event => { followerPageSize=Number(event.target.value); followerPage=1; renderMonitorList(); });
 $('followerPrevPage').addEventListener('click', () => { followerPage--; renderMonitorList(); });
 $('followerNextPage').addEventListener('click', () => { followerPage++; renderMonitorList(); });
+$('collectNetwork').addEventListener('click', () => collectMutualNetwork($('networkAnchor').value, true));
+$('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
 $('profileDrawerMask').addEventListener('click', closeProfileDrawer);
 $('drawerRefreshProfile').addEventListener('click', refreshDrawerProfile);
@@ -717,14 +778,22 @@ try {
   renderExplorer();
 } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
 
+try {
+  const savedNetwork = await chrome.storage.local.get('mutualNetwork');
+  mutualNetwork = {...mutualNetwork, ...(savedNetwork.mutualNetwork || {})};
+  renderMutualNetwork();
+  if (mutualNetwork.lastCollected) networkStatus(`已恢复 ${mutualNetwork.users?.length || 0} 个去重账号，最近锚点 @${mutualNetwork.anchor}。`);
+} catch (error) { networkStatus(`互粉网络记录加载失败：${error.message}`); }
+
 setTab('monitor');
 
 try {
-  const [savedRows, savedMonitor, savedAnalysis, savedProfiles, savedExplorer] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('explorer')]);
+  const [savedRows, savedMonitor, savedAnalysis, savedProfiles, savedExplorer, savedNetwork] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('explorer'), durableGet('mutualNetwork')]);
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
   if (!Object.keys(profileCache).length && savedProfiles && typeof savedProfiles === 'object') { profileCache=savedProfiles; await chrome.storage.local.set({profileCache}); }
   if (!(explorer.queue || []).length && savedExplorer) { explorer = {...explorer, ...savedExplorer}; await chrome.storage.local.set({explorer}); renderExplorer(); explorerStatus('已从 X 本地数据库恢复关系探索队列。'); }
+  if (!(mutualNetwork.users || []).length && savedNetwork) { mutualNetwork = {...mutualNetwork, ...savedNetwork}; await chrome.storage.local.set({mutualNetwork}); renderMutualNetwork(); networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`); }
 } catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
 
