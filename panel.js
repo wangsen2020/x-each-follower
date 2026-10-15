@@ -17,6 +17,9 @@ let explorerRunning = false;
 let followerScanRunning = false;
 let activeFollowerTab = 'following';
 let selectedFollowerHandles = new Set();
+let followerPage = 1;
+let followerPageSize = 20;
+let followerSearch = '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -33,22 +36,37 @@ function currentFollowerUsers() {
   return [...source].sort((a,b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
 }
 function renderMonitorList() {
-  const users = currentFollowerUsers(); const allUsers = monitor.users || []; const pending = (monitor.queue || []).filter(user => user.status === 'pending');
-  const empty = $('monitorEmpty'); const list = $('monitorList'); const selection = $('selectionBar');
+  const allTabUsers = currentFollowerUsers(); const allUsers = monitor.users || []; const pending = (monitor.queue || []).filter(user => user.status === 'pending');
+  const keyword = followerSearch.trim().toLowerCase();
+  const matchedUsers = keyword ? allTabUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allTabUsers;
+  const totalPages = Math.max(1, Math.ceil(matchedUsers.length / followerPageSize));
+  followerPage = Math.min(Math.max(1, followerPage), totalPages);
+  const start = (followerPage - 1) * followerPageSize;
+  const users = matchedUsers.slice(start, start + followerPageSize);
+  const empty = $('monitorEmpty'); const list = $('monitorList'); const selection = $('selectionBar'); const pagination = $('monitorPagination');
   const following=(monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user) === 'followed').length;
   $('followingCount').textContent = String(following); $('followBackCount').textContent = String(pending.length); $('queueCount').textContent = String(pending.length);
   document.querySelectorAll('.follower-tab').forEach(button => button.classList.toggle('active', button.dataset.followerTab === activeFollowerTab));
-  empty.hidden = users.length > 0; list.hidden = users.length === 0; selection.hidden = users.length === 0; list.replaceChildren();
+  empty.hidden = allTabUsers.length > 0; list.hidden = allTabUsers.length === 0; selection.hidden = allTabUsers.length === 0; pagination.hidden = allTabUsers.length === 0; list.replaceChildren();
   $('scanFollowers').title = allUsers.length ? '扫描新粉丝，只读取最新页面直到遇到历史账号。' : '获取初始粉丝列表。';
   $('monitorEmptyTitle').textContent = activeFollowerTab === 'followBack' ? '没有待回关账号' : (allUsers.length ? '没有已关注的粉丝' : '还没有粉丝列表');
   $('initialFollowers').hidden = activeFollowerTab === 'followBack';
   $('initialFollowers').textContent = allUsers.length ? '扫描新粉丝' : '获取初始列表';
-  $('monitorStatus').textContent = allUsers.length ? `已保存 ${allUsers.length.toLocaleString()} 个粉丝 · 待回关 ${pending.length} 个` : '点击“获取初始列表”开始保存粉丝画像。';
-  const visibleKeys = new Set(users.map(user => user.handle.toLowerCase()));
+  $('monitorStatus').textContent = allUsers.length ? `已保存 ${allUsers.length.toLocaleString()} 个粉丝 · 待回关 ${pending.length} 个${keyword ? ` · 搜索到 ${matchedUsers.length} 个` : ''}` : '点击“获取初始列表”开始保存粉丝画像。';
+  const visibleKeys = new Set(allTabUsers.map(user => user.handle.toLowerCase()));
   for (const key of [...selectedFollowerHandles]) if (!visibleKeys.has(key) && !allUsers.some(user => user.handle.toLowerCase() === key)) selectedFollowerHandles.delete(key);
   $('selectedCount').textContent = String(selectedFollowerHandles.size); $('analyzeSelected').disabled = selectedFollowerHandles.size === 0;
   $('listSelectAll').checked = users.length > 0 && users.every(user => selectedFollowerHandles.has(user.handle.toLowerCase()));
-  if (!users.length) return;
+  $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())) && !$('listSelectAll').checked;
+  $('followerSearch').value = followerSearch;
+  $('followerPageSize').value = String(followerPageSize);
+  $('followerPageSummary').textContent = matchedUsers.length ? `${start + 1}–${Math.min(start + users.length, matchedUsers.length)} / ${matchedUsers.length.toLocaleString()}` : '0 / 0';
+  $('followerPrevPage').disabled = followerPage <= 1;
+  $('followerNextPage').disabled = followerPage >= totalPages;
+  if (!allTabUsers.length) return;
+  if (!users.length) {
+    const noMatch = document.createElement('p'); noMatch.className = 'monitor-no-match'; noMatch.textContent = '没有匹配的账号。'; list.append(noMatch); return;
+  }
   const fragment = document.createDocumentFragment();
   for (const user of users) {
     const key=user.handle.toLowerCase(); const item = document.createElement('div'); item.className = `monitor-item ${user.status === 'danger' ? 'is-danger' : ''}`;
@@ -492,14 +510,22 @@ $('initialFollowers').addEventListener('click', startFollowerScan);
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
-document.querySelectorAll('.follower-tab').forEach(button => button.addEventListener('click', () => { activeFollowerTab=button.dataset.followerTab; renderMonitorList(); }));
+document.querySelectorAll('.follower-tab').forEach(button => button.addEventListener('click', () => { activeFollowerTab=button.dataset.followerTab; followerPage=1; renderMonitorList(); }));
 $('listSelectAll').addEventListener('change', event => {
-  const users=currentFollowerUsers();
+  const allUsers=currentFollowerUsers(); const keyword=followerSearch.trim().toLowerCase(); const matchedUsers=keyword ? allUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allUsers;
+  const users=matchedUsers.slice((followerPage - 1) * followerPageSize, followerPage * followerPageSize);
   const additions=users.filter(user => !selectedFollowerHandles.has(user.handle.toLowerCase())).length;
-  if (event.target.checked && selectedFollowerHandles.size + additions > 20) { event.target.checked=false; monitorStatus('一次最多选择 20 个账号，请手动调整。'); return; }
-  for (const user of users) { const key=user.handle.toLowerCase(); if (event.target.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); }
+  if (event.target.checked && selectedFollowerHandles.size + additions > 20) {
+    const capacity = 20 - selectedFollowerHandles.size;
+    for (const user of users.slice(0, Math.max(0, capacity))) selectedFollowerHandles.add(user.handle.toLowerCase());
+    monitorStatus(`Grok 一次最多分析 20 个账号，已从当前页选择前 ${Math.max(0, capacity)} 个。`);
+  } else for (const user of users) { const key=user.handle.toLowerCase(); if (event.target.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); }
   renderMonitorList();
 });
+$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; renderMonitorList(); });
+$('followerPageSize').addEventListener('change', event => { followerPageSize=Number(event.target.value); followerPage=1; renderMonitorList(); });
+$('followerPrevPage').addEventListener('click', () => { followerPage--; renderMonitorList(); });
+$('followerNextPage').addEventListener('click', () => { followerPage++; renderMonitorList(); });
 $('processExplorerQueue').addEventListener('click', () => processExplorerQueue().catch(error => explorerStatus(`跟进队列失败：${error.message}`)));
 
 function grokPrompt() {

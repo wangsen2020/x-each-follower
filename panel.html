@@ -9,9 +9,9 @@
     <button class="nav-tab" data-tab="candidates">候选账号</button>
     <button class="nav-tab" data-tab="explorer">关系探索 <span id="explorerQueueCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.9.0<br>本地数据</div>
+    <div class="sidebar-foot">v0.10.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v0.9.0</span><h1>粉丝管理</h1></header>
+  <header><span class="eyebrow">XFollower · v0.10.0</span><h1>粉丝管理</h1></header>
   <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -25,10 +25,11 @@
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head"><div class="follower-tabs" role="tablist"><button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount">0</span></button><button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount">0</span></button></div><div class="icon-actions"><button class="icon-button secondary" title="首次获取会建立本地粉丝列表；之后只扫描新粉丝。" aria-label="说明">!</button><button id="scanFollowers" class="icon-button" title="获取初始粉丝列表或扫描新粉丝" aria-label="扫描粉丝">↻</button><button id="processFollowBack" class="icon-button secondary" title="按设置的节奏处理已进入待回关队列的账号" aria-label="处理待回关">↗</button></div></div>
     <div class="monitor-toolbar"><label title="自动扫描的时间间隔（分钟）"><span>检查间隔</span><input id="monitorEvery" type="number" value="60" min="10" max="1440"></label><label title="每批最多执行的回关数"><span>每批回关</span><input id="followBatch" type="number" value="10" min="1" max="20"></label><label title="两批回关之间的间隔（分钟）"><span>批次间隔</span><input id="batchEvery" type="number" value="10" min="5" max="180"></label><label class="check compact-check" title="开启后按检查间隔提醒扫描"><input id="monitorEnabled" type="checkbox"><span>定时扫描</span></label></div>
-    <div id="selectionBar" class="selection-bar" hidden><label><input id="listSelectAll" type="checkbox"> 全选</label><span>已选 <b id="selectedCount">0</b> / 20</span><button id="analyzeSelected" class="secondary" disabled>Grok 分析</button></div>
+    <div id="selectionBar" class="selection-bar" hidden><label title="仅选择当前页；Grok 每次最多分析 20 个账号。"><input id="listSelectAll" type="checkbox"> 全选本页</label><span>已选 <b id="selectedCount">0</b> / 20</span><button id="analyzeSelected" class="secondary" disabled>Grok 分析</button></div>
     <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite"></p>
     <div id="monitorEmpty" class="monitor-empty"><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>
     <div id="monitorList" class="monitor-list" hidden></div>
+    <div id="monitorPagination" class="monitor-pagination" hidden><label>搜索<input id="followerSearch" type="search" placeholder="账号、名称或简介" autocomplete="off"></label><label>每页<select id="followerPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label><span id="followerPageSummary" class="page-summary"></span><div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div></div>
   </section>
   <section id="explorerSection" class="explorer-card tab-panel" data-panel="explorer" aria-label="关系探索">
     <div class="queue-head"><div><h2>关系探索</h2></div><div class="icon-actions"><button class="icon-button secondary" title="静默读取账号的关注与粉丝；可将其中账号继续加入跟进队列。" aria-label="说明">!</button><button id="processExplorerQueue" class="secondary">继续收集</button></div></div>
