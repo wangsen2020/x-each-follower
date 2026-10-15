@@ -13,6 +13,7 @@ let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue
 let analysisRows = [];
 let explorer = {selected:null, following:[], followers:[], queue:[]};
 let explorerRunning = false;
+let followerScanRunning = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -23,6 +24,24 @@ function setTab(tab) {
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 const persist = (key, value) => durableSet(key, value).catch(() => {});
+function renderMonitorList() {
+  const users = [...(monitor.users || [])].sort((a, b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
+  const empty = $('monitorEmpty'); const list = $('monitorList');
+  empty.hidden = users.length > 0; list.hidden = users.length === 0; list.replaceChildren();
+  $('scanFollowers').title = users.length ? 'Scan the newest follower pages and add new accounts' : 'Fetch the initial follower list';
+  $('monitorStatus').textContent = users.length ? `${users.length.toLocaleString()} followers saved · ${((monitor.queue || []).filter(user => user.status === 'pending')).length} pending` : 'No followers saved.';
+  if (!users.length) return;
+  const fragment = document.createDocumentFragment();
+  for (const user of users) {
+    const item = document.createElement('div'); item.className = `monitor-item ${user.status === 'danger' ? 'is-danger' : ''}`;
+    const info = document.createElement('div'); const link = document.createElement('a'); link.href = `https://x.com/${user.handle}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${user.name || user.handle} · @${user.handle}`;
+    const detail = document.createElement('small'); detail.textContent = (user.bio || 'No bio').slice(0, 140); info.append(link, detail);
+    const action = document.createElement('button'); action.className = 'secondary'; action.textContent = 'Profile'; action.title = 'Open profile details in the silent relation explorer'; action.addEventListener('click', () => exploreProfile(user.handle));
+    const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = user.status === 'danger' ? 'Review' : user.status === 'followed' ? 'Followed' : user.status === 'pending' ? 'Follow back' : (user.status || 'Saved');
+    item.append(info, action, badge); fragment.append(item);
+  }
+  list.append(fragment);
+}
 function explorerStatus(text) { $('explorerStatus').textContent = text; }
 function explorerKey(user) { return String(user?.handle || '').toLowerCase(); }
 function renderExplorerList(root, users, role) {
@@ -53,6 +72,7 @@ function renderExplorer() {
   for (const item of explorer.queue) { const row=document.createElement('div'); row.className=`explorer-item ${item.status === 'done' ? 'is-done' : item.status === 'error' ? 'is-error' : ''}`; const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`@${item.handle}`; const detail=document.createElement('small'); detail.textContent=item.error || ({pending:'等待采集',running:'正在静默采集',done:`已完成 · ${item.following?.length || 0} following / ${item.followers?.length || 0} followers`}[item.status] || item.status); info.append(strong,detail); const button=document.createElement('button'); button.className='secondary'; button.textContent='查看资料'; button.addEventListener('click',() => exploreProfile(item.handle)); row.append(info,button); root.append(row); }
 }
 function renderQueue() {
+  renderMonitorList();
   const filter = $('queueFilter').value;
   const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
   const queue = [...(monitor.queue || [])].filter(user => filter === 'all' ? true : filter === 'danger' ? user.status === 'danger' : user.status === 'pending').sort((a,b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
@@ -452,7 +472,17 @@ async function processFollowBack() {
   monitorStatus(`本批已处理 ${completed} 个，剩余 ${monitor.queue.filter(user => user.status === 'pending').length} 个。`);
 }
 
-$('scanFollowers').addEventListener('click', async () => { try { monitorStatus('正在打开粉丝列表并滚动收集账号…'); await scanFollowerList(); } catch (error) { monitorStatus(`扫描失败：${error.message}`); } });
+async function startFollowerScan() {
+  if (followerScanRunning) return;
+  followerScanRunning = true;
+  $('scanFollowers').disabled = true; $('initialFollowers').disabled = true;
+  monitorStatus(monitor.users?.length ? 'Scanning newest followers…' : 'Fetching initial followers…');
+  try { await scanFollowerList(); }
+  catch (error) { monitorStatus(`Scan failed: ${error.message}`); }
+  finally { followerScanRunning = false; $('scanFollowers').disabled = false; $('initialFollowers').disabled = false; renderMonitorList(); }
+}
+$('scanFollowers').addEventListener('click', startFollowerScan);
+$('initialFollowers').addEventListener('click', startFollowerScan);
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
