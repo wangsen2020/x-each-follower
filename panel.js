@@ -31,6 +31,7 @@ function setTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
+document.addEventListener('click', event => { if (event.target.closest('.info-tip')) event.preventDefault(); });
 const persist = (key, value) => durableSet(key, value).catch(() => {});
 function monitorUserStatus(user) { return (monitor.queue || []).find(item => item.handle?.toLowerCase() === user.handle?.toLowerCase())?.status || 'saved'; }
 function currentFollowerUsers() {
