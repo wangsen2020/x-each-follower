@@ -251,7 +251,45 @@ async function collectAnalysisBatch() {
   analysisStatus(`已收集 ${analysisRows.length} 个账号，每个包含最多 ${recentLimit} 条最近帖子。可以复制到 Grok。`);
 }
 
+async function submitBatchToGrok() {
+  if (!analysisRows.length) await collectAnalysisBatch();
+  const prompt = grokPrompt();
+  const created = await chrome.windows.create({url:'https://x.com/i/grok', type:'popup', state:'minimized', focused:false});
+  const tabId = created.tabs?.[0]?.id;
+  if (!tabId) throw new Error('Grok 窗口创建失败。');
+  await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
+  const deadline = Date.now() + 30000;
+  let lastReason = 'Grok 页面尚未准备好';
+  while (Date.now() < deadline) {
+    await sleep(1000);
+    const result = (await chrome.scripting.executeScript({target:{tabId}, func:(text) => {
+      const input = document.querySelector('textarea, [contenteditable="true"]');
+      if (!input) return {ok:false, reason:'找不到 Grok 输入框'};
+      if (input.tagName === 'TEXTAREA') {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(input, text);
+      } else {
+        input.textContent = text;
+      }
+      input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
+      input.dispatchEvent(new Event('change', {bubbles:true}));
+      const send = [...document.querySelectorAll('button')].find(button => {
+        const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
+        return /send|提交|发送/i.test(label) && !button.disabled;
+      });
+      if (!send) return {ok:false, reason:'找不到 Grok 发送按钮'};
+      send.click();
+      return {ok:true};
+    }, args:[prompt]}))[0]?.result;
+    if (result?.ok) { analysisStatus(`已在最小化 Grok 窗口提交 ${analysisRows.length} 个账号的分析请求。`); return; }
+    lastReason = result?.reason || lastReason;
+  }
+  await navigator.clipboard.writeText(prompt);
+  throw new Error(`${lastReason}。分析包已复制到剪贴板，请在 Grok 窗口粘贴发送。`);
+}
+
 $('collectAnalysis').addEventListener('click', async () => { try { await collectAnalysisBatch(); } catch (error) { analysisStatus(`收集失败：${error.message}`); } });
+$('submitGrok').addEventListener('click', async () => { try { analysisStatus('正在收集资料并打开最小化 Grok 窗口…'); await submitBatchToGrok(); } catch (error) { analysisStatus(`提交失败：${error.message}`); } });
 $('copyGrok').addEventListener('click', async () => { try { if (!analysisRows.length) await collectAnalysisBatch(); await navigator.clipboard.writeText(grokPrompt()); analysisStatus(`已复制 ${analysisRows.length} 个账号的 Grok 分析包，打开 Grok 后粘贴一次即可。`); } catch (error) { analysisStatus(`复制失败：${error.message}`); } });
 $('openGrok').addEventListener('click', async () => { await chrome.tabs.create({url:'https://x.com/i/grok', active:true}); });
 window.addEventListener('beforeunload', event => { if (running) { event.preventDefault(); event.returnValue = ''; } });

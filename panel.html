@@ -22,7 +22,7 @@
   </section>
   <section class="monitor-card" aria-label="批量 Grok 分析">
     <div><span class="eyebrow">BATCH PROFILE REVIEW</span><h2>批量提交给 Grok</h2><p>一次收集 15–20 个账号的 profile、粉丝/关注数据和最近 5 条帖子，生成一份统一分析包。</p></div>
-    <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
+    <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="submitGrok">收集并提交 Grok</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
     <p id="analysisStatus" class="note">优先使用待回关队列；没有队列时使用当前筛选结果中的账号。</p>
   </section>
   <div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>承诺与比例不符</option><option>需复核</option></select></label></div>
