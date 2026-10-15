@@ -1,5 +1,5 @@
 import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
-import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack, clickFollowOnProfile } from './page-reader.js';
+import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack, clickFollowBackOnProfile, clickFollowOnProfile } from './page-reader.js';
 import { networkFetch, parseNetworkUsers, findCursor } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 
@@ -25,6 +25,7 @@ let drawerLoading = false;
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null};
 let mutualNetworkRunning = false;
 const followBackBusy = new Set();
+const profileRefreshBusy = new Set();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { const root = $('status') || $('networkStatus'); if (root) root.textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -66,7 +67,7 @@ function renderMonitorList() {
   $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())) && !$('listSelectAll').checked;
   $('followerSearch').value = followerSearch;
   $('followerPageSize').value = String(followerPageSize);
-  $('followerPageSummary').textContent = matchedUsers.length ? `${start + 1}–${Math.min(start + users.length, matchedUsers.length)} / ${matchedUsers.length.toLocaleString()}` : '0 / 0';
+  $('followerPageSummary').textContent = matchedUsers.length ? `第 ${followerPage} / ${totalPages} 页 · ${matchedUsers.length.toLocaleString()} 个` : '第 0 / 0 页 · 0 个';
   $('followerPrevPage').disabled = followerPage <= 1;
   $('followerNextPage').disabled = followerPage >= totalPages;
   if (!allTabUsers.length) return;
@@ -81,9 +82,11 @@ function renderMonitorList() {
     const detail = document.createElement('small'); detail.textContent = (user.bio || '暂无简介').slice(0, 140); info.append(link, detail);
     const actions = document.createElement('div'); actions.className = 'monitor-actions';
     if (activeFollowerTab === 'followBack' && user.status === 'pending') {
-      const follow = document.createElement('button'); follow.className = 'secondary'; follow.textContent = followBackBusy.has(key) ? '回关中' : '回关'; follow.disabled = followBackBusy.has(key); follow.title = '在最小化、不抢焦点的窗口打开主页，只点击精确的 Follow'; follow.addEventListener('click', () => followBackOne(user, follow));
+      const follow = document.createElement('button'); follow.className = 'secondary'; follow.textContent = followBackBusy.has(key) ? '回关中' : '回关'; follow.disabled = followBackBusy.has(key); follow.title = '在最小化、不抢焦点的窗口打开主页，只点击精确的 Follow back'; follow.addEventListener('click', () => followBackOne(user, follow));
       actions.append(follow);
     }
+    const refresh = document.createElement('button'); refresh.className = 'secondary'; refresh.textContent = profileRefreshBusy.has(key) ? '刷新中' : '刷新资料'; refresh.disabled = profileRefreshBusy.has(key); refresh.title = '静默打开主页读取最新公开资料和最近 5 条帖子，并保存到本地画像'; refresh.addEventListener('click', () => refreshFollowerProfile(user));
+    actions.append(refresh);
     const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在右侧抽屉查看资料；可继续采集或收集关系'; action.addEventListener('click', () => openProfileDrawer(user));
     actions.append(action);
     const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = {danger:'风险',followed:'已回关',pending:'待回关',saved:'已保存'}[user.status] || '已保存';
@@ -193,6 +196,40 @@ async function refreshDrawerProfile() {
   } catch (error) {
     monitorStatus(`@${drawerUser.handle} 的资料采集失败：${error.message}`);
   } finally { drawerLoading = false; renderProfileDrawer(); }
+}
+
+function applyProfileToMonitor(profile) {
+  const key = String(profile?.handle || '').toLowerCase();
+  if (!key) return;
+  const {status, ...profileFields} = profile;
+  for (const collection of [monitor.users || [], monitor.queue || []]) {
+    const item = collection.find(entry => String(entry.handle || '').toLowerCase() === key);
+    if (item) Object.assign(item, profileFields);
+  }
+}
+
+async function refreshFollowerProfile(user) {
+  const key = String(user?.handle || '').toLowerCase();
+  if (!key || profileRefreshBusy.has(key)) return;
+  profileRefreshBusy.add(key);
+  renderMonitorList();
+  monitorStatus(`正在后台刷新 @${user.handle} 的公开资料…`);
+  try {
+    const profile = await readProfileBundleInBackground(user);
+    profileCache[key] = profile;
+    applyProfileToMonitor(profile);
+    if (String(drawerUser?.handle || '').toLowerCase() === key) drawerUser = profile;
+    await chrome.storage.local.set({monitor, profileCache});
+    persist('monitor', monitor);
+    persist('profileCache', profileCache);
+    monitorStatus(`@${user.handle} 的资料已刷新并保存。`);
+  } catch (error) {
+    monitorStatus(`@${user.handle} 的资料刷新失败：${error.message}`);
+  } finally {
+    profileRefreshBusy.delete(key);
+    renderMonitorList();
+    if (String(drawerUser?.handle || '').toLowerCase() === key) renderProfileDrawer();
+  }
 }
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
@@ -383,6 +420,8 @@ async function markQueueFollowed(user) {
   const key = user.handle.toLowerCase();
   const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
   if (item) { item.status = 'followed'; item.followedAt = new Date().toISOString(); }
+  const userItem = (monitor.users || []).find(entry => entry.handle?.toLowerCase() === key);
+  if (userItem) { userItem.state = 'following'; }
   await chrome.storage.local.set({monitor});
   persist('monitor', monitor);
   renderMonitorList();
@@ -403,15 +442,20 @@ async function followBackOne(user, button) {
   try {
     monitorStatus(`正在后台打开 @${user.handle}，不会切换当前窗口…`);
     win = await chrome.windows.create({url:`https://x.com/${user.handle}`, type:'popup', state:'minimized', focused:false});
-    const tab = win.tabs?.[0];
-    if (!tab?.id) throw new Error('后台窗口创建失败');
+    let tabId = win.tabs?.[0]?.id;
+    if (!tabId && win.id) {
+      const tabs = await chrome.tabs.query({windowId: win.id});
+      tabId = tabs?.[0]?.id;
+    }
+    if (!tabId) throw new Error('后台窗口创建失败');
     const deadline = Date.now() + 30000;
     let lastReason = '主页尚未准备好';
     while (Date.now() < deadline) {
       await sleep(800);
-      const current = await chrome.tabs.get(tab.id);
+      const current = await chrome.tabs.get(tabId).catch(() => null);
+      if (!current) continue;
       if (current.status !== 'complete') continue;
-      const result = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:clickFollowBackOnProfile, args:[user.handle]}))[0]?.result;
+      const result = (await chrome.scripting.executeScript({target:{tabId}, func:clickFollowBackOnProfile, args:[user.handle]}))[0]?.result;
       if (result?.reason === 'rate_limited') {
         monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
         await chrome.storage.local.set({monitor});
@@ -423,6 +467,18 @@ async function followBackOne(user, button) {
         return;
       }
       if (result?.ok) {
+        await sleep(600);
+        const limited = (await chrome.scripting.executeScript({target:{tabId}, func:() => /unable to follow|rate limit|try again in an hour|too quickly/i.test(document.body?.innerText || '')}))[0]?.result;
+        if (limited) {
+          monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
+          await chrome.storage.local.set({monitor});
+          persist('monitor', monitor);
+          renderMonitorList();
+          button.disabled = false;
+          button.textContent = '回关';
+          monitorStatus(`@${user.handle} 触发关注限制（rate limit），未记为已回关，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
+          return;
+        }
         await markQueueFollowed(user);
         monitorStatus(`已回关 @${user.handle}。`);
         return;
