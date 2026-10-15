@@ -8,11 +8,12 @@
     <button class="nav-tab active" data-tab="candidates">候选账号</button>
     <button class="nav-tab" data-tab="queue">待回关 <span id="queueCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="monitor">粉丝监测</button>
+    <button class="nav-tab" data-tab="explorer">关系探索 <span id="explorerQueueCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="grok">Grok 分析</button>
     <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.6.1<br>本地数据</div>
+    <div class="sidebar-foot">v0.7.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.6.0</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，找到互关线索。</p></header>
+  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.7.0</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，找到互关线索。</p></header>
   <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -34,6 +35,12 @@
     <div><span class="eyebrow">BATCH PROFILE REVIEW</span><h2>批量提交给 Grok</h2><p>一次收集 15–20 个账号的 profile、粉丝/关注数据和最近 5 条帖子，生成一份统一分析包。</p></div>
     <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="submitGrok">收集并提交 Grok</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
     <p id="analysisStatus" class="note">优先使用待回关队列；没有队列时使用当前筛选结果中的账号。</p>
+  </section>
+  <section id="explorerSection" class="explorer-card tab-panel" data-panel="explorer" aria-label="关系探索">
+    <div class="queue-head"><div><span class="eyebrow">RELATION EXPLORER</span><h2>关系探索</h2><p>从一个账号静默收集 following 和 followers，再把感兴趣的账号加入跟进队列。</p></div><button id="processExplorerQueue" class="secondary">继续收集跟进队列</button></div>
+    <p id="explorerStatus" class="note">从候选账号点击“查看资料”开始。</p>
+    <div class="explorer-grid"><div><h3>Following <span id="explorerFollowingCount" class="muted-count">0</span></h3><div id="explorerFollowing" class="explorer-list"><p class="note">还没有收集到 following。</p></div></div><div><h3>Followers <span id="explorerFollowersCount" class="muted-count">0</span></h3><div id="explorerFollowers" class="explorer-list"><p class="note">还没有收集到 followers。</p></div></div></div>
+    <h3>跟进队列 <span id="explorerPendingCount" class="muted-count">0</span></h3><div id="explorerQueue" class="explorer-list"><p class="note">选择账号加入后，会在最小化后台标签页中继续采集。</p></div>
   </section>
   <div id="candidatesSection" class="tab-panel" data-panel="candidates"><div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>疑似骗关注</option><option>危险</option><option>需复核</option></select></label></div>
   <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div></div>

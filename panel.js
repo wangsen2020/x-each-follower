@@ -11,6 +11,8 @@ let inspectionTab;
 let options;
 let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue:[], lastScan:null};
 let analysisRows = [];
+let explorer = {selected:null, following:[], followers:[], queue:[]};
+let explorerRunning = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -21,6 +23,35 @@ function setTab(tab) {
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 const persist = (key, value) => durableSet(key, value).catch(() => {});
+function explorerStatus(text) { $('explorerStatus').textContent = text; }
+function explorerKey(user) { return String(user?.handle || '').toLowerCase(); }
+function renderExplorerList(root, users, role) {
+  root.replaceChildren();
+  if (!users.length) { const empty=document.createElement('p'); empty.className='note'; empty.textContent='还没有收集到账号。'; root.append(empty); return; }
+  const queued = new Set((explorer.queue || []).map(explorerKey));
+  for (const user of users) {
+    const item=document.createElement('div'); item.className='explorer-item';
+    const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`${user.name || user.handle} · @${user.handle}`;
+    const detail=document.createElement('small'); detail.textContent=`${user.bio || '暂无简介'}${user.followersText ? ` · 粉丝 ${user.followersText}` : ''}${user.followingText ? ` · 关注 ${user.followingText}` : ''}`;
+    info.append(strong, detail);
+    const actions=document.createElement('div'); actions.className='explorer-actions';
+    const open=document.createElement('button'); open.className='secondary'; open.textContent='查看资料'; open.addEventListener('click', () => exploreProfile(user.handle));
+    const add=document.createElement('button'); add.className='queue-status'; add.textContent=queued.has(explorerKey(user)) ? '已在队列' : '加入队列'; add.disabled=queued.has(explorerKey(user)); add.addEventListener('click', () => addExplorerQueue(user, role));
+    actions.append(open, add); item.append(info, actions); root.append(item);
+  }
+}
+function renderExplorer() {
+  $('explorerFollowingCount').textContent=String(explorer.following?.length || 0);
+  $('explorerFollowersCount').textContent=String(explorer.followers?.length || 0);
+  const pending=(explorer.queue || []).filter(item => item.status === 'pending').length;
+  $('explorerQueueCount').textContent=String(pending);
+  $('explorerPendingCount').textContent=String(pending);
+  renderExplorerList($('explorerFollowing'), explorer.following || [], 'following');
+  renderExplorerList($('explorerFollowers'), explorer.followers || [], 'followers');
+  const root=$('explorerQueue'); root.replaceChildren();
+  if (!(explorer.queue || []).length) { const empty=document.createElement('p'); empty.className='note'; empty.textContent='选择账号加入后，会在最小化后台标签页中继续采集。'; root.append(empty); return; }
+  for (const item of explorer.queue) { const row=document.createElement('div'); row.className=`explorer-item ${item.status === 'done' ? 'is-done' : item.status === 'error' ? 'is-error' : ''}`; const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`@${item.handle}`; const detail=document.createElement('small'); detail.textContent=item.error || ({pending:'等待采集',running:'正在静默采集',done:`已完成 · ${item.following?.length || 0} following / ${item.followers?.length || 0} followers`}[item.status] || item.status); info.append(strong,detail); const button=document.createElement('button'); button.className='secondary'; button.textContent='查看资料'; button.addEventListener('click',() => exploreProfile(item.handle)); row.append(info,button); root.append(row); }
+}
 function renderQueue() {
   const filter = $('queueFilter').value;
   const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
@@ -31,8 +62,9 @@ function renderQueue() {
   for (const user of queue) {
     const item = document.createElement('div'); item.className = `queue-item ${user.status === 'danger' ? 'queue-danger' : ''}`;
     const text = document.createElement('div'); const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener'; link.textContent=`${user.name || user.handle} · @${user.handle}`; const detail=document.createElement('small'); detail.textContent=user.risk?.level === 'danger' ? `危险：${user.risk.hits.join('、')}` : (user.bio || '').slice(0,120); text.append(link, detail);
+    const inspect = document.createElement('button'); inspect.className='secondary'; inspect.textContent='查看资料'; inspect.addEventListener('click', () => exploreProfile(user.handle));
     const statusEl=document.createElement('span'); statusEl.className='queue-status'; statusEl.textContent={pending:'Follow back',danger:'危险',followed:'已回关',changed:'状态变化',unreadable:'需复核'}[user.status] || user.status;
-    item.append(text,statusEl); root.append(item);
+    item.append(text,inspect,statusEl); root.append(item);
   }
 }
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
@@ -79,6 +111,12 @@ function render() {
     badge.textContent = row.verdict;
     result.append(badge);
     if (row.verdict === '候选') {
+      const explore = document.createElement('button');
+      explore.className = 'secondary';
+      explore.style.marginLeft = '8px';
+      explore.textContent = '查看资料';
+      explore.addEventListener('click', () => exploreProfile(row));
+      result.append(explore);
       const follow = document.createElement('button');
       follow.className = 'queue-status';
       follow.style.marginLeft = '8px';
@@ -91,6 +129,70 @@ function render() {
   }
   $('empty').hidden = visible.length > 0;
   $('empty').textContent = rows.length ? '当前筛选下没有结果。' : '还没有检查记录。输入目标账号开始。';
+}
+
+async function backgroundProfileTab(handle) {
+  const tab = await chrome.tabs.create({url:`https://x.com/${handle}`, active:false});
+  if (!tab?.id) throw new Error('后台标签页创建失败');
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const current = await chrome.tabs.get(tab.id);
+    if (current.status === 'complete') return tab.id;
+    await sleep(500);
+  }
+  throw new Error('后台标签页加载超时');
+}
+
+async function collectRelations(handle) {
+  const tabId = await backgroundProfileTab(handle);
+  try {
+    await sleep(1200);
+    const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+    if (profile.status !== 200) throw new Error(profile.error || '未捕获 profile 网络模板，请先在 X 打开一次主页。');
+    const owner = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
+    if (!owner?.id) throw new Error('没有读取到该账号的用户 ID。');
+    const collect = async operation => {
+      const found = new Map(); let cursor = '';
+      for (let page=0; page<10 && found.size<500; page++) {
+        const response = await networkFetch(tabId, operation, {userId:owner.id, count:100, ...(cursor ? {cursor} : {})});
+        if (response.status !== 200) throw new Error(response.error || `${operation} 网络请求失败（${response.status}）`);
+        for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
+        const next=findCursor(response.json); if (!next || next === cursor) break; cursor=next;
+      }
+      return [...found.values()];
+    };
+    return {handle, following:await collect('Following'), followers:await collect('Followers'), checkedAt:new Date().toISOString()};
+  } finally { await chrome.tabs.remove(tabId).catch(() => {}); }
+}
+
+async function saveExplorer() { await chrome.storage.local.set({explorer}); persist('explorer', explorer); }
+async function exploreProfile(userOrHandle) {
+  const handle = typeof userOrHandle === 'string' ? userOrHandle : userOrHandle.handle;
+  setTab('explorer'); explorerStatus(`正在后台打开 @${handle}，不会切换当前窗口…`);
+  try {
+    const result = await collectRelations(handle);
+    explorer.selected = {handle, checkedAt:result.checkedAt}; explorer.following=result.following; explorer.followers=result.followers;
+    await saveExplorer(); renderExplorer(); explorerStatus(`已收集 @${handle}：${result.following.length} 个 following，${result.followers.length} 个 followers。可继续把账号加入跟进队列。`);
+  } catch (error) { explorerStatus(`采集 @${handle} 失败：${error.message}`); }
+}
+async function addExplorerQueue(user, role='following') {
+  const key=explorerKey(user); if (!key || (explorer.queue || []).some(item => explorerKey(item) === key)) return;
+  explorer.queue.push({...user, role, status:'pending', addedAt:new Date().toISOString()}); await saveExplorer(); renderExplorer(); processExplorerQueue();
+}
+async function processExplorerQueue() {
+  if (explorerRunning) return; explorerRunning=true;
+  try {
+    while (true) {
+      const item=(explorer.queue || []).find(entry => entry.status === 'pending'); if (!item) break;
+      item.status='running'; renderExplorer(); await saveExplorer(); explorerStatus(`正在后台采集 @${item.handle} 的 following 和 followers…`);
+      try {
+        const result=await collectRelations(item.handle); item.status='done'; item.checkedAt=result.checkedAt; item.following=result.following; item.followers=result.followers;
+        explorer.selected=item; explorer.following=result.following; explorer.followers=result.followers;
+        explorerStatus(`已完成 @${item.handle}：${result.following.length} 个 following，${result.followers.length} 个 followers。`);
+      } catch (error) { item.status='error'; item.error=error.message; explorerStatus(`@${item.handle} 采集失败：${error.message}`); }
+      await saveExplorer(); renderExplorer();
+    }
+  } finally { explorerRunning=false; }
 }
 
 async function followCandidate(row, button) {
@@ -344,6 +446,7 @@ $('processFollowBack').addEventListener('click', async () => { try { await proce
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 $('queueFilter').addEventListener('change', renderQueue);
+$('processExplorerQueue').addEventListener('click', () => processExplorerQueue().catch(error => explorerStatus(`跟进队列失败：${error.message}`)));
 
 function grokPrompt() {
   const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `本地危险信号：${row.risk?.level === 'danger' ? `危险（${row.risk.hits.join('、')}）` : '未命中规则'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
@@ -437,13 +540,20 @@ try {
   renderQueue();
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
-try { const savedAnalysis = await chrome.storage.local.get('analysisRows'); analysisRows = savedAnalysis.analysisRows || []; if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`); } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
+try {
+  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'explorer']);
+  analysisRows = savedAnalysis.analysisRows || [];
+  explorer = {...explorer, ...(savedAnalysis.explorer || {})};
+  if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`);
+  renderExplorer();
+} catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
 
 setTab('candidates');
 
 try {
-  const [savedRows, savedMonitor, savedAnalysis] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows')]);
+  const [savedRows, savedMonitor, savedAnalysis, savedExplorer] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('explorer')]);
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); monitorStatus(`已从 X 本地数据库恢复待回关队列。`); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
+  if (!(explorer.queue || []).length && savedExplorer) { explorer = {...explorer, ...savedExplorer}; await chrome.storage.local.set({explorer}); renderExplorer(); explorerStatus('已从 X 本地数据库恢复关系探索队列。'); }
 } catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
