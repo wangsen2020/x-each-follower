@@ -1,4 +1,4 @@
-import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
+import { normalizeHandle, parseCount, assess, riskAssess, csv, formatPageSummary } from './scoring.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack, clickFollowBackOnProfile, clickFollowOnProfile } from './page-reader.js';
 import { networkFetch, parseNetworkUsers, findCursor } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -12,8 +12,6 @@ let options;
 let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue:[], lastScan:null};
 let analysisRows = [];
 let profileCache = {};
-let explorer = {selected:null, following:[], followers:[], queue:[]};
-let explorerRunning = false;
 let followerScanRunning = false;
 let activeFollowerTab = 'following';
 let selectedFollowerHandles = new Set();
@@ -67,7 +65,7 @@ function renderMonitorList() {
   $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())) && !$('listSelectAll').checked;
   $('followerSearch').value = followerSearch;
   $('followerPageSize').value = String(followerPageSize);
-  $('followerPageSummary').textContent = matchedUsers.length ? `第 ${followerPage} / ${totalPages} 页 · ${matchedUsers.length.toLocaleString()} 个` : '第 0 / 0 页 · 0 个';
+  $('followerPageSummary').textContent = formatPageSummary(followerPage, totalPages, matchedUsers.length);
   $('followerPrevPage').disabled = followerPage <= 1;
   $('followerNextPage').disabled = followerPage >= totalPages;
   if (!allTabUsers.length) return;
@@ -81,11 +79,11 @@ function renderMonitorList() {
     const info = document.createElement('div'); const link = document.createElement('a'); link.href = `https://x.com/${user.handle}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${user.name || user.handle} · @${user.handle}`;
     const detail = document.createElement('small'); detail.textContent = (user.bio || '暂无简介').slice(0, 140); info.append(link, detail);
     const actions = document.createElement('div'); actions.className = 'monitor-actions';
-    if (activeFollowerTab === 'followBack' && user.status === 'pending') {
-      const follow = document.createElement('button'); follow.className = 'secondary'; follow.textContent = followBackBusy.has(key) ? '回关中' : '回关'; follow.disabled = followBackBusy.has(key); follow.title = '在最小化、不抢焦点的窗口打开主页，只点击精确的 Follow back'; follow.addEventListener('click', () => followBackOne(user, follow));
+    if (activeFollowerTab === 'followBack' && user.status !== 'followed') {
+      const follow = document.createElement('button'); follow.className = 'secondary'; follow.textContent = followBackBusy.has(key) ? '回关中' : '回关'; follow.disabled = followBackBusy.has(key); follow.title = '在最小化、不抢焦点的后台窗口打开主页，只点击精确的 Follow back'; follow.addEventListener('click', () => followBackOne(user, follow));
       actions.append(follow);
     }
-    const refresh = document.createElement('button'); refresh.className = 'secondary'; refresh.textContent = profileRefreshBusy.has(key) ? '刷新中' : '刷新资料'; refresh.disabled = profileRefreshBusy.has(key); refresh.title = '静默打开主页读取最新公开资料和最近 5 条帖子，并保存到本地画像'; refresh.addEventListener('click', () => refreshFollowerProfile(user));
+    const refresh = document.createElement('button'); refresh.className = 'secondary'; refresh.textContent = profileRefreshBusy.has(key) ? '刷新中…' : '刷新资料'; refresh.disabled = profileRefreshBusy.has(key); refresh.title = '静默读取该账号公开资料并存入本地画像缓存；无需打开抽屉'; refresh.addEventListener('click', () => refreshFollowerProfile(user));
     actions.append(refresh);
     const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在右侧抽屉查看资料；可继续采集或收集关系'; action.addEventListener('click', () => openProfileDrawer(user));
     actions.append(action);
@@ -93,35 +91,6 @@ function renderMonitorList() {
     item.append(select, info, actions, badge); fragment.append(item);
   }
   list.append(fragment);
-}
-function explorerStatus(text) { $('explorerStatus').textContent = text; }
-function explorerKey(user) { return String(user?.handle || '').toLowerCase(); }
-function renderExplorerList(root, users, role) {
-  root.replaceChildren();
-  if (!users.length) { const empty=document.createElement('p'); empty.className='note'; empty.textContent='还没有收集到账号。'; root.append(empty); return; }
-  const queued = new Set((explorer.queue || []).map(explorerKey));
-  for (const user of users) {
-    const item=document.createElement('div'); item.className='explorer-item';
-    const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`${user.name || user.handle} · @${user.handle}`;
-    const detail=document.createElement('small'); detail.textContent=`${user.bio || '暂无简介'}${user.followersText ? ` · 粉丝 ${user.followersText}` : ''}${user.followingText ? ` · 关注 ${user.followingText}` : ''}`;
-    info.append(strong, detail);
-    const actions=document.createElement('div'); actions.className='explorer-actions';
-    const open=document.createElement('button'); open.className='secondary'; open.textContent='查看资料'; open.addEventListener('click', () => exploreProfile(user.handle));
-    const add=document.createElement('button'); add.className='queue-status'; add.textContent=queued.has(explorerKey(user)) ? '已在队列' : '加入队列'; add.disabled=queued.has(explorerKey(user)); add.addEventListener('click', () => addExplorerQueue(user, role));
-    actions.append(open, add); item.append(info, actions); root.append(item);
-  }
-}
-function renderExplorer() {
-  $('explorerFollowingCount').textContent=String(explorer.following?.length || 0);
-  $('explorerFollowersCount').textContent=String(explorer.followers?.length || 0);
-  const pending=(explorer.queue || []).filter(item => item.status === 'pending').length;
-  $('explorerQueueCount').textContent=String(pending);
-  $('explorerPendingCount').textContent=String(pending);
-  renderExplorerList($('explorerFollowing'), explorer.following || [], 'following');
-  renderExplorerList($('explorerFollowers'), explorer.followers || [], 'followers');
-  const root=$('explorerQueue'); root.replaceChildren();
-  if (!(explorer.queue || []).length) { const empty=document.createElement('p'); empty.className='note'; empty.textContent='选择账号加入后，会在最小化后台标签页中继续采集。'; root.append(empty); return; }
-  for (const item of explorer.queue) { const row=document.createElement('div'); row.className=`explorer-item ${item.status === 'done' ? 'is-done' : item.status === 'error' ? 'is-error' : ''}`; const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`@${item.handle}`; const detail=document.createElement('small'); detail.textContent=item.error || ({pending:'等待采集',running:'正在静默采集',done:`已完成 · ${item.following?.length || 0} following / ${item.followers?.length || 0} followers`}[item.status] || item.status); info.append(strong,detail); const button=document.createElement('button'); button.className='secondary'; button.textContent='查看资料'; button.addEventListener('click',() => exploreProfile(item.handle)); row.append(info,button); root.append(row); }
 }
 function renderQueue() { renderMonitorList(); }
 
@@ -280,7 +249,7 @@ function render() {
       explore.className = 'secondary';
       explore.style.marginLeft = '8px';
       explore.textContent = '查看资料';
-      explore.addEventListener('click', () => exploreProfile(row));
+      explore.addEventListener('click', () => openProfileDrawer(row));
       result.append(explore);
       const follow = document.createElement('button');
       follow.className = 'queue-status';
@@ -329,8 +298,6 @@ async function collectRelations(handle, perSideLimit = 500) {
     return {handle, following:await collect('Following'), followers:await collect('Followers'), checkedAt:new Date().toISOString()};
   } finally { await chrome.tabs.remove(tabId).catch(() => {}); }
 }
-
-async function saveExplorer() { await chrome.storage.local.set({explorer}); persist('explorer', explorer); }
 
 async function saveMutualNetwork() { await chrome.storage.local.set({mutualNetwork}); persist('mutualNetwork', mutualNetwork); }
 function networkStatus(text) { $('networkStatus').textContent = text; }
@@ -387,35 +354,6 @@ $('start').addEventListener('click', event => {
   setTab('candidates');
   collectMutualNetwork($('target').value, true);
 }, true);
-async function exploreProfile(userOrHandle) {
-  const handle = typeof userOrHandle === 'string' ? userOrHandle : userOrHandle.handle;
-  setTab('explorer'); explorerStatus(`正在后台打开 @${handle}，不会切换当前窗口…`);
-  try {
-    const result = await collectRelations(handle);
-    explorer.selected = {handle, checkedAt:result.checkedAt}; explorer.following=result.following; explorer.followers=result.followers;
-    await saveExplorer(); renderExplorer(); explorerStatus(`已收集 @${handle}：${result.following.length} 个 following，${result.followers.length} 个 followers。可继续把账号加入跟进队列。`);
-  } catch (error) { explorerStatus(`采集 @${handle} 失败：${error.message}`); }
-}
-async function addExplorerQueue(user, role='following') {
-  const key=explorerKey(user); if (!key || (explorer.queue || []).some(item => explorerKey(item) === key)) return;
-  explorer.queue.push({...user, role, status:'pending', addedAt:new Date().toISOString()}); await saveExplorer(); renderExplorer(); processExplorerQueue();
-}
-async function processExplorerQueue() {
-  if (explorerRunning) return; explorerRunning=true;
-  try {
-    while (true) {
-      const item=(explorer.queue || []).find(entry => entry.status === 'pending'); if (!item) break;
-      item.status='running'; renderExplorer(); await saveExplorer(); explorerStatus(`正在后台采集 @${item.handle} 的 following 和 followers…`);
-      try {
-        const result=await collectRelations(item.handle); item.status='done'; item.checkedAt=result.checkedAt; item.following=result.following; item.followers=result.followers;
-        explorer.selected=item; explorer.following=result.following; explorer.followers=result.followers;
-        explorerStatus(`已完成 @${item.handle}：${result.following.length} 个 following，${result.followers.length} 个 followers。`);
-      } catch (error) { item.status='error'; item.error=error.message; explorerStatus(`@${item.handle} 采集失败：${error.message}`); }
-      await saveExplorer(); renderExplorer();
-    }
-  } finally { explorerRunning=false; }
-}
-
 async function markQueueFollowed(user) {
   const key = user.handle.toLowerCase();
   const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
@@ -798,10 +736,8 @@ $('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Ent
 $('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
 $('profileDrawerMask').addEventListener('click', closeProfileDrawer);
 $('drawerRefreshProfile').addEventListener('click', refreshDrawerProfile);
-$('drawerExploreRelations').addEventListener('click', () => { if (drawerUser?.handle) exploreProfile(drawerUser.handle); });
 $('drawerOpenX').addEventListener('click', () => { if (drawerUser?.handle) chrome.tabs.create({url:`https://x.com/${drawerUser.handle}`, active:true}); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !($('profileDrawer').hidden)) closeProfileDrawer(); });
-$('processExplorerQueue').addEventListener('click', () => processExplorerQueue().catch(error => explorerStatus(`跟进队列失败：${error.message}`)));
 
 function grokPrompt() {
   const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `本地危险信号：${row.risk?.level === 'danger' ? `危险（${row.risk.hits.join('、')}）` : '未命中规则'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
@@ -903,11 +839,9 @@ try {
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try {
-  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'profileCache', 'explorer']);
+  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'profileCache']);
   analysisRows = savedAnalysis.analysisRows || [];
   profileCache = savedAnalysis.profileCache || {};
-  explorer = {...explorer, ...(savedAnalysis.explorer || {})};
-  renderExplorer();
 } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
 
 try {
@@ -920,12 +854,11 @@ try {
 setTab('monitor');
 
 try {
-  const [savedRows, savedMonitor, savedAnalysis, savedProfiles, savedExplorer, savedNetwork] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('explorer'), durableGet('mutualNetwork')]);
+  const [savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('mutualNetwork')]);
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
   if (!Object.keys(profileCache).length && savedProfiles && typeof savedProfiles === 'object') { profileCache=savedProfiles; await chrome.storage.local.set({profileCache}); }
-  if (!(explorer.queue || []).length && savedExplorer) { explorer = {...explorer, ...savedExplorer}; await chrome.storage.local.set({explorer}); renderExplorer(); explorerStatus('已从 X 本地数据库恢复关系探索队列。'); }
   if (!(mutualNetwork.users || []).length && savedNetwork) { mutualNetwork = {...mutualNetwork, ...savedNetwork}; await chrome.storage.local.set({mutualNetwork}); renderMutualNetwork(); networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`); }
 } catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
 
