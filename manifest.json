@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "FollowBack Radar · 回关雷达",
-  "version": "0.8.3",
-  "description": "本地监测 X followers、non-followers 和 mutuals，管理 follow-back 队列并检查粉丝质量。",
+  "name": "XFollower · 粉丝管理",
+  "version": "0.9.0",
+  "description": "本地保存 X 粉丝画像，管理待回关账号，并批量提交选中账号给 Grok 分析。",
   "permissions": ["scripting", "storage", "alarms", "notifications", "tabs", "windows", "clipboardWrite"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "background": {"service_worker": "background.js"},
@@ -11,7 +11,7 @@
     {"matches":["https://x.com/*","https://twitter.com/*"],"js":["net-hook.js"],"run_at":"document_start","world":"MAIN"}
   ],
   "icons": {"128": "icon128.png"},
-  "action": {"default_title": "打开 XFollower 回关雷达"}
+  "action": {"default_title": "打开 XFollower 粉丝管理"}
 }
 
 

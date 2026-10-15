@@ -11,34 +11,53 @@ let inspectionTab;
 let options;
 let monitor = {enabled:false, every:60, batch:10, batchEvery:10, users:[], queue:[], lastScan:null};
 let analysisRows = [];
+let profileCache = {};
 let explorer = {selected:null, following:[], followers:[], queue:[]};
 let explorerRunning = false;
 let followerScanRunning = false;
+let activeFollowerTab = 'following';
+let selectedFollowerHandles = new Set();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
-const analysisStatus = text => { $('analysisStatus').textContent = text; };
+const analysisStatus = text => monitorStatus(text);
 function setTab(tab) {
   document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 const persist = (key, value) => durableSet(key, value).catch(() => {});
+function monitorUserStatus(user) { return (monitor.queue || []).find(item => item.handle?.toLowerCase() === user.handle?.toLowerCase())?.status || 'saved'; }
+function currentFollowerUsers() {
+  const source = activeFollowerTab === 'followBack' ? (monitor.queue || []).filter(user => user.status !== 'followed') : (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user) === 'followed').map(user => ({...user, status:monitorUserStatus(user)}));
+  return [...source].sort((a,b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
+}
 function renderMonitorList() {
-  const users = [...(monitor.users || [])].sort((a, b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
-  const empty = $('monitorEmpty'); const list = $('monitorList');
-  empty.hidden = users.length > 0; list.hidden = users.length === 0; list.replaceChildren();
-  $('scanFollowers').title = users.length ? 'Scan the newest follower pages and add new accounts' : 'Fetch the initial follower list';
-  $('monitorStatus').textContent = users.length ? `${users.length.toLocaleString()} followers saved · ${((monitor.queue || []).filter(user => user.status === 'pending')).length} pending` : 'No followers saved.';
+  const users = currentFollowerUsers(); const allUsers = monitor.users || []; const pending = (monitor.queue || []).filter(user => user.status === 'pending');
+  const empty = $('monitorEmpty'); const list = $('monitorList'); const selection = $('selectionBar');
+  const following=(monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user) === 'followed').length;
+  $('followingCount').textContent = String(following); $('followBackCount').textContent = String(pending.length); $('queueCount').textContent = String(pending.length);
+  document.querySelectorAll('.follower-tab').forEach(button => button.classList.toggle('active', button.dataset.followerTab === activeFollowerTab));
+  empty.hidden = users.length > 0; list.hidden = users.length === 0; selection.hidden = users.length === 0; list.replaceChildren();
+  $('scanFollowers').title = allUsers.length ? '扫描新粉丝，只读取最新页面直到遇到历史账号。' : '获取初始粉丝列表。';
+  $('monitorEmptyTitle').textContent = activeFollowerTab === 'followBack' ? '没有待回关账号' : (allUsers.length ? '没有已关注的粉丝' : '还没有粉丝列表');
+  $('initialFollowers').hidden = activeFollowerTab === 'followBack';
+  $('initialFollowers').textContent = allUsers.length ? '扫描新粉丝' : '获取初始列表';
+  $('monitorStatus').textContent = allUsers.length ? `已保存 ${allUsers.length.toLocaleString()} 个粉丝 · 待回关 ${pending.length} 个` : '点击“获取初始列表”开始保存粉丝画像。';
+  const visibleKeys = new Set(users.map(user => user.handle.toLowerCase()));
+  for (const key of [...selectedFollowerHandles]) if (!visibleKeys.has(key) && !allUsers.some(user => user.handle.toLowerCase() === key)) selectedFollowerHandles.delete(key);
+  $('selectedCount').textContent = String(selectedFollowerHandles.size); $('analyzeSelected').disabled = selectedFollowerHandles.size === 0;
+  $('listSelectAll').checked = users.length > 0 && users.every(user => selectedFollowerHandles.has(user.handle.toLowerCase()));
   if (!users.length) return;
   const fragment = document.createDocumentFragment();
   for (const user of users) {
-    const item = document.createElement('div'); item.className = `monitor-item ${user.status === 'danger' ? 'is-danger' : ''}`;
+    const key=user.handle.toLowerCase(); const item = document.createElement('div'); item.className = `monitor-item ${user.status === 'danger' ? 'is-danger' : ''}`;
+    const select = document.createElement('input'); select.type='checkbox'; select.checked=selectedFollowerHandles.has(key); select.title='选择后可提交给 Grok 分析'; select.addEventListener('change', () => { if (select.checked && selectedFollowerHandles.size >= 20) { select.checked=false; monitorStatus('一次最多选择 20 个账号。'); return; } if (select.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); renderMonitorList(); });
     const info = document.createElement('div'); const link = document.createElement('a'); link.href = `https://x.com/${user.handle}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${user.name || user.handle} · @${user.handle}`;
-    const detail = document.createElement('small'); detail.textContent = (user.bio || 'No bio').slice(0, 140); info.append(link, detail);
-    const action = document.createElement('button'); action.className = 'secondary'; action.textContent = 'Profile'; action.title = 'Open profile details in the silent relation explorer'; action.addEventListener('click', () => exploreProfile(user.handle));
-    const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = user.status === 'danger' ? 'Review' : user.status === 'followed' ? 'Followed' : user.status === 'pending' ? 'Follow back' : (user.status || 'Saved');
-    item.append(info, action, badge); fragment.append(item);
+    const detail = document.createElement('small'); detail.textContent = (user.bio || '暂无简介').slice(0, 140); info.append(link, detail);
+    const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在后台采集该账号的 following 和 followers'; action.addEventListener('click', () => exploreProfile(user.handle));
+    const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = {danger:'风险',followed:'已回关',pending:'待回关',saved:'已保存'}[user.status] || '已保存';
+    item.append(select, info, action, badge); fragment.append(item);
   }
   list.append(fragment);
 }
@@ -71,22 +90,7 @@ function renderExplorer() {
   if (!(explorer.queue || []).length) { const empty=document.createElement('p'); empty.className='note'; empty.textContent='选择账号加入后，会在最小化后台标签页中继续采集。'; root.append(empty); return; }
   for (const item of explorer.queue) { const row=document.createElement('div'); row.className=`explorer-item ${item.status === 'done' ? 'is-done' : item.status === 'error' ? 'is-error' : ''}`; const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`@${item.handle}`; const detail=document.createElement('small'); detail.textContent=item.error || ({pending:'等待采集',running:'正在静默采集',done:`已完成 · ${item.following?.length || 0} following / ${item.followers?.length || 0} followers`}[item.status] || item.status); info.append(strong,detail); const button=document.createElement('button'); button.className='secondary'; button.textContent='查看资料'; button.addEventListener('click',() => exploreProfile(item.handle)); row.append(info,button); root.append(row); }
 }
-function renderQueue() {
-  renderMonitorList();
-  const filter = $('queueFilter').value;
-  const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
-  const queue = [...(monitor.queue || [])].filter(user => filter === 'all' ? true : filter === 'danger' ? user.status === 'danger' : user.status === 'pending').sort((a,b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
-  $('queueCount').textContent = String((monitor.queue || []).filter(user => user.status === 'pending').length);
-  const root = $('queueList'); root.replaceChildren();
-  if (!queue.length) { const empty = document.createElement('p'); empty.className='note'; empty.textContent='当前没有符合筛选条件的账号。'; root.append(empty); return; }
-  for (const user of queue) {
-    const item = document.createElement('div'); item.className = `queue-item ${user.status === 'danger' ? 'queue-danger' : ''}`;
-    const text = document.createElement('div'); const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener'; link.textContent=`${user.name || user.handle} · @${user.handle}`; const detail=document.createElement('small'); detail.textContent=user.risk?.level === 'danger' ? `危险：${user.risk.hits.join('、')}` : (user.bio || '').slice(0,120); text.append(link, detail);
-    const inspect = document.createElement('button'); inspect.className='secondary'; inspect.textContent='查看资料'; inspect.addEventListener('click', () => exploreProfile(user.handle));
-    const statusEl=document.createElement('span'); statusEl.className='queue-status'; statusEl.textContent={pending:'Follow back',danger:'危险',followed:'已回关',changed:'状态变化',unreadable:'需复核'}[user.status] || user.status;
-    item.append(text,inspect,statusEl); root.append(item);
-  }
-}
+function renderQueue() { renderMonitorList(); }
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
 function settings() {
@@ -419,7 +423,8 @@ async function scanFollowerList() {
   const networkUsers = await scanFollowersFromNetwork(tabId, knownHandles).catch(() => null);
   if (networkUsers?.length) {
     const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
-    for (const user of networkUsers) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
+    const foundAt = new Date().toISOString();
+    for (const user of networkUsers) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
     const users = [...previous.values()];
     const queueMap = new Map((monitor.queue || []).map(user => [user.handle.toLowerCase(), user]));
     for (const user of networkUsers) if (user.state === 'follow_back' && !queueMap.has(user.handle.toLowerCase())) { const risk = riskAssess(user); queueMap.set(user.handle.toLowerCase(), {...user, risk, discoveredAt:new Date().toISOString(), status:risk.level === 'danger' ? 'danger' : 'pending'}); }
@@ -441,7 +446,8 @@ async function scanFollowerList() {
   }
   const users = [...found.values()];
   const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
-  for (const user of users) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
+  const foundAt = new Date().toISOString();
+  for (const user of users) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
   const allUsers = [...previous.values()];
   const queueMap = new Map((monitor.queue || []).map(user => [user.handle.toLowerCase(), user]));
   for (const user of users.filter(item => item.state === 'follow_back')) if (!queueMap.has(user.handle.toLowerCase())) { const risk=riskAssess(user); queueMap.set(user.handle.toLowerCase(), {...user, risk, discoveredAt:new Date().toISOString(), status:risk.level === 'danger' ? 'danger' : 'pending'}); }
@@ -476,9 +482,9 @@ async function startFollowerScan() {
   if (followerScanRunning) return;
   followerScanRunning = true;
   $('scanFollowers').disabled = true; $('initialFollowers').disabled = true;
-  monitorStatus(monitor.users?.length ? 'Scanning newest followers…' : 'Fetching initial followers…');
+  monitorStatus(monitor.users?.length ? '正在扫描新粉丝…' : '正在获取初始粉丝列表…');
   try { await scanFollowerList(); }
-  catch (error) { monitorStatus(`Scan failed: ${error.message}`); }
+  catch (error) { monitorStatus(`扫描失败：${error.message}`); }
   finally { followerScanRunning = false; $('scanFollowers').disabled = false; $('initialFollowers').disabled = false; renderMonitorList(); }
 }
 $('scanFollowers').addEventListener('click', startFollowerScan);
@@ -486,7 +492,14 @@ $('initialFollowers').addEventListener('click', startFollowerScan);
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用，每 ${monitor.every} 分钟提醒。` : '已关闭定时提醒。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
-$('queueFilter').addEventListener('change', renderQueue);
+document.querySelectorAll('.follower-tab').forEach(button => button.addEventListener('click', () => { activeFollowerTab=button.dataset.followerTab; renderMonitorList(); }));
+$('listSelectAll').addEventListener('change', event => {
+  const users=currentFollowerUsers();
+  const additions=users.filter(user => !selectedFollowerHandles.has(user.handle.toLowerCase())).length;
+  if (event.target.checked && selectedFollowerHandles.size + additions > 20) { event.target.checked=false; monitorStatus('一次最多选择 20 个账号，请手动调整。'); return; }
+  for (const user of users) { const key=user.handle.toLowerCase(); if (event.target.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); }
+  renderMonitorList();
+});
 $('processExplorerQueue').addEventListener('click', () => processExplorerQueue().catch(error => explorerStatus(`跟进队列失败：${error.message}`)));
 
 function grokPrompt() {
@@ -494,28 +507,37 @@ function grokPrompt() {
   return `你是 X 账号筛选助手。下面是同一批 ${analysisRows.length} 个账号的公开 profile 和最近帖子。请逐个输出：\n1. 账号主题与真实活跃方向；\n2. 是否像普通交流账号、营销号、互关号或可疑账号；\n3. 关注/粉丝比例与简介承诺是否一致；\n4. 最近帖子质量、原创性和明显风险，特别标记擦边色情、成人平台、私密导流、博彩、诈骗或可疑外链；\n5. 是否值得人工回关（值得 / 谨慎 / 不建议）及一句理由。危险账号默认不建议回关。最后按“值得回关优先级”给出排序。不要把简介里的“互关/回关”当成事实，要结合最近帖子判断。\n\n${items}`;
 }
 
-async function collectAnalysisBatch() {
-  const count = Math.max(1, Math.min(20, Number($('analysisBatch').value) || 15));
-  const recentLimit = Math.max(1, Math.min(5, Number($('recentPosts').value) || 5));
-  const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.risk?.level !== 'danger');
-  const candidates = pending.length ? pending : rows.filter(row => row.verdict === '候选').map(row => ({handle:row.handle, name:row.name, bio:row.bio, url:row.url}));
-  if (!candidates.length) throw new Error('没有待分析账号，请先扫描粉丝或完成 profile 检查。');
-  analysisRows = []; inspectionTab = await followerTab();
-  for (const user of candidates.slice(0, count)) {
-    analysisStatus(`正在收集 @${user.handle} 的 profile 和最近帖子（${analysisRows.length + 1}/${Math.min(count, candidates.length)}）…`);
-    await navigate(`https://x.com/${user.handle}`);
-    let data = {pending:true}; const deadline = Date.now() + 18000;
-    while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, recentLimit]); if (data.pending) await sleep(700); }
-    const row = {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || []};
-    analysisRows.push({...row, risk:riskAssess(row)});
-  }
-  await chrome.storage.local.set({analysisRows});
-  persist('analysisRows', analysisRows);
-  analysisStatus(`已收集 ${analysisRows.length} 个账号，每个包含最多 ${recentLimit} 条最近帖子。可以复制到 Grok。`);
+function selectedFollowerUsers() {
+  const users = new Map();
+  for (const user of [...(monitor.users || []), ...(monitor.queue || [])]) users.set(user.handle.toLowerCase(), user);
+  return [...selectedFollowerHandles].map(key => users.get(key)).filter(Boolean).slice(0, 20);
+}
+
+async function collectSelectedProfiles() {
+  const candidates = selectedFollowerUsers();
+  if (!candidates.length) throw new Error('请先在粉丝列表中选择账号。');
+  const collected = []; let tabId;
+  try {
+    for (const user of candidates) {
+      const key=user.handle.toLowerCase(); const cached=profileCache[key];
+      if (cached) { collected.push(cached); continue; }
+      if (!tabId) { const tab=await chrome.tabs.create({url:'https://x.com/home', active:false}); tabId=tab.id; inspectionTab=tabId; }
+      analysisStatus(`正在读取 @${user.handle} 的资料（${collected.length + 1}/${candidates.length}）…`);
+      await navigate(`https://x.com/${user.handle}`);
+      let data = {pending:true}; const deadline = Date.now() + 18000;
+      while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, 5]); if (data.pending) await sleep(700); }
+      const row = {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || [], risk:riskAssess({...user,...data}), profileCachedAt:new Date().toISOString()};
+      profileCache[key]=row; collected.push(row);
+      await chrome.storage.local.set({profileCache}); persist('profileCache', profileCache);
+    }
+  } finally { if (tabId) await chrome.tabs.remove(tabId).catch(() => {}); }
+  analysisRows=collected;
+  await chrome.storage.local.set({analysisRows}); persist('analysisRows', analysisRows);
+  return collected;
 }
 
 async function submitBatchToGrok() {
-  if (!analysisRows.length) await collectAnalysisBatch();
+  await collectSelectedProfiles();
   const prompt = grokPrompt();
   const created = await chrome.windows.create({url:'https://x.com/i/grok', type:'popup', state:'minimized', focused:false});
   const tabId = created.tabs?.[0]?.id;
@@ -551,10 +573,7 @@ async function submitBatchToGrok() {
   throw new Error(`${lastReason}。分析包已复制到剪贴板，请在 Grok 窗口粘贴发送。`);
 }
 
-$('collectAnalysis').addEventListener('click', async () => { try { await collectAnalysisBatch(); } catch (error) { analysisStatus(`收集失败：${error.message}`); } });
-$('submitGrok').addEventListener('click', async () => { try { analysisStatus('正在收集资料并打开最小化 Grok 窗口…'); await submitBatchToGrok(); } catch (error) { analysisStatus(`提交失败：${error.message}`); } });
-$('copyGrok').addEventListener('click', async () => { try { if (!analysisRows.length) await collectAnalysisBatch(); await navigator.clipboard.writeText(grokPrompt()); analysisStatus(`已复制 ${analysisRows.length} 个账号的 Grok 分析包，打开 Grok 后粘贴一次即可。`); } catch (error) { analysisStatus(`复制失败：${error.message}`); } });
-$('openGrok').addEventListener('click', async () => { await chrome.tabs.create({url:'https://x.com/i/grok', active:true}); });
+$('analyzeSelected').addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok…'); await submitBatchToGrok(); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
 window.addEventListener('beforeunload', event => { if (running) { event.preventDefault(); event.returnValue = ''; } });
 try {
   const saved = await chrome.storage.local.get(['rows', 'options']);
@@ -583,20 +602,21 @@ try {
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try {
-  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'explorer']);
+  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'profileCache', 'explorer']);
   analysisRows = savedAnalysis.analysisRows || [];
+  profileCache = savedAnalysis.profileCache || {};
   explorer = {...explorer, ...(savedAnalysis.explorer || {})};
-  if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`);
   renderExplorer();
 } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
 
-setTab('candidates');
+setTab('monitor');
 
 try {
-  const [savedRows, savedMonitor, savedAnalysis, savedExplorer] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('explorer')]);
+  const [savedRows, savedMonitor, savedAnalysis, savedProfiles, savedExplorer] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('explorer')]);
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
+  if (!Object.keys(profileCache).length && savedProfiles && typeof savedProfiles === 'object') { profileCache=savedProfiles; await chrome.storage.local.set({profileCache}); }
   if (!(explorer.queue || []).length && savedExplorer) { explorer = {...explorer, ...savedExplorer}; await chrome.storage.local.set({explorer}); renderExplorer(); explorerStatus('已从 X 本地数据库恢复关系探索队列。'); }
 } catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
 

@@ -1,19 +1,17 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FollowBack Radar · X 关注管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"></head>
 <body>
 <main>
   <aside class="sidebar" aria-label="主导航">
-    <div class="brand-mark"><div class="brand-logo"><img src="icon128.png" alt="XFollower logo"></div><div class="brand-name">FollowBack Radar</div><span>智能关注管理</span></div>
-    <button class="nav-tab active" data-tab="candidates">候选账号</button>
-    <button class="nav-tab" data-tab="queue">待回关 <span id="queueCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="monitor">粉丝监测</button>
+    <div class="brand-mark"><div class="brand-logo"><img src="icon128.png" alt="XFollower logo"></div><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
+    <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count">0</span></button>
+    <button class="nav-tab" data-tab="candidates">候选账号</button>
     <button class="nav-tab" data-tab="explorer">关系探索 <span id="explorerQueueCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="grok">Grok 分析</button>
     <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.8.3<br>本地数据</div>
+    <div class="sidebar-foot">v0.9.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">FOLLOWBACK RADAR · X 本地资料检查 · v0.8.3</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，找到互关线索。</p></header>
+  <header><span class="eyebrow">XFollower · v0.9.0</span><h1>粉丝管理</h1></header>
   <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -24,27 +22,22 @@
     <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
     <div class="actions"><button id="start">开始查看资料</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
   </section>
-  <section id="queueSection" class="queue-card tab-panel" data-panel="queue" aria-label="待回关列表"><div class="queue-head"><div><span class="eyebrow">FOLLOW-BACK QUEUE</span><h2>待回关</h2></div><select id="queueFilter"><option value="pending">待处理优先</option><option value="all">全部状态</option><option value="danger">危险标记</option></select></div><div id="queueList" class="queue-list"><p class="note">扫描粉丝后，Follow back 会优先显示在这里。</p></div></section>
-  <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="Follower monitor">
-    <div class="monitor-head"><div><span class="eyebrow">FOLLOWER MONITOR</span><h2>Followers</h2></div><div class="icon-actions"><button id="scanFollowers" class="icon-button" title="Fetch the initial follower list, or scan for new followers">↻</button><button id="processFollowBack" class="icon-button secondary" title="Process pending follow-backs at the configured pace">↗</button></div></div>
-    <div class="monitor-toolbar"><label title="Minutes between automatic scans"><span>Interval</span><input id="monitorEvery" type="number" value="60" min="10" max="1440"></label><label title="Maximum follow-backs in one batch"><span>Batch</span><input id="followBatch" type="number" value="10" min="1" max="20"></label><label title="Minutes between follow-back batches"><span>Cooldown</span><input id="batchEvery" type="number" value="10" min="5" max="180"></label><label class="check compact-check" title="Enable periodic scan reminders"><input id="monitorEnabled" type="checkbox"><span>Auto</span></label></div>
-    <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite">No followers saved.</p>
-    <div id="monitorEmpty" class="monitor-empty"><span class="empty-icon" aria-hidden="true">＋</span><strong>No followers yet</strong><small>Fetch the initial list to start.</small><button id="initialFollowers" class="secondary">Fetch list</button></div>
+  <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
+    <div class="monitor-head"><div class="follower-tabs" role="tablist"><button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount">0</span></button><button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount">0</span></button></div><div class="icon-actions"><button class="icon-button secondary" title="首次获取会建立本地粉丝列表；之后只扫描新粉丝。" aria-label="说明">!</button><button id="scanFollowers" class="icon-button" title="获取初始粉丝列表或扫描新粉丝" aria-label="扫描粉丝">↻</button><button id="processFollowBack" class="icon-button secondary" title="按设置的节奏处理已进入待回关队列的账号" aria-label="处理待回关">↗</button></div></div>
+    <div class="monitor-toolbar"><label title="自动扫描的时间间隔（分钟）"><span>检查间隔</span><input id="monitorEvery" type="number" value="60" min="10" max="1440"></label><label title="每批最多执行的回关数"><span>每批回关</span><input id="followBatch" type="number" value="10" min="1" max="20"></label><label title="两批回关之间的间隔（分钟）"><span>批次间隔</span><input id="batchEvery" type="number" value="10" min="5" max="180"></label><label class="check compact-check" title="开启后按检查间隔提醒扫描"><input id="monitorEnabled" type="checkbox"><span>定时扫描</span></label></div>
+    <div id="selectionBar" class="selection-bar" hidden><label><input id="listSelectAll" type="checkbox"> 全选</label><span>已选 <b id="selectedCount">0</b> / 20</span><button id="analyzeSelected" class="secondary" disabled>Grok 分析</button></div>
+    <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite"></p>
+    <div id="monitorEmpty" class="monitor-empty"><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>
     <div id="monitorList" class="monitor-list" hidden></div>
   </section>
-  <section id="grokSection" class="monitor-card tab-panel" data-panel="grok" aria-label="批量 Grok 分析">
-    <div><span class="eyebrow">BATCH PROFILE REVIEW</span><h2>批量提交给 Grok</h2><p>一次收集 15–20 个账号的 profile、粉丝/关注数据和最近 5 条帖子，生成一份统一分析包。</p></div>
-    <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="submitGrok">收集并提交 Grok</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
-    <p id="analysisStatus" class="note">优先使用待回关队列；没有队列时使用当前筛选结果中的账号。</p>
-  </section>
   <section id="explorerSection" class="explorer-card tab-panel" data-panel="explorer" aria-label="关系探索">
-    <div class="queue-head"><div><span class="eyebrow">RELATION EXPLORER</span><h2>关系探索</h2><p>从一个账号静默收集 following 和 followers，再把感兴趣的账号加入跟进队列。</p></div><button id="processExplorerQueue" class="secondary">继续收集跟进队列</button></div>
+    <div class="queue-head"><div><h2>关系探索</h2></div><div class="icon-actions"><button class="icon-button secondary" title="静默读取账号的关注与粉丝；可将其中账号继续加入跟进队列。" aria-label="说明">!</button><button id="processExplorerQueue" class="secondary">继续收集</button></div></div>
     <p id="explorerStatus" class="note">从候选账号点击“查看资料”开始。</p>
-    <div class="explorer-grid"><div><h3>Following <span id="explorerFollowingCount" class="muted-count">0</span></h3><div id="explorerFollowing" class="explorer-list"><p class="note">还没有收集到 following。</p></div></div><div><h3>Followers <span id="explorerFollowersCount" class="muted-count">0</span></h3><div id="explorerFollowers" class="explorer-list"><p class="note">还没有收集到 followers。</p></div></div></div>
+    <div class="explorer-grid"><div><h3>关注的账号 <span id="explorerFollowingCount" class="muted-count">0</span></h3><div id="explorerFollowing" class="explorer-list"><p class="note">还没有收集到账号。</p></div></div><div><h3>粉丝 <span id="explorerFollowersCount" class="muted-count">0</span></h3><div id="explorerFollowers" class="explorer-list"><p class="note">还没有收集到账号。</p></div></div></div>
     <h3>跟进队列 <span id="explorerPendingCount" class="muted-count">0</span></h3><div id="explorerQueue" class="explorer-list"><p class="note">选择账号加入后，会在最小化后台标签页中继续采集。</p></div>
   </section>
-  <div id="candidatesSection" class="tab-panel" data-panel="candidates"><div class="toolbar"><div><p id="status" role="status" aria-live="polite">准备就绪</p><p class="note">使用前先在此浏览器登录 X。会打开一个检查标签页，先滚动 following，再逐个访问 profile。所有结果仅保存在本机。</p></div><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>疑似骗关注</option><option>危险</option><option>需复核</option></select></label></div>
-  <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div><footer>比例接近、简介承诺都不等于实际回关。公开数据不满足阈值只能标记为需复核；X 的缩写人数也可能有误差。</footer></div>
+  <div id="candidatesSection" class="tab-panel" data-panel="candidates"><div class="toolbar"><div><p id="status" role="status" aria-live="polite">准备就绪</p></div><div class="icon-actions"><button class="icon-button secondary" title="逐个读取公开资料，按粉丝/关注比例与互关描述筛选。结果只保存于本机。" aria-label="说明">!</button><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>疑似骗关注</option><option>危险</option><option>需复核</option></select></label></div></div>
+  <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div></div>
 </main><script type="module" src="panel.js"></script>
 </body></html>
 
