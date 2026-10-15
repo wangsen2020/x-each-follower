@@ -1,4 +1,4 @@
-import { normalizeHandle, parseCount, assess, csv } from './scoring.js';
+import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack } from './page-reader.js';
 
 const $ = id => document.getElementById(id);
@@ -199,15 +199,15 @@ async function scanFollowerList() {
   }
   const users = [...found.values()];
   const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
-  const queue = users.filter(user => user.state === 'follow_back').map(user => ({...user, discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+  const queue = users.filter(user => user.state === 'follow_back').map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
   monitor = {...monitor, users, queue, lastScan:new Date().toISOString()};
   await chrome.storage.local.set({monitor});
-  monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个。`);
+  monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个（已排除）。`);
 }
 
 async function processFollowBack() {
   if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) { monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`); return; }
-  const pending = (monitor.queue || []).filter(user => user.status === 'pending').slice(0, monitor.batch);
+  const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.risk?.level !== 'danger').slice(0, monitor.batch);
   if (!pending.length) { monitorStatus('没有待回关账号，请先扫描粉丝列表。'); return; }
   const tabId = await followerTab(); let completed = 0;
   for (const user of pending) {
@@ -228,14 +228,14 @@ $('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(
 for (const id of ['monitorEvery','followBatch','batchEvery']) $(id).addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 
 function grokPrompt() {
-  const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
-  return `你是 X 账号筛选助手。下面是同一批 ${analysisRows.length} 个账号的公开 profile 和最近帖子。请逐个输出：\n1. 账号主题与真实活跃方向；\n2. 是否像普通交流账号、营销号、互关号或可疑账号；\n3. 关注/粉丝比例与简介承诺是否一致；\n4. 最近帖子质量、原创性和明显风险；\n5. 是否值得人工回关（值得 / 谨慎 / 不建议）及一句理由。\n最后按“值得回关优先级”给出排序。不要把简介里的“互关/回关”当成事实，要结合最近帖子判断。\n\n${items}`;
+  const items = analysisRows.map((row, index) => [`账号 ${index + 1}`, `用户名：@${row.handle}`, `主页：${row.url}`, `名称：${row.name || ''}`, `简介：${row.bio || ''}`, `粉丝：${row.followersText || '未读取'}`, `关注：${row.followingText || '未读取'}`, `本地危险信号：${row.risk?.level === 'danger' ? `危险（${row.risk.hits.join('、')}）` : '未命中规则'}`, `最近帖子：`, ...(row.posts || []).map((post, postIndex) => `${postIndex + 1}. ${post.text}${post.time ? `（${post.time}）` : ''}${post.url ? ` ${post.url}` : ''}`)].join('\n')).join('\n\n---\n\n');
+  return `你是 X 账号筛选助手。下面是同一批 ${analysisRows.length} 个账号的公开 profile 和最近帖子。请逐个输出：\n1. 账号主题与真实活跃方向；\n2. 是否像普通交流账号、营销号、互关号或可疑账号；\n3. 关注/粉丝比例与简介承诺是否一致；\n4. 最近帖子质量、原创性和明显风险，特别标记擦边色情、成人平台、私密导流、博彩、诈骗或可疑外链；\n5. 是否值得人工回关（值得 / 谨慎 / 不建议）及一句理由。危险账号默认不建议回关。最后按“值得回关优先级”给出排序。不要把简介里的“互关/回关”当成事实，要结合最近帖子判断。\n\n${items}`;
 }
 
 async function collectAnalysisBatch() {
   const count = Math.max(1, Math.min(20, Number($('analysisBatch').value) || 15));
   const recentLimit = Math.max(1, Math.min(5, Number($('recentPosts').value) || 5));
-  const pending = (monitor.queue || []).filter(user => user.status === 'pending');
+  const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.risk?.level !== 'danger');
   const candidates = pending.length ? pending : rows.filter(row => row.verdict === '候选').map(row => ({handle:row.handle, name:row.name, bio:row.bio, url:row.url}));
   if (!candidates.length) throw new Error('没有待分析账号，请先扫描粉丝或完成 profile 检查。');
   analysisRows = []; inspectionTab = await followerTab();
@@ -244,7 +244,8 @@ async function collectAnalysisBatch() {
     await navigate(`https://x.com/${user.handle}`);
     let data = {pending:true}; const deadline = Date.now() + 18000;
     while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, recentLimit]); if (data.pending) await sleep(700); }
-    analysisRows.push({...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || []});
+    const row = {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || []};
+    analysisRows.push({...row, risk:riskAssess(row)});
   }
   await chrome.storage.local.set({analysisRows});
   analysisStatus(`已收集 ${analysisRows.length} 个账号，每个包含最多 ${recentLimit} 条最近帖子。可以复制到 Grok。`);

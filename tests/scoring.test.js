@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCount, normalizeHandle, assess, csv} from '../scoring.js';
+import {parseCount, normalizeHandle, assess, riskAssess, csv} from '../scoring.js';
 
 test('parse public profile count formats without turning missing values into zero', () => {
   for (const [text, expected] of [['1,234 Followers',1234],['1.2K Followers',1200],['2.5M',2500000],['1.3万 位关注者',13000],['2萬',20000],['1\u202f234 Followers',1234],['0 Following',0],['Followers',null],['',null]]) assert.equal(parseCount(text),expected,text);
@@ -27,4 +27,10 @@ test('CSV quotes untrusted profile data and neutralizes spreadsheet formulas', (
   const output = csv([{handle:'alice',name:'=CMD()',bio:'text,"quoted"\nnext'}]);
   assert.ok(output.includes('"\'=CMD()"'));
   assert.ok(output.includes('"text,""quoted""\nnext"'));
+});
+test('risk rules mark adult, private-content and high-risk funnel signals', () => {
+  assert.equal(riskAssess({name:'', bio:'18+ 私密视频 加我 Telegram'}).level, 'danger');
+  assert.match(riskAssess({name:'', bio:'OnlyFans creator'}).hits.join(','), /成人/);
+  assert.equal(riskAssess({name:'Alice', bio:'AI research and photography', posts:[{text:'分享今天的项目进展'}]}).level, 'normal');
+  assert.equal(assess({name:'',bio:'NSFW 18+',followers:100,following:100,status:'ok'}, {...options,requirePromise:false}).verdict, '危险');
 });

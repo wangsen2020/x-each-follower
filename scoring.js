@@ -24,15 +24,29 @@ export function assess(profile, options) {
   if (!readable || ratio === null) verdict = '需复核';
   else if (promise && !balanced) verdict = '承诺与比例不符';
   else if (balanced && enough && (!options.requirePromise || promise)) verdict = '候选';
-  return { ...profile, promise, balanced, ratio, verdict };
+  const risk = riskAssess(profile);
+  if (risk.level === 'danger') verdict = '危险';
+  return { ...profile, promise, balanced, ratio, risk, verdict };
+}
+
+export function riskAssess(profile) {
+  const text = `${profile.name || ''} ${profile.bio || ''} ${(profile.posts || []).map(post => post.text || '').join(' ')}`.toLowerCase();
+  const hits = [];
+  const rules = [
+    [/onlyfans|fansly|pornhub|xvideos|xnxx|成人直播|成人视频|裸聊|约炮|援交|情色|色情|成人视频|私密视频|福利视频|写真|同城约|上门服务/i, '成人或擦边平台/服务'],
+    [/18\s*\+|nsfw|n\s*s\s*f\s*w|sexy|性感|爆乳|巨乳|白丝|黑丝|内衣|裸|露点|私房照|尺度/i, '成人或擦边内容词'],
+    [/t\.me\/|telegram|加微|微信|私聊看|付费解锁|订阅解锁|机场|低价代充|博彩|赌场|下注|返利/i, '导流、付费或高风险外链'],
+  ];
+  for (const [pattern, label] of rules) if (pattern.test(text)) hits.push(label);
+  return {level:hits.length ? 'danger' : 'normal', hits:[...new Set(hits)]};
 }
 
 export function csv(rows) {
-  const columns = ['handle', 'name', 'bio', 'followers', 'following', 'followersText', 'followingText', 'ratio', 'promise', 'verdict', 'status', 'url', 'checkedAt'];
+  const columns = ['handle', 'name', 'bio', 'followers', 'following', 'followersText', 'followingText', 'ratio', 'promise', 'riskLevel', 'riskHits', 'verdict', 'status', 'url', 'checkedAt'];
   const cell = value => {
     let text = String(value ?? '');
     if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
     return `"${text.replaceAll('"', '""')}"`;
   };
-  return '\ufeff' + [columns, ...rows.map(row => columns.map(key => row[key]))].map(row => row.map(cell).join(',')).join('\r\n');
+  return '\ufeff' + [columns, ...rows.map(row => columns.map(key => key === 'riskLevel' ? row.risk?.level : key === 'riskHits' ? row.risk?.hits?.join('; ') : row[key]))].map(row => row.map(cell).join(',')).join('\r\n');
 }
