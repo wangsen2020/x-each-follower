@@ -1,6 +1,7 @@
 import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack, clickFollowOnProfile } from './page-reader.js';
 import { networkFetch, parseNetworkUsers, findCursor } from './network-api.js';
+import { durableGet, durableSet } from './persistent-db.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -14,6 +15,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
 const analysisStatus = text => { $('analysisStatus').textContent = text; };
+const persist = (key, value) => durableSet(key, value).catch(() => {});
 function renderQueue() {
   const filter = $('queueFilter').value;
   const priority = {pending:0, danger:1, followed:2, changed:3, unreadable:4};
@@ -146,6 +148,7 @@ $('start').addEventListener('click', async () => {
   render();
   try {
     await chrome.storage.local.set({ options, rows });
+    persist('rows', rows);
     const tab = await chrome.tabs.create({ url: `https://x.com/${options.target}/following`, active: true });
     inspectionTab = tab.id;
     await navigate(`https://x.com/${options.target}/following`);
@@ -192,6 +195,7 @@ $('start').addEventListener('click', async () => {
       failed = profile.status === 'ok' ? 0 : failed + 1;
       rows.push(profile);
       await chrome.storage.local.set({ rows });
+      persist('rows', rows);
       render();
       if (failed >= 3) throw new Error('连续 3 个 profile 未能读取，已停止。请检查登录状态、访问限制或页面变化，已有结果已保存。');
       await waitInterruptibly(options.delay * 1000);
@@ -221,13 +225,14 @@ $('export').addEventListener('click', () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-$('clear').addEventListener('click', async () => { rows = []; await chrome.storage.local.remove('rows'); render(); status('本地检查记录已清空。'); });
+$('clear').addEventListener('click', async () => { rows = []; await chrome.storage.local.remove('rows'); persist('rows', []); render(); status('本地检查记录已清空。'); });
 
 async function saveMonitorSettings() {
   const next = {enabled:$('monitorEnabled').checked, every:Number($('monitorEvery').value), batch:Number($('followBatch').value), batchEvery:Number($('batchEvery').value)};
   if (![next.every,next.batch,next.batchEvery].every(Number.isFinite) || next.every < 10 || next.batch < 1 || next.batch > 20 || next.batchEvery < 5) throw new Error('检查间隔至少 10 分钟，每批 1–20 个，批次间隔至少 5 分钟。');
   monitor = {...monitor, ...next};
   await chrome.storage.local.set({monitor});
+  persist('monitor', monitor);
   await chrome.alarms.clear('x-followers-scan');
   if (monitor.enabled) await chrome.alarms.create('x-followers-scan', {periodInMinutes:monitor.every});
 }
@@ -286,7 +291,7 @@ async function scanFollowerList() {
     const queue = networkUsers.map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
     monitor = {...monitor, users:networkUsers, queue, lastScan:new Date().toISOString(), source:'network'};
-    await chrome.storage.local.set({monitor}); renderQueue();
+    await chrome.storage.local.set({monitor}); persist('monitor', monitor); renderQueue();
     monitorStatus(`已通过 X 网络接口静默读取 ${networkUsers.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个。`);
     return;
   }
@@ -305,6 +310,7 @@ async function scanFollowerList() {
   queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
   monitor = {...monitor, users, queue, lastScan:new Date().toISOString()};
   await chrome.storage.local.set({monitor});
+  persist('monitor', monitor);
   renderQueue();
   monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个（已排除）。`);
 }
@@ -354,6 +360,7 @@ async function collectAnalysisBatch() {
     analysisRows.push({...row, risk:riskAssess(row)});
   }
   await chrome.storage.local.set({analysisRows});
+  persist('analysisRows', analysisRows);
   analysisStatus(`已收集 ${analysisRows.length} 个账号，每个包含最多 ${recentLimit} 条最近帖子。可以复制到 Grok。`);
 }
 
@@ -425,3 +432,10 @@ try {
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try { const savedAnalysis = await chrome.storage.local.get('analysisRows'); analysisRows = savedAnalysis.analysisRows || []; if (analysisRows.length) analysisStatus(`已恢复上次收集的 ${analysisRows.length} 个账号资料。`); } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
+
+try {
+  const [savedRows, savedMonitor, savedAnalysis] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows')]);
+  if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
+  if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); monitorStatus(`已从 X 本地数据库恢复待回关队列。`); }
+  if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
+} catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
