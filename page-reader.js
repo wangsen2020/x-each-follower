@@ -80,3 +80,21 @@ export function clickFollowBack(handle) {
   }
   return {ok:false, reason:'not_visible'};
 }
+
+export function clickFollowOnProfile(handle) {
+  const path = location.pathname.replaceAll('/', '').toLowerCase();
+  if (path !== handle.toLowerCase()) return {ok:false, reason:'wrong_profile'};
+  const root = document.querySelector('[data-testid="primaryColumn"]');
+  const buttons = [...(root?.querySelectorAll('button') || [])];
+  const button = buttons.find(item => {
+    const label = `${item.innerText || ''} ${item.getAttribute('aria-label') || ''}`.trim();
+    return /^follow$/i.test(label);
+  });
+  if (!button) {
+    const labels = buttons.map(item => `${item.innerText || ''} ${item.getAttribute('aria-label') || ''}`).join(' | ');
+    if (/following|follow back|pending|unfollow/i.test(labels)) return {ok:false, reason:'already_following'};
+    return {ok:false, reason:'follow_button_unavailable'};
+  }
+  button.click();
+  return {ok:true};
+}

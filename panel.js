@@ -1,5 +1,5 @@
 import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
-import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack } from './page-reader.js';
+import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack, clickFollowOnProfile } from './page-reader.js';
 import { networkFetch, parseNetworkUsers, findCursor } from './network-api.js';
 
 const $ = id => document.getElementById(id);
@@ -70,11 +70,43 @@ function render() {
     badge.className = `badge ${row.verdict === '候选' ? 'candidate' : row.verdict === '未命中' ? '' : 'review'}`;
     badge.textContent = row.verdict;
     result.append(badge);
+    if (row.verdict === '候选') {
+      const follow = document.createElement('button');
+      follow.className = 'queue-status';
+      follow.style.marginLeft = '8px';
+      follow.textContent = '打开并关注';
+      follow.addEventListener('click', () => followCandidate(row, follow));
+      result.append(follow);
+    }
     tr.append(result);
     body.append(tr);
   }
   $('empty').hidden = visible.length > 0;
   $('empty').textContent = rows.length ? '当前筛选下没有结果。' : '还没有检查记录。输入目标账号开始。';
+}
+
+async function followCandidate(row, button) {
+  button.disabled = true;
+  button.textContent = '正在打开…';
+  try {
+    const tab = await chrome.tabs.create({url:`https://x.com/${row.handle}`, active:true});
+    const deadline = Date.now() + 30000;
+    let lastReason = '主页尚未准备好';
+    while (Date.now() < deadline) {
+      await sleep(800);
+      const current = await chrome.tabs.get(tab.id);
+      if (current.status !== 'complete') continue;
+      const result = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:clickFollowOnProfile, args:[row.handle]}))[0]?.result;
+      if (result?.ok) { button.textContent = '已点击关注'; button.className = 'queue-status'; return; }
+      lastReason = result?.reason || lastReason;
+      if (['already_following','follow_button_unavailable'].includes(lastReason)) break;
+    }
+    button.textContent = lastReason === 'already_following' ? '已关注' : '未执行';
+    status(`@${row.handle} 未执行关注：${lastReason}`);
+  } catch (error) {
+    button.textContent = '失败';
+    status(`打开 @${row.handle} 失败：${error.message}`);
+  } finally { button.disabled = false; }
 }
 
 async function invoke(func, args) {
