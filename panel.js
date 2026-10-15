@@ -89,7 +89,9 @@ async function followCandidate(row, button) {
   button.disabled = true;
   button.textContent = '正在打开…';
   try {
-    const tab = await chrome.tabs.create({url:`https://x.com/${row.handle}`, active:true});
+    const win = await chrome.windows.create({url:`https://x.com/${row.handle}`, type:'popup', state:'minimized', focused:false});
+    const tab = win.tabs?.[0];
+    if (!tab?.id) throw new Error('后台窗口创建失败');
     const deadline = Date.now() + 30000;
     let lastReason = '主页尚未准备好';
     while (Date.now() < deadline) {
