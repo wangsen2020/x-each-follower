@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>X 互关线索筛选</title><link rel="stylesheet" href="panel.css"></head>
+<body>
+<main>
+  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，逐个查看个人资料，找到互关线索。</p></header>
+  <section class="controls" aria-label="筛选设置">
+    <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
+    <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
+    <label>粉丝 / 关注下限<input id="minRatio" type="number" value="0.7" min="0.01" step="0.1"></label>
+    <label>粉丝 / 关注上限<input id="maxRatio" type="number" value="1.4" min="0.01" step="0.1"></label>
+    <label>两项人数至少<input id="minCount" type="number" value="50" min="0"></label>
+    <label>访问间隔（秒）<input id="delay" type="number" value="5" min="3" max="60"></label>
+    <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
+    <div class="actions"><button id="start">开始查看资料</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
+  </section>
+  <p class="note">使用前先在此浏览器登录 X。会打开一个检查标签页，先滚动 following，再逐个访问 profile。请保持本工具页开启。所有结果仅保存在本机，不自动关注或取消关注。</p>
+  <div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>承诺与比例不符</option><option>需复核</option></select></label></div>
+  <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div>
+  <footer>比例接近、简介承诺都不等于实际回关。这里的“承诺与比例不符”仅表示公开数据不满足阈值，不能据此认定骗关注。X 显示的缩写人数可能有误差；受限、未加载或不可读的资料会标记为需复核。</footer>
+</main><script type="module" src="panel.js"></script>
+</body></html>
