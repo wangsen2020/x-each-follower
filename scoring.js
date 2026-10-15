@@ -17,16 +17,18 @@ export function normalizeHandle(input) {
 export function assess(profile, options) {
   const promise = /互关|互關|回关|回關|关必回|關必回|fo\s*back|follow\s*back|follow\s*for\s*follow|\bf4f\b|\bifb\b/i.test(`${profile.name || ''} ${profile.bio || ''}`);
   const ratio = profile.followers !== null && profile.following > 0 ? profile.followers / profile.following : null;
-  const balanced = ratio !== null && ratio >= options.minRatio && ratio <= options.maxRatio;
+  // 低比例（关注多、粉丝少）是正常的主动关注信号；高比例才是互关承诺与行为不一致的信号。
+  const balanced = ratio !== null && ratio <= options.maxRatio;
+  const reverseRatioRisk = ratio !== null && ratio > options.maxRatio;
   const enough = profile.followers !== null && profile.following !== null && Math.min(profile.followers, profile.following) >= options.minCount;
   const readable = profile.status === 'ok';
   let verdict = '未命中';
   if (!readable || ratio === null) verdict = '需复核';
-  else if (promise && !balanced) verdict = '承诺与比例不符';
+  else if (promise && reverseRatioRisk) verdict = '疑似骗关注';
   else if (balanced && enough && (!options.requirePromise || promise)) verdict = '候选';
   const risk = riskAssess(profile);
   if (risk.level === 'danger') verdict = '危险';
-  return { ...profile, promise, balanced, ratio, risk, verdict };
+  return { ...profile, promise, balanced, reverseRatioRisk, ratio, risk, verdict };
 }
 
 export function riskAssess(profile) {

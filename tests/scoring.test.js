@@ -14,7 +14,8 @@ const options = {minRatio:0.7,maxRatio:1.4,minCount:50,requirePromise:true};
 const base = {name:'Alice',bio:'互关，欢迎交流',followers:100,following:110,status:'ok'};
 test('candidate requires readable counts, sufficient population and optional promise', () => {
   assert.equal(assess(base, options).verdict,'候选');
-  assert.equal(assess({...base,followers:10000}, options).verdict,'承诺与比例不符');
+  assert.equal(assess({...base,followers:10000}, options).verdict,'疑似骗关注');
+  assert.equal(assess({...base,followers:100,following:300}, options).verdict,'候选');
   assert.equal(assess({...base,followers:null}, options).verdict,'需复核');
   assert.equal(assess({...base,following:0}, options).verdict,'需复核');
   assert.equal(assess({...base,status:'unreadable'}, options).verdict,'需复核');

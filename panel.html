@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>X 互关线索筛选</title><link rel="stylesheet" href="panel.css"></head>
 <body>
 <main>
-  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.4.3</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，找到互关线索。</p></header>
+  <header><span class="eyebrow">X EACH FOLLOWER · 本地资料检查 · v0.4.4</span><h1>值得进一步了解的账号</h1><p>从某个用户的 following 出发，找到互关线索。</p></header>
   <section class="controls" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -26,7 +26,7 @@
     <div class="monitor-controls"><label>本批人数<input id="analysisBatch" type="number" value="15" min="1" max="20"></label><label>最近帖子数<input id="recentPosts" type="number" value="5" min="1" max="5"></label><div class="actions"><button id="collectAnalysis">收集本批资料</button><button id="submitGrok">收集并提交 Grok</button><button id="copyGrok" class="secondary">复制 Grok 分析包</button><button id="openGrok" class="secondary">打开 Grok</button></div></div>
     <p id="analysisStatus" class="note">优先使用待回关队列；没有队列时使用当前筛选结果中的账号。</p>
   </section>
-  <div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>承诺与比例不符</option><option>需复核</option></select></label></div>
+  <div class="toolbar"><p id="status" role="status" aria-live="polite">准备就绪</p><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>疑似骗关注</option><option>危险</option><option>需复核</option></select></label></div>
   <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div>
   <footer>比例接近、简介承诺都不等于实际回关。这里的“承诺与比例不符”仅表示公开数据不满足阈值，不能据此认定骗关注。X 显示的缩写人数可能有误差；受限、未加载或不可读的资料会标记为需复核。</footer>
 </main><script type="module" src="panel.js"></script>
