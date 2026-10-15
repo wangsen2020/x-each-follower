@@ -1,10 +1,10 @@
-# FollowBack Radar · X Follower Audit & Mutuals Monitor · v0.8.2
+# FollowBack Radar · X Follower Audit & Mutuals Monitor · v0.8.3
 
 品牌界面：XFollower（X follower monitor）。面板采用全窗口自适应布局，左侧为可伸缩品牌导航，右侧为填满剩余空间的工作区，列表在工作区内部滚动。
 
 界面采用左侧导航、右侧工作区的管理后台布局。可以在“候选账号”“待回关”“粉丝监测”“Grok 分析”和“设置”之间切换；列表会在右侧区域自适应，长列表只在工作区内部滚动。
 
-当前版本：`0.8.2`。每次增加功能或核心分析规则都会递增版本号；在 `chrome://extensions` 中点击扩展的重新加载后，可以通过版本号确认已载入新代码。
+当前版本：`0.8.3`。每次增加功能或核心分析规则都会递增版本号；在 `chrome://extensions` 中点击扩展的重新加载后，可以通过版本号确认已载入新代码。
 
 “关系探索”支持从候选账号点击“查看资料”，在不切换当前窗口的后台标签页中收集该账号的 following 和 followers。两组列表都可以把账号加入跟进队列；队列会逐个打开最小化后台标签页继续收集，结果写入本地缓存和 X 站点下的 IndexedDB，适合逐层扩展关系图。
 
@@ -75,6 +75,7 @@ npm run check
 
 当前开发分支为 `codex/initial-extension`。这是新仓库，尚无生产部署或生产基线。
 持久化：历史队列、账号记录和 Grok 分析资料会同步写入 X 站点下的本地 IndexedDB。扩展重装后，只要没有清除 x.com 网站数据，重新加载插件即可恢复；扩展的 `chrome.storage.local` 仍作为快速缓存。
+
 
 
 

@@ -579,6 +579,7 @@ try {
   $('batchEvery').value = monitor.batchEvery;
   if (monitor.lastScan) monitorStatus(`上次扫描 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
   renderQueue();
+  renderMonitorList();
 } catch (error) { monitorStatus(`定时检查记录加载失败：${error.message}`); }
 
 try {
@@ -594,7 +595,8 @@ setTab('candidates');
 try {
   const [savedRows, savedMonitor, savedAnalysis, savedExplorer] = await Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('explorer')]);
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
-  if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); monitorStatus(`已从 X 本地数据库恢复待回关队列。`); }
+  if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
   if (!(explorer.queue || []).length && savedExplorer) { explorer = {...explorer, ...savedExplorer}; await chrome.storage.local.set({explorer}); renderExplorer(); explorerStatus('已从 X 本地数据库恢复关系探索队列。'); }
 } catch (error) { status('本地数据库尚未初始化，将在下一次扫描后建立。'); }
+
