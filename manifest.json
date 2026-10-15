@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
   "name": "X 互关线索筛选",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "逐个访问 X 用户资料，结合互关描述、粉丝数和关注数筛选可复核的互关线索。",
   "permissions": ["scripting", "storage", "alarms", "notifications", "tabs", "windows", "clipboardWrite"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {"matches":["https://x.com/*","https://twitter.com/*"],"js":["bridge.js"],"run_at":"document_start"},
+    {"matches":["https://x.com/*","https://twitter.com/*"],"js":["net-hook.js"],"run_at":"document_start","world":"MAIN"}
+  ],
   "action": {"default_title": "打开 X 互关线索筛选"}
 }

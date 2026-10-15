@@ -1,5 +1,6 @@
 import { normalizeHandle, parseCount, assess, riskAssess, csv } from './scoring.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowBack } from './page-reader.js';
+import { networkFetch, parseNetworkUsers, findCursor } from './network-api.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -200,8 +201,41 @@ async function followerTab() {
   return tab.id;
 }
 
+async function readOwnHandle(tabId) {
+  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:() => document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replace(/^\//,'').split('/')[0] || ''});
+  return result?.[0]?.result || '';
+}
+
+async function scanFollowersFromNetwork(tabId) {
+  const handle = await readOwnHandle(tabId);
+  if (!handle) return null;
+  const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+  if (profile.status !== 200) return null;
+  const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
+  if (!me?.id) return null;
+  const found = new Map(); let cursor = '';
+  for (let page=0; page<10 && found.size<500; page++) {
+    const response = await networkFetch(tabId, 'Followers', {userId:me.id, count:100, ...(cursor ? {cursor} : {})});
+    if (response.status !== 200) return null;
+    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
+    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+  }
+  return [...found.values()];
+}
+
 async function scanFollowerList() {
   const tabId = await followerTab();
+  const networkUsers = await scanFollowersFromNetwork(tabId).catch(() => null);
+  if (networkUsers?.length) {
+    const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
+    const queue = networkUsers.map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+    queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
+    monitor = {...monitor, users:networkUsers, queue, lastScan:new Date().toISOString(), source:'network'};
+    await chrome.storage.local.set({monitor}); renderQueue();
+    monitorStatus(`已通过 X 网络接口静默读取 ${networkUsers.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个。`);
+    return;
+  }
+  monitorStatus('网络模板尚未捕获，退回页面列表读取…');
   const found = new Map(); let idle = 0;
   for (let i=0; i<100 && found.size<500 && idle<8; i++) {
     const result = (await chrome.scripting.executeScript({target:{tabId}, func:scanFollowers}))[0]?.result;
