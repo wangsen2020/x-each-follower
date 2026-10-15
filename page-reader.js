@@ -26,9 +26,10 @@ export function readProfile(handle) {
   });
   const following = countLink(['following']);
   const followers = countLink(['followers', 'verified_followers']);
+  const avatarUrl = root.querySelector(`a[href="/${handle}/photo"] img`)?.src || '';
   // Do not use generic text: suggested accounts and posts can contain unrelated numbers.
   if (!name || !following || !followers) return { pending: true, name, bio };
-  return { pending: false, name: name.split('\n')[0], bio, followersText: followers.innerText, followingText: following.innerText, status: 'ok' };
+  return { pending: false, name: name.split('\n')[0], bio, followersText: followers.innerText, followingText: following.innerText, avatarUrl, status: 'ok' };
 }
 
 export function readProfileBundle(handle, recentLimit = 5) {
@@ -40,6 +41,7 @@ export function readProfileBundle(handle, recentLimit = 5) {
   const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => suffixes.some(suffix => new URL(link.href, location.origin).pathname.toLowerCase() === `/${handle.toLowerCase()}/${suffix}`));
   const following = countLink(['following']);
   const followers = countLink(['followers', 'verified_followers']);
+  const avatarUrl = root.querySelector(`a[href="/${handle}/photo"] img`)?.src || '';
   if (!name || !following || !followers) return {pending:true, name, bio};
   const posts = [...(root?.querySelectorAll('article') || [])].slice(0, recentLimit).map(article => {
     const text = (article.innerText || '').replace(/\s+/g, ' ').trim();
@@ -47,7 +49,7 @@ export function readProfileBundle(handle, recentLimit = 5) {
     const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
     return {text, time, url: link ? new URL(link.href, location.origin).href : ''};
   });
-  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, status:'ok', posts};
+  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts};
 }
 
 export function scanFollowers() {

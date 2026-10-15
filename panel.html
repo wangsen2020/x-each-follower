@@ -9,9 +9,9 @@
     <button class="nav-tab" data-tab="candidates">候选账号</button>
     <button class="nav-tab" data-tab="explorer">关系探索 <span id="explorerQueueCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.10.0<br>本地数据</div>
+    <div class="sidebar-foot">v0.11.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v0.10.0</span><h1>粉丝管理</h1></header>
+  <header><span class="eyebrow">XFollower · v0.11.0</span><h1>粉丝管理</h1></header>
   <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置">
     <label class="target">目标用户<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>最多检查<input id="limit" type="number" value="50" min="1" max="500"></label>
@@ -39,6 +39,12 @@
   </section>
   <div id="candidatesSection" class="tab-panel" data-panel="candidates"><div class="toolbar"><div><p id="status" role="status" aria-live="polite">准备就绪</p></div><div class="icon-actions"><button class="icon-button secondary" title="逐个读取公开资料，按粉丝/关注比例与互关描述筛选。结果只保存于本机。" aria-label="说明">!</button><label>显示<select id="filter"><option value="all">全部结果</option><option>候选</option><option>疑似骗关注</option><option>危险</option><option>需复核</option></select></label></div></div>
   <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>粉丝</th><th>关注</th><th>粉丝 / 关注</th><th>互关描述</th><th>筛选结果</th></tr></thead><tbody id="results"></tbody></table><p id="empty">还没有检查记录。输入目标账号开始。</p></div></div>
+  <div id="profileDrawerMask" class="profile-drawer-mask" hidden></div>
+  <aside id="profileDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle" hidden>
+    <div class="profile-drawer-head"><strong id="profileDrawerTitle">账号资料</strong><button id="closeProfileDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button></div>
+    <div id="profileDrawerContent" class="profile-drawer-content"></div>
+    <div class="profile-drawer-actions"><button id="drawerRefreshProfile" class="secondary">采集资料</button><button id="drawerExploreRelations" class="secondary">收集关系</button><button id="drawerOpenX">在 X 打开</button></div>
+  </aside>
 </main><script type="module" src="panel.js"></script>
 </body></html>
 

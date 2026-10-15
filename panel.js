@@ -20,6 +20,8 @@ let selectedFollowerHandles = new Set();
 let followerPage = 1;
 let followerPageSize = 20;
 let followerSearch = '';
+let drawerUser = null;
+let drawerLoading = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const status = text => { $('status').textContent = text; };
 const monitorStatus = text => { $('monitorStatus').textContent = text; };
@@ -73,7 +75,7 @@ function renderMonitorList() {
     const select = document.createElement('input'); select.type='checkbox'; select.checked=selectedFollowerHandles.has(key); select.title='选择后可提交给 Grok 分析'; select.addEventListener('change', () => { if (select.checked && selectedFollowerHandles.size >= 20) { select.checked=false; monitorStatus('一次最多选择 20 个账号。'); return; } if (select.checked) selectedFollowerHandles.add(key); else selectedFollowerHandles.delete(key); renderMonitorList(); });
     const info = document.createElement('div'); const link = document.createElement('a'); link.href = `https://x.com/${user.handle}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${user.name || user.handle} · @${user.handle}`;
     const detail = document.createElement('small'); detail.textContent = (user.bio || '暂无简介').slice(0, 140); info.append(link, detail);
-    const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在后台采集该账号的 following 和 followers'; action.addEventListener('click', () => exploreProfile(user.handle));
+    const action = document.createElement('button'); action.className = 'secondary'; action.textContent = '资料'; action.title = '在右侧抽屉查看资料；可继续采集或收集关系'; action.addEventListener('click', () => openProfileDrawer(user));
     const badge = document.createElement('span'); badge.className = 'monitor-badge'; badge.textContent = {danger:'风险',followed:'已回关',pending:'待回关',saved:'已保存'}[user.status] || '已保存';
     item.append(select, info, action, badge); fragment.append(item);
   }
@@ -109,6 +111,79 @@ function renderExplorer() {
   for (const item of explorer.queue) { const row=document.createElement('div'); row.className=`explorer-item ${item.status === 'done' ? 'is-done' : item.status === 'error' ? 'is-error' : ''}`; const info=document.createElement('div'); const strong=document.createElement('strong'); strong.textContent=`@${item.handle}`; const detail=document.createElement('small'); detail.textContent=item.error || ({pending:'等待采集',running:'正在静默采集',done:`已完成 · ${item.following?.length || 0} following / ${item.followers?.length || 0} followers`}[item.status] || item.status); info.append(strong,detail); const button=document.createElement('button'); button.className='secondary'; button.textContent='查看资料'; button.addEventListener('click',() => exploreProfile(item.handle)); row.append(info,button); root.append(row); }
 }
 function renderQueue() { renderMonitorList(); }
+
+function closeProfileDrawer() {
+  drawerUser = null;
+  $('profileDrawer').hidden = true;
+  $('profileDrawerMask').hidden = true;
+}
+
+function drawerProfile() {
+  if (!drawerUser?.handle) return null;
+  return profileCache[drawerUser.handle.toLowerCase()] || drawerUser;
+}
+
+function drawerField(label, value) {
+  const row = document.createElement('div'); row.className = 'drawer-field';
+  const key = document.createElement('span'); key.textContent = label;
+  const text = document.createElement('strong'); text.textContent = value || '未读取';
+  row.append(key, text); return row;
+}
+
+function renderProfileDrawer() {
+  const profile = drawerProfile();
+  if (!profile) return closeProfileDrawer();
+  const root = $('profileDrawerContent'); root.replaceChildren();
+  const identity = document.createElement('div'); identity.className = 'drawer-identity';
+  const avatar = document.createElement('div'); avatar.className = 'drawer-avatar';
+  if (profile.avatarUrl) { const image = document.createElement('img'); image.src = profile.avatarUrl; image.alt = ''; avatar.append(image); }
+  else avatar.textContent = String(profile.name || profile.handle || '?').slice(0, 1).toUpperCase();
+  const names = document.createElement('div'); const name = document.createElement('strong'); name.textContent = profile.name || `@${profile.handle}`; const handle = document.createElement('small'); handle.textContent = `@${profile.handle}`; names.append(name, handle); identity.append(avatar, names); root.append(identity);
+  const facts = document.createElement('div'); facts.className = 'drawer-facts'; facts.append(drawerField('粉丝', profile.followersText), drawerField('关注', profile.followingText)); root.append(facts);
+  const bio = document.createElement('section'); bio.className = 'drawer-section'; const bioTitle = document.createElement('h3'); bioTitle.textContent = '简介'; const bioText = document.createElement('p'); bioText.textContent = profile.bio || '暂无简介'; bio.append(bioTitle, bioText); root.append(bio);
+  const risk = profile.risk || riskAssess(profile); const riskSection = document.createElement('section'); riskSection.className = `drawer-section drawer-risk ${risk.level === 'danger' ? 'is-danger' : ''}`; const riskTitle = document.createElement('h3'); riskTitle.textContent = risk.level === 'danger' ? '风险标记' : '风险检查'; const riskText = document.createElement('p'); riskText.textContent = risk.level === 'danger' ? risk.hits.join('；') : '未命中本地危险信号'; riskSection.append(riskTitle, riskText); root.append(riskSection);
+  const postSection = document.createElement('section'); postSection.className = 'drawer-section'; const postTitle = document.createElement('h3'); postTitle.textContent = '最近帖子'; const posts = profile.posts || []; if (!posts.length) { const hint = document.createElement('p'); hint.textContent = drawerLoading ? '正在读取公开资料…' : '尚未采集，点击“采集资料”读取最近 5 条。'; postSection.append(postTitle, hint); } else { const list = document.createElement('ol'); for (const post of posts) { const item = document.createElement('li'); item.textContent = post.text || '无文字内容'; list.append(item); } postSection.append(postTitle, list); } root.append(postSection);
+  $('profileDrawerTitle').textContent = `@${profile.handle}`;
+  $('drawerRefreshProfile').disabled = drawerLoading;
+  $('drawerRefreshProfile').textContent = drawerLoading ? '采集中…' : '采集资料';
+  $('profileDrawer').hidden = false;
+  $('profileDrawerMask').hidden = false;
+}
+
+function openProfileDrawer(user) {
+  drawerUser = {...user};
+  renderProfileDrawer();
+  if (!profileCache[user.handle.toLowerCase()]) refreshDrawerProfile();
+}
+
+async function readProfileBundleInBackground(user) {
+  const tab = await chrome.tabs.create({url:`https://x.com/${user.handle}`, active:false});
+  if (!tab?.id) throw new Error('后台资料标签页创建失败');
+  try {
+    const deadline = Date.now() + 25000;
+    let data = {pending:true};
+    while (Date.now() < deadline && data.pending) {
+      const current = await chrome.tabs.get(tab.id);
+      if (current.status === 'complete') data = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, 5]}))[0]?.result || data;
+      if (data.pending) await sleep(700);
+    }
+    if (data.pending) throw new Error('公开资料未能在限定时间内读取');
+    return {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || [], risk:riskAssess({...user, ...data}), profileCachedAt:new Date().toISOString()};
+  } finally { await chrome.tabs.remove(tab.id).catch(() => {}); }
+}
+
+async function refreshDrawerProfile() {
+  if (!drawerUser?.handle || drawerLoading) return;
+  drawerLoading = true; renderProfileDrawer();
+  try {
+    const profile = await readProfileBundleInBackground(drawerUser);
+    profileCache[profile.handle.toLowerCase()] = profile;
+    drawerUser = profile;
+    await chrome.storage.local.set({profileCache}); persist('profileCache', profileCache);
+  } catch (error) {
+    monitorStatus(`@${drawerUser.handle} 的资料采集失败：${error.message}`);
+  } finally { drawerLoading = false; renderProfileDrawer(); }
+}
 const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
 
 function settings() {
@@ -526,6 +601,12 @@ $('followerSearch').addEventListener('input', event => { followerSearch=event.ta
 $('followerPageSize').addEventListener('change', event => { followerPageSize=Number(event.target.value); followerPage=1; renderMonitorList(); });
 $('followerPrevPage').addEventListener('click', () => { followerPage--; renderMonitorList(); });
 $('followerNextPage').addEventListener('click', () => { followerPage++; renderMonitorList(); });
+$('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
+$('profileDrawerMask').addEventListener('click', closeProfileDrawer);
+$('drawerRefreshProfile').addEventListener('click', refreshDrawerProfile);
+$('drawerExploreRelations').addEventListener('click', () => { if (drawerUser?.handle) exploreProfile(drawerUser.handle); });
+$('drawerOpenX').addEventListener('click', () => { if (drawerUser?.handle) chrome.tabs.create({url:`https://x.com/${drawerUser.handle}`, active:true}); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !($('profileDrawer').hidden)) closeProfileDrawer(); });
 $('processExplorerQueue').addEventListener('click', () => processExplorerQueue().catch(error => explorerStatus(`跟进队列失败：${error.message}`)));
 
 function grokPrompt() {
