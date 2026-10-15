@@ -374,7 +374,7 @@ async function scanFollowingFromNetwork(tabId, target, limit) {
   return [...found.values()].slice(0, limit);
 }
 
-async function scanFollowersFromNetwork(tabId) {
+async function scanFollowersFromNetwork(tabId, knownHandles = new Set()) {
   const handle = await readOwnHandle(tabId);
   if (!handle) return null;
   const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
@@ -385,7 +385,9 @@ async function scanFollowersFromNetwork(tabId) {
   for (let page=0; page<10 && found.size<500; page++) {
     const response = await networkFetch(tabId, 'Followers', {userId:me.id, count:100, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return null;
-    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
+    let pageHasNew = false;
+    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) { if (!knownHandles.has(user.handle.toLowerCase())) pageHasNew = true; found.set(user.handle.toLowerCase(), user); }
+    if (knownHandles.size && page > 0 && !pageHasNew) break;
     const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
   }
   return [...found.values()];
@@ -393,14 +395,19 @@ async function scanFollowersFromNetwork(tabId) {
 
 async function scanFollowerList() {
   const tabId = await followerTab();
-  const networkUsers = await scanFollowersFromNetwork(tabId).catch(() => null);
+  const knownHandles = new Set((monitor.users || []).map(user => user.handle.toLowerCase()));
+  const networkUsers = await scanFollowersFromNetwork(tabId, knownHandles).catch(() => null);
   if (networkUsers?.length) {
     const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
-    const queue = networkUsers.map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+    for (const user of networkUsers) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
+    const users = [...previous.values()];
+    const queueMap = new Map((monitor.queue || []).map(user => [user.handle.toLowerCase(), user]));
+    for (const user of networkUsers) if (user.state === 'follow_back' && !queueMap.has(user.handle.toLowerCase())) { const risk = riskAssess(user); queueMap.set(user.handle.toLowerCase(), {...user, risk, discoveredAt:new Date().toISOString(), status:risk.level === 'danger' ? 'danger' : 'pending'}); }
+    const queue = [...queueMap.values()];
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
-    monitor = {...monitor, users:networkUsers, queue, lastScan:new Date().toISOString(), source:'network'};
+    monitor = {...monitor, users, queue, lastScan:new Date().toISOString(), source:'network'};
     await chrome.storage.local.set({monitor}); persist('monitor', monitor); renderQueue();
-    monitorStatus(`已通过 X 网络接口静默读取 ${networkUsers.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个。`);
+    monitorStatus(`本次发现 ${networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length} 个新粉丝，累计保存 ${users.length} 个；待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个。`);
     return;
   }
   monitorStatus('网络模板尚未捕获，退回页面列表读取…');
@@ -414,13 +421,17 @@ async function scanFollowerList() {
   }
   const users = [...found.values()];
   const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
-  const queue = users.filter(user => user.state === 'follow_back').map(user => ({...user, risk:riskAssess(user), discoveredAt:previous.get(user.handle.toLowerCase())?.discoveredAt || new Date().toISOString(), status:riskAssess(user).level === 'danger' ? 'danger' : previous.get(user.handle.toLowerCase())?.status === 'followed' ? 'followed' : 'pending'}));
+  for (const user of users) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
+  const allUsers = [...previous.values()];
+  const queueMap = new Map((monitor.queue || []).map(user => [user.handle.toLowerCase(), user]));
+  for (const user of users.filter(item => item.state === 'follow_back')) if (!queueMap.has(user.handle.toLowerCase())) { const risk=riskAssess(user); queueMap.set(user.handle.toLowerCase(), {...user, risk, discoveredAt:new Date().toISOString(), status:risk.level === 'danger' ? 'danger' : 'pending'}); }
+  const queue = [...queueMap.values()];
   queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
-  monitor = {...monitor, users, queue, lastScan:new Date().toISOString()};
+  monitor = {...monitor, users:allUsers, queue, lastScan:new Date().toISOString()};
   await chrome.storage.local.set({monitor});
   persist('monitor', monitor);
   renderQueue();
-  monitorStatus(`最近扫描 ${users.length} 个粉丝，待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个（已排除）。`);
+  monitorStatus(`本次读取 ${users.length} 个可见粉丝，累计保存 ${allUsers.length} 个；待回关 ${queue.filter(user => user.status === 'pending').length} 个，危险标记 ${queue.filter(user => user.status === 'danger').length} 个（已排除）。`);
 }
 
 async function processFollowBack() {
