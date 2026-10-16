@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="458" viewBox="0 0 640 458" role="img" aria-labelledby="title desc">
   <title id="title">X 帖子中的评论追踪按钮位置</title>
-  <desc id="desc">真实 X 帖子截图的局部，红色标记指向 XFollower 注入的评论追踪按钮。</desc>
+  <desc id="desc">真实 X 帖子截图的局部，红圈圈出 XFollower 注入的评论区用户提取按钮，红色箭头指向该按钮。</desc>
   <image href="x-comment-post.png" x="0" y="45" width="600" height="413" />
-  <rect x="517" y="382" width="32" height="47" rx="7" fill="none" stroke="#e4432f" stroke-width="3" />
-  <rect x="360" y="7" width="200" height="34" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
-  <text x="375" y="30" fill="#d73320" font-family="Arial, sans-serif" font-size="16" font-weight="700">评论追踪图标</text>
-  <path d="M493 41 L533 377" fill="none" stroke="#e4432f" stroke-width="3" />
-  <path d="M526 371 L533 382 L539 371" fill="none" stroke="#e4432f" stroke-width="3" />
+  <ellipse cx="533" cy="405" rx="24" ry="29" fill="none" stroke="#e4432f" stroke-width="3" />
+  <rect x="315" y="7" width="285" height="34" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="330" y="30" fill="#d73320" font-family="Arial, sans-serif" font-size="16" font-weight="700">点击这里提取评论区用户</text>
+  <path d="M510 41 L533 370" fill="none" stroke="#e4432f" stroke-width="3" />
+  <path d="M526 362 L533 382 L540 362" fill="none" stroke="#e4432f" stroke-width="3" />
 </svg>
