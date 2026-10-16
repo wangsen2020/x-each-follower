@@ -126,6 +126,7 @@ const defaultCommentAutoFollow = () => {
 };
 let commentTrackingStatus = null;
 let autoFollowLogs = [];
+let activeGrokStreamResolver = null;
 let activeCommentFilter = 'notMutual';
 let commentPage = 1;
 let commentPageSize = 20;
@@ -1761,11 +1762,154 @@ async function saveMutualAutoFollowSettings() {
   }
 }
 
+function extractGrokCommentReply(rawText, cleanHandle) {
+  if (!rawText) return '';
+  const text = String(rawText).trim();
+  const marker = `[@${cleanHandle} | 回评:`;
+  const idx = text.lastIndexOf(marker);
+  if (idx !== -1) {
+    const after = text.slice(idx + marker.length);
+    const endIdx = after.indexOf(']');
+    const candidate = (endIdx !== -1 ? after.slice(0, endIdx) : after).trim();
+    if (candidate.length >= 4) {
+      return candidate.replace(/\n+/g, ' ').trim();
+    }
+  }
+
+  const match = /回评[:：]\s*([^\n\]]{6,160})/i.exec(text.slice(-1500));
+  if (match && match[1]) {
+    return match[1].replace(/\n+/g, ' ').trim();
+  }
+
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.length >= 8 && line.length <= 150 && !/Thinking about|Regenerate|Copy text|Go to grok/i.test(line)) {
+      return line.replace(/^["'“‘]|["'”’]$/g, '').trim();
+    }
+  }
+  return '';
+}
+
+function driveGrokInput(prompt) {
+  return (async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const findTa = () => {
+      const root = document.getElementById('react-root');
+      if (!root) return null;
+      return Array.prototype.find.call(
+        document.querySelectorAll('textarea'),
+        (t) => root.contains(t) && t.offsetParent !== null && t.getBoundingClientRect().width > 100
+      ) || null;
+    };
+    const findBtn = () => Array.prototype.find.call(
+      document.querySelectorAll('button'),
+      (b) => {
+        const label = `${b.getAttribute('aria-label') || ''} ${b.innerText || ''} ${b.getAttribute('data-testid') || ''}`;
+        return /Grok something|send|提交|发送/i.test(label);
+      }
+    );
+    const ready = (b) => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
+
+    let el = null;
+    for (let i = 0; i < 30 && !el; i++) {
+      el = findTa();
+      if (!el) await sleep(500);
+    }
+    if (!el) return { ok: false, err: 'Grok 输入框未挂载' };
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (setter) setter.call(el, prompt);
+    else el.value = prompt;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: prompt }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+
+    if (el.value !== prompt) {
+      return { ok: false, err: '输入框未收下 prompt' };
+    }
+
+    let btn = null;
+    for (let i = 0; i < 20; i++) {
+      btn = findBtn();
+      if (ready(btn)) break;
+      await sleep(250);
+    }
+    const sawBtn = !!btn;
+    if (ready(btn)) {
+      btn.click();
+    } else {
+      el.focus();
+      const key = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        el.dispatchEvent(new KeyboardEvent(type, key));
+      }
+    }
+
+    for (let i = 0; i < 40; i++) {
+      await sleep(250);
+      const ta = findTa();
+      if (!ta || ta.value === '') return { ok: true };
+      if (sawBtn && !findBtn()) return { ok: true };
+    }
+    return { ok: true };
+  })();
+}
+
+function readGrokDomAnswer(anchor) {
+  const labels = Array.prototype.map.call(
+    document.querySelectorAll('button'), (b) => b.getAttribute('aria-label') || b.innerText || ''
+  );
+  const done = labels.some(l => /Regenerate|Copy text|重新生成|复制文本/i.test(l));
+
+  const root = document.querySelector('[data-testid=primaryColumn]') || document.body;
+  const t = root.innerText || '';
+
+  const FAIL = /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复/;
+  const i = anchor ? t.lastIndexOf(anchor) : 0;
+  if (i < 0) return { text: '', done: false };
+
+  if (FAIL.test(t.slice(i))) {
+    const leaf = Array.prototype.find.call(
+      document.querySelectorAll('span,div,button'),
+      (e) => e.children.length === 0 && /Retry|重试/i.test((e.innerText || '').trim())
+    );
+    if (leaf) {
+      let n = leaf;
+      for (let k = 0; k < 6 && n; k++) {
+        if (n.tagName === 'BUTTON' || n.getAttribute('role') === 'button') break;
+        n = n.parentElement;
+      }
+      (n || leaf).click();
+    }
+    return { text: '', done: false, failed: true };
+  }
+
+  const JUNK = [
+    'Quick Answer', 'Auto', 'Think Harder', 'Fast', 'Expert',
+    '自动', '快速', '专家', 'Go to grok.com',
+    'Regenerate', 'Copy text', '重新生成', '复制文本',
+    'Share', 'New Chat', 'See new posts', 'Stop', 'Thought for a moment'
+  ];
+  const THINKING = 'Thinking about your request';
+  const text = t.slice(i + (anchor ? anchor.length : 0)).split('\n')
+    .filter(line => {
+      const l = line.trim();
+      if (!l) return false;
+      if (JUNK.includes(l)) return false;
+      if (l.startsWith(THINKING)) return false;
+      return true;
+    })
+    .join('\n').trim();
+
+  return { text, done };
+}
+
 async function requestGrokReplyForPost(handle, post, authorName = '') {
   if (!post || !post.text) return null;
   const postText = (post.text || '').trim();
   const cleanHandle = String(handle || '').replace(/^@/, '');
   const cleanName = repairMojibake(authorName || cleanHandle);
+  const anchorLine = `[@${cleanHandle} | 回评: 你的评论内容]`;
   const prompt = [
     `你是一位推特（X平台）上的互动高手。请针对博主 @${cleanHandle}（昵称：${cleanName}）发布的以下推文，生成一条自然真实、高情商、有共鸣、能激发博主回评互动的高质量简短评论：`,
     '要求：',
@@ -1773,13 +1917,19 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
     '2. 紧扣推文具体内容和观点，提出真诚的问题、独到的共鸣或有趣的切入点，切忌空洞客套；',
     '3. 严禁以“作为AI”、“非常赞同”等机械刻板句式开头，要像真诚的推友即兴交流；',
     '4. 回复的最末尾请务必以如下标准格式单独输出回评（便于工具提取）：',
-    `[@${cleanHandle} | 回评: 你的评论内容]`,
+    anchorLine,
     '',
     '推文正文：',
     postText.slice(0, 500)
   ].join('\n');
 
   let createdWindow = null;
+  let streamText = null;
+  const streamPromise = new Promise(resolve => {
+    activeGrokStreamResolver = resolve;
+  });
+  streamPromise.then(text => { streamText = text; }).catch(() => {});
+
   try {
     createdWindow = await chrome.windows.create({
       url: 'https://x.com/i/grok',
@@ -1794,70 +1944,60 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
     }
     if (!tabId) return null;
 
-    const deadlineSend = Date.now() + 25000;
-    let sent = false;
-    while (Date.now() < deadlineSend && !sent) {
-      await sleep(1000);
-      const res = (await chrome.scripting.executeScript({
-        target: {tabId},
-        func: (text) => {
-          const input = document.querySelector('textarea, [contenteditable="true"]');
-          if (!input) return {ok: false, reason: 'no_input'};
-          if (input.tagName === 'TEXTAREA') {
-            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-            setter?.call(input, text);
-          } else {
-            input.textContent = text;
-          }
-          input.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
-          input.dispatchEvent(new Event('change', {bubbles: true}));
-          const send = [...document.querySelectorAll('button')].find(button => {
-            const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
-            return /send|提交|发送/i.test(label) && !button.disabled;
-          });
-          if (!send) return {ok: false, reason: 'no_send_btn'};
-          send.click();
-          return {ok: true};
-        },
-        args: [prompt]
-      }).catch(() => []))?.[0]?.result;
+    // 驱动输入框填入并提交（MAIN world）
+    const driveRes = (await chrome.scripting.executeScript({
+      target: {tabId},
+      world: 'MAIN',
+      func: driveGrokInput,
+      args: [prompt]
+    }).catch(() => []))?.[0]?.result;
 
-      if (res?.ok) {
-        sent = true;
-        break;
-      }
+    if (!driveRes?.ok) {
+      console.warn('Grok 驱动发送状态:', driveRes?.err || '已尝试发送');
     }
 
-    if (!sent) return null;
-
-    const deadlinePoll = Date.now() + 35000;
+    // 双通道等待答案（最长 45 秒）
+    const deadline = Date.now() + 45000;
     let reply = '';
-    while (Date.now() < deadlinePoll) {
-      await sleep(2000);
-      const textResult = (await chrome.scripting.executeScript({
-        target: {tabId},
-        func: () => document.body?.innerText || ''
-      }).catch(() => []))?.[0]?.result || '';
+    let lastDomText = '';
+    let stableRounds = 0;
 
-      if (!textResult) continue;
-
-      const marker = `[@${cleanHandle} | 回评:`;
-      const idx = textResult.lastIndexOf(marker);
-      if (idx !== -1) {
-        const after = textResult.slice(idx + marker.length);
-        const endIdx = after.indexOf(']');
-        const candidate = (endIdx !== -1 ? after.slice(0, endIdx) : after).trim();
-        if (candidate.length >= 5) {
-          reply = candidate.replace(/\n+/g, ' ').trim();
-          break;
-        }
-      } else {
-        const match = /回评[:：]\s*([^\n\]]{8,150})/i.exec(textResult.slice(-1500));
-        if (match && match[1]) {
-          reply = match[1].trim();
-          break;
-        }
+    while (Date.now() < deadline) {
+      // 通道一：网络响应流（net-hook 拦截的 add_response.json）
+      if (streamText) {
+        reply = extractGrokCommentReply(streamText, cleanHandle);
+        if (reply) break;
       }
+
+      await sleep(2000);
+
+      // 通道二：智能 DOM 读取（Regenerate / Copy text 完成信号判定）
+      try {
+        const out = await chrome.scripting.executeScript({
+          target: {tabId},
+          world: 'MAIN',
+          func: readGrokDomAnswer,
+          args: [anchorLine]
+        });
+        const domRes = out?.[0]?.result;
+        if (domRes?.text) {
+          const extracted = extractGrokCommentReply(domRes.text, cleanHandle);
+          if (domRes.done && extracted) {
+            reply = extracted;
+            break;
+          }
+          if (extracted && extracted === lastDomText) {
+            stableRounds++;
+            if (stableRounds >= 3) {
+              reply = extracted;
+              break;
+            }
+          } else if (extracted) {
+            lastDomText = extracted;
+            stableRounds = 0;
+          }
+        }
+      } catch (err) {}
     }
 
     if (reply) {
@@ -1872,6 +2012,7 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
     console.warn('Grok 回评生成异常:', e);
     return null;
   } finally {
+    activeGrokStreamResolver = null;
     if (createdWindow?.id) {
       await chrome.windows.remove(createdWindow.id).catch(() => {});
     }
@@ -2206,6 +2347,11 @@ window.addEventListener('beforeunload', () => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd === 'grokStreamAnswer') {
+    if (typeof activeGrokStreamResolver === 'function') {
+      try { activeGrokStreamResolver(message.text || ''); } catch {}
+    }
+  }
   if (message?.cmd === 'runMutualAutoFollowTick') {
     sendResponse({ok: true, handledByPanel: true});
     runMutualAutoFollowBatch('alarm').catch(() => {});

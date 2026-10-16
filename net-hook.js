@@ -28,6 +28,22 @@
     if (vars?.cursor) return;
     post({op, queryId:match[1], origin:u.origin, features:q.get('features'), fieldToggles:q.get('fieldToggles'), variables:q.get('variables'), headers:head, json:json || null, at:Date.now()});
   };
+  const GROK_RE = /\/2\/grok\/add_response\.json/;
+  const emitGrok = text => {
+    const finals = [];
+    const others = [];
+    for (const line of String(text).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const r = JSON.parse(line).result;
+        if (!r || typeof r.message !== 'string') continue;
+        if (r.messageTag === 'final') finals.push(r.message);
+        else if (!r.isThinking && r.messageTag !== 'header') others.push(r.message);
+      } catch {}
+    }
+    const msg = finals.length ? finals.join('') : others.join('');
+    post({ kind: 'grok', text: msg, raw: msg ? '' : String(text).slice(0, 400) });
+  };
   const isInternal = (h, init) => {
     try {
       if (init?.__xefInternal === true) return true;
@@ -42,6 +58,11 @@
     let url = ''; let h = null;
     try { const a = args[0]; url = typeof a === 'string' ? a : a?.url || a?.href || ''; h = args[1]?.headers || a?.headers; } catch {}
     const promise = fetch0.apply(this, args);
+    if (GROK_RE.test(url)) {
+      promise.then(r => {
+        try { r.clone().text().then(emitGrok).catch(() => {}); } catch {}
+      }).catch(() => {});
+    }
     if (!isInternal(h, args[1]) && RE.test(url)) {
       promise.then(r => {
         if (r && r.status >= 200 && r.status < 300) {
@@ -55,6 +76,11 @@
   xp.open = function(method, url, ...rest) { this.__xefUrl = String(url); this.__xefHeaders = {}; return open.call(this, method, url, ...rest); };
   xp.setRequestHeader = function(k, v) { this.__xefHeaders[String(k).toLowerCase()] = v; return set.call(this, k, v); };
   xp.send = function(...args) {
+    if (GROK_RE.test(this.__xefUrl || '')) {
+      this.addEventListener('load', () => {
+        try { emitGrok(this.responseText); } catch {}
+      });
+    }
     if (!this.__xefHeaders?.['x-xef-internal'] && RE.test(this.__xefUrl || '')) {
       this.addEventListener('load', () => {
         try {
