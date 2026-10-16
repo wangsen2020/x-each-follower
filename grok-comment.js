@@ -228,6 +228,101 @@ export async function requestGrokComment(handle, post, authorName, { sleep, fix 
 }
 
 /**
+ * 通用向 Grok 提问函数（用于辅助编程、生成算法、多维标签分析等）。
+ * 自动适配 x.com/i/grok 与 grok.com，等待回答全部生成后返回完整 Markdown 文本。
+ */
+export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r => setTimeout(r, ms)), timeoutMs = 90000 } = {}) {
+  const nonce = makeNonce();
+  const fullPrompt = `${userPrompt}\n\n[任务凭证：${nonce}]`;
+  const reasons = [];
+
+  async function askTextOnX() {
+    const { winId, tabId } = await openMinimized('https://x.com/i/grok');
+    try {
+      if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
+      const probe = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => {
+        const t = (document.body?.innerText || '').slice(0, 3000);
+        return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
+      } }).catch(() => []))?.[0]?.result;
+      if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
+      const drive = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [fullPrompt] })
+        .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+      if (!drive?.ok) return { ok: false, reason: `x.com Grok 提交失败: ${drive?.err || ''}` };
+
+      const deadline = Date.now() + timeoutMs;
+      let lastText = '';
+      let stableCount = 0;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
+          .catch(() => []))?.[0]?.result;
+        if (dom?.failed) return { ok: false, reason: 'Grok 回复异常或触发风控' };
+        const text = String(dom?.text || '').trim();
+        if (text) {
+          if (dom.done) return { ok: true, text, channel: 'x.com' };
+          if (text === lastText && text.length > 20) {
+            stableCount++;
+            if (stableCount >= 3) return { ok: true, text, channel: 'x.com' };
+          } else {
+            stableCount = 0;
+            lastText = text;
+          }
+        }
+      }
+      return { ok: false, reason: 'x.com Grok 生成超时' };
+    } finally {
+      if (winId) await chrome.windows.remove(winId).catch(() => {});
+    }
+  }
+
+  async function askTextOnGrokCom() {
+    const { winId, tabId } = await openMinimized('https://grok.com/');
+    try {
+      if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
+      await sleep(3000);
+      const drive = (await chrome.scripting.executeScript({ target: { tabId }, func: driveGrokComInput, args: [fullPrompt] })
+        .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+      if (!drive?.ok) return { ok: false, reason: `grok.com 提交失败: ${drive?.err || ''}` };
+
+      const deadline = Date.now() + timeoutMs;
+      let lastText = '';
+      let stableCount = 0;
+      while (Date.now() < deadline) {
+        await sleep(2500);
+        const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
+          .catch(() => []))?.[0]?.result;
+        if (dom?.failed) return { ok: false, reason: 'grok.com 回复异常' };
+        const text = String(dom?.text || '').trim();
+        if (text) {
+          if (dom.done) return { ok: true, text, channel: 'grok.com' };
+          if (text === lastText && text.length > 20) {
+            stableCount++;
+            if (stableCount >= 3) return { ok: true, text, channel: 'grok.com' };
+          } else {
+            stableCount = 0;
+            lastText = text;
+          }
+        }
+      }
+      return { ok: false, reason: 'grok.com 生成超时' };
+    } finally {
+      if (winId) await chrome.windows.remove(winId).catch(() => {});
+    }
+  }
+
+  for (const ask of [askTextOnX, askTextOnGrokCom]) {
+    try {
+      const res = await ask();
+      if (res.ok) return res;
+      reasons.push(res.reason);
+    } catch (e) {
+      reasons.push(String(e?.message || e));
+    }
+  }
+  return { ok: false, reason: reasons.join('；') };
+}
+
+/**
  * 把 Grok 评价作为引用帖发布：打开原帖详情页 → Quote/引用 → 发布并校验。
  * 返回 {ok} 或 {ok:false, reason}。
  */

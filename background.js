@@ -3,7 +3,7 @@ import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -554,3 +554,32 @@ chrome.runtime.onInstalled.addListener(async () => {
     scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
   }
 });
+
+// ---------------- 本地 Grok 协同开发桥接 (Dev Bridge) ----------------
+let bridgeActive = false;
+async function pollGrokDevBridge() {
+  if (bridgeActive) return;
+  bridgeActive = true;
+  const BRIDGE_URL = 'http://127.0.0.1:18288';
+  while (true) {
+    try {
+      const res = await fetch(`${BRIDGE_URL}/task`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.taskId && data.prompt) {
+          console.log('[XFollower DevBridge] 收到协同编码任务:', data.taskId);
+          const ans = await requestGrokText(data.prompt, { timeoutMs: 120000 });
+          await fetch(`${BRIDGE_URL}/result`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId: data.taskId, ...ans })
+          }).catch(() => {});
+        }
+      }
+    } catch (_) {
+      // 本地无任务或服务未启动时静默忽略
+    }
+    await sleep(1500);
+  }
+}
+pollGrokDevBridge().catch(() => {});
