@@ -6,6 +6,25 @@ export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
 const X_QUOTE_LIMIT = 280;
 
+// Grok tasks run in a small, minimized popup placed outside the usual desktop area.
+// Keep the viewport usable for scripted page interaction without covering the user's work.
+export function buildBackgroundGrokWindowOptions(url) {
+  return {
+    url,
+    type: 'popup',
+    state: 'minimized',
+    focused: false,
+    left: 10000,
+    top: 0,
+    width: 800,
+    height: 600
+  };
+}
+
+export function createBackgroundGrokWindow(url) {
+  return chrome.windows.create(buildBackgroundGrokWindowOptions(url));
+}
+
 /** X 的字数权重：CJK 等宽字符计 2，其余计 1。 */
 export function tweetWeight(text) {
   let n = 0;
@@ -148,7 +167,7 @@ export function deliverGrokStream(text) {
 }
 
 async function openMinimized(url) {
-  const win = await chrome.windows.create({ url, type: 'popup', state: 'minimized', focused: false });
+  const win = await createBackgroundGrokWindow(url);
   const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
   return { winId: win.id, tabId };
 }

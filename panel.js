@@ -3,7 +3,7 @@ import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulate
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -2078,12 +2078,7 @@ async function checkGrokAvailability(force = false) {
   // 1. 测试 x.com/i/grok
   let winX = null;
   try {
-    winX = await chrome.windows.create({
-      url: 'https://x.com/i/grok',
-      type: 'popup',
-      state: 'minimized',
-      focused: false
-    });
+    winX = await createBackgroundGrokWindow('https://x.com/i/grok');
     const tabId = winX.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winX.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
@@ -2118,12 +2113,7 @@ async function checkGrokAvailability(force = false) {
   // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常
   let winGrok = null;
   try {
-    winGrok = await chrome.windows.create({
-      url: 'https://grok.com/',
-      type: 'popup',
-      state: 'minimized',
-      focused: false
-    });
+    winGrok = await createBackgroundGrokWindow('https://grok.com/');
     const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
@@ -3525,7 +3515,7 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
 async function submitBatchToGrok(customCandidates = null, reportStatus = analysisStatus) {
   await collectSelectedProfiles(customCandidates, reportStatus);
   const prompt = grokPrompt();
-  const created = await chrome.windows.create({url:'https://x.com/i/grok', type:'popup', state:'minimized', focused:false});
+  const created = await createBackgroundGrokWindow('https://x.com/i/grok');
   let tabId = created.tabs?.[0]?.id;
   if (!tabId && created.id) {
     const tabs = await chrome.tabs.query({windowId: created.id});

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab} from '../grok-comment.js';
+import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions} from '../grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage} from '../page-reader.js';
 
 test('extractGrokComment takes the body between markers', () => {
@@ -41,6 +41,13 @@ test('tweetWeight counts CJK as 2 and latin as 1', () => {
 
 test('makeNonce is unique per call', () => {
   assert.notEqual(makeNonce(), makeNonce());
+});
+
+test('Grok windows use a small, minimized, unfocused off-screen popup', () => {
+  assert.deepEqual(buildBackgroundGrokWindowOptions('https://grok.com/'), {
+    url: 'https://grok.com/', type: 'popup', state: 'minimized', focused: false,
+    left: 10000, top: 0, width: 800, height: 600
+  });
 });
 
 test('publishQuotePostOnPage refuses when the page is not the target status page', async () => {
