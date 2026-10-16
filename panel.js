@@ -1,5 +1,5 @@
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
-import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile } from './page-reader.js';
+import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishReplyToTweetOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
@@ -1422,7 +1422,20 @@ function renderMutualNetwork() {
     const account = document.createElement('td');
     account.className = 'col-account';
     const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent=`${displayName} · @${user.handle}`;
-    const bio = document.createElement('p'); bio.textContent=displayBio || '暂无简介'; account.append(link,bio); row.append(account);
+    const bio = document.createElement('p'); bio.textContent=displayBio || '暂无简介'; account.append(link,bio);
+    if (cached?.grokComment || user.grokComment) {
+      const commentText = cached?.grokComment || user.grokComment;
+      const isPosted = cached?.grokCommentPosted || user.grokCommentPosted;
+      const postUrl = cached?.grokCommentPostUrl || user.grokCommentPostUrl || '';
+      const grokNote = document.createElement('div');
+      grokNote.className = 'log-grok-box';
+      grokNote.style.margin = '4px 0 0';
+      grokNote.style.padding = '4px 8px';
+      grokNote.style.fontSize = '12px';
+      grokNote.innerHTML = `<span style="font-weight:600;color:${isPosted ? '#1d5c3a' : '#2e7d32'}">${isPosted ? '✔ 已发表回评' : '💬 Grok回评'}:</span> 「${commentText}」${postUrl ? ` <a href="${postUrl}" target="_blank" rel="noopener noreferrer" style="font-size:11px;margin-left:4px">查看推文 ↗</a>` : ''}`;
+      account.append(grokNote);
+    }
+    row.append(account);
     const tagTd = createMutualTagCell(user, 'td');
     row.append(tagTd);
     const relation = document.createElement('td'); relation.className = 'col-relation';
@@ -2331,6 +2344,8 @@ async function visitScrollAndFollowCandidate(user, cfg) {
     if (item) Object.assign(item, updatedProfile);
 
     let grokResult = null;
+    let commentPosted = false;
+    let commentPostError = null;
     if (cfg.grokAutoComment && Array.isArray(updatedProfile.posts) && updatedProfile.posts.length > 0) {
       const validPosts = updatedProfile.posts.filter(p => (p?.text || '').trim().length >= 8);
       const pool = validPosts.length > 0 ? validPosts : updatedProfile.posts;
@@ -2342,15 +2357,35 @@ async function visitScrollAndFollowCandidate(user, cfg) {
           updatedProfile.grokComment = grokResult.reply;
           updatedProfile.grokCommentPost = grokResult.postText;
           updatedProfile.grokCommentPostUrl = grokResult.postUrl;
+
+          // 自动在推文下发表回复评论，真正留下互动痕迹提高曝光与回关率
+          networkStatus(`已由 Grok 生成回评，正在向 @${handle} 的推文发表回复…`);
+          const replyPostRes = (await chrome.scripting.executeScript({
+            target: {tabId},
+            func: publishReplyToTweetOnPage,
+            args: [chosenPost.url, grokResult.reply]
+          }).catch(() => []))?.[0]?.result;
+
+          if (replyPostRes?.ok) {
+            commentPosted = true;
+            updatedProfile.grokCommentPosted = true;
+            networkStatus(`✔ 已成功向 @${handle} 的推文发表 Grok 互动回评！`);
+          } else {
+            commentPostError = replyPostRes?.reason || '推文回复未完成';
+            console.warn('推文回复发表状态:', commentPostError);
+          }
+
           if (profileCache[key]) {
             profileCache[key].grokComment = grokResult.reply;
             profileCache[key].grokCommentPost = grokResult.postText;
             profileCache[key].grokCommentPostUrl = grokResult.postUrl;
+            profileCache[key].grokCommentPosted = commentPosted;
           }
           if (item) {
             item.grokComment = grokResult.reply;
             item.grokCommentPost = grokResult.postText;
             item.grokCommentPostUrl = grokResult.postUrl;
+            item.grokCommentPosted = commentPosted;
           }
         }
       }
@@ -2396,6 +2431,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
         grokComment: grokResult?.reply || '',
         grokCommentPost: grokResult?.postText || '',
         grokCommentPostUrl: grokResult?.postUrl || '',
+        commentPosted,
         dwellSeconds
       };
     }
@@ -2453,11 +2489,12 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             handle: target.handle,
             name: target.name,
             result: 'followed',
-            detail: `主页看帖目标停留约 ${res.dwellSeconds ?? cfg.dwellSeconds} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${res.grokComment ? '已由 Grok 生成互动回评。' : ''}`,
+            detail: `主页看帖目标停留约 ${res.dwellSeconds ?? cfg.dwellSeconds} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${res.grokComment ? (res.commentPosted ? '✔ 已通过 Grok 成功向推文发布互动回评！' : '已由 Grok 生成互动回评草稿。') : ''}`,
             posts: postsScanned,
             grokComment: res.grokComment || '',
             grokCommentPost: res.grokCommentPost || '',
-            grokCommentPostUrl: res.grokCommentPostUrl || ''
+            grokCommentPostUrl: res.grokCommentPostUrl || '',
+            commentPosted: Boolean(res.commentPosted)
           });
         } else if (res.status === 'skipped') {
           skippedNow++;
@@ -4089,7 +4126,13 @@ function renderLogsModal() {
 
       const grokTag = document.createElement('span');
       grokTag.className = 'log-grok-tag';
-      grokTag.textContent = '🤖 Grok 互动回评建议';
+      if (log.commentPosted) {
+        grokTag.style.background = '#d9eee1';
+        grokTag.style.color = '#1d5c3a';
+        grokTag.textContent = '✔ 已在推特发表 Grok 回评';
+      } else {
+        grokTag.textContent = '🤖 Grok 互动回评建议（草稿）';
+      }
       grokHeader.append(grokTag);
 
       if (log.grokCommentPostUrl) {
@@ -4225,8 +4268,32 @@ async function handleTestGrokClick(buttonId, displayId) {
 
     const testRes = await requestGrokReplyForPost(testHandle, testPost, testAuthorName);
     if (testRes?.reply) {
+      let isPublished = false;
+      if (confirm(`🎉 Grok 实测成功生成高情商回评！\n\n【测试通道】: ${res.activeChannel}\n【博主】: @${testHandle}（${testAuthorName}）\n【推文】: ${testPost.text.slice(0, 100)}\n\n【Grok 回评】:\n「${testRes.reply}」\n\n是否立即在推特上发表该评论，留下真实可见的互动痕迹？`)) {
+        if (handleEl) handleEl.textContent = `正在为 @${testHandle} 的推文发表回复评论…`;
+        const postTab = await chrome.tabs.create({ url: testPost.url || `https://x.com/${testHandle}`, active: false });
+        if (postTab?.id) {
+          try {
+            await sleep(4000);
+            const pubRes = (await chrome.scripting.executeScript({
+              target: { tabId: postTab.id },
+              func: publishReplyToTweetOnPage,
+              args: [testPost.url, testRes.reply]
+            }).catch(() => []))?.[0]?.result;
+            if (pubRes?.ok) {
+              isPublished = true;
+              alert(`✔ 评论已成功发布到 X 推特上！\n\n推文：${testPost.url || `https://x.com/${testHandle}`}\n回评内容：${testRes.reply}\n\n您现在可以在该推文下方或您的“回复”记录中看到真实的评论痕迹。`);
+            } else {
+              alert(`回评已生成，但自动点击发送未完成（${pubRes?.reason || '未找到发送按钮'}）。您可在执行日志中一键复制该回评手动发送。`);
+            }
+          } finally {
+            await chrome.tabs.remove(postTab.id).catch(() => {});
+          }
+        }
+      }
+
       if (handleEl) {
-        handleEl.textContent = `✔ Grok 实测成功！已为 @${testHandle} 生成回评：「${testRes.reply.slice(0, 45)}…」`;
+        handleEl.textContent = `✔ Grok 实测成功！已为 @${testHandle} 生成回评${isPublished ? '（已发表）' : ''}：「${testRes.reply.slice(0, 40)}…」`;
         handleEl.style.color = '#1d5c3a';
       }
 
@@ -4236,10 +4303,9 @@ async function handleTestGrokClick(buttonId, displayId) {
         status: 'followed',
         grokComment: testRes.reply,
         grokCommentPost: testPost.text.slice(0, 140),
-        grokCommentPostUrl: testPost.url || ''
+        grokCommentPostUrl: testPost.url || '',
+        commentPosted: isPublished
       }).catch(() => {});
-
-      alert(`🎉 Grok 真实回评实测成功！\n\n【测试通道】: ${res.activeChannel}\n【测试博主】: @${testHandle}（${testAuthorName}）\n【推文内容】: ${testPost.text.slice(0, 100)}\n\n【Grok 生成的高情商回评】:\n${testRes.reply}\n\n该回评已同步记录到执行日志中。`);
     } else {
       if (handleEl) {
         handleEl.textContent = '✕ Grok 实测未返回有效回复，请检查 X 登录状态与网络';

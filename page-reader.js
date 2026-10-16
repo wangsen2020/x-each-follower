@@ -186,3 +186,76 @@ export function clickAnyFollowOnProfile(handle) {
   return {ok:true};
 }
 
+export function publishReplyToTweetOnPage(tweetUrl, replyText) {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const cleanText = String(replyText || '').trim();
+    if (!cleanText) return { ok: false, reason: '回复内容为空' };
+
+    let targetArticle = null;
+    let replyButton = null;
+
+    if (tweetUrl) {
+      const match = String(tweetUrl).match(/\/status\/(\d+)/);
+      const tweetId = match ? match[1] : '';
+      if (tweetId) {
+        const articles = Array.from(document.querySelectorAll('article'));
+        targetArticle = articles.find(a => a.querySelector(`a[href*="/status/${tweetId}"]`));
+      }
+    }
+
+    if (!targetArticle) {
+      targetArticle = document.querySelector('article');
+    }
+
+    if (targetArticle) {
+      replyButton = targetArticle.querySelector('[data-testid="reply"]');
+      if (replyButton) {
+        replyButton.click();
+        await sleep(900);
+      }
+    }
+
+    let textarea = null;
+    for (let i = 0; i < 25; i++) {
+      textarea = document.querySelector('[role="dialog"] [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]');
+      if (textarea && textarea.offsetParent !== null) break;
+      await sleep(200);
+    }
+
+    if (!textarea) {
+      return { ok: false, reason: '未找到推文回复输入框' };
+    }
+
+    textarea.focus();
+    try {
+      document.execCommand('insertText', false, cleanText);
+    } catch (e) {}
+
+    const textLen = (textarea.innerText || textarea.textContent || '').trim().length;
+    if (textLen < cleanText.length * 0.5) {
+      textarea.innerText = cleanText;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    await sleep(600);
+
+    let sendBtn = null;
+    for (let i = 0; i < 20; i++) {
+      const modal = document.querySelector('[role="dialog"]') || document;
+      sendBtn = modal.querySelector('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]');
+      if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') break;
+      await sleep(200);
+    }
+
+    if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
+      return { ok: false, reason: '回复发送按钮不可用' };
+    }
+
+    sendBtn.click();
+    await sleep(1500);
+
+    return { ok: true };
+  })();
+}
+
