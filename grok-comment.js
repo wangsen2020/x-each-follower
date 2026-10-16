@@ -1,6 +1,6 @@
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
-import { openQuoteComposerOnPage, inspectQuoteComposerOnPage } from './page-reader.js';
+import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage } from './page-reader.js';
 
 export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
@@ -345,6 +345,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
 export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
+  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url]}).catch(() => []);
   await chrome.tabs.update(tabId, { url });
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -373,9 +374,13 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     }
     await sleep(300);
   }
-  if (!composerReady) return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框' };
+  if (!composerReady) {
+    await dismissDraft();
+    return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿' };
+  }
 
   const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
+  if (!res?.ok) await dismissDraft();
   return res || { ok: false, reason: '引用帖发布脚本无返回' };
 }
