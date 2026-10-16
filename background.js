@@ -378,8 +378,16 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   }
 
   if (alarm.name === 'x-mutual-auto-follow') {
-    const { mutualNetwork } = await chrome.storage.local.get('mutualNetwork');
-    const cfg = normalizeAutoFollowConfig(mutualNetwork?.autoFollow);
+    let { mutualNetwork, mutualAutoFollowSettings } = await chrome.storage.local.get(['mutualNetwork', 'mutualAutoFollowSettings']);
+    if (!mutualAutoFollowSettings && !mutualNetwork?.autoFollow) {
+      try {
+        if (chrome.storage?.sync) {
+          const syncData = await chrome.storage.sync.get('mutualAutoFollowSettings');
+          if (syncData?.mutualAutoFollowSettings) mutualAutoFollowSettings = syncData.mutualAutoFollowSettings;
+        }
+      } catch {}
+    }
+    const cfg = normalizeAutoFollowConfig(mutualAutoFollowSettings || mutualNetwork?.autoFollow);
     if (!cfg?.enabled) return;
     const base = Number(cfg.every) || 5;
     const jitter = Number(cfg.jitter) ?? 3;
@@ -402,11 +410,31 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   }
 });
 
+async function restoreSettingsFromSync() {
+  try {
+    if (chrome.storage?.sync) {
+      const syncData = await chrome.storage.sync.get(['mutualAutoFollowSettings', 'commentAutoFollowSettings']);
+      const toSet = {};
+      if (syncData.mutualAutoFollowSettings) {
+        toSet.mutualAutoFollowSettings = normalizeAutoFollowConfig(syncData.mutualAutoFollowSettings);
+      }
+      if (syncData.commentAutoFollowSettings) {
+        toSet.commentAutoFollowSettings = normalizeAutoFollowConfig(syncData.commentAutoFollowSettings);
+      }
+      if (Object.keys(toSet).length) {
+        await chrome.storage.local.set(toSet);
+      }
+    }
+  } catch {}
+}
+
 chrome.runtime.onStartup.addListener(async () => {
+  await restoreSettingsFromSync();
   const tracking = await loadCommentTracking().catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
 });
 chrome.runtime.onInstalled.addListener(async () => {
+  await restoreSettingsFromSync();
   const tracking = await loadCommentTracking().catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
 });

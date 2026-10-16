@@ -45,6 +45,74 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
   return res;
 }
+
+function debounce(fn, delay = 300) {
+  let timer;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+async function persistAutoFollowSettings(type, cfg) {
+  const localKey = type === 'mutual' ? 'mutualAutoFollowSettings' : 'commentAutoFollowSettings';
+  const lsKey = type === 'mutual' ? 'x_mutualAutoFollowSettings' : 'x_commentAutoFollowSettings';
+  const normalized = normalizeAutoFollowConfig(cfg);
+
+  // 1. chrome.storage.local
+  await chrome.storage.local.set({ [localKey]: normalized }).catch(() => {});
+
+  // 2. localStorage 兜底
+  try {
+    localStorage.setItem(lsKey, JSON.stringify(normalized));
+  } catch {}
+
+  // 3. chrome.storage.sync 跨卸载/重装持久化
+  try {
+    if (chrome.storage?.sync) {
+      await chrome.storage.sync.set({ [localKey]: normalized }).catch(() => {});
+    }
+  } catch {}
+
+  // 4. x.com 域 IndexedDB 跨扩展重装生存
+  persist(localKey, normalized);
+}
+
+async function loadPersistedAutoFollowSettings(type) {
+  const localKey = type === 'mutual' ? 'mutualAutoFollowSettings' : 'commentAutoFollowSettings';
+  const lsKey = type === 'mutual' ? 'x_mutualAutoFollowSettings' : 'x_commentAutoFollowSettings';
+
+  // 1. chrome.storage.local
+  try {
+    const local = await chrome.storage.local.get(localKey);
+    if (local && local[localKey]) return normalizeAutoFollowConfig(local[localKey]);
+  } catch {}
+
+  // 2. localStorage
+  try {
+    const raw = localStorage.getItem(lsKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed) return normalizeAutoFollowConfig(parsed);
+    }
+  } catch {}
+
+  // 3. chrome.storage.sync
+  try {
+    if (chrome.storage?.sync) {
+      const syncData = await chrome.storage.sync.get(localKey);
+      if (syncData && syncData[localKey]) return normalizeAutoFollowConfig(syncData[localKey]);
+    }
+  } catch {}
+
+  // 4. x.com 域 IndexedDB
+  try {
+    const durable = await durableGet(localKey);
+    if (durable) return normalizeAutoFollowConfig(durable);
+  } catch {}
+
+  return null;
+}
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null, autoFollow: defaultMutualAutoFollow()};
 let selectedMutualHandles = new Set();
 let mutualSearch = '';
@@ -171,6 +239,7 @@ async function saveCommentAutoFollowSettings() {
   if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时周期。');
   commentTracking.autoFollow = next;
   await saveCommentTracking();
+  await persistAutoFollowSettings('comment', next);
   await chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:next}).catch(() => {});
   renderCommentAutoFollowSettings();
 }
@@ -373,9 +442,13 @@ $('commentPageSize')?.addEventListener('change', event => { commentPageSize = Nu
 $('commentPrevPage')?.addEventListener('click', () => { commentPage--; renderCommentTracking(); });
 $('commentNextPage')?.addEventListener('click', () => { commentPage++; renderCommentTracking(); });
 $('openCommentAutoFollowSettings')?.addEventListener('click', openCommentAutoFollowSettings);
-$('closeCommentAutoFollowDrawer')?.addEventListener('click', () => { $('commentAutoFollowDrawer').hidden = true; syncDrawerMask(); });
+$('closeCommentAutoFollowDrawer')?.addEventListener('click', closeCommentAutoFollowDrawer);
 $('commentAutoEnabled')?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
-for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent']) $(id)?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
+const debouncedSaveComment = debounce(() => saveCommentAutoFollowSettings().catch(() => {}), 300);
+for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent']) {
+  $(id)?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
+  $(id)?.addEventListener('input', debouncedSaveComment);
+}
 $('saveCommentAutoSettings')?.addEventListener('click', () => saveCommentAutoFollowSettings().then(() => { $('commentTrackingStatus').textContent = '评论追踪自动关注配置已保存。'; }).catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 $('runCommentAutoNow')?.addEventListener('click', runCommentAutoFollowNow);
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -698,11 +771,13 @@ function closeSettingsDrawer() {
 }
 
 function closeMutualSettingsDrawer() {
+  saveMutualAutoFollowSettings().catch(() => {});
   if ($('mutualSettingsDrawer')) $('mutualSettingsDrawer').hidden = true;
   syncDrawerMask();
 }
 
 function closeCommentAutoFollowDrawer() {
+  saveCommentAutoFollowSettings().catch(() => {});
   if ($('commentAutoFollowDrawer')) $('commentAutoFollowDrawer').hidden = true;
   syncDrawerMask();
 }
@@ -1613,6 +1688,7 @@ async function saveMutualAutoFollowSettings() {
   if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时执行周期。');
   mutualNetwork.autoFollow = next;
   await saveMutualNetwork();
+  await persistAutoFollowSettings('mutual', next);
   renderMutualSettingsDrawer();
   await chrome.alarms.clear('x-mutual-auto-follow');
   if (next.enabled) {
@@ -1903,9 +1979,16 @@ $('mutualAutoEnabled')?.addEventListener('change', () => {
     })
     .catch(error => networkStatus(error.message));
 });
+const debouncedSaveMutual = debounce(() => saveMutualAutoFollowSettings().catch(() => {}), 300);
 for (const id of ['mutualAutoEvery', 'mutualAutoJitter', 'mutualAutoBatchSize', 'mutualAutoScrollRounds', 'mutualAutoDwellSec', 'mutualAutoMinFollowers', 'mutualAutoOnlyIntent']) {
   $(id)?.addEventListener('change', () => saveMutualAutoFollowSettings().catch(error => networkStatus(error.message)));
+  $(id)?.addEventListener('input', debouncedSaveMutual);
 }
+
+window.addEventListener('beforeunload', () => {
+  saveMutualAutoFollowSettings().catch(() => {});
+  saveCommentAutoFollowSettings().catch(() => {});
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd === 'runMutualAutoFollowTick') {
@@ -3040,11 +3123,15 @@ try {
 } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
 
 try {
-  const savedNetwork = await chrome.storage.local.get('mutualNetwork');
+  const savedNetwork = await chrome.storage.local.get(['mutualNetwork', 'mutualAutoFollowSettings']);
+  let mutualCfg = savedNetwork.mutualAutoFollowSettings || savedNetwork.mutualNetwork?.autoFollow;
+  if (!mutualCfg) {
+    mutualCfg = await loadPersistedAutoFollowSettings('mutual');
+  }
   mutualNetwork = {
     ...mutualNetwork,
     ...(savedNetwork.mutualNetwork || {}),
-    autoFollow: normalizeAutoFollowConfig(savedNetwork.mutualNetwork?.autoFollow || {})
+    autoFollow: normalizeAutoFollowConfig(mutualCfg || {})
   };
   renderMutualNetwork();
   renderMutualSettingsDrawer();
@@ -3053,9 +3140,17 @@ try {
 
 try {
   const {autoFollowLogs: savedLocalLogs = []} = await chrome.storage.local.get('autoFollowLogs');
-    if (Array.isArray(savedLocalLogs) && savedLocalLogs.length) { autoFollowLogs = savedLocalLogs; renderLogsModal(); }
-    const savedComments = await chrome.storage.local.get(['commentTracking','commentTrackingStatus']);
-  commentTracking = {...commentTracking, ...(savedComments.commentTracking || {}), autoFollow:normalizeAutoFollowConfig(savedComments.commentTracking?.autoFollow || {})};
+  if (Array.isArray(savedLocalLogs) && savedLocalLogs.length) { autoFollowLogs = savedLocalLogs; renderLogsModal(); }
+  const savedComments = await chrome.storage.local.get(['commentTracking', 'commentTrackingStatus', 'commentAutoFollowSettings']);
+  let commentCfg = savedComments.commentAutoFollowSettings || savedComments.commentTracking?.autoFollow;
+  if (!commentCfg) {
+    commentCfg = await loadPersistedAutoFollowSettings('comment');
+  }
+  commentTracking = {
+    ...commentTracking,
+    ...(savedComments.commentTracking || {}),
+    autoFollow: normalizeAutoFollowConfig(commentCfg || {})
+  };
   commentTrackingStatus = savedComments.commentTrackingStatus || null;
   renderCommentAutoFollowSettings();
   chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
@@ -3073,7 +3168,27 @@ if (sanitizeMojibakeCollections()) {
 
 setTab('monitor');
 
-Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows'), durableGet('profileCache'), durableGet('mutualNetwork'), durableGet('commentTracking'), durableGet('autoFollowLogs')]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs]) => {
+Promise.all([
+  durableGet('rows'),
+  durableGet('monitor'),
+  durableGet('analysisRows'),
+  durableGet('profileCache'),
+  durableGet('mutualNetwork'),
+  durableGet('commentTracking'),
+  durableGet('autoFollowLogs'),
+  durableGet('mutualAutoFollowSettings'),
+  durableGet('commentAutoFollowSettings')
+]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto]) => {
+  if (durableMutualAuto) {
+    mutualNetwork.autoFollow = normalizeAutoFollowConfig({ ...mutualNetwork.autoFollow, ...durableMutualAuto });
+    await chrome.storage.local.set({ mutualAutoFollowSettings: mutualNetwork.autoFollow });
+    renderMutualSettingsDrawer();
+  }
+  if (durableCommentAuto) {
+    commentTracking.autoFollow = normalizeAutoFollowConfig({ ...commentTracking.autoFollow, ...durableCommentAuto });
+    await chrome.storage.local.set({ commentAutoFollowSettings: commentTracking.autoFollow });
+    renderCommentAutoFollowSettings();
+  }
   if (Array.isArray(savedLogs) && savedLogs.length && !autoFollowLogs.length) { autoFollowLogs = savedLogs; await chrome.storage.local.set({autoFollowLogs}); renderLogsModal(); }
   if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = []; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
@@ -3083,14 +3198,20 @@ Promise.all([durableGet('rows'), durableGet('monitor'), durableGet('analysisRows
     mutualNetwork = {
       ...mutualNetwork,
       ...savedNetwork,
-      autoFollow: {...defaultMutualAutoFollow, ...(savedNetwork.autoFollow || mutualNetwork.autoFollow || {})}
+      autoFollow: normalizeAutoFollowConfig(savedNetwork.autoFollow || mutualNetwork.autoFollow || {})
     };
     await chrome.storage.local.set({mutualNetwork});
     renderMutualNetwork();
     renderMutualSettingsDrawer();
     networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`);
   }
-  if (!(commentTracking.users || []).length && savedComments?.users?.length) { commentTracking = {...savedComments, autoFollow:{...defaultCommentAutoFollow(), ...(savedComments.autoFollow || {})}}; await chrome.storage.local.set({commentTracking}); renderCommentTracking(); renderCommentAutoFollowSettings(); chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {}); }
+  if (!(commentTracking.users || []).length && savedComments?.users?.length) {
+    commentTracking = {...savedComments, autoFollow:normalizeAutoFollowConfig(savedComments.autoFollow || commentTracking.autoFollow || {})};
+    await chrome.storage.local.set({commentTracking});
+    renderCommentTracking();
+    renderCommentAutoFollowSettings();
+    chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
+  }
   if (sanitizeMojibakeCollections()) {
     await chrome.storage.local.set({monitor, mutualNetwork, profileCache});
     persist('monitor', monitor);
