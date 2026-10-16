@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END} from '../grok-comment.js';
-import {publishQuotePostOnPage} from '../page-reader.js';
+import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab} from '../grok-comment.js';
+import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage} from '../page-reader.js';
 
 test('extractGrokComment takes the body between markers', () => {
   assert.equal(extractGrokComment(`好的\n${START}恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？${END}\n希望有帮助`), '恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？');
@@ -44,48 +44,68 @@ test('makeNonce is unique per call', () => {
 });
 
 test('publishQuotePostOnPage refuses when the page is not the target status page', async () => {
-  globalThis.location = {pathname: '/someone'};
+  globalThis.location = {pathname: '/someone/status/999'};
   globalThis.document = {querySelectorAll: () => [], querySelector: () => null};
   const res = await publishQuotePostOnPage('https://x.com/alice/status/123', '评价');
   assert.equal(res.ok, false);
-  assert.match(res.reason, /目标帖子详情页/);
+  assert.match(res.reason, /不是目标原帖/);
   const empty = await publishQuotePostOnPage('https://x.com/alice/status/123', '  ');
   assert.equal(empty.ok, false);
 });
 
 function makeQuotePage({embeddedOriginal = true} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
+  globalThis.window = {innerHeight: 900};
   const events = [];
   let closed = false;
-  const box = {offsetParent: {}, innerText: '', focus() { events.push('focus'); }};
+  let composerOpen = false;
+  const rect = (top, width, height) => ({top, bottom: top + height, width, height});
+  const box = {innerText: '', getBoundingClientRect: () => rect(120, 500, 28), focus() { events.push('focus'); }};
   const send = {
     disabled: false,
     getAttribute: () => null,
     click() { events.push('publish'); closed = true; }
   };
-  const quoteItem = {offsetParent: {}, innerText: 'Quote', click() { events.push('quote'); }};
+  const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(160, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
   const retweet = {click() { events.push('retweet'); }};
-  const originalLink = {};
-  const article = {querySelector(selector) {
-    if (selector === '[data-testid="retweet"]') return retweet;
-    if (selector.includes('/status/123')) return originalLink;
-    return null;
-  }};
-  const dialog = {querySelector(selector) {
+  const originalLink = {href: 'https://x.com/alice/status/123'};
+  const article = {
+    querySelectorAll: selector => selector === 'a' ? [originalLink] : [],
+    querySelector(selector) {
+      if (selector === '[data-testid="retweet"]') return retweet;
+      if (selector.includes('/status/123')) return originalLink;
+      return null;
+    }
+  };
+  const dialog = {
+    getBoundingClientRect: () => rect(50, 600, 640),
+    contains: element => element === box,
+    querySelectorAll(selector) {
+      if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
+      if (selector === 'a') return embeddedOriginal ? [originalLink] : [];
+      return [];
+    },
+    querySelector(selector) {
     if (selector.includes('/status/123')) return embeddedOriginal ? originalLink : null;
-    if (selector === '[data-testid="tweetTextarea_0"]') return closed ? null : box;
-    if (selector === '[data-testid="tweetButton"]') return closed ? null : send;
+    if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? box : null;
+    if (selector === '[data-testid="tweetButton"]') return composerOpen && !closed ? send : null;
     return null;
   }};
+  const hiddenDialog = {
+    getBoundingClientRect: () => rect(0, 1920, 0),
+    contains: element => element === box,
+    querySelectorAll: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? [box] : [],
+    querySelector: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? box : null
+  };
   globalThis.document = {
     querySelectorAll(selector) {
       if (selector === 'article') return [article];
       if (selector === '[role="menuitem"]') return events.includes('retweet') ? [quoteItem] : [];
+      if (selector === '[role="dialog"]') return composerOpen && !closed ? [hiddenDialog, dialog] : [];
       return [];
     },
     querySelector(selector) {
       if (selector === '[data-testid="toast"]') return null;
-      if (selector === '[role="dialog"]') return events.includes('quote') && !closed ? dialog : null;
       return null;
     },
     execCommand(command, _ui, text) {
@@ -100,6 +120,9 @@ function makeQuotePage({embeddedOriginal = true} = {}) {
 
 test('publishQuotePostOnPage embeds the exact original and publishes through Quote', async () => {
   const {events} = makeQuotePage();
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(inspected.ready, true);
   const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
   assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'publish']);
@@ -107,8 +130,37 @@ test('publishQuotePostOnPage embeds the exact original and publishes through Quo
 
 test('publishQuotePostOnPage refuses to publish if the composer does not contain the target original', async () => {
   const {events} = makeQuotePage({embeddedOriginal: false});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
   const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
   assert.equal(result.ok, false);
   assert.match(result.reason, /未嵌入目标原帖/);
   assert.equal(events.includes('publish'), false);
+});
+
+test('postQuoteOnTab recovers when choosing Quote navigates away and destroys the injected page context', async () => {
+  const calls = [];
+  const targetUrl = 'https://x.com/alice/status/123';
+  globalThis.chrome = {
+    tabs: {
+      update: async (_tabId, update) => { calls.push('navigate:' + update.url); },
+      get: async () => ({status: 'complete', url: 'https://x.com/compose/post'})
+    },
+    scripting: {
+      executeScript: async ({func}) => {
+        calls.push(func.name);
+        if (func === openQuoteComposerOnPage) throw new Error('Execution context was destroyed by X route change');
+        if (func.name === 'inspectQuoteComposerOnPage') return [{result: {ok: true, ready: true, originalUrl: targetUrl}}];
+        if (func === publishQuotePostOnPage) return [{result: {ok: true, mode: 'quote'}}];
+        return [];
+      }
+    }
+  };
+  const result = await postQuoteOnTab(1, {url: targetUrl}, '引用评价文本', publishQuotePostOnPage, async () => {});
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.deepEqual(calls, [
+    'navigate:' + targetUrl,
+    'openQuoteComposerOnPage',
+    'inspectQuoteComposerOnPage',
+    'publishQuotePostOnPage'
+  ]);
 });

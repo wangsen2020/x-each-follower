@@ -1,5 +1,6 @@
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
+import { openQuoteComposerOnPage, inspectQuoteComposerOnPage } from './page-reader.js';
 
 export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
@@ -242,7 +243,28 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     await sleep(500);
   }
   await sleep(1500);
+  const opened = (await chrome.scripting.executeScript({ target: { tabId }, func: openQuoteComposerOnPage, args: [url] })
+    .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
+
+  // X 选择 Quote 会从帖子页切换到 /compose/post；原页面注入可能因路由导航被销毁。
+  // 不把这类导航错误当作发布失败，等新路由上的引用编辑框确实就绪后重新注入发布阶段。
+  const composerDeadline = Date.now() + 20000;
+  let composerReady = false;
+  while (Date.now() < composerDeadline) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return { ok: false, reason: '引用帖标签页已关闭' };
+    if (tab.status !== 'complete') { await sleep(300); continue; }
+    const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url] })
+      .catch(() => []))?.[0]?.result;
+    if (state?.ok && state.ready && String(state.originalUrl || '').includes(new URL(url).pathname)) {
+      composerReady = true;
+      break;
+    }
+    await sleep(300);
+  }
+  if (!composerReady) return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框' };
+
   const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
-  return res || { ok: false, reason: '发表脚本无返回' };
+  return res || { ok: false, reason: '引用帖发布脚本无返回' };
 }
