@@ -1882,7 +1882,7 @@ function probeXGrokInPage() {
   if (/Subscribe to Premium|Upgrade to Premium|Upgrade to SuperGrok|Grok is not available in your region/i.test(text)) {
     return { ok: false, reason: 'x.com 账号未开通 Grok 权限（需订阅 Premium）' };
   }
-  if (/Grok was unable to reply|Something went wrong, please refresh/i.test(text)) {
+  if (/Grok was unable to reply|Something went wrong, please refresh|Failed to load models|Unable to load model/i.test(text)) {
     return { ok: false, reason: 'x.com Grok 服务暂时异常或被限流' };
   }
   const ta = Array.prototype.find.call(
@@ -1898,13 +1898,33 @@ function probeGrokComInPage() {
   if (/login|signin/i.test(url)) {
     return { ok: false, reason: 'grok.com 用户未登录' };
   }
-  const text = (document.body.innerText || '').slice(0, 3000);
-  if (/(Sign in|Log in to continue|Sign in with X)/i.test(text) && !document.querySelector('textarea, [contenteditable="true"]')) {
+  const bodyText = (document.body ? document.body.innerText : '') || '';
+  if (/(Sign in|Log in to continue|Sign in with X)/i.test(bodyText) && !document.querySelector('textarea, [contenteditable="true"]')) {
     return { ok: false, reason: 'grok.com 用户未登录' };
   }
-  if (/Subscription required|Upgrade to continue|Limit reached/i.test(text)) {
+  if (/Subscription required|Upgrade to continue|Limit reached/i.test(bodyText)) {
     return { ok: false, reason: 'grok.com 未开通使用权限或额度耗尽' };
   }
+
+  // 精准识别 grok.com 出现的 "Failed to load models. Retry" 故障
+  const hasModelFailText = /Failed to load models|Unable to load model|Failed to fetch models|No models available/i.test(bodyText);
+  const modelFailEl = Array.from(document.querySelectorAll('*')).find(
+    el => el.children.length === 0 && /Failed to load models/i.test(el.textContent || '')
+  );
+  if (hasModelFailText || modelFailEl) {
+    // 尝试寻找弹出的 Retry 按钮自动点击一次尝试恢复
+    const retryBtn = Array.from(document.querySelectorAll('button, a, span, div[role="button"]'))
+      .find(el => el.textContent && /Retry|重试/i.test(el.textContent.trim()) && el.offsetParent !== null);
+    if (retryBtn) {
+      try { retryBtn.click(); } catch (e) {}
+    }
+    return { ok: false, reason: 'grok.com 模型加载失败 (Failed to load models. Retry)' };
+  }
+
+  if (/Something went wrong|Service unavailable/i.test(bodyText) && !document.querySelector('textarea, [contenteditable="true"]')) {
+    return { ok: false, reason: 'grok.com 服务暂时不可用' };
+  }
+
   const inputEl = document.querySelector('textarea, [contenteditable="true"], [data-placeholder], input[type="text"]');
   if (inputEl) {
     return { ok: true, reason: 'grok.com 已登录且开通可用' };
@@ -1913,6 +1933,10 @@ function probeGrokComInPage() {
 }
 
 function driveGrokComInput(prompt) {
+  const bodyText = (document.body ? document.body.innerText : '') || '';
+  if (/Failed to load models|Unable to load model/i.test(bodyText)) {
+    return { ok: false, err: 'grok.com 模型加载失败 (Failed to load models)' };
+  }
   const inputEl = document.querySelector('textarea, [contenteditable="true"]');
   if (!inputEl) return { ok: false, err: '未找到 grok.com 输入框' };
   if (inputEl.tagName === 'TEXTAREA') {
@@ -1937,7 +1961,10 @@ function driveGrokComInput(prompt) {
 }
 
 function readGrokComDomAnswer(anchor) {
-  const text = document.body.innerText || '';
+  const text = (document.body ? document.body.innerText : '') || '';
+  if (/Failed to load models|Unable to load model/i.test(text)) {
+    return { text: '', done: true, err: 'grok.com 模型加载失败' };
+  }
   const i = text.lastIndexOf(anchor);
   if (i < 0) return { text: '', done: false };
   const slice = text.slice(i + anchor.length).trim();
@@ -1996,7 +2023,7 @@ async function checkGrokAvailability(force = false) {
     return cachedGrokAvailability;
   }
 
-  // 3. x.com 不可用时，探测 grok.com 用户是否已开通
+  // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常
   let winGrok = null;
   try {
     winGrok = await chrome.windows.create({
@@ -2036,7 +2063,7 @@ async function checkGrokAvailability(force = false) {
     cachedGrokAvailability = {
       available: false,
       activeChannel: null,
-      message: `x.com（${xReason || '不可用'}）与 grok.com（${grokComReason || '未登录/未开通'}）均不可用，评论生成不可用`,
+      message: `x.com（${xReason || '不可用'}）与 grok.com（${grokComReason || '未登录/未开通/模型加载失败'}）均不可用，评论生成不可用`,
       xReason,
       grokComReason
     };
@@ -2048,6 +2075,14 @@ async function checkGrokAvailability(force = false) {
 
 async function requestGrokReplyForPost(handle, post, authorName = '') {
   if (!post || !post.text) return null;
+
+  // 1. 优先读取 Grok 可用性检测结果，若均不可用立即跳过，避免长时间阻塞看帖和关注流程
+  const status = await checkGrokAvailability(false);
+  if (!status.available) {
+    console.warn('Grok 评论服务当前不可用，跳过回评生成:', status.message);
+    return null;
+  }
+
   const postText = (post.text || '').trim();
   const cleanHandle = String(handle || '').replace(/^@/, '');
   const cleanName = repairMojibake(authorName || cleanHandle);
@@ -2065,94 +2100,105 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
     postText.slice(0, 500)
   ].join('\n');
 
-  let createdWindow = null;
-  let streamText = null;
-  const streamPromise = new Promise(resolve => {
-    activeGrokStreamResolver = resolve;
-  });
-  streamPromise.then(text => { streamText = text; }).catch(() => {});
-
-  try {
-    createdWindow = await chrome.windows.create({
-      url: 'https://x.com/i/grok',
-      type: 'popup',
-      state: 'minimized',
-      focused: false
+  // 如果已知只有 grok.com 可用（例如 x.com 未开通 Premium），直接走 grok.com 通道
+  if (status.activeChannel !== 'grok.com') {
+    let createdWindow = null;
+    let streamText = null;
+    const streamPromise = new Promise(resolve => {
+      activeGrokStreamResolver = resolve;
     });
-    let tabId = createdWindow.tabs?.[0]?.id;
-    if (!tabId && createdWindow.id) {
-      const tabs = await chrome.tabs.query({windowId: createdWindow.id});
-      tabId = tabs?.[0]?.id;
-    }
-    if (!tabId) return null;
+    streamPromise.then(text => { streamText = text; }).catch(() => {});
 
-    // 驱动输入框填入并提交（MAIN world）
-    const driveRes = (await chrome.scripting.executeScript({
-      target: {tabId},
-      world: 'MAIN',
-      func: driveGrokInput,
-      args: [prompt]
-    }).catch(() => []))?.[0]?.result;
-
-    if (!driveRes?.ok) {
-      console.warn('Grok 驱动发送状态:', driveRes?.err || '已尝试发送');
-    }
-
-    // 双通道等待答案（最长 45 秒）
-    const deadline = Date.now() + 45000;
-    let reply = '';
-    let lastDomText = '';
-    let stableRounds = 0;
-
-    while (Date.now() < deadline) {
-      if (streamText) {
-        reply = extractGrokCommentReply(streamText, cleanHandle);
-        if (reply) break;
+    try {
+      createdWindow = await chrome.windows.create({
+        url: 'https://x.com/i/grok',
+        type: 'popup',
+        state: 'minimized',
+        focused: false
+      });
+      let tabId = createdWindow.tabs?.[0]?.id;
+      if (!tabId && createdWindow.id) {
+        const tabs = await chrome.tabs.query({windowId: createdWindow.id});
+        tabId = tabs?.[0]?.id;
       }
-
-      await sleep(2000);
-
-      try {
-        const out = await chrome.scripting.executeScript({
+      if (tabId) {
+        await sleep(2500);
+        const xProbe = (await chrome.scripting.executeScript({
           target: {tabId},
-          world: 'MAIN',
-          func: readGrokDomAnswer,
-          args: [anchorLine]
-        });
-        const domRes = out?.[0]?.result;
-        if (domRes?.text) {
-          const extracted = extractGrokCommentReply(domRes.text, cleanHandle);
-          if (domRes.done && extracted) {
-            reply = extracted;
-            break;
+          func: probeXGrokInPage
+        }).catch(() => []))?.[0]?.result;
+
+        if (xProbe?.ok) {
+          // 驱动输入框填入并提交（MAIN world）
+          const driveRes = (await chrome.scripting.executeScript({
+            target: {tabId},
+            world: 'MAIN',
+            func: driveGrokInput,
+            args: [prompt]
+          }).catch(() => []))?.[0]?.result;
+
+          if (!driveRes?.ok) {
+            console.warn('Grok 驱动发送状态:', driveRes?.err || '已尝试发送');
           }
-          if (extracted && extracted === lastDomText) {
-            stableRounds++;
-            if (stableRounds >= 3) {
-              reply = extracted;
-              break;
+
+          // 双通道等待答案（最长 45 秒）
+          const deadline = Date.now() + 45000;
+          let reply = '';
+          let lastDomText = '';
+          let stableRounds = 0;
+
+          while (Date.now() < deadline) {
+            if (streamText) {
+              reply = extractGrokCommentReply(streamText, cleanHandle);
+              if (reply) break;
             }
-          } else if (extracted) {
-            lastDomText = extracted;
-            stableRounds = 0;
+
+            await sleep(2000);
+
+            try {
+              const out = await chrome.scripting.executeScript({
+                target: {tabId},
+                world: 'MAIN',
+                func: readGrokDomAnswer,
+                args: [anchorLine]
+              });
+              const domRes = out?.[0]?.result;
+              if (domRes?.text) {
+                const extracted = extractGrokCommentReply(domRes.text, cleanHandle);
+                if (domRes.done && extracted) {
+                  reply = extracted;
+                  break;
+                }
+                if (extracted && extracted === lastDomText) {
+                  stableRounds++;
+                  if (stableRounds >= 3) {
+                    reply = extracted;
+                    break;
+                  }
+                } else if (extracted) {
+                  lastDomText = extracted;
+                  stableRounds = 0;
+                }
+              }
+            } catch (err) {}
+          }
+
+          if (reply) {
+            return {
+              reply,
+              postText: postText.slice(0, 140),
+              postUrl: post.url || ''
+            };
           }
         }
-      } catch (err) {}
-    }
-
-    if (reply) {
-      return {
-        reply,
-        postText: postText.slice(0, 140),
-        postUrl: post.url || ''
-      };
-    }
-  } catch (e) {
-    console.warn('x.com Grok 调用异常，尝试备用通道:', e);
-  } finally {
-    activeGrokStreamResolver = null;
-    if (createdWindow?.id) {
-      await chrome.windows.remove(createdWindow.id).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('x.com Grok 调用异常，尝试备用通道:', e);
+    } finally {
+      activeGrokStreamResolver = null;
+      if (createdWindow?.id) {
+        await chrome.windows.remove(createdWindow.id).catch(() => {});
+      }
     }
   }
 
@@ -2174,11 +2220,15 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
       }).catch(() => []))?.[0]?.result;
 
       if (probeRes?.ok) {
-        await chrome.scripting.executeScript({
+        const driveRes = (await chrome.scripting.executeScript({
           target: { tabId: gTabId },
           func: driveGrokComInput,
           args: [prompt]
-        }).catch(() => {});
+        }).catch(() => []))?.[0]?.result;
+
+        if (driveRes?.err) {
+          console.warn('grok.com 输入驱动错误:', driveRes.err);
+        }
 
         const gDeadline = Date.now() + 40000;
         let gReply = '';
@@ -2190,6 +2240,10 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
             args: [anchorLine]
           }).catch(() => []);
           const res = out?.[0]?.result;
+          if (res?.err) {
+            console.warn('grok.com 运行异常:', res.err);
+            break;
+          }
           if (res?.text) {
             const ext = extractGrokCommentReply(res.text, cleanHandle);
             if (res.done && ext) {
@@ -2208,6 +2262,13 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
         }
       } else {
         console.warn('grok.com 备用通道不可用:', probeRes?.reason || '未开通或未登录');
+        cachedGrokAvailability = {
+          available: false,
+          activeChannel: null,
+          message: `grok.com 不可用（${probeRes?.reason || '模型加载失败/未开通'}），评论功能不可用`,
+          xReason: status.xReason,
+          grokComReason: probeRes?.reason || '不可用'
+        };
       }
     }
   } catch (grokErr) {
