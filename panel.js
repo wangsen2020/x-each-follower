@@ -3706,7 +3706,8 @@ async function recordAutoFollowLog(entry) {
     })),
     grokComment: entry.grokComment || '',
     grokCommentPost: entry.grokCommentPost || '',
-    grokCommentPostUrl: entry.grokCommentPostUrl || ''
+    grokCommentPostUrl: entry.grokCommentPostUrl || '',
+    commentPosted: Boolean(entry.commentPosted)
   };
   autoFollowLogs.unshift(logItem);
   if (autoFollowLogs.length > 300) autoFollowLogs = autoFollowLogs.slice(0, 300);
@@ -3814,7 +3815,15 @@ function renderLogsModal() {
 
     const resultBadge = document.createElement('span');
     resultBadge.className = 'badge';
-    if (log.result === 'followed') {
+    if (log.source === 'manual' && log.grokComment) {
+      if (log.commentPosted) {
+        resultBadge.classList.add('candidate');
+        resultBadge.textContent = '回评已发表 ✓';
+      } else {
+        resultBadge.classList.add('review');
+        resultBadge.textContent = '仅生成草稿';
+      }
+    } else if (log.result === 'followed') {
       resultBadge.classList.add('candidate');
       resultBadge.textContent = '关注成功 ✓';
     } else if (log.result === 'skipped') {
@@ -4007,7 +4016,7 @@ async function clearAutoFollowLogs() {
 }
 
 // 绑定日志弹窗与 Grok 实测事件
-async function handleTestGrokClick(buttonId, displayId) {
+async function handleTestGrokClick(buttonId, displayId, scope) {
   const btn = $(buttonId);
   const handleEl = $(displayId);
   if (!btn) return;
@@ -4064,11 +4073,11 @@ async function handleTestGrokClick(buttonId, displayId) {
       }
 
       await recordAutoFollowLog({
-        scope: 'mutual',
+        scope,
         source: 'manual',
         handle: testHandle,
         name: testAuthorName,
-        result: isPublished ? 'followed' : 'skipped',
+        result: isPublished ? 'commented' : 'draft',
         detail: isPublished ? `手动实测：Grok（${testRes.channel}）写评论并已发表到帖子下。` : `手动实测：Grok（${testRes.channel}）已写评论，${publishReason ? '发表失败：' + publishReason : '未选择发表'}。`,
         posts: [testPost],
         grokComment: testRes.reply,
@@ -4095,8 +4104,8 @@ async function handleTestGrokClick(buttonId, displayId) {
   }
 }
 
-$('testMutualGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testMutualGrokBtn', 'mutualGrokStatusHandle'));
-$('testCommentGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testCommentGrokBtn', 'commentGrokStatusHandle'));
+$('testMutualGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testMutualGrokBtn', 'mutualGrokStatusHandle', 'mutual'));
+$('testCommentGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testCommentGrokBtn', 'commentGrokStatusHandle', 'comment'));
 
 $('openMutualLogs')?.addEventListener('click', openLogsModal);
 $('openCommentLogs')?.addEventListener('click', openLogsModal);
