@@ -625,6 +625,9 @@ function renderMonitorList() {
     $('analyzeSelected').hidden = activeFollowerTab === 'notMutual';
     $('analyzeSelected').disabled = selectedFollowerHandles.size === 0 || selectedFollowerHandles.size > 20;
   }
+  if ($('addSelectedToMutual')) {
+    $('addSelectedToMutual').disabled = selectedFollowerHandles.size === 0;
+  }
   if ($('batchUnfollow')) {
     $('batchUnfollow').hidden = activeFollowerTab !== 'notMutual';
     $('batchUnfollow').disabled = selectedFollowerHandles.size === 0 || unfollowRunning;
@@ -2636,6 +2639,83 @@ async function unfollowOne(user, button) {
   }
 }
 
+async function addSelectedFollowersToMutualNetwork() {
+  if (!selectedFollowerHandles.size) {
+    monitorStatus('请先在列表中勾选需要加入互关追踪的用户账号。');
+    return;
+  }
+
+  // 汇集当前勾选的用户详情
+  const allKnownMap = new Map();
+  for (const u of (monitor.followingUsers || [])) {
+    if (u?.handle) allKnownMap.set(u.handle.toLowerCase(), u);
+  }
+  for (const u of (monitor.users || [])) {
+    if (u?.handle) {
+      const existing = allKnownMap.get(u.handle.toLowerCase()) || {};
+      allKnownMap.set(u.handle.toLowerCase(), { ...existing, ...u });
+    }
+  }
+  for (const u of getNotMutualUsers()) {
+    if (u?.handle) {
+      const existing = allKnownMap.get(u.handle.toLowerCase()) || {};
+      allKnownMap.set(u.handle.toLowerCase(), { ...existing, ...u });
+    }
+  }
+
+  const targets = [...selectedFollowerHandles].map(k => allKnownMap.get(k)).filter(Boolean);
+  if (!targets.length) {
+    monitorStatus('未找到选中账号的详细信息。');
+    return;
+  }
+
+  const existingMutualMap = new Map((mutualNetwork.users || []).map(u => [u.handle.toLowerCase(), u]));
+  let addedCount = 0;
+  let updatedCount = 0;
+  const now = new Date().toISOString();
+
+  for (const user of targets) {
+    const key = user.handle.toLowerCase();
+    const cached = profileCache[key] || {};
+    const baseAccount = {
+      id: user.id || cached.id || '',
+      handle: user.handle,
+      name: repairMojibake(cached.name || user.name || user.handle),
+      bio: repairMojibake(cached.bio || user.bio || ''),
+      avatarUrl: cached.avatarUrl || user.avatarUrl || '',
+      followersText: cached.followersText || user.followersText || '',
+      followingText: cached.followingText || user.followingText || '',
+      followers: cached.followers || user.followers || null,
+      following: cached.following || user.following || null,
+      sourceAnchors: ['粉丝管理'],
+      discoveredAt: now,
+      relationship: { ...(user.relationship || {}), ...(cached.relationship || {}) }
+    };
+
+    if (!existingMutualMap.has(key)) {
+      const full = applyOwnFollowingSnapshot(mergeNetworkAccount({}, baseAccount));
+      existingMutualMap.set(key, full);
+      addedCount++;
+    } else {
+      const old = existingMutualMap.get(key);
+      const merged = applyOwnFollowingSnapshot(mergeNetworkAccount(old, baseAccount));
+      existingMutualMap.set(key, merged);
+      updatedCount++;
+    }
+  }
+
+  mutualNetwork.users = [...existingMutualMap.values()];
+  mutualNetwork.updatedAt = now;
+  await saveMutualNetwork();
+  renderMutualNetwork();
+
+  if ($('mutualNetworkCount')) $('mutualNetworkCount').textContent = mutualNetwork.users.length;
+
+  const msg = `已成功将选中的 ${targets.length} 位用户加入互关追踪（新增 ${addedCount} 位，更新 ${updatedCount} 位），可前往“互关追踪”进行统一分析与定时看帖关注！`;
+  monitorStatus(msg);
+  alert(msg);
+}
+
 async function batchUnfollowSelected() {
   if (unfollowRunning) {
     unfollowStopped = true;
@@ -3222,6 +3302,7 @@ $('listSelectAll').addEventListener('change', event => {
   renderMonitorList();
 });
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
+$('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
 $('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; renderMonitorList(); });
 $('followerSearchBtn')?.addEventListener('click', () => { followerSearch=$('followerSearch').value.trim(); followerPage=1; renderMonitorList(); });
 $('followerSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { followerSearch=event.target.value.trim(); followerPage=1; renderMonitorList(); } });
