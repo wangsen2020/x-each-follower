@@ -6,12 +6,13 @@
   <aside class="sidebar" aria-label="主导航">
     <div class="brand-mark"><div class="brand-logo"><img src="icon128.png" alt="XFollower logo"></div><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
     <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="candidates">互粉网络 <span id="mutualNetworkCount" class="nav-count">0</span></button>
+    <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count">0</span></button>
+    <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.17.0<br>本地数据</div>
+    <div class="sidebar-foot">v0.24.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v0.17.0</span><h1>粉丝管理</h1></header>
-  <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置">
+  <header><span class="eyebrow">XFollower · v0.24.0</span><h1>粉丝管理</h1></header>
+  <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置" hidden>
     <label class="target">默认互粉锚点<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
     <label>资料采集上限<input id="limit" type="number" value="50" min="1" max="500"></label>
     <label>粉丝 / 关注下限<input id="minRatio" type="number" value="0.7" min="0.01" step="0.1"></label>
@@ -19,25 +20,376 @@
     <label>两项人数至少<input id="minCount" type="number" value="50" min="0"></label>
     <label>访问间隔（秒）<input id="delay" type="number" value="5" min="3" max="60"></label>
     <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
-    <div class="actions"><button id="start">打开互粉网络</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
+    <div class="actions"><button id="start">打开互关追踪</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
   </section>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
-    <div class="monitor-head"><div class="follower-tabs" role="tablist"><button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount">0</span></button><button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount">0</span></button><span class="info-tip" data-tip="首次获取会建立本地粉丝列表；之后扫描只补充新粉丝。" aria-label="粉丝列表说明">?</span></div><div class="monitor-head-actions"><div id="monitorPagination" class="monitor-pagination" hidden><label>搜索<input id="followerSearch" type="search" placeholder="账号、名称或简介" autocomplete="off"></label><label>每页<select id="followerPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label><span id="followerPageSummary" class="page-summary"></span><div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div></div><div class="icon-actions"><button id="scanFollowers" class="icon-button" title="获取初始粉丝列表或扫描新粉丝" aria-label="扫描粉丝">↻</button><button id="processFollowBack" class="icon-button secondary" title="按设置的节奏处理已进入待回关队列的账号" aria-label="处理待回关">↗</button></div></div></div>
-    <div class="monitor-toolbar"><label><span>检查间隔 <span class="info-tip" data-tip="自动扫描粉丝的时间间隔，单位为分钟。" aria-label="检查间隔说明">?</span></span><input id="monitorEvery" type="number" value="60" min="10" max="1440"></label><label><span>每批回关 <span class="info-tip" data-tip="每次处理待回关队列时最多点击的账号数。" aria-label="每批回关说明">?</span></span><input id="followBatch" type="number" value="10" min="1" max="20"></label><label><span>批次间隔 <span class="info-tip" data-tip="两批回关之间等待的时间，单位为分钟。" aria-label="批次间隔说明">?</span></span><input id="batchEvery" type="number" value="10" min="5" max="180"></label><label class="check compact-check"><input id="monitorEnabled" type="checkbox"><span>定时扫描 <span class="info-tip" data-tip="开启后按检查间隔提醒扫描新粉丝。" aria-label="定时扫描说明">?</span></span></label></div>
-    <div id="selectionBar" class="selection-bar" hidden><label><input id="listSelectAll" type="checkbox"> 全选本页 <span class="info-tip" data-tip="只选择当前页；Grok 每次最多分析 20 个账号。" aria-label="批量选择说明">?</span></label><span>已选 <b id="selectedCount">0</b> / 20</span><button id="analyzeSelected" class="secondary" disabled>Grok 分析</button></div>
+    <div class="monitor-head">
+      <div class="follower-tabs" role="tablist">
+        <button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount">0</span></button>
+        <button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount">0</span></button>
+        <button class="follower-tab" data-follower-tab="notMutual" role="tab">未互关 <span id="notMutualCount">0</span></button>
+        <span class="info-tip" data-tip="已关注：相互关注与已关注账号；待回关：对方关注了我们但未回关；未互关：我们关注了对方但对方未回关（单向关注）。" aria-label="粉丝分类说明">?</span>
+      </div>
+      <div class="monitor-head-right">
+        <div class="icon-actions">
+          <button id="scanFollowers" class="icon-button" title="增量同步关注与粉丝数据" aria-label="增量同步关注与粉丝">↻</button>
+          <button id="processFollowBack" class="icon-button secondary" title="一键回关所有待关注账号" aria-label="一键回关"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.55-3.35 2.7-5.25 5.5-5.25s4.95 1.9 5.5 5.25"/><path d="M18 8v7M14.5 11.5h7"/></svg></button>
+          <button id="openSettingsDrawer" class="icon-button secondary" title="关注与粉丝检索配置" aria-label="关注与粉丝检索配置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div id="selectionBar" class="selection-bar monitor-subbar" hidden>
+      <div class="subbar-left">
+        <div class="search-wrap">
+          <input id="followerSearch" type="search" placeholder="账号、名称或简介" autocomplete="off">
+          <button id="followerSearchBtn" type="button" class="secondary search-btn">搜索</button>
+        </div>
+        <button id="analyzeSelected" class="secondary" disabled>Grok 分析</button>
+        <button id="batchUnfollow" class="secondary danger-btn" disabled title="批量取消关注选中的账号">批量取关</button>
+      </div>
+      <div id="monitorPagination" class="monitor-pagination">
+        <label>每页<select id="followerPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+        <span id="followerPageSummary" class="page-summary"></span>
+        <div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
+      </div>
+    </div>
     <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite"></p>
     <div id="monitorEmpty" class="monitor-empty"><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>
+    <div id="monitorListHeader" class="monitor-list-header" hidden>
+      <span class="col-check">
+        <input id="listSelectAll" type="checkbox" title="全选 / 取消全选当前页" aria-label="全选当前页">
+      </span>
+      <span class="col-profile">
+        <span>粉丝画像</span>
+        <span class="selected-count-badge">已选 <b id="selectedCount">0</b> / <span id="totalVisibleCount">0</span></span>
+      </span>
+      <span class="col-tag">标签 <span class="info-tip" data-tip="互粉标签：有互粉意向且推荐互关标为“互粉”，否则为“无”；关注量不少于粉丝数 4/5（差额 1/5 以内）标为“推荐”，否则标为“不推荐”。悬停标签可查看推荐原因或不推荐原因。" aria-label="标签说明">?</span></span>
+      <span class="col-status">关系状态</span>
+      <span class="col-actions">操作</span>
+    </div>
     <div id="monitorList" class="monitor-list" hidden></div>
   </section>
-  <div id="candidatesSection" class="tab-panel" data-panel="candidates"><div class="mutual-network-head"><label class="mutual-field mutual-anchor-field"><span class="mutual-field-label">互粉锚点 <span class="info-tip" data-tip="输入一个以互关为主、粉丝数和关注数接近的账号。插件读取其 following 和 followers，并将两侧账号去重合并。" aria-label="互粉锚点说明">?</span></span><input id="networkAnchor" placeholder="@username 或主页链接" autocomplete="off"></label><label class="mutual-field mutual-limit-field"><span class="mutual-field-label">每侧上限 <span class="info-tip" data-tip="每次最多读取锚点 following 和 followers 的数量；更大的范围需要更多时间。" aria-label="每侧上限说明">?</span></span><select id="networkLimit"><option value="100">100</option><option value="250">250</option><option value="500" selected>500</option></select></label><button id="collectNetwork">开始新网络</button></div><p id="networkStatus" class="network-status" role="status" aria-live="polite">输入互粉锚点后开始收集。</p>
-  <div class="table-wrap"><table><thead><tr><th>账号与简介</th><th>与锚点关系</th><th>粉丝</th><th>关注</th><th>操作</th></tr></thead><tbody id="mutualResults"></tbody></table><p id="mutualEmpty">还没有互粉网络记录。</p></div></div>
+  <div id="candidatesSection" class="tab-panel" data-panel="candidates" hidden>
+    <div class="mutual-network-head">
+      <label class="mutual-field mutual-anchor-field"><span class="mutual-field-label">互粉锚点 <span class="info-tip" data-tip="输入一个以互关为主、粉丝数和关注数接近的账号。插件读取其 following 和 followers，并将两侧账号去重合并到互关追踪列表。" aria-label="互粉锚点说明">?</span></span><input id="networkAnchor" placeholder="@username 或主页链接" autocomplete="off"></label>
+      <label class="mutual-field mutual-limit-field"><span class="mutual-field-label">每侧上限 <span class="info-tip" data-tip="每次最多读取锚点 following 和 followers 的数量；更大的范围需要更多时间。" aria-label="每侧上限说明">?</span></span><select id="networkLimit"><option value="100">100</option><option value="250">250</option><option value="500" selected>500</option></select></label>
+      <button id="collectNetwork">开始新追踪</button>
+      <button id="batchRefreshMutual" class="secondary" title="优先批量更新已勾选账号，未勾选时更新当前页公开资料及关注关系">批量更新</button>
+      <button id="grokAnalyzeMutual" class="secondary" title="优先将已勾选账号（最多 20 个）提交给 Grok 分析互粉倾向并回填标签">Grok 分析</button>
+      
+    </div>
+    <div class="mutual-subbar">
+      <div class="subbar-left">
+        <div class="follower-tabs mutual-tabs" role="tablist" aria-label="互关追踪关系分类">
+          <button class="follower-tab mutual-tab active" data-mutual-tab="mutual" role="tab" aria-selected="true">已互关 <span id="mutualTabMutualCount">0</span></button>
+          <button class="follower-tab mutual-tab" data-mutual-tab="following" role="tab" aria-selected="false">已关注 <span id="mutualTabFollowingCount">0</span></button>
+          <button class="follower-tab mutual-tab" data-mutual-tab="followBack" role="tab" aria-selected="false">待回关 <span id="mutualTabFollowBackCount">0</span></button>
+          <button class="follower-tab mutual-tab" data-mutual-tab="none" role="tab" aria-selected="false">无关系 <span id="mutualTabNoneCount">0</span></button>
+          <span class="info-tip" data-tip="已互关：双方互相关注；已关注：你已关注对方但对方未回关；待回关：对方已关注你但你未回关；无关系：双方均未关注或关系未知。" aria-label="互关追踪分类说明">?</span>
+        </div>
+        <div class="search-wrap mutual-search-wrap">
+          <input id="mutualSearch" type="search" placeholder="账号、名称、简介或互粉词" autocomplete="off">
+          <button id="mutualSearchBtn" type="button" class="secondary search-btn">搜索</button>
+        </div>
+      </div>
+      <div class="subbar-right">
+        <div id="mutualPagination" class="monitor-pagination" hidden>
+        <label>
+          <span>每页</span>
+          <select id="mutualPageSize">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+        <span id="mutualPageSummary" class="page-summary">第 1 / 1 页</span>
+        <div class="page-actions">
+          <button id="mutualPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button>
+          <button id="mutualNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button>
+        </div>
+      </div>
+    </div>
+    </div>
+    <p id="networkStatus" class="monitor-status network-status" role="status" aria-live="polite">输入互粉锚点后开始追踪。</p>
+    <div class="table-wrap">
+      <table class="mutual-table">
+        <thead>
+          <tr>
+            <th class="th-check">
+              <input id="mutualSelectAll" type="checkbox" title="全选 / 取消全选当前页" aria-label="全选当前页">
+            </th>
+            <th class="th-account">
+              <span>账号与简介</span>
+              <span class="selected-count-badge">已选 <b id="mutualSelectedCount">0</b> / <span id="mutualTotalVisibleCount">0</span></span>
+            </th>
+            <th class="th-tag">标签 <span class="info-tip" data-tip="互粉标签：有互粉意向且推荐互关标为“互粉”，否则为“无”；关注量不少于粉丝数 4/5（差额 1/5 以内）标为“推荐”，否则标为“不推荐”。悬停标签可查看推荐原因或不推荐原因。" aria-label="标签说明">?</span></th>
+            <th class="th-relation">与你的关系 <span class="info-tip" data-tip="按当前登录 X 账号与候选账号之间的关注关系显示；锚点仅用于扩展候选网络。" aria-label="你的关系说明">?</span></th>
+            <th class="th-count">粉丝</th>
+            <th class="th-count">关注</th>
+            <th class="th-actions">操作</th>
+          </tr>
+        </thead>
+        <tbody id="mutualResults"></tbody>
+      </table>
+      <p id="mutualEmpty">还没有互关追踪记录。</p>
+    </div>
+  </div>
+  <section id="commentsSection" class="tab-panel comments-panel" data-panel="comments" aria-label="评论追踪" hidden>
+    <div class="comments-head">
+      <div class="comments-title"><h2>评论追踪</h2><span id="commentsUserCount" class="page-summary">0 位用户</span><button id="openCommentAutoFollowSettings" class="icon-button secondary" title="评论追踪与定时看帖关注设置" aria-label="评论追踪与定时看帖关注设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
+      <div class="follower-tabs comment-tabs" role="tablist" aria-label="评论用户筛选">
+        <button class="follower-tab active" data-comment-filter="notMutual" role="tab" aria-selected="true">未互关 <span id="commentNotMutualCount">0</span></button>
+        <button class="follower-tab" data-comment-filter="all" role="tab" aria-selected="false">全部 <span id="commentAllCount">0</span></button>
+      </div>
+    </div>
+    <div class="comments-toolbar">
+      <div class="search-wrap"><input id="commentSearch" type="search" placeholder="搜索账号、评论或帖子链接" autocomplete="off"><button id="commentSearchBtn" class="secondary search-btn" type="button">搜索</button></div>
+      <div id="commentPagination" class="monitor-pagination">
+        <label>每页<select id="commentPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+        <span id="commentPageSummary" class="page-summary">0 条</span>
+        <div class="page-actions"><button id="commentPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="commentNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
+      </div>
+    </div>
+    <p id="commentTrackingStatus" class="monitor-status" role="status" aria-live="polite">在 X 帖子旁点击评论图标，静默收集评论用户。</p>
+    <div class="table-wrap comments-table-wrap">
+      <table id="commentUsersTable" class="mutual-table comment-table" hidden>
+        <thead>
+          <tr>
+            <th class="th-account">账号与简介</th>
+            <th class="th-source">来源帖子</th>
+            <th class="th-relation">与你的关系</th>
+            <th class="th-count">粉丝</th>
+            <th class="th-count">关注</th>
+            <th class="th-count">关注记录 <span class="info-tip" data-tip="记录你通过本工具关注该用户的时间，以及对方是否已回关（待回关/已回关），方便日后核实并清理未回关账号。" aria-label="关注记录说明">?</span></th>
+            <th class="th-actions">操作</th>
+          </tr>
+        </thead>
+        <tbody id="commentUsersList"></tbody>
+      </table>
+      <p id="commentUsersEmpty" class="comment-empty"><strong>还没有评论用户</strong><span>打开 X，在帖子操作栏点击评论追踪图标开始收集。</span></p>
+    </div>
+  </section>
   <div id="profileDrawerMask" class="profile-drawer-mask" hidden></div>
+  <aside id="settingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="settingsDrawerTitle" hidden>
+    <div class="profile-drawer-head"><strong id="settingsDrawerTitle">关注与粉丝检索配置</strong><button id="closeSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button></div>
+    <div class="profile-drawer-content settings-drawer-content">
+      <div class="drawer-setting-group">
+        <label for="monitorEvery" class="drawer-setting-label">
+          <span>基准检索间隔（分钟）</span>
+          <span class="info-tip" data-tip="自动检索 Following 和 Followers 数据的基本周期，默认 60 分钟。" aria-label="基准检索间隔说明">?</span>
+        </label>
+        <input id="monitorEvery" type="number" value="60" min="10" max="1440">
+        <small class="drawer-setting-desc">增量检索的基础周期，结合随机浮动形成不定频调度。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="monitorJitter" class="drawer-setting-label">
+          <span>不定频随机浮动（±分钟）</span>
+          <span class="info-tip" data-tip="实际执行间隔将在 基准间隔 ± 浮动分钟 内随机生成，避免固定机械规律被平台风控识别。" aria-label="随机浮动说明">?</span>
+        </label>
+        <input id="monitorJitter" type="number" value="15" min="0" max="120">
+        <small class="drawer-setting-desc">突出频率与间隔的不定性，模拟真实人工作息习惯。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label class="drawer-setting-label">
+          <span>增量检索位点记录</span>
+          <span class="info-tip" data-tip="记录上次检索到的最新粉丝账号。下次仅拉取该位点之后的新增粉丝，到达该位点即停止，避免反复拉取全量 2W+ 粉丝。" aria-label="增量位点说明">?</span>
+        </label>
+        <div id="monitorCheckpointDisplay" class="drawer-checkpoint-display">
+          <span id="monitorCheckpointHandle" class="checkpoint-handle">未记录位点（首次将建立基准）</span>
+          <span id="monitorCheckpointTime" class="checkpoint-time"></span>
+        </div>
+        <small class="drawer-setting-desc">增量模式只抓取新增，到达记录位点即自动结束，避免拉取不停。</small>
+      </div>
+
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label">
+          <input id="monitorEnabled" type="checkbox">
+          <span>开启不定频定时检索</span>
+          <span class="info-tip" data-tip="开启后后台将按不定频浮动间隔定时提醒或检索新增数据。" aria-label="定时检索说明">?</span>
+        </label>
+        <small class="drawer-setting-desc">按设定基准及随机浮动区间在后台定时提醒同步增量数据。</small>
+      </div>
+    </div>
+    <div class="profile-drawer-actions"><button id="saveSettingsDrawer" type="button">保存配置</button></div>
+  </aside>
+  <aside id="mutualSettingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="mutualSettingsDrawerTitle" hidden>
+    <div class="profile-drawer-head">
+      <strong id="mutualSettingsDrawerTitle">互粉追踪 · 定时看帖与关注设置</strong>
+      <div class="drawer-head-actions">
+        <button id="openMutualLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
+        <button id="closeMutualSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <div class="profile-drawer-content settings-drawer-content">
+      <div class="drawer-setting-group">
+        <label for="mutualAutoEvery" class="drawer-setting-label">
+          <span>定时执行周期（分钟）</span>
+          <span class="info-tip" data-tip="每隔多少分钟自动挑选有意向、有价值的用户，打开其首页下拉看帖并关注。" aria-label="定时执行周期说明">?</span>
+        </label>
+        <input id="mutualAutoEvery" type="number" value="45" min="5" max="1440">
+        <small class="drawer-setting-desc">定时寻找价值互粉账号的基础间隔周期。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="mutualAutoJitter" class="drawer-setting-label">
+          <span>随机浮动间隔（±分钟）</span>
+          <span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问与关注的时间间隔自然不固定。" aria-label="随机浮动间隔说明">?</span>
+        </label>
+        <input id="mutualAutoJitter" type="number" value="15" min="0" max="120">
+        <small class="drawer-setting-desc">不定频调度，避免固定时间点触发平台风控。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="mutualAutoBatchSize" class="drawer-setting-label">
+          <span>单次关注人数上限</span>
+          <span class="info-tip" data-tip="每轮定时任务最多打开多少位高价值用户的首页进行看帖和关注。" aria-label="单次关注人数说明">?</span>
+        </label>
+        <input id="mutualAutoBatchSize" type="number" value="3" min="1" max="20">
+        <small class="drawer-setting-desc">建议单次 2–5 人，少量多次更接近真人习惯。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="mutualAutoScrollRounds" class="drawer-setting-label">
+          <span>主页下拉看帖次数</span>
+          <span class="info-tip" data-tip="打开对方个人主页后，模拟向下滚动阅读帖子的分段次数，同时提取前 5–10 条帖子校验互粉意向。" aria-label="下拉看帖次数说明">?</span>
+        </label>
+        <input id="mutualAutoScrollRounds" type="number" value="3" min="1" max="8">
+        <small class="drawer-setting-desc">打开首页后分多次平滑下拉看帖，随后再回顶部点击关注。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="mutualAutoDwellSec" class="drawer-setting-label">
+          <span>主页看帖停留时长（秒）</span>
+          <span class="info-tip" data-tip="在对方主页下拉浏览帖子的总停留时间（秒），停留结束后再触发点击关注。" aria-label="看帖停留时长说明">?</span>
+        </label>
+        <input id="mutualAutoDwellSec" type="number" value="6" min="2" max="30">
+        <small class="drawer-setting-desc">模拟真实阅读帖子的停留时间。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="mutualAutoMinFollowers" class="drawer-setting-label">
+          <span>最低粉丝数门槛</span>
+          <span class="info-tip" data-tip="过滤粉丝过少的空白小号，优先选择活跃有价值的互粉账号。" aria-label="最低粉丝数说明">?</span>
+        </label>
+        <input id="mutualAutoMinFollowers" type="number" value="50" min="0" max="1000000">
+        <small class="drawer-setting-desc">仅挑选粉丝数达到该门槛且评估为“推荐”的账号。</small>
+      </div>
+
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label">
+          <input id="mutualAutoOnlyIntent" type="checkbox" checked>
+          <span>仅关注有“互粉”意向或“推荐”标签账号</span>
+        </label>
+        <small class="drawer-setting-desc">打开首页下拉看帖时若发现对方属于“不推荐”，将自动跳过不关注。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label class="drawer-setting-label">
+          <span>执行状态与记录</span>
+        </label>
+        <div id="mutualAutoStatusBox" class="drawer-checkpoint-display">
+          <span id="mutualAutoSummaryText" class="checkpoint-handle">尚未执行定时看帖关注</span>
+          <span id="mutualAutoLastTime" class="checkpoint-time"></span>
+        </div>
+      </div>
+
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label">
+          <input id="mutualAutoEnabled" type="checkbox">
+          <span>开启定时看帖并关注</span>
+          <span class="info-tip" data-tip="开启后将按设定周期自动挑选有意向、有价值的用户，打开其首页下拉模拟看帖并点击关注。" aria-label="开启定时看帖关注说明">?</span>
+        </label>
+        <small class="drawer-setting-desc">后台定时挑选高价值互粉用户，自动完成“打开主页 → 下拉看帖 → 点击关注”。</small>
+      </div>
+    </div>
+    <div class="profile-drawer-actions">
+      <button id="saveMutualSettings" type="button">保存配置</button>
+      <button id="runMutualAutoNow" class="secondary" type="button">立即执行一次（看帖并关注）</button>
+    </div>
+  </aside>
+  <aside id="commentAutoFollowDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="commentAutoFollowTitle" hidden>
+    <div class="profile-drawer-head">
+      <strong id="commentAutoFollowTitle">评论追踪 · 定时看帖与关注设置</strong>
+      <div class="drawer-head-actions">
+        <button id="openCommentLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
+        <button id="closeCommentAutoFollowDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <div class="profile-drawer-content settings-drawer-content">
+      <div class="drawer-setting-group">
+        <label for="commentAutoEvery" class="drawer-setting-label"><span>定时执行周期（分钟）</span><span class="info-tip" data-tip="每隔多少分钟自动挑选评论追踪中的未关注用户，读取最近帖子后执行关注。" aria-label="定时执行周期说明">?</span></label>
+        <input id="commentAutoEvery" type="number" value="45" min="5" max="1440">
+        <small class="drawer-setting-desc">评论用户定时看帖与关注的基础间隔周期。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问和关注的时间间隔不固定。" aria-label="随机浮动间隔说明">?</span></label>
+        <input id="commentAutoJitter" type="number" value="15" min="0" max="120">
+        <small class="drawer-setting-desc">按基础周期及随机浮动范围调度。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoBatchSize" class="drawer-setting-label"><span>单次关注人数上限</span><span class="info-tip" data-tip="每轮定时任务最多打开多少位评论用户主页并尝试关注。" aria-label="单次关注人数说明">?</span></label>
+        <input id="commentAutoBatchSize" type="number" value="3" min="1" max="20">
+        <small class="drawer-setting-desc">控制每轮处理量，降低连续操作频率。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoScrollRounds" class="drawer-setting-label"><span>主页下拉看帖次数</span><span class="info-tip" data-tip="打开评论用户主页后分段向下浏览，并提取近期帖子用于后续评估。" aria-label="下拉看帖次数说明">?</span></label>
+        <input id="commentAutoScrollRounds" type="number" value="3" min="1" max="8">
+        <small class="drawer-setting-desc">在读取最近 5 条帖子期间分段浏览主页。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留时长（秒）</span><span class="info-tip" data-tip="每位用户主页滚动浏览的总停留时长，完成后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
+        <input id="commentAutoDwellSec" type="number" value="6" min="2" max="30">
+        <small class="drawer-setting-desc">设置阅读帖子时的总停留时间。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoMinFollowers" class="drawer-setting-label"><span>最低粉丝数门槛</span><span class="info-tip" data-tip="低于此粉丝数的账号将跳过，不会自动关注。" aria-label="最低粉丝数说明">?</span></label>
+        <input id="commentAutoMinFollowers" type="number" value="50" min="0" max="1000000">
+        <small class="drawer-setting-desc">仅处理粉丝数达到门槛的评论用户。</small>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="commentAutoOnlyIntent" type="checkbox" checked><span>仅关注有“互粉”意向或“推荐”标签账号</span><span class="info-tip" data-tip="若简介与最近帖子未显示互粉意向，且关注/粉丝比例不符合推荐条件，则跳过关注。" aria-label="仅关注互粉意向账号说明">?</span></label>
+        <small class="drawer-setting-desc">读取主页帖子后若账号不符合设置条件，将保存帖子并跳过关注。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label class="drawer-setting-label"><span>执行状态与记录</span></label>
+        <div class="drawer-checkpoint-display"><span id="commentAutoSummary" class="checkpoint-handle">尚未执行评论追踪定时关注</span><span id="commentAutoLastTime" class="checkpoint-time"></span></div>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="commentAutoEnabled" type="checkbox"><span>开启定时看帖并关注</span><span class="info-tip" data-tip="开启后按设定周期处理评论追踪中的未关注账号，打开主页看帖并按筛选条件尝试关注。" aria-label="开启定时看帖关注说明">?</span></label>
+        <small class="drawer-setting-desc">此选项默认关闭；后台会按条件读取帖子并通过 X 关注接口执行，触发频率限制时暂停本轮。</small>
+      </div>
+    </div>
+    <div class="profile-drawer-actions"><button id="saveCommentAutoSettings" type="button">保存配置</button><button id="runCommentAutoNow" class="secondary" type="button">立即执行一次（看帖并关注）</button></div>
+  </aside>
   <aside id="profileDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle" hidden>
     <div class="profile-drawer-head"><strong id="profileDrawerTitle">账号资料</strong><button id="closeProfileDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button></div>
     <div id="profileDrawerContent" class="profile-drawer-content"></div>
     <div class="profile-drawer-actions"><button id="drawerRefreshProfile" class="secondary">采集资料</button><button id="drawerOpenX">在 X 打开</button></div>
   </aside>
 </main><script type="module" src="panel.js"></script>
+  <div id="logsModalMask" class="profile-drawer-mask logs-modal-mask" hidden></div>
+  <div id="logsModal" class="logs-modal" role="dialog" aria-modal="true" aria-labelledby="logsModalTitle" hidden>
+    <div class="logs-modal-head">
+      <div class="logs-modal-title-box">
+        <strong id="logsModalTitle">定时看帖关注 · 执行日志</strong>
+        <span id="logsTotalBadge" class="badge">0 条记录</span>
+      </div>
+      <div class="logs-modal-head-btns">
+        <button id="clearLogsBtn" class="secondary danger-btn" type="button" title="清空全部执行日志">清空日志</button>
+        <button id="closeLogsModal" class="icon-button secondary" type="button" title="关闭" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <div class="logs-modal-body">
+      <div id="logsEmpty" class="logs-empty">
+        <p><strong>暂无执行日志记录</strong></p>
+        <span>开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。</span>
+      </div>
+      <div id="logsList" class="logs-list"></div>
+    </div>
+  </div>
 </body></html>
 
 
