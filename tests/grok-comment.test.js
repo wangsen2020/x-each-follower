@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions} from '../grok-comment.js';
+import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage} from '../grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../page-reader.js';
 
 test('extractGrokComment takes the body between markers', () => {
@@ -48,6 +48,52 @@ test('Grok windows use a visible, compact popup without taking focus', () => {
     url: 'https://grok.com/', type: 'popup', state: 'normal', focused: false,
     width: 800, height: 600
   });
+});
+
+test('Grok analysis waits for a new copy control and a structured target result', async () => {
+  const previous = {
+    document: globalThis.document,
+    MutationObserver: globalThis.MutationObserver,
+    InputEvent: globalThis.InputEvent,
+    Event: globalThis.Event
+  };
+  let observer;
+  let resolveObserved;
+  const input = {tagName:'DIV', dispatchEvent() {}};
+  const send = {disabled:false, innerText:'Send', getAttribute:() => null, click() {
+    buttons.push({innerText:'', getAttribute:() => 'Copy response'});
+    observer.callback();
+    setTimeout(() => {
+      body.innerText = '[@alice | 互粉意向: 有 | 互粉标签: 互粉]';
+      observer.callback();
+    }, 0);
+  }};
+  const buttons = [send];
+  const body = {innerText:'prompt asking for @alice analysis'};
+  globalThis.document = {
+    body,
+    documentElement:body,
+    querySelector:() => input,
+    querySelectorAll:selector => selector === 'button' ? buttons.filter(button => button === send) : buttons
+  };
+  globalThis.MutationObserver = class {
+    constructor(callback) { this.callback = callback; observer = this; }
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.InputEvent = class {};
+  globalThis.Event = class {};
+  try {
+    const result = await submitGrokPromptAndWaitForCopyIconOnPage('analyze @alice', 1000, ['alice']);
+    assert.equal(result.submitted, true);
+    assert.equal(result.completed, true);
+    assert.match(result.text, /\[@alice \| 互粉意向: 有/);
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.MutationObserver = previous.MutationObserver;
+    globalThis.InputEvent = previous.InputEvent;
+    globalThis.Event = previous.Event;
+  }
 });
 
 test('publishQuotePostOnPage refuses when the page is not the target status page', async () => {
