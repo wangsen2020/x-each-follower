@@ -115,8 +115,13 @@ export async function networkFollow(tabId, userId) {
   if (!template?.origin || !template?.headers?.authorization || !template?.headers?.['x-csrf-token']) {
     return {status:0, error:'未捕获 X 网络请求模板；请先打开 X 或扫描一次粉丝列表。'};
   }
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (id, t) => {
-    const body = new URLSearchParams({user_id:String(id), skip_status:'true'}).toString();
+  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (target, t) => {
+    const id = typeof target === 'object' ? (target?.id || target?.userId) : target;
+    const screenName = typeof target === 'object' ? (target?.handle || target?.screen_name) : '';
+    const params = {skip_status:'true'};
+    if (id) params.user_id = String(id);
+    if (screenName) params.screen_name = String(screenName).replace(/^@/, '');
+    const body = new URLSearchParams(params).toString();
     const response = await fetch(`${t.origin}/i/api/1.1/friendships/create.json`, {
       method:'POST',
       credentials:'include',
@@ -136,8 +141,13 @@ export async function networkUnfollow(tabId, userId) {
   if (!template?.origin || !template?.headers?.authorization || !template?.headers?.['x-csrf-token']) {
     return {status:0, error:'未捕获 X 网络请求模板；请先打开 X 或扫描一次粉丝列表。'};
   }
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (id, t) => {
-    const body = new URLSearchParams({user_id:String(id), skip_status:'true'}).toString();
+  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (target, t) => {
+    const id = typeof target === 'object' ? (target?.id || target?.userId) : target;
+    const screenName = typeof target === 'object' ? (target?.handle || target?.screen_name) : '';
+    const params = {skip_status:'true'};
+    if (id) params.user_id = String(id);
+    if (screenName) params.screen_name = String(screenName).replace(/^@/, '');
+    const body = new URLSearchParams(params).toString();
     const response = await fetch(`${t.origin}/i/api/1.1/friendships/destroy.json`, {
       method:'POST',
       credentials:'include',
@@ -167,11 +177,13 @@ export function parseTweetReplies(json, focalTweetId = '') {
       const userLegacy = user.legacy || {};
       const userCore = user.core || {};
       const id = String(tweet.rest_id || legacy.id_str || '');
+      const userId = String(user.rest_id || userLegacy.id_str || user.id_str || (user.id && !String(user.id).startsWith('VXNl') ? user.id : '') || '');
       const handle = userLegacy.screen_name || userCore.screen_name || user.screen_name || '';
       if (id && id !== String(focalTweetId) && /^[A-Za-z0-9_]{1,15}$/.test(handle)) {
         const relationship = tweet.core?.user_results?.result?.relationship_perspectives || user.relationship_perspectives || {};
         replies.set(id, {
           id,
+          userId,
           handle,
           name:repairMojibake(userLegacy.name || userCore.name || handle),
           bio:repairMojibake(userLegacy.description || user.profile_bio?.description || ''),
@@ -201,9 +213,10 @@ export function mergeCommentTracking(tracking = {users:[], posts:[]}, post, repl
   for (const reply of replies) {
     const key = String(reply.handle || '').toLowerCase();
     if (!key) continue;
-    const current = users.get(key) || {...reply, sources:[]};
+    const { id: _replyTweetId, ...replyRest } = reply;
+    const current = users.get(key) || {...replyRest, id: reply.userId || '', sources:[]};
     current.sources ||= [];
-    current.id = reply.id || current.id;
+    current.id = reply.userId || (current.id && current.id !== reply.id ? current.id : '');
     current.name = reply.name || current.name || reply.handle;
     current.bio = reply.bio || current.bio || '';
     current.avatarUrl = reply.avatarUrl || current.avatarUrl || '';

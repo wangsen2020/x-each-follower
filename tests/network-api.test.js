@@ -83,9 +83,17 @@ test('parses unique authors and reply text from TweetDetail timeline entries, ex
     ['101','alice','hello'],
     ['102','postowner','reply to alice']
   ]);
+  assert.equal(replies[0].userId, 'user-alice');
   assert.equal(replies[0].relationship.followedBy, true);
   assert.equal(findBottomCursor(json), 'next-cursor');
   assert.equal(GRAPHQL_OP_RE.exec('/i/api/graphql/q/TweetDetail?variables=%7B%7D')?.[2], 'TweetDetail');
+});
+
+test('comment tracking merges user rest_id and discards reply tweet ID', () => {
+  const legacy = {users:[{handle:'zhangttt12345', name:'Zhang', id:'bad-tweet-id'}], posts:[]};
+  const reply = {id:'bad-tweet-id', replyId:'bad-tweet-id', userId:'14567890', handle:'zhangttt12345', name:'Zhang'};
+  const merged = mergeCommentTracking(legacy, {tweetId:'post-1', url:'https://x.com/owner/status/post-1', authorHandle:'owner'}, [reply]);
+  assert.equal(merged.users[0].id, '14567890');
 });
 
 test('comment tracking deduplicates users while retaining distinct source posts and merging repeat replies', () => {
