@@ -171,6 +171,7 @@ async function runCommentAutoFollow(source = 'alarm') {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
         actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
+        delete profile.dwellSeconds;
         user.recentPosts = mergeRecentPosts(user.recentPosts || [], profile.posts || [], 100);
         user.recentPostsFetchedAt = new Date().toISOString();
         user.recentPostsCount = user.recentPosts.length;
@@ -197,7 +198,7 @@ async function runCommentAutoFollow(source = 'alarm') {
           processedCount++;
           skippedCount++;
           await appendAutoFollowLog({scope:'comment', source, handle, result:'skipped', detail:skipReason, posts:profile.posts || []});
-          await sleep(500);
+          await sleep(500 + Math.floor(Math.random() * 1000));
           continue;
         }
         let followed = false;

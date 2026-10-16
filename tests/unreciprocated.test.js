@@ -10,6 +10,7 @@ test('normalizeUnreciprocatedConfig sets robust default parameters for followbac
   assert.equal(cfg.autoUnfollow, false, '默认自动取关关闭');
   assert.equal(cfg.batchLimit, 10, '单次默认处理10人');
   assert.equal(cfg.unfollowDelay, 3, '取关默认间隔3秒');
+  assert.equal(cfg.unfollowDelayJitter, 2, '取关默认随机浮动2秒');
   assert.equal(cfg.whitelist, '', '默认无白名单');
 });
 
@@ -21,6 +22,7 @@ test('normalizeUnreciprocatedConfig respects custom options within safe bounds',
     autoUnfollow: true,
     batchLimit: 20,
     unfollowDelay: 5,
+    unfollowDelayJitter: 4,
     whitelist: 'elonmusk, OpenAI'
   });
   assert.equal(cfg.every, 120);
@@ -29,6 +31,7 @@ test('normalizeUnreciprocatedConfig respects custom options within safe bounds',
   assert.equal(cfg.autoUnfollow, true);
   assert.equal(cfg.batchLimit, 20);
   assert.equal(cfg.unfollowDelay, 5);
+  assert.equal(cfg.unfollowDelayJitter, 4);
   assert.equal(cfg.whitelist, 'elonmusk, OpenAI');
 });
 
