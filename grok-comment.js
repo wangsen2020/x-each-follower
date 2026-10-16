@@ -11,6 +11,7 @@ export function buildBackgroundGrokWindowOptions(url) {
   return {
     url,
     type: 'popup',
+    state: 'normal',
     focused: false,
     width: 800,
     height: 600
