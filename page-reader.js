@@ -266,6 +266,29 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
   return { ok: true, ready: true, originalUrl: composer.originalLink?.href || location.href, text: composer.box.innerText || '' };
 }
 
+export function dismissQuoteComposerOnPage(tweetUrl) {
+  // 仅关闭本次自动化目标原帖对应的引用草稿；不得碰其他帖子或页面编辑器。
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+    if (!tweetId) return {ok:false, closed:false, reason:'帖子链接无效'};
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')];
+    const dialog = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
+    if (!dialog) return {ok:true, closed:false};
+    const close = dialog.querySelector('[data-testid="app-bar-close"]') || [...dialog.querySelectorAll('button')].find(button =>
+      /^(close|关闭)$/i.test((button.getAttribute('aria-label') || button.innerText || '').trim())
+    );
+    if (close) close.click();
+    else dialog.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
+    await sleep(200);
+    const discard = [...document.querySelectorAll('[role="dialog"] button')].find(button =>
+      /^(discard|discard post|丢弃|丢弃帖子)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim())
+    );
+    if (discard) discard.click();
+    return {ok:true, closed:true};
+  })();
+}
+
 export function publishQuotePostOnPage(tweetUrl, quoteText) {
   // 经 executeScript 序列化注入，必须自包含。
   return (async () => {

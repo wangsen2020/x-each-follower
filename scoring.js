@@ -68,6 +68,148 @@ export function matchMutualKeywords(profile = {}) {
   };
 }
 
+export const TAG_DEFINITIONS = {
+  'reputation:quick_back': { namespace: 'reputation', key: 'quick_back', label: '⚡ 秒回关', colorClass: 'tag-quick-back', desc: '主页明确承诺秒回/必回关' },
+  'reputation:mutual_credit': { namespace: 'reputation', key: 'mutual_credit', label: '🤝 诚信互关', colorClass: 'tag-mutual-credit', desc: '关注/粉丝比例达80%以上，关注比例健康' },
+  'reputation:slow_back': { namespace: 'reputation', key: 'slow_back', label: '⏳ 慢热回关', colorClass: 'tag-slow-back', desc: '关注比例在 50%~80% 之间，回关概率中等' },
+  'reputation:bait_risk': { namespace: 'reputation', key: 'bait_risk', label: '⚠️ 骗关风险', colorClass: 'tag-bait-risk', desc: '关注远少于粉丝(差距超1/5)或含割韭菜营销特征' },
+
+  'identity:blue_v': { namespace: 'identity', key: 'blue_v', label: '🔷 蓝V', colorClass: 'tag-blue-v', desc: 'Twitter / X 官方蓝V认证' },
+  'identity:kol': { namespace: 'identity', key: 'kol', label: '🌟 KOL', colorClass: 'tag-kol', desc: '粉丝数超过 10,000 的大博主' },
+  'identity:rising': { namespace: 'identity', key: 'rising', label: '🌱 新苗', colorClass: 'tag-rising', desc: '粉丝 500~5,000 成长期活跃账号' },
+  'identity:marketer': { namespace: 'identity', key: 'marketer', label: '📢 营销号', colorClass: 'tag-marketer', desc: '含私域导流、加V、电报群等推广特征' },
+
+  'niche:ai_tech': { namespace: 'niche', key: 'ai_tech', label: '💻 AI/科技', colorClass: 'tag-niche-ai', desc: 'AI、大模型、独立开发、代码、出海SaaS' },
+  'niche:crypto_web3': { namespace: 'niche', key: 'crypto_web3', label: '🪙 Web3', colorClass: 'tag-niche-crypto', desc: 'Web3、Crypto、加密货币、空投、链游' },
+  'niche:ecommerce': { namespace: 'niche', key: 'ecommerce', label: '📈 跨境电商', colorClass: 'tag-niche-ecom', desc: '亚马逊、跨境出海、独立站、外贸电商' },
+  'niche:creator': { namespace: 'niche', key: 'creator', label: '🎨 创意设计', colorClass: 'tag-niche-design', desc: 'UI/UX、摄影、插画、视觉美术、视频剪辑' },
+
+  'activity:daily': { namespace: 'activity', key: 'daily', label: '🔥 日更高频', colorClass: 'tag-active-daily', desc: '近期高频发帖互动' },
+  'activity:engager': { namespace: 'activity', key: 'engager', label: '💬 互动达人', colorClass: 'tag-active-engager', desc: '常互动、多串门、热情点赞回评' },
+  'activity:dormant': { namespace: 'activity', key: 'dormant', label: '💤 沉睡低频', colorClass: 'tag-active-dormant', desc: '长时间未更新推文（超过30天无动态）' },
+
+  'custom:starred': { namespace: 'custom', key: 'starred', label: '⭐ 重点', colorClass: 'tag-custom-star', desc: '用户标星重点跟进' },
+  'custom:whitelist': { namespace: 'custom', key: 'whitelist', label: '🛡️ 白名单', colorClass: 'tag-custom-white', desc: '白名单受保护账号（免取关）' }
+};
+
+export function computeMultiDimensionTags(profile = {}) {
+  const followers = typeof profile.followers === 'number' && Number.isFinite(profile.followers)
+    ? profile.followers
+    : parseCount(String(profile.followersText ?? ''));
+  const following = typeof profile.following === 'number' && Number.isFinite(profile.following)
+    ? profile.following
+    : parseCount(String(profile.followingText ?? ''));
+  const countsKnown = followers !== null && following !== null && followers > 0;
+
+  const bioText = `${profile.name || ''} ${profile.bio || profile.description || ''}`;
+  const posts = Array.isArray(profile.posts) ? profile.posts.slice(0, 10) : [];
+  const postsText = posts.map(p => (typeof p === 'string' ? p : (p?.text || ''))).join(' ');
+  const combinedText = `${bioText} ${postsText}`;
+
+  const tags = [];
+  const addTag = (id, overrideDesc) => {
+    const def = TAG_DEFINITIONS[id];
+    if (def && !tags.some(t => t.id === id)) {
+      tags.push({
+        id,
+        namespace: def.namespace,
+        key: def.key,
+        label: def.label,
+        colorClass: def.colorClass,
+        desc: overrideDesc || def.desc
+      });
+    }
+  };
+
+  // 1. 信誉回关维度 (reputation)
+  const isQuickBackPromise = /秒回|必回|有粉必回|来者不拒|秒互|即回|instant\s*follow\s*back|ifb\b|follow\s*back\s*instantly/i.test(combinedText);
+  if (isQuickBackPromise) {
+    addTag('reputation:quick_back', '主页或近期动态承诺秒回/必回关');
+  }
+
+  const isDanger = riskAssess(profile).level === 'danger';
+  if (countsKnown) {
+    if (following < followers * 0.8 && followers >= 500) {
+      addTag('reputation:bait_risk', `关注(${following})少于粉丝(${followers})的 80%，差距超过 1/5 黄金线`);
+    } else if (following >= followers * 0.8 && !isDanger) {
+      addTag('reputation:mutual_credit', `关注数(${following})达粉丝数(${followers})的 80% 以上，关注比例健康`);
+    } else if (following >= followers * 0.5 && following < followers * 0.8) {
+      addTag('reputation:slow_back', `关注数(${following})占粉丝数(${followers})的 50%~80%，回关较为慢热`);
+    }
+  }
+
+  // 2. 身份梯队维度 (identity)
+  const isBlueVerified = profile.is_blue_verified === true ||
+    profile.verified === true ||
+    profile.isBlueVerified === true ||
+    /蓝V|Blue\s*Verified|verified\s*followers/i.test(bioText);
+  if (isBlueVerified) {
+    addTag('identity:blue_v');
+  }
+
+  if (followers !== null) {
+    if (followers >= 10000) {
+      addTag('identity:kol', `粉丝量超 10k（当前 ${followers}），行业影响力账号`);
+    } else if (followers >= 500 && followers < 5000 && following >= 500) {
+      addTag('identity:rising', '成长期活跃新苗');
+    }
+  }
+
+  const isMarketer = /t\.me\/|电报|加V|私信领取|进群|招代理|返佣|免费资料|私域|引流/i.test(combinedText);
+  if (isMarketer) {
+    addTag('identity:marketer');
+  }
+
+  // 3. 垂直赛道维度 (niche)
+  if (profile.grokNiche === 'ai_tech' || /AI|LLM|GPT|ChatGPT|Claude|SaaS|独立开发|出海|编程|算法|机器学习|深度学习|全栈|Python|React|Prompt|Cursor|Copilot/i.test(combinedText)) {
+    addTag('niche:ai_tech');
+  }
+  if (profile.grokNiche === 'crypto_web3' || /Web3|Crypto|BTC|ETH|Solana|空投|Airdrop|撸毛|NFT|DeFi|Binance|链游|以太坊|比特币/i.test(combinedText)) {
+    addTag('niche:crypto_web3');
+  }
+  if (profile.grokNiche === 'ecommerce' || /跨境|电商|亚马逊|Amazon|Shopify|TikTok\s*Shop|外贸|选品|独立站|Shopee/i.test(combinedText)) {
+    addTag('niche:ecommerce');
+  }
+  if (profile.grokNiche === 'creator' || /UI\/?UX|摄影|插画|剪辑|Figma|Blender|Midjourney|视觉美术|原画设计|动画制作/i.test(combinedText)) {
+    addTag('niche:creator');
+  }
+
+  // 4. 活跃行为维度 (activity)
+  if (/多评论|多串门|常互动|多点赞|互评/i.test(combinedText)) {
+    addTag('activity:engager');
+  }
+
+  if (posts.length > 0) {
+    const firstPost = posts[0];
+    const postTimeStr = firstPost?.created_at || firstPost?.createdAt || firstPost?.time;
+    if (postTimeStr) {
+      const postTimestamp = Date.parse(postTimeStr);
+      if (!Number.isNaN(postTimestamp)) {
+        const diffHours = (Date.now() - postTimestamp) / 3600000;
+        if (diffHours >= 0 && diffHours <= 36) {
+          addTag('activity:daily', '36小时内有发推或互动，日更活跃');
+        } else if (diffHours > 720) {
+          addTag('activity:dormant', '超过 30 天无新推文发布');
+        }
+      }
+    }
+  }
+
+  // 5. 自定义维度 (custom)
+  if (profile.starred || profile.isStarred) {
+    addTag('custom:starred');
+  }
+  if (profile.whitelist || profile.isWhitelist || profile.exempt) {
+    addTag('custom:whitelist');
+  }
+
+  return {
+    tags,
+    tagIds: tags.map(t => t.id),
+    primaryTag: tags[0] || null
+  };
+}
+
 export function evaluateMutualProfile(profile = {}) {
   const followers = typeof profile.followers === 'number' && Number.isFinite(profile.followers)
     ? profile.followers
@@ -161,7 +303,8 @@ export function evaluateMutualProfile(profile = {}) {
     hasMutualIntent,
     intentSource,
     tag,
-    risk
+    risk,
+    multiTags: computeMultiDimensionTags(profile)
   };
 }
 
@@ -292,10 +435,14 @@ export function repairMojibake(str) {
   }
 }
 
-export function filterMutualTrackingUsers(users = [], keyword = '', profileCache = {}) {
+export function filterMutualTrackingUsers(users = [], keyword = '', profileCache = {}, activeTags = null) {
   const q = String(keyword || '').trim().toLowerCase();
-  if (!q) return [...users];
   const qNoAt = q.replace(/^@+/, '');
+  const hasTags = activeTags && (activeTags instanceof Set ? activeTags.size > 0 : Array.isArray(activeTags) ? activeTags.length > 0 : false);
+  const tagSet = hasTags ? (activeTags instanceof Set ? activeTags : new Set(activeTags)) : null;
+
+  if (!q && !hasTags) return [...users];
+
   return users.filter(user => {
     const key = String(user?.handle || '').toLowerCase();
     const cached = profileCache[key] || {};
@@ -307,6 +454,26 @@ export function filterMutualTrackingUsers(users = [], keyword = '', profileCache
       posts: Array.isArray(cached.posts) && cached.posts.length ? cached.posts : (user.posts || [])
     };
     const evalRes = evaluateMutualProfile(merged);
+
+    // 1. 多维标签筛选逻辑
+    if (tagSet && tagSet.size > 0) {
+      const userTagIds = new Set(evalRes.multiTags?.tagIds || []);
+
+      // 特殊排除项：排除骗关风险
+      if (tagSet.has('exclude:bait_risk') && userTagIds.has('reputation:bait_risk')) {
+        return false;
+      }
+
+      // 常规标签匹配：如果选了除排除项之外的标签，必须命中选中的任一常规标签 (OR 语义)
+      const positiveTags = [...tagSet].filter(t => !t.startsWith('exclude:'));
+      if (positiveTags.length > 0) {
+        const matchesAny = positiveTags.some(t => userTagIds.has(t));
+        if (!matchesAny) return false;
+      }
+    }
+
+    // 2. 关键字搜索逻辑
+    if (!q) return true;
     const postTexts = (merged.posts || []).map(p => String(typeof p === 'string' ? p : (p?.text || ''))).join(' ');
     const fields = [
       merged.handle,
@@ -316,7 +483,8 @@ export function filterMutualTrackingUsers(users = [], keyword = '', profileCache
       postTexts,
       evalRes.tag,
       evalRes.recommendLabel,
-      ...(evalRes.keywordHits || [])
+      ...(evalRes.keywordHits || []),
+      ...(evalRes.multiTags?.tags?.map(t => t.label) || [])
     ];
     return fields.some(val => {
       const text = String(val || '').toLowerCase();

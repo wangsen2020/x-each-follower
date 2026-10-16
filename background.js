@@ -217,25 +217,28 @@ async function runCommentAutoFollow(source = 'alarm') {
         }
         let followed = false;
         if (user.id) {
-          const result = await networkFollow(tabId, user.id);
+          const result = await networkFollow(tabId, {id:user.id, handle});
           followed = result.status >= 200 && result.status < 300;
           if (!followed) {
             user.followFailureReason = result.error || `关注接口返回 ${result.status}`;
             rateLimited = result.status === 429 || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
           }
-        } else {
+        }
+        if (!followed && !rateLimited) {
           const lookup = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
           const target = lookup.status === 200 ? parseNetworkUsers(lookup.json).find(item => item.handle.toLowerCase() === handle.toLowerCase()) : null;
           if (target?.relationship?.following) followed = true;
           else if (target?.id) {
             user.id = target.id;
-            const result = await networkFollow(tabId, target.id);
+            const result = await networkFollow(tabId, {id:target.id, handle});
             followed = result.status >= 200 && result.status < 300;
             if (!followed) {
               user.followFailureReason = result.error || `关注接口返回 ${result.status}`;
               rateLimited = result.status === 429 || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
             }
-          } else user.followFailureReason = lookup.error || '无法解析用户 ID';
+          } else if (!user.followFailureReason) {
+            user.followFailureReason = lookup.error || '无法解析用户 ID';
+          }
         }
         if (followed) {
           user.followedAt ||= new Date().toISOString(); user.followSource = 'comment-auto';
@@ -345,8 +348,9 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
             newRepliesOnPage++;
           }
           const key = reply.handle.toLowerCase();
-          const current = replyUsers.get(key) || {...reply, replyIds:new Set(), replyItems:[]};
-          current.id = reply.id || current.id;
+          const { id: _replyTweetId, ...replyRest } = reply;
+          const current = replyUsers.get(key) || {...replyRest, id: reply.userId || '', replyIds:new Set(), replyItems:[]};
+          current.id = reply.userId || (current.id && current.id !== reply.id ? current.id : '');
           if (!current.replyIds.has(reply.replyId)) {
             current.replyIds.add(reply.replyId);
             current.replyItems.push({replyId:reply.replyId, text:reply.replyText || '', createdAt:reply.replyCreatedAt || ''});

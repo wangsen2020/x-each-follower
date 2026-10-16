@@ -1,10 +1,87 @@
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
-import { openQuoteComposerOnPage, inspectQuoteComposerOnPage } from './page-reader.js';
+import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage } from './page-reader.js';
 
 export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
 const X_QUOTE_LIMIT = 280;
+
+// Keep Grok windows visible so progress can be observed, while avoiding focus theft.
+export function buildBackgroundGrokWindowOptions(url) {
+  return {
+    url,
+    type: 'popup',
+    state: 'normal',
+    focused: false,
+    width: 800,
+    height: 600
+  };
+}
+
+export function createBackgroundGrokWindow(url) {
+  return chrome.windows.create(buildBackgroundGrokWindowOptions(url));
+}
+
+/** 在提交互粉分析前安装 DOM 监听；Grok 回答工具栏出现新的复制按钮即认为本轮完成。 */
+export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 75000, handles = []) {
+  return new Promise(resolve => {
+    const input = document.querySelector('textarea, [contenteditable="true"]');
+    if (!input) return resolve({submitted:false, completed:false, reason:'找不到 Grok 输入框'});
+    const copyButtons = () => [...document.querySelectorAll('button,[role="button"]')].filter(button => {
+      const label = `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.getAttribute('data-testid') || ''} ${button.innerText || ''}`;
+      return /copy|复制|clipboard/i.test(label);
+    });
+    const hasStructuredResult = text => handles.some(rawHandle => {
+      const handle = String(rawHandle || '').replace(/^@/, '').trim();
+      if (!handle) return false;
+      const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\[@${escaped}\\s*\\|\\s*互粉意向\\s*[:：]`, 'i').test(text);
+    });
+    const initialCopyCount = copyButtons().length;
+    if (input.tagName === 'TEXTAREA') {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, prompt);
+    } else {
+      input.textContent = prompt;
+    }
+    input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:prompt}));
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+    const send = [...document.querySelectorAll('button')].find(button => {
+      const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
+      return /send|提交|发送/i.test(label) && !button.disabled;
+    });
+    if (!send) return resolve({submitted:false, completed:false, reason:'找不到 Grok 发送按钮'});
+
+    let settled = false;
+    let observer;
+    let timer;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      observer?.disconnect();
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const inspect = () => {
+      const count = copyButtons().length;
+      const text = document.body?.innerText || '';
+      if (count > initialCopyCount && hasStructuredResult(text)) {
+        finish({submitted:true, completed:true, copyButtonCount:count, text});
+      }
+    };
+    observer = new MutationObserver(inspect);
+    observer.observe(document.body || document.documentElement, {
+      subtree:true, childList:true, attributes:true,
+      attributeFilter:['aria-label','title','data-testid']
+    });
+    timer = setTimeout(() => finish({
+      submitted:true, completed:false, reason:'等待 Grok 回复的复制按钮出现超时',
+      text:document.body?.innerText || ''
+    }), Math.max(1000, Number(timeoutMs) || 75000));
+    send.click();
+    inspect();
+  });
+}
 
 /** X 的字数权重：CJK 等宽字符计 2，其余计 1。 */
 export function tweetWeight(text) {
@@ -148,7 +225,7 @@ export function deliverGrokStream(text) {
 }
 
 async function openMinimized(url) {
-  const win = await chrome.windows.create({ url, type: 'popup', state: 'minimized', focused: false });
+  const win = await createBackgroundGrokWindow(url);
   const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
   return { winId: win.id, tabId };
 }
@@ -329,6 +406,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
 export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
+  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url]}).catch(() => []);
   await chrome.tabs.update(tabId, { url });
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -357,9 +435,13 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     }
     await sleep(300);
   }
-  if (!composerReady) return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框' };
+  if (!composerReady) {
+    await dismissDraft();
+    return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿' };
+  }
 
   const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
+  if (!res?.ok) await dismissDraft();
   return res || { ok: false, reason: '引用帖发布脚本无返回' };
 }

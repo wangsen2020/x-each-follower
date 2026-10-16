@@ -3,7 +3,7 @@ import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulate
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -121,6 +121,7 @@ async function loadPersistedAutoFollowSettings(type) {
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null, autoFollow: defaultMutualAutoFollow()};
 let selectedMutualHandles = new Set();
 let mutualSearch = '';
+let activeMutualTags = new Set();
 let mutualAutoRunning = false;
 let commentTracking = {users:[], posts:[]};
 const defaultCommentAutoFollow = () => {
@@ -675,9 +676,26 @@ function renderMonitorList() {
     link.href = `https://x.com/${user.handle}`;
     link.target = '_blank';
     link.rel = 'noopener';
+    link.style.display = 'inline-flex';
+    link.style.alignItems = 'center';
+    link.style.flexWrap = 'wrap';
     const cached = profileCache[key];
     const rawName = cached?.name || user.name || user.handle;
-    link.textContent = `${repairMojibake(rawName)} · @${user.handle}`;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = repairMojibake(rawName);
+    link.append(nameSpan);
+
+    if (isUserVerified(user, cached)) {
+      link.append(createVerifiedBadgeElement(14));
+    }
+
+    const handleSpan = document.createElement('span');
+    handleSpan.textContent = `· @${user.handle}`;
+    handleSpan.style.marginLeft = '3px';
+    handleSpan.style.opacity = '0.85';
+    link.append(handleSpan);
+
     const detail = document.createElement('small');
     detail.textContent = cleanFollowerBio(user).slice(0, 160);
     info.append(link, detail);
@@ -753,6 +771,34 @@ function getMergedUserForEvaluation(user) {
   };
 }
 
+function isUserVerified(user, cached = null) {
+  if (!user && !cached) return false;
+  return Boolean(
+    user?.is_blue_verified ||
+    cached?.is_blue_verified ||
+    user?.isBlueVerified ||
+    cached?.isBlueVerified ||
+    user?.verified ||
+    cached?.verified ||
+    /蓝V|Blue\s*Verified/i.test(`${user?.name || ''} ${cached?.name || ''} ${user?.bio || ''}`)
+  );
+}
+
+function createVerifiedBadgeElement(size = 14) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 22 22');
+  svg.setAttribute('aria-label', '蓝V认证');
+  svg.setAttribute('title', '已认证的 Twitter/X 蓝V账号');
+  svg.setAttribute('class', 'x-verified-badge');
+  svg.style.cssText = `width:${size}px;height:${size}px;min-width:${size}px;margin:0 3px;vertical-align:-2px;display:inline-block;fill:#1d9bf0;flex-shrink:0;`;
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.5.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
+  g.append(path);
+  svg.append(g);
+  return svg;
+}
+
 function createMutualTagCell(user, cellTag = 'div') {
   const cell = document.createElement(cellTag);
   cell.className = cellTag === 'td' ? 'col-tag' : 'col-tag-cell';
@@ -764,30 +810,43 @@ function createMutualTagCell(user, cellTag = 'div') {
   const merged = getMergedUserForEvaluation(user);
   const evalResult = evaluateMutualProfile(merged);
 
-  const intentBadge = document.createElement('span');
-  if (evalResult.tag === '互粉') {
-    intentBadge.className = 'monitor-badge badge-mutual-intent';
-    intentBadge.textContent = '互粉';
-  } else {
-    intentBadge.className = 'monitor-badge badge-no-intent';
-    intentBadge.textContent = '无';
-  }
-  intentBadge.title = evalResult.intentTooltip;
-  intentBadge.dataset.tip = evalResult.intentTooltip;
-  wrap.append(intentBadge);
-
-  if (evalResult.countsKnown || evalResult.isNotRecommended) {
-    const ratioBadge = document.createElement('span');
-    if (evalResult.isNotRecommended) {
-      ratioBadge.className = 'monitor-badge badge-bait-risk';
-      ratioBadge.textContent = '不推荐';
-    } else {
-      ratioBadge.className = 'monitor-badge badge-safe-ratio';
-      ratioBadge.textContent = '推荐';
+  // 优先在一列中展现多维标签组（蓝V作为官方认证标直接展示在账号名右侧，标签列中不再作为胶囊展现）
+  const multiTags = (evalResult.multiTags?.tags || []).filter(t => t.id !== 'identity:blue_v');
+  if (multiTags.length > 0) {
+    for (const tag of multiTags) {
+      const badge = document.createElement('span');
+      badge.className = `tag-badge ${tag.colorClass}`;
+      badge.textContent = tag.label;
+      badge.title = tag.desc || tag.label;
+      badge.dataset.tip = tag.desc || tag.label;
+      wrap.append(badge);
     }
-    ratioBadge.title = evalResult.recommendReason;
-    ratioBadge.dataset.tip = evalResult.recommendReason;
-    wrap.append(ratioBadge);
+  } else {
+    const intentBadge = document.createElement('span');
+    if (evalResult.tag === '互粉') {
+      intentBadge.className = 'monitor-badge badge-mutual-intent';
+      intentBadge.textContent = '互粉';
+    } else {
+      intentBadge.className = 'monitor-badge badge-no-intent';
+      intentBadge.textContent = '无';
+    }
+    intentBadge.title = evalResult.intentTooltip;
+    intentBadge.dataset.tip = evalResult.intentTooltip;
+    wrap.append(intentBadge);
+
+    if (evalResult.countsKnown || evalResult.isNotRecommended) {
+      const ratioBadge = document.createElement('span');
+      if (evalResult.isNotRecommended) {
+        ratioBadge.className = 'monitor-badge badge-bait-risk';
+        ratioBadge.textContent = '不推荐';
+      } else {
+        ratioBadge.className = 'monitor-badge badge-safe-ratio';
+        ratioBadge.textContent = '推荐';
+      }
+      ratioBadge.title = evalResult.recommendReason;
+      ratioBadge.dataset.tip = evalResult.recommendReason;
+      wrap.append(ratioBadge);
+    }
   }
   return cell;
 }
@@ -913,7 +972,20 @@ function renderProfileDrawer() {
   const avatar = document.createElement('div'); avatar.className = 'drawer-avatar';
   if (profile.avatarUrl) { const image = document.createElement('img'); image.src = profile.avatarUrl; image.alt = ''; avatar.append(image); }
   else avatar.textContent = String(repairMojibake(profile.name) || profile.handle || '?').slice(0, 1).toUpperCase();
-  const names = document.createElement('div'); const name = document.createElement('strong'); name.textContent = repairMojibake(profile.name) || `@${profile.handle}`; const handle = document.createElement('small'); handle.textContent = `@${profile.handle}`; names.append(name, handle); identity.append(avatar, names); root.append(identity);
+  const names = document.createElement('div');
+  const name = document.createElement('strong');
+  name.style.display = 'inline-flex';
+  name.style.alignItems = 'center';
+  name.textContent = repairMojibake(profile.name) || `@${profile.handle}`;
+  if (isUserVerified(profile)) {
+    name.append(createVerifiedBadgeElement(16));
+  }
+  const handle = document.createElement('small');
+  handle.textContent = `@${profile.handle}`;
+  names.append(name, handle);
+  identity.append(avatar, names);
+  root.append(identity);
+
   const facts = document.createElement('div'); facts.className = 'drawer-facts';
   const tagSourceSuffix = evalResult.intentSource === 'posts' ? '（帖子命中）' : (evalResult.intentSource === 'grok' ? '（Grok）' : '');
   facts.append(
@@ -923,6 +995,27 @@ function renderProfileDrawer() {
     drawerField('推荐评估', evalResult.recommendLabel)
   );
   root.append(facts);
+
+  const drawerTags = (evalResult.multiTags?.tags || []).filter(t => t.id !== 'identity:blue_v');
+  if (drawerTags.length) {
+    const multiTagSec = document.createElement('section');
+    multiTagSec.className = 'drawer-section';
+    const tagTitle = document.createElement('h3');
+    tagTitle.textContent = '多维画像标签';
+    const tagWrap = document.createElement('div');
+    tagWrap.className = 'col-tag-cell';
+    tagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;';
+    for (const tag of drawerTags) {
+      const badge = document.createElement('span');
+      badge.className = `tag-badge ${tag.colorClass}`;
+      badge.textContent = tag.label;
+      badge.title = tag.desc;
+      badge.dataset.tip = tag.desc;
+      tagWrap.append(badge);
+    }
+    multiTagSec.append(tagTitle, tagWrap);
+    root.append(multiTagSec);
+  }
   const bio = document.createElement('section'); bio.className = 'drawer-section'; const bioTitle = document.createElement('h3'); bioTitle.textContent = '简介'; const bioText = document.createElement('p'); bioText.textContent = repairMojibake(profile.bio) || '暂无简介'; bio.append(bioTitle, bioText); root.append(bio);
   const mutualSection = document.createElement('section'); mutualSection.className = `drawer-section drawer-risk ${evalResult.isNotRecommended ? 'is-danger' : ''}`;
   const mutualTitle = document.createElement('h3'); mutualTitle.textContent = '互粉意向与推荐评估';
@@ -1321,9 +1414,9 @@ function getAllMutualUsersWithSnapshot() {
     .sort((a,b) => personalRelationRank(a) - personalRelationRank(b) || String(a.name || a.handle).localeCompare(String(b.name || b.handle)));
 }
 
-function getFilteredMutualUsers(tab = activeMutualTab, keyword = mutualSearch) {
+function getFilteredMutualUsers(tab = activeMutualTab, keyword = mutualSearch, tags = activeMutualTags) {
   const byTab = getAllMutualUsersWithSnapshot().filter(user => mutualUserCategory(user) === tab);
-  return filterMutualTrackingUsers(byTab, keyword, profileCache);
+  return filterMutualTrackingUsers(byTab, keyword, profileCache, tags);
 }
 
 function selectedMutualUsersList() {
@@ -1359,7 +1452,7 @@ function renderMutualNetwork() {
   });
 
   const tabUsers = groups[activeMutualTab] || [];
-  const users = filterMutualTrackingUsers(tabUsers, mutualSearch, profileCache);
+  const users = filterMutualTrackingUsers(tabUsers, mutualSearch, profileCache, activeMutualTags);
   const total = users.length;
   if ($('mutualSelectedCount')) $('mutualSelectedCount').textContent = String(selectedMutualHandles.size);
   if ($('mutualTotalVisibleCount')) $('mutualTotalVisibleCount').textContent = String(total);
@@ -1422,8 +1515,31 @@ function renderMutualNetwork() {
 
     const account = document.createElement('td');
     account.className = 'col-account';
-    const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent=`${displayName} · @${user.handle}`;
-    const bio = document.createElement('p'); bio.textContent=displayBio || '暂无简介'; account.append(link,bio);
+    const link = document.createElement('a');
+    link.href = `https://x.com/${user.handle}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.style.display = 'inline-flex';
+    link.style.alignItems = 'center';
+    link.style.flexWrap = 'wrap';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = displayName;
+    link.append(nameSpan);
+
+    if (isUserVerified(user, cached)) {
+      link.append(createVerifiedBadgeElement(14));
+    }
+
+    const handleSpan = document.createElement('span');
+    handleSpan.textContent = `· @${user.handle}`;
+    handleSpan.style.marginLeft = '3px';
+    handleSpan.style.opacity = '0.85';
+    link.append(handleSpan);
+
+    const bio = document.createElement('p');
+    bio.textContent = displayBio || '暂无简介';
+    account.append(link, bio);
     if (cached?.grokComment || user.grokComment) {
       const commentText = cached?.grokComment || user.grokComment;
       const isPosted = cached?.grokCommentPosted || user.grokCommentPosted;
@@ -1488,8 +1604,17 @@ function renderMutualNetwork() {
   if (allUsers.length === 0) {
     $('mutualEmpty').textContent = mutualNetwork.anchor ? '该锚点尚未读取到可展示的账号。' : '还没有互关追踪记录。';
   } else if (users.length === 0) {
-    if (mutualSearch.trim()) {
-      $('mutualEmpty').textContent = `未找到匹配“${mutualSearch.trim()}”的账号。`;
+    if (mutualSearch.trim() || activeMutualTags.size > 0) {
+      const parts = [];
+      if (mutualSearch.trim()) parts.push(`“${mutualSearch.trim()}”`);
+      if (activeMutualTags.size > 0) {
+        const tagNames = [...activeMutualTags].map(t => {
+          const btn = document.querySelector(`#mutualTagPills [data-tag-filter="${t}"]`);
+          return btn ? btn.textContent.trim() : t;
+        });
+        parts.push(`标签 [${tagNames.join('、')}]`);
+      }
+      $('mutualEmpty').textContent = `未找到符合 ${parts.join(' 且 ')} 的账号。`;
     } else {
       const emptyMap = {
         mutual: '当前没有已互关账号。',
@@ -1953,12 +2078,7 @@ async function checkGrokAvailability(force = false) {
   // 1. 测试 x.com/i/grok
   let winX = null;
   try {
-    winX = await chrome.windows.create({
-      url: 'https://x.com/i/grok',
-      type: 'popup',
-      state: 'minimized',
-      focused: false
-    });
+    winX = await createBackgroundGrokWindow('https://x.com/i/grok');
     const tabId = winX.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winX.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
@@ -1993,12 +2113,7 @@ async function checkGrokAvailability(force = false) {
   // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常
   let winGrok = null;
   try {
-    winGrok = await chrome.windows.create({
-      url: 'https://grok.com/',
-      type: 'popup',
-      state: 'minimized',
-      focused: false
-    });
+    winGrok = await createBackgroundGrokWindow('https://grok.com/');
     const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
@@ -2362,6 +2477,35 @@ $('mutualSearch')?.addEventListener('keydown', event => {
     mutualPage = 1;
     renderMutualNetwork();
   }
+});
+
+$('mutualTagPills')?.addEventListener('click', event => {
+  const btn = event.target.closest('.tag-filter-pill');
+  if (!btn) return;
+  const tagKey = btn.dataset.tagFilter;
+  if (!tagKey) return;
+
+  if (tagKey === 'all') {
+    activeMutualTags.clear();
+  } else {
+    if (activeMutualTags.has(tagKey)) {
+      activeMutualTags.delete(tagKey);
+    } else {
+      activeMutualTags.add(tagKey);
+    }
+  }
+
+  document.querySelectorAll('#mutualTagPills .tag-filter-pill').forEach(pill => {
+    const key = pill.dataset.tagFilter;
+    if (key === 'all') {
+      pill.classList.toggle('active', activeMutualTags.size === 0);
+    } else {
+      pill.classList.toggle('active', activeMutualTags.has(key));
+    }
+  });
+
+  mutualPage = 1;
+  renderMutualNetwork();
 });
 
 $('openMutualSettingsDrawer')?.addEventListener('click', openMutualSettingsDrawer);
@@ -3298,38 +3442,12 @@ async function applyGrokAnalysisResults(parsedMap) {
   return updatedCount;
 }
 
-async function pollGrokResponseAndApply(tabId, handles, reportStatus = analysisStatus) {
-  const targetHandles = (handles || []).filter(Boolean);
-  if (!tabId || !targetHandles.length) return;
-  const deadline = Date.now() + 75000;
-  let bestCount = 0;
-  let stableRounds = 0;
-  while (Date.now() < deadline) {
-    await sleep(2500);
-    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!currentTab) break;
-    const textResult = (await chrome.scripting.executeScript({
-      target: {tabId},
-      func: () => document.body?.innerText || ''
-    }).catch(() => []))?.[0]?.result || '';
-    if (!textResult) continue;
-    const markerIdx = textResult.lastIndexOf('[@用户名 | 互粉意向:');
-    const responseText = markerIdx >= 0 ? textResult.slice(markerIdx + 18) : textResult;
-    const parsed = parseGrokMutualAnalysis(responseText, targetHandles);
-    const matchedCount = Object.keys(parsed).length;
-    if (matchedCount > 0) {
-      await applyGrokAnalysisResults(parsed);
-      const mutualCount = Object.values(parsed).filter(item => item.grokMutualIntent).length;
-      reportStatus(`Grok 已回填 ${matchedCount}/${targetHandles.length} 个账号标签（其中“互粉” ${mutualCount} 个）。`);
-      if (matchedCount >= targetHandles.length) break;
-      if (matchedCount === bestCount) {
-        stableRounds++;
-        if (stableRounds >= 4) break;
-      } else {
-        bestCount = matchedCount;
-        stableRounds = 0;
-      }
-    }
+async function closeGrokAnalysisWindow(windowId) {
+  if (!windowId) return;
+  await chrome.windows.remove(windowId).catch(() => {});
+  const {grokWindowId} = await chrome.storage.local.get('grokWindowId').catch(() => ({}));
+  if (grokWindowId === windowId) {
+    await chrome.storage.local.remove(['grokWindowId', 'grokSubmittedAt']).catch(() => {});
   }
 }
 
@@ -3371,47 +3489,43 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
 async function submitBatchToGrok(customCandidates = null, reportStatus = analysisStatus) {
   await collectSelectedProfiles(customCandidates, reportStatus);
   const prompt = grokPrompt();
-  const created = await chrome.windows.create({url:'https://x.com/i/grok', type:'popup', state:'minimized', focused:false});
-  let tabId = created.tabs?.[0]?.id;
-  if (!tabId && created.id) {
-    const tabs = await chrome.tabs.query({windowId: created.id});
-    tabId = tabs?.[0]?.id;
-  }
-  if (!tabId) throw new Error('Grok 窗口创建失败。');
-  await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
-  const deadline = Date.now() + 30000;
-  let lastReason = 'Grok 页面尚未准备好';
-  while (Date.now() < deadline) {
-    await sleep(1000);
-    const result = (await chrome.scripting.executeScript({target:{tabId}, func:(text) => {
-      const input = document.querySelector('textarea, [contenteditable="true"]');
-      if (!input) return {ok:false, reason:'找不到 Grok 输入框'};
-      if (input.tagName === 'TEXTAREA') {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        setter?.call(input, text);
-      } else {
-        input.textContent = text;
+  const created = await createBackgroundGrokWindow('https://x.com/i/grok');
+  try {
+    let tabId = created.tabs?.[0]?.id;
+    if (!tabId && created.id) {
+      const tabs = await chrome.tabs.query({windowId: created.id});
+      tabId = tabs?.[0]?.id;
+    }
+    if (!tabId) throw new Error('Grok 窗口创建失败。');
+    await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
+    const handles = analysisRows.map(r => r.handle);
+    const submitDeadline = Date.now() + 30000;
+    let lastReason = 'Grok 页面尚未准备好';
+    while (Date.now() < submitDeadline) {
+      await sleep(1000);
+      const result = (await chrome.scripting.executeScript({
+        target:{tabId}, func:submitGrokPromptAndWaitForCopyIconOnPage, args:[prompt, 75000, handles]
+      }))[0]?.result;
+      if (!result?.submitted) {
+        lastReason = result?.reason || 'Grok 尚未准备好接收消息';
+        continue;
       }
-      input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
-      input.dispatchEvent(new Event('change', {bubbles:true}));
-      const send = [...document.querySelectorAll('button')].find(button => {
-        const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
-        return /send|提交|发送/i.test(label) && !button.disabled;
-      });
-      if (!send) return {ok:false, reason:'找不到 Grok 发送按钮'};
-      send.click();
-      return {ok:true};
-    }, args:[prompt]}))[0]?.result;
-    if (result?.ok) {
-      const handles = analysisRows.map(r => r.handle);
-      reportStatus(`已在最小化 Grok 窗口提交 ${handles.length} 个账号的互粉倾向分析，正在等待 Grok 回填标签…`);
-      pollGrokResponseAndApply(tabId, handles, reportStatus).catch(() => {});
+      if (!result.completed) throw new Error(`${result.reason || 'Grok 回复未完成'}。窗口已关闭，请检查 Grok 后重试。`);
+      const markerIdx = String(result.text || '').lastIndexOf('[@用户名 | 互粉意向:');
+      const responseText = markerIdx >= 0 ? result.text.slice(markerIdx + 18) : result.text;
+      const parsed = parseGrokMutualAnalysis(responseText, handles);
+      const matchedCount = Object.keys(parsed).length;
+      if (!matchedCount) throw new Error('已检测到 Grok 回复的复制按钮，但未能解析出互粉分析标签。');
+      await applyGrokAnalysisResults(parsed);
+      const mutualCount = Object.values(parsed).filter(item => item.grokMutualIntent).length;
+      reportStatus(`检测到 Grok 回复的复制按钮，分析完成：已回填 ${matchedCount}/${handles.length} 个账号标签（其中“互粉” ${mutualCount} 个）。`);
       return;
     }
-    lastReason = result?.reason || lastReason;
+    await navigator.clipboard.writeText(prompt);
+    throw new Error(`${lastReason}。分析包已复制到剪贴板，800×600 Grok 窗口将关闭。`);
+  } finally {
+    await closeGrokAnalysisWindow(created.id);
   }
-  await navigator.clipboard.writeText(prompt);
-  throw new Error(`${lastReason}。分析包已复制到剪贴板，请在 Grok 窗口粘贴发送。`);
 }
 
 function sanitizeUserMojibake(user) {
