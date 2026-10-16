@@ -30,6 +30,7 @@ const defaultMutualAutoFollow = () => ({
   dwellSeconds: 15,
   minFollowers: 50,
   onlyMutualIntent: true,
+  grokAutoComment: false,
   processedHandles: [],
   followedCount: 0,
   lastRunAt: null,
@@ -43,6 +44,7 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
   if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
+  res.grokAutoComment = Boolean(res.grokAutoComment);
   return res;
 }
 
@@ -233,7 +235,8 @@ async function saveCommentAutoFollowSettings() {
     scrollRounds: Math.max(1, Math.min(8, Number($('commentAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('commentAutoDwellSec')?.value || 15))),
     minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value ?? 50)),
-    onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true
+    onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true,
+    grokAutoComment: Boolean($('commentAutoGrokComment')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('评论追踪定时周期至少 5 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时周期。');
@@ -254,6 +257,7 @@ function renderCommentAutoFollowSettings() {
   if ($('commentAutoDwellSec')) $('commentAutoDwellSec').value = cfg.dwellSeconds;
   if ($('commentAutoMinFollowers')) $('commentAutoMinFollowers').value = cfg.minFollowers;
   if ($('commentAutoOnlyIntent')) $('commentAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
+  if ($('commentAutoGrokComment')) $('commentAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
   if ($('commentAutoSummary')) $('commentAutoSummary').textContent = cfg.lastSummary || '尚未执行评论用户定时关注';
   if ($('commentAutoLastTime')) $('commentAutoLastTime').textContent = cfg.lastRunAt ? `最近执行：${new Date(cfg.lastRunAt).toLocaleString()}` : '';
 }
@@ -445,7 +449,7 @@ $('openCommentAutoFollowSettings')?.addEventListener('click', openCommentAutoFol
 $('closeCommentAutoFollowDrawer')?.addEventListener('click', closeCommentAutoFollowDrawer);
 $('commentAutoEnabled')?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 const debouncedSaveComment = debounce(() => saveCommentAutoFollowSettings().catch(() => {}), 300);
-for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent']) {
+for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent', 'commentAutoGrokComment']) {
   $(id)?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
   $(id)?.addEventListener('input', debouncedSaveComment);
 }
@@ -823,6 +827,7 @@ function renderMutualSettingsDrawer() {
   if ($('mutualAutoDwellSec')) $('mutualAutoDwellSec').value = cfg.dwellSeconds || 15;
   if ($('mutualAutoMinFollowers')) $('mutualAutoMinFollowers').value = cfg.minFollowers ?? 50;
   if ($('mutualAutoOnlyIntent')) $('mutualAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
+  if ($('mutualAutoGrokComment')) $('mutualAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
   const summaryEl = $('mutualAutoSummaryText');
   const timeEl = $('mutualAutoLastTime');
   if (summaryEl) {
@@ -899,6 +904,63 @@ function renderProfileDrawer() {
   root.append(mutualSection);
   const risk = profile.risk || evalResult.risk; const riskSection = document.createElement('section'); riskSection.className = `drawer-section drawer-risk ${risk.level === 'danger' ? 'is-danger' : ''}`; const riskTitle = document.createElement('h3'); riskTitle.textContent = risk.level === 'danger' ? '风险标记' : '内容风险检查'; const riskText = document.createElement('p'); riskText.textContent = risk.level === 'danger' ? risk.hits.join('；') : '未命中本地内容危险信号'; riskSection.append(riskTitle, riskText); root.append(riskSection);
   const postSection = document.createElement('section'); postSection.className = 'drawer-section'; const recentPosts = drawerMode === 'commentPosts' ? (drawerUser.recentPosts || profile.posts || []) : (profile.posts || []); const postTitle = document.createElement('h3'); postTitle.textContent = drawerMode === 'commentPosts' ? `近期帖子历史（${recentPosts.length}/100）` : '最近帖子（用于互粉关键词匹配）'; if (!recentPosts.length) { const hint = document.createElement('p'); hint.textContent = drawerLoading ? '正在读取公开资料…' : '尚未采集，点击“采集资料”读取最近帖子。'; postSection.append(postTitle, hint); } else { const list = document.createElement('ol'); for (const post of recentPosts) { const item = document.createElement('li'); const text = document.createElement('span'); text.textContent = post.text || '无文字内容'; item.append(text); if (post.url) { const link = document.createElement('a'); link.href = post.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '打开帖子'; item.append(document.createTextNode(' · '), link); } list.append(item); } postSection.append(postTitle, list); } root.append(postSection);
+  if (profile.grokComment) {
+    const grokSec = document.createElement('section');
+    grokSec.className = 'drawer-section';
+    const grokTitle = document.createElement('h3');
+    grokTitle.textContent = '🤖 Grok 互动回评建议（草稿）';
+    const grokBox = document.createElement('div');
+    grokBox.className = 'log-grok-box';
+    grokBox.style.margin = '6px 0 0';
+    const grokHdr = document.createElement('div');
+    grokHdr.className = 'log-grok-header';
+    const grokTag = document.createElement('span');
+    grokTag.className = 'log-grok-tag';
+    grokTag.textContent = '推荐回评';
+    grokHdr.append(grokTag);
+    if (profile.grokCommentPostUrl) {
+      const a = document.createElement('a');
+      a.className = 'log-grok-post-link';
+      a.href = profile.grokCommentPostUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = '原推 ↗';
+      grokHdr.append(a);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'log-copy-btn';
+    btn.textContent = '复制回评';
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(profile.grokComment);
+        btn.textContent = '已复制！';
+        setTimeout(() => { btn.textContent = '复制回评'; }, 1800);
+      } catch {
+        btn.textContent = '复制失败';
+      }
+    });
+    grokHdr.append(btn);
+    grokBox.append(grokHdr);
+    if (profile.grokCommentPost) {
+      const pPrev = document.createElement('div');
+      pPrev.style.fontSize = '11px';
+      pPrev.style.color = 'var(--text-subtle)';
+      pPrev.style.marginBottom = '4px';
+      pPrev.style.paddingLeft = '6px';
+      pPrev.style.borderLeft = '2px solid var(--border-soft)';
+      pPrev.style.maxHeight = '38px';
+      pPrev.style.overflow = 'hidden';
+      pPrev.style.textOverflow = 'ellipsis';
+      pPrev.textContent = '针对推文：' + profile.grokCommentPost;
+      grokBox.append(pPrev);
+    }
+    const bdy = document.createElement('div');
+    bdy.className = 'log-grok-body';
+    bdy.textContent = profile.grokComment;
+    grokBox.append(bdy);
+    grokSec.append(grokTitle, grokBox);
+    root.append(grokSec);
+  }
   $('profileDrawerTitle').textContent = `@${profile.handle}`;
   $('drawerRefreshProfile').disabled = drawerLoading;
   $('drawerRefreshProfile').textContent = drawerLoading ? '采集中…' : '采集资料';
@@ -1682,7 +1744,8 @@ async function saveMutualAutoFollowSettings() {
     scrollRounds: Math.max(1, Math.min(8, Number($('mutualAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('mutualAutoDwellSec')?.value || 15))),
     minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value ?? 50)),
-    onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true
+    onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true,
+    grokAutoComment: Boolean($('mutualAutoGrokComment')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('定时执行周期至少 5 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时执行周期。');
@@ -1695,6 +1758,123 @@ async function saveMutualAutoFollowSettings() {
     const delta = next.jitter > 0 ? Math.floor((Math.random() * 2 - 1) * next.jitter) : 0;
     const delay = Math.max(5, next.every + delta);
     await chrome.alarms.create('x-mutual-auto-follow', {delayInMinutes: delay});
+  }
+}
+
+async function requestGrokReplyForPost(handle, post, authorName = '') {
+  if (!post || !post.text) return null;
+  const postText = (post.text || '').trim();
+  const cleanHandle = String(handle || '').replace(/^@/, '');
+  const cleanName = repairMojibake(authorName || cleanHandle);
+  const prompt = [
+    `你是一位推特（X平台）上的互动高手。请针对博主 @${cleanHandle}（昵称：${cleanName}）发布的以下推文，生成一条自然真实、高情商、有共鸣、能激发博主回评互动的高质量简短评论：`,
+    '要求：',
+    '1. 字数控制在 25 到 80 个字以内；',
+    '2. 紧扣推文具体内容和观点，提出真诚的问题、独到的共鸣或有趣的切入点，切忌空洞客套；',
+    '3. 严禁以“作为AI”、“非常赞同”等机械刻板句式开头，要像真诚的推友即兴交流；',
+    '4. 回复的最末尾请务必以如下标准格式单独输出回评（便于工具提取）：',
+    `[@${cleanHandle} | 回评: 你的评论内容]`,
+    '',
+    '推文正文：',
+    postText.slice(0, 500)
+  ].join('\n');
+
+  let createdWindow = null;
+  try {
+    createdWindow = await chrome.windows.create({
+      url: 'https://x.com/i/grok',
+      type: 'popup',
+      state: 'minimized',
+      focused: false
+    });
+    let tabId = createdWindow.tabs?.[0]?.id;
+    if (!tabId && createdWindow.id) {
+      const tabs = await chrome.tabs.query({windowId: createdWindow.id});
+      tabId = tabs?.[0]?.id;
+    }
+    if (!tabId) return null;
+
+    const deadlineSend = Date.now() + 25000;
+    let sent = false;
+    while (Date.now() < deadlineSend && !sent) {
+      await sleep(1000);
+      const res = (await chrome.scripting.executeScript({
+        target: {tabId},
+        func: (text) => {
+          const input = document.querySelector('textarea, [contenteditable="true"]');
+          if (!input) return {ok: false, reason: 'no_input'};
+          if (input.tagName === 'TEXTAREA') {
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+            setter?.call(input, text);
+          } else {
+            input.textContent = text;
+          }
+          input.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
+          input.dispatchEvent(new Event('change', {bubbles: true}));
+          const send = [...document.querySelectorAll('button')].find(button => {
+            const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
+            return /send|提交|发送/i.test(label) && !button.disabled;
+          });
+          if (!send) return {ok: false, reason: 'no_send_btn'};
+          send.click();
+          return {ok: true};
+        },
+        args: [prompt]
+      }).catch(() => []))?.[0]?.result;
+
+      if (res?.ok) {
+        sent = true;
+        break;
+      }
+    }
+
+    if (!sent) return null;
+
+    const deadlinePoll = Date.now() + 35000;
+    let reply = '';
+    while (Date.now() < deadlinePoll) {
+      await sleep(2000);
+      const textResult = (await chrome.scripting.executeScript({
+        target: {tabId},
+        func: () => document.body?.innerText || ''
+      }).catch(() => []))?.[0]?.result || '';
+
+      if (!textResult) continue;
+
+      const marker = `[@${cleanHandle} | 回评:`;
+      const idx = textResult.lastIndexOf(marker);
+      if (idx !== -1) {
+        const after = textResult.slice(idx + marker.length);
+        const endIdx = after.indexOf(']');
+        const candidate = (endIdx !== -1 ? after.slice(0, endIdx) : after).trim();
+        if (candidate.length >= 5) {
+          reply = candidate.replace(/\n+/g, ' ').trim();
+          break;
+        }
+      } else {
+        const match = /回评[:：]\s*([^\n\]]{8,150})/i.exec(textResult.slice(-1500));
+        if (match && match[1]) {
+          reply = match[1].trim();
+          break;
+        }
+      }
+    }
+
+    if (reply) {
+      return {
+        reply,
+        postText: postText.slice(0, 140),
+        postUrl: post.url || ''
+      };
+    }
+    return null;
+  } catch (e) {
+    console.warn('Grok 回评生成异常:', e);
+    return null;
+  } finally {
+    if (createdWindow?.id) {
+      await chrome.windows.remove(createdWindow.id).catch(() => {});
+    }
   }
 }
 
@@ -1759,6 +1939,32 @@ async function visitScrollAndFollowCandidate(user, cfg) {
     const item = (mutualNetwork.users || []).find(u => u.handle.toLowerCase() === key);
     if (item) Object.assign(item, updatedProfile);
 
+    let grokResult = null;
+    if (cfg.grokAutoComment && Array.isArray(updatedProfile.posts) && updatedProfile.posts.length > 0) {
+      const validPosts = updatedProfile.posts.filter(p => (p?.text || '').trim().length >= 8);
+      const pool = validPosts.length > 0 ? validPosts : updatedProfile.posts;
+      const chosenPost = pool[Math.floor(Math.random() * pool.length)];
+      if (chosenPost && chosenPost.text) {
+        networkStatus(`正在使用 Grok 为 @${handle} 的推文生成高情商互动回评建议…`);
+        grokResult = await requestGrokReplyForPost(handle, chosenPost, updatedProfile.name);
+        if (grokResult?.reply) {
+          updatedProfile.grokComment = grokResult.reply;
+          updatedProfile.grokCommentPost = grokResult.postText;
+          updatedProfile.grokCommentPostUrl = grokResult.postUrl;
+          if (profileCache[key]) {
+            profileCache[key].grokComment = grokResult.reply;
+            profileCache[key].grokCommentPost = grokResult.postText;
+            profileCache[key].grokCommentPostUrl = grokResult.postUrl;
+          }
+          if (item) {
+            item.grokComment = grokResult.reply;
+            item.grokCommentPost = grokResult.postText;
+            item.grokCommentPostUrl = grokResult.postUrl;
+          }
+        }
+      }
+    }
+
     const evalRes = evaluateMutualProfile(profileCache[key]);
     if (evalRes.isNotRecommended) {
       return {status: 'skipped', reason: evalRes.recommendReason};
@@ -1793,7 +1999,13 @@ async function visitScrollAndFollowCandidate(user, cfg) {
         monitor.followingUsers = [...(monitor.followingUsers || []), {...updatedProfile, relationship: updatedRel, state: 'following'}];
       }
       await markQueueFollowed(updatedProfile);
-      return {status: 'followed', evalResult: evalRes};
+      return {
+        status: 'followed',
+        evalResult: evalRes,
+        grokComment: grokResult?.reply || '',
+        grokCommentPost: grokResult?.postText || '',
+        grokCommentPostUrl: grokResult?.postUrl || ''
+      };
     }
     return {status: 'failed', reason: clickRes.error || clickRes.reason || '未找到关注按钮'};
   } finally {
@@ -1849,8 +2061,11 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             handle: target.handle,
             name: target.name,
             result: 'followed',
-            detail: `看帖停留 ${cfg.dwellSeconds || 15} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。`,
-            posts: postsScanned
+            detail: `看帖停留 ${cfg.dwellSeconds || 15} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${res.grokComment ? '已由 Grok 生成互动回评。' : ''}`,
+            posts: postsScanned,
+            grokComment: res.grokComment || '',
+            grokCommentPost: res.grokCommentPost || '',
+            grokCommentPostUrl: res.grokCommentPostUrl || ''
           });
         } else if (res.status === 'skipped') {
           skippedNow++;
@@ -1980,7 +2195,7 @@ $('mutualAutoEnabled')?.addEventListener('change', () => {
     .catch(error => networkStatus(error.message));
 });
 const debouncedSaveMutual = debounce(() => saveMutualAutoFollowSettings().catch(() => {}), 300);
-for (const id of ['mutualAutoEvery', 'mutualAutoJitter', 'mutualAutoBatchSize', 'mutualAutoScrollRounds', 'mutualAutoDwellSec', 'mutualAutoMinFollowers', 'mutualAutoOnlyIntent']) {
+for (const id of ['mutualAutoEvery', 'mutualAutoJitter', 'mutualAutoBatchSize', 'mutualAutoScrollRounds', 'mutualAutoDwellSec', 'mutualAutoMinFollowers', 'mutualAutoOnlyIntent', 'mutualAutoGrokComment']) {
   $(id)?.addEventListener('change', () => saveMutualAutoFollowSettings().catch(error => networkStatus(error.message)));
   $(id)?.addEventListener('input', debouncedSaveMutual);
 }
@@ -3261,7 +3476,10 @@ async function recordAutoFollowLog(entry) {
       text: typeof p === 'string' ? p : (p?.text || ''),
       url: p?.url || '',
       time: p?.time || ''
-    }))
+    })),
+    grokComment: entry.grokComment || '',
+    grokCommentPost: entry.grokCommentPost || '',
+    grokCommentPostUrl: entry.grokCommentPostUrl || ''
   };
   autoFollowLogs.unshift(logItem);
   if (autoFollowLogs.length > 300) autoFollowLogs = autoFollowLogs.slice(0, 300);
@@ -3392,6 +3610,65 @@ function renderLogsModal() {
       }
       postsBox.append(postsList);
     }
+    if (log.grokComment) {
+      const grokBox = document.createElement('div');
+      grokBox.className = 'log-grok-box';
+
+      const grokHeader = document.createElement('div');
+      grokHeader.className = 'log-grok-header';
+
+      const grokTag = document.createElement('span');
+      grokTag.className = 'log-grok-tag';
+      grokTag.textContent = '🤖 Grok 互动回评建议';
+      grokHeader.append(grokTag);
+
+      if (log.grokCommentPostUrl) {
+        const postLink = document.createElement('a');
+        postLink.className = 'log-grok-post-link';
+        postLink.href = log.grokCommentPostUrl;
+        postLink.target = '_blank';
+        postLink.rel = 'noopener noreferrer';
+        postLink.textContent = '原推链接 ↗';
+        grokHeader.append(postLink);
+      }
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'log-copy-btn';
+      copyBtn.textContent = '一键复制回评';
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(log.grokComment);
+          copyBtn.textContent = '已复制！';
+          setTimeout(() => { copyBtn.textContent = '一键复制回评'; }, 1800);
+        } catch {
+          copyBtn.textContent = '复制失败';
+        }
+      });
+      grokHeader.append(copyBtn);
+      grokBox.append(grokHeader);
+
+      if (log.grokCommentPost) {
+        const postPreview = document.createElement('div');
+        postPreview.style.fontSize = '11px';
+        postPreview.style.color = 'var(--text-subtle)';
+        postPreview.style.marginBottom = '4px';
+        postPreview.style.paddingLeft = '6px';
+        postPreview.style.borderLeft = '2px solid var(--border-soft)';
+        postPreview.style.maxHeight = '38px';
+        postPreview.style.overflow = 'hidden';
+        postPreview.style.textOverflow = 'ellipsis';
+        postPreview.textContent = '针对推文：' + log.grokCommentPost;
+        grokBox.append(postPreview);
+      }
+
+      const grokBody = document.createElement('div');
+      grokBody.className = 'log-grok-body';
+      grokBody.textContent = log.grokComment;
+      grokBox.append(grokBody);
+
+      card.append(grokBox);
+    }
+
     card.append(postsBox);
     list.append(card);
   }

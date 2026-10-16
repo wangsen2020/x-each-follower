@@ -22,7 +22,8 @@ function normalizeAutoFollowConfig(cfg = {}) {
     scrollRounds: 5,
     dwellSeconds: 15,
     minFollowers: 50,
-    onlyMutualIntent: true
+    onlyMutualIntent: true,
+    grokAutoComment: false
   };
   const res = { ...defaults, ...(cfg || {}) };
   if (res.every === 45) res.every = defaults.every;
@@ -30,6 +31,7 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
   if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
+  res.grokAutoComment = Boolean(res.grokAutoComment);
   return res;
 }
 

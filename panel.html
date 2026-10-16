@@ -289,6 +289,15 @@
         <small class="drawer-setting-desc">打开首页下拉看帖时若发现对方属于“不推荐”，将自动跳过不关注。</small>
       </div>
 
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label">
+          <input id="mutualAutoGrokComment" type="checkbox">
+          <span>看帖时调用 Grok 生成高情商回评（提升曝光与回粉）</span>
+          <span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评建议，并在执行日志中生成可一键复制的回复草稿，助力博主回评互动与回关。" aria-label="Grok回评说明">?</span>
+        </label>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论草稿，提高曝光与回评率。</small>
+      </div>
+
       <div class="drawer-setting-group">
         <label class="drawer-setting-label">
           <span>执行状态与记录</span>
@@ -355,6 +364,10 @@
       <div class="drawer-setting-group drawer-setting-switch">
         <label class="drawer-switch-label"><input id="commentAutoOnlyIntent" type="checkbox" checked><span>仅关注有“互粉”意向或“推荐”标签账号</span><span class="info-tip" data-tip="若简介与最近帖子未显示互粉意向，且关注/粉丝比例不符合推荐条件，则跳过关注。" aria-label="仅关注互粉意向账号说明">?</span></label>
         <small class="drawer-setting-desc">读取主页帖子后若账号不符合设置条件，将保存帖子并跳过关注。</small>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成高情商回评（提升曝光与回粉）</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评建议，并在执行日志中生成可一键复制的回复草稿。" aria-label="Grok回评说明">?</span></label>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论草稿，提高曝光与回评率。</small>
       </div>
       <div class="drawer-setting-group">
         <label class="drawer-setting-label"><span>执行状态与记录</span></label>

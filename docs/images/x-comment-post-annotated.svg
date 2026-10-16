@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="230" viewBox="0 0 640 230" role="img" aria-labelledby="title desc">
+  <title id="title">X 帖子中的评论追踪按钮位置</title>
+  <desc id="desc">真实 X 帖子截图的局部，红色标记指向 XFollower 注入的评论追踪按钮。</desc>
+  <image href="x-comment-post.png" x="-150" y="-250" width="929" height="827" />
+  <rect x="521" y="140" width="32" height="47" rx="7" fill="none" stroke="#e4432f" stroke-width="3" />
+  <rect x="352" y="12" width="210" height="34" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="367" y="35" fill="#d73320" font-family="Arial, sans-serif" font-size="16" font-weight="700">评论追踪图标</text>
+  <path d="M493 46 L535 135" fill="none" stroke="#e4432f" stroke-width="3" />
+  <path d="M529 130 L535 140 L540 129" fill="none" stroke="#e4432f" stroke-width="3" />
+</svg>

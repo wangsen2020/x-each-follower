@@ -494,6 +494,66 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
   font-size: 11px;
 }
 
+.log-grok-box {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: #f4f6fd;
+  border: 1px solid #dbe2fb;
+  border-left: 3px solid #5c6bc0;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.log-grok-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.log-grok-tag {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3949ab;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.log-grok-post-link {
+  font-size: 11px;
+  color: #5c6bc0;
+  text-decoration: none;
+}
+.log-grok-post-link:hover {
+  text-decoration: underline;
+}
+.log-grok-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1a237e;
+  background: #ffffff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #e0e5fb;
+  font-style: italic;
+  word-break: break-word;
+}
+.log-copy-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #c5cae9;
+  color: #3949ab;
+  transition: all .15s ease;
+}
+.log-copy-btn:hover {
+  background: #e8eaf6;
+  border-color: #9fa8da;
+}
+
 /* 评论追踪头部两端对齐 */
 #commentsSection .comments-head {
   display: flex;
