@@ -676,9 +676,26 @@ function renderMonitorList() {
     link.href = `https://x.com/${user.handle}`;
     link.target = '_blank';
     link.rel = 'noopener';
+    link.style.display = 'inline-flex';
+    link.style.alignItems = 'center';
+    link.style.flexWrap = 'wrap';
     const cached = profileCache[key];
     const rawName = cached?.name || user.name || user.handle;
-    link.textContent = `${repairMojibake(rawName)} · @${user.handle}`;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = repairMojibake(rawName);
+    link.append(nameSpan);
+
+    if (isUserVerified(user, cached)) {
+      link.append(createVerifiedBadgeElement(14));
+    }
+
+    const handleSpan = document.createElement('span');
+    handleSpan.textContent = `· @${user.handle}`;
+    handleSpan.style.marginLeft = '3px';
+    handleSpan.style.opacity = '0.85';
+    link.append(handleSpan);
+
     const detail = document.createElement('small');
     detail.textContent = cleanFollowerBio(user).slice(0, 160);
     info.append(link, detail);
@@ -754,6 +771,34 @@ function getMergedUserForEvaluation(user) {
   };
 }
 
+function isUserVerified(user, cached = null) {
+  if (!user && !cached) return false;
+  return Boolean(
+    user?.is_blue_verified ||
+    cached?.is_blue_verified ||
+    user?.isBlueVerified ||
+    cached?.isBlueVerified ||
+    user?.verified ||
+    cached?.verified ||
+    /蓝V|Blue\s*Verified/i.test(`${user?.name || ''} ${cached?.name || ''} ${user?.bio || ''}`)
+  );
+}
+
+function createVerifiedBadgeElement(size = 14) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 22 22');
+  svg.setAttribute('aria-label', '蓝V认证');
+  svg.setAttribute('title', '已认证的 Twitter/X 蓝V账号');
+  svg.setAttribute('class', 'x-verified-badge');
+  svg.style.cssText = `width:${size}px;height:${size}px;min-width:${size}px;margin:0 3px;vertical-align:-2px;display:inline-block;fill:#1d9bf0;flex-shrink:0;`;
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.5.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
+  g.append(path);
+  svg.append(g);
+  return svg;
+}
+
 function createMutualTagCell(user, cellTag = 'div') {
   const cell = document.createElement(cellTag);
   cell.className = cellTag === 'td' ? 'col-tag' : 'col-tag-cell';
@@ -765,8 +810,8 @@ function createMutualTagCell(user, cellTag = 'div') {
   const merged = getMergedUserForEvaluation(user);
   const evalResult = evaluateMutualProfile(merged);
 
-  // 优先在一列中展现多维标签组（字体12px、高24px、行高24px、色彩区分）
-  const multiTags = evalResult.multiTags?.tags || [];
+  // 优先在一列中展现多维标签组（蓝V作为官方认证标直接展示在账号名右侧，标签列中不再作为胶囊展现）
+  const multiTags = (evalResult.multiTags?.tags || []).filter(t => t.id !== 'identity:blue_v');
   if (multiTags.length > 0) {
     for (const tag of multiTags) {
       const badge = document.createElement('span');
@@ -927,7 +972,20 @@ function renderProfileDrawer() {
   const avatar = document.createElement('div'); avatar.className = 'drawer-avatar';
   if (profile.avatarUrl) { const image = document.createElement('img'); image.src = profile.avatarUrl; image.alt = ''; avatar.append(image); }
   else avatar.textContent = String(repairMojibake(profile.name) || profile.handle || '?').slice(0, 1).toUpperCase();
-  const names = document.createElement('div'); const name = document.createElement('strong'); name.textContent = repairMojibake(profile.name) || `@${profile.handle}`; const handle = document.createElement('small'); handle.textContent = `@${profile.handle}`; names.append(name, handle); identity.append(avatar, names); root.append(identity);
+  const names = document.createElement('div');
+  const name = document.createElement('strong');
+  name.style.display = 'inline-flex';
+  name.style.alignItems = 'center';
+  name.textContent = repairMojibake(profile.name) || `@${profile.handle}`;
+  if (isUserVerified(profile)) {
+    name.append(createVerifiedBadgeElement(16));
+  }
+  const handle = document.createElement('small');
+  handle.textContent = `@${profile.handle}`;
+  names.append(name, handle);
+  identity.append(avatar, names);
+  root.append(identity);
+
   const facts = document.createElement('div'); facts.className = 'drawer-facts';
   const tagSourceSuffix = evalResult.intentSource === 'posts' ? '（帖子命中）' : (evalResult.intentSource === 'grok' ? '（Grok）' : '');
   facts.append(
@@ -938,7 +996,8 @@ function renderProfileDrawer() {
   );
   root.append(facts);
 
-  if (evalResult.multiTags?.tags?.length) {
+  const drawerTags = (evalResult.multiTags?.tags || []).filter(t => t.id !== 'identity:blue_v');
+  if (drawerTags.length) {
     const multiTagSec = document.createElement('section');
     multiTagSec.className = 'drawer-section';
     const tagTitle = document.createElement('h3');
@@ -946,7 +1005,7 @@ function renderProfileDrawer() {
     const tagWrap = document.createElement('div');
     tagWrap.className = 'col-tag-cell';
     tagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;';
-    for (const tag of evalResult.multiTags.tags) {
+    for (const tag of drawerTags) {
       const badge = document.createElement('span');
       badge.className = `tag-badge ${tag.colorClass}`;
       badge.textContent = tag.label;
@@ -1456,8 +1515,31 @@ function renderMutualNetwork() {
 
     const account = document.createElement('td');
     account.className = 'col-account';
-    const link = document.createElement('a'); link.href=`https://x.com/${user.handle}`; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent=`${displayName} · @${user.handle}`;
-    const bio = document.createElement('p'); bio.textContent=displayBio || '暂无简介'; account.append(link,bio);
+    const link = document.createElement('a');
+    link.href = `https://x.com/${user.handle}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.style.display = 'inline-flex';
+    link.style.alignItems = 'center';
+    link.style.flexWrap = 'wrap';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = displayName;
+    link.append(nameSpan);
+
+    if (isUserVerified(user, cached)) {
+      link.append(createVerifiedBadgeElement(14));
+    }
+
+    const handleSpan = document.createElement('span');
+    handleSpan.textContent = `· @${user.handle}`;
+    handleSpan.style.marginLeft = '3px';
+    handleSpan.style.opacity = '0.85';
+    link.append(handleSpan);
+
+    const bio = document.createElement('p');
+    bio.textContent = displayBio || '暂无简介';
+    account.append(link, bio);
     if (cached?.grokComment || user.grokComment) {
       const commentText = cached?.grokComment || user.grokComment;
       const isPosted = cached?.grokCommentPosted || user.grokCommentPosted;
