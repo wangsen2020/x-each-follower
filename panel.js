@@ -193,7 +193,11 @@ function setTab(tab) {
   document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
   const h1 = document.querySelector('main > header > h1');
-  if (h1) h1.textContent = {monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', settings:'设置'}[tab] || '粉丝管理';
+  if (h1) h1.textContent = {monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测', settings:'设置'}[tab] || '粉丝管理';
+  if (tab === 'unreciprocated') {
+    syncAllActiveFollowedUsers();
+    renderUnreciprocatedUI();
+  }
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 document.addEventListener('click', event => { if (event.target.closest('.info-tip')) event.preventDefault(); });
@@ -2357,6 +2361,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     runMutualAutoFollowBatch('alarm').catch(() => {});
     return true;
   }
+  if (message?.cmd === 'runUnreciprocatedTick') {
+    sendResponse({ok: true, handledByPanel: true});
+    runUnreciprocatedCheckCycle('alarm').catch(() => {});
+    return true;
+  }
 });
 
 $('batchRefreshMutual')?.addEventListener('click', batchRefreshMutualNetwork);
@@ -2421,6 +2430,7 @@ $('start').addEventListener('click', event => {
 }, true);
 async function markQueueFollowed(user) {
   const key = user.handle.toLowerCase();
+  registerTrackedFollow(user);
   const now = new Date().toISOString();
   const stamp = entry => { entry.followedAt = now; delete entry.followBackAt; entry.relationship = {...(entry.relationship || {}), following: true}; };
   const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
@@ -3518,6 +3528,32 @@ try {
   renderCommentTracking();
 } catch (error) { $('commentTrackingStatus').textContent = `评论追踪记录加载失败：${error.message}`; }
 
+try {
+  const savedUnrecip = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings', 'unreciprocatedLogs']);
+  if (savedUnrecip.unreciprocatedLogs && Array.isArray(savedUnrecip.unreciprocatedLogs)) {
+    unreciprocatedLogs = savedUnrecip.unreciprocatedLogs;
+  }
+  let unrecipCfg = savedUnrecip.unreciprocatedSettings || savedUnrecip.unreciprocatedTracker?.config;
+  if (!unrecipCfg) {
+    try {
+      if (chrome.storage?.sync) {
+        const syncData = await chrome.storage.sync.get('unreciprocatedSettings');
+        if (syncData?.unreciprocatedSettings) unrecipCfg = syncData.unreciprocatedSettings;
+      }
+    } catch {}
+  }
+  unreciprocatedTracker = {
+    users: savedUnrecip.unreciprocatedTracker?.users || [],
+    config: normalizeUnreciprocatedConfig(unrecipCfg || {}),
+    updatedAt: savedUnrecip.unreciprocatedTracker?.updatedAt || ''
+  };
+  syncAllActiveFollowedUsers();
+  renderUnreciprocatedSettingsDrawer();
+  renderUnreciprocatedUI();
+} catch (error) {
+  console.warn('回关监测记录初始化错误：', error);
+}
+
 if (sanitizeMojibakeCollections()) {
   chrome.storage.local.set({monitor, mutualNetwork, profileCache}).catch(() => {});
   persist('monitor', monitor);
@@ -3538,8 +3574,24 @@ Promise.all([
   durableGet('commentTracking'),
   durableGet('autoFollowLogs'),
   durableGet('mutualAutoFollowSettings'),
-  durableGet('commentAutoFollowSettings')
-]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto]) => {
+  durableGet('commentAutoFollowSettings'),
+  durableGet('unreciprocatedTracker'),
+  durableGet('unreciprocatedLogs')
+]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto, durableUnrecip, durableUnrecipLogs]) => {
+  if (durableUnrecip && Array.isArray(durableUnrecip.users) && (!unreciprocatedTracker.users.length || (durableUnrecip.updatedAt && durableUnrecip.updatedAt > unreciprocatedTracker.updatedAt))) {
+    unreciprocatedTracker = {
+      ...durableUnrecip,
+      config: normalizeUnreciprocatedConfig(durableUnrecip.config || unreciprocatedTracker.config)
+    };
+    await chrome.storage.local.set({ unreciprocatedTracker });
+    syncAllActiveFollowedUsers();
+    renderUnreciprocatedSettingsDrawer();
+    renderUnreciprocatedUI();
+  }
+  if (Array.isArray(durableUnrecipLogs) && durableUnrecipLogs.length && !unreciprocatedLogs.length) {
+    unreciprocatedLogs = durableUnrecipLogs;
+    await chrome.storage.local.set({ unreciprocatedLogs });
+  }
   if (durableMutualAuto) {
     mutualNetwork.autoFollow = normalizeAutoFollowConfig({ ...mutualNetwork.autoFollow, ...durableMutualAuto });
     await chrome.storage.local.set({ mutualAutoFollowSettings: mutualNetwork.autoFollow });
@@ -3637,13 +3689,74 @@ async function recordAutoFollowLog(entry) {
 function renderLogsModal() {
   const modal = $('logsModal');
   if (!modal) return;
+  const isUnrecip = currentLogsScope === 'unreciprocated';
+  const logsData = isUnrecip ? unreciprocatedLogs : autoFollowLogs;
   const badge = $('logsTotalBadge');
-  if (badge) badge.textContent = `${autoFollowLogs.length} 条记录`;
+  if (badge) badge.textContent = `${logsData.length} 条记录`;
   const empty = $('logsEmpty');
   const list = $('logsList');
-  if (empty) empty.hidden = autoFollowLogs.length > 0;
+  if (empty) empty.hidden = logsData.length > 0;
   if (!list) return;
   list.replaceChildren();
+
+  if (isUnrecip) {
+    for (const log of logsData) {
+      const card = document.createElement('div');
+      card.className = 'log-card';
+
+      const header = document.createElement('div');
+      header.className = 'log-card-header';
+
+      const meta = document.createElement('div');
+      meta.className = 'log-card-meta';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'log-time';
+      timeSpan.textContent = log.at ? new Date(log.at).toLocaleString() : '未知时间';
+
+      const scopeSpan = document.createElement('span');
+      scopeSpan.className = 'log-scope-badge';
+      scopeSpan.textContent = '回关监测';
+
+      const sourceSpan = document.createElement('span');
+      sourceSpan.className = 'log-scope-badge';
+      sourceSpan.textContent = log.source === 'manual' ? '手动检测' : '定时执行';
+
+      meta.append(timeSpan, scopeSpan, sourceSpan);
+
+      const resultBadge = document.createElement('span');
+      resultBadge.className = 'badge';
+      if (log.result === 'success') {
+        resultBadge.classList.add('candidate');
+        resultBadge.textContent = '执行完成 ✓';
+      } else {
+        resultBadge.style.background = '#fbe9e7';
+        resultBadge.style.color = '#c62828';
+        resultBadge.textContent = '执行失败';
+      }
+      header.append(meta, resultBadge);
+      card.append(header);
+
+      const summaryRow = document.createElement('div');
+      summaryRow.style.padding = '8px 12px';
+      summaryRow.style.fontSize = '13px';
+      summaryRow.style.color = '#263238';
+      summaryRow.textContent = log.summary || '';
+      card.append(summaryRow);
+
+      if (log.unfollowedHandles && log.unfollowedHandles.length > 0) {
+        const unfollowRow = document.createElement('div');
+        unfollowRow.style.padding = '0 12px 8px';
+        unfollowRow.style.fontSize = '12px';
+        unfollowRow.style.color = '#c62828';
+        unfollowRow.textContent = '已取关账号：' + log.unfollowedHandles.map(h => '@' + h).join('， ');
+        card.append(unfollowRow);
+      }
+
+      list.append(card);
+    }
+    return;
+  }
 
   for (const log of autoFollowLogs) {
     const card = document.createElement('div');
@@ -3820,9 +3933,16 @@ function renderLogsModal() {
   }
 }
 
-function openLogsModal() {
+let currentLogsScope = 'autoFollow';
+
+function openLogsModal(scope = 'autoFollow') {
+  currentLogsScope = scope;
   const modal = $('logsModal');
   const mask = $('logsModalMask');
+  const title = $('logsModalTitle');
+  if (title) {
+    title.textContent = scope === 'unreciprocated' ? '回关监测 · 定时检测与取关日志' : '定时看帖关注 · 执行日志';
+  }
   if (modal) modal.hidden = false;
   if (mask) mask.hidden = false;
   renderLogsModal();
@@ -3836,6 +3956,14 @@ function closeLogsModal() {
 }
 
 async function clearAutoFollowLogs() {
+  if (currentLogsScope === 'unreciprocated') {
+    if (!confirm('确定清空所有回关监测执行日志吗？此操作不可撤销。')) return;
+    unreciprocatedLogs = [];
+    await chrome.storage.local.set({unreciprocatedLogs});
+    persist('unreciprocatedLogs', unreciprocatedLogs);
+    renderLogsModal();
+    return;
+  }
   if (!confirm('确定清空所有执行日志记录吗？此操作不可撤销。')) return;
   autoFollowLogs = [];
   await chrome.storage.local.set({autoFollowLogs});
@@ -3851,3 +3979,804 @@ $('viewCommentLogsLink')?.addEventListener('click', openLogsModal);
 $('closeLogsModal')?.addEventListener('click', closeLogsModal);
 $('logsModalMask')?.addEventListener('click', closeLogsModal);
 $('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
+
+// ==============================================================================
+// 回关监测模块核心实现 (Unreciprocated Followback Tracker Module)
+// ==============================================================================
+let unreciprocatedTracker = {
+  users: [],
+  config: {
+    enabled: false,
+    every: 60,
+    jitter: 10,
+    overdueDays: 14,
+    autoUnfollow: false,
+    batchLimit: 10,
+    unfollowDelay: 3,
+    whitelist: '',
+    lastRunAt: null,
+    lastSummary: '尚未执行回关监测'
+  },
+  updatedAt: ''
+};
+let unreciprocatedLogs = [];
+let activeUnreciprocatedTab = 'overdue';
+let unreciprocatedSearch = '';
+let unreciprocatedPage = 1;
+let unreciprocatedPageSize = 50;
+const selectedUnreciprocatedHandles = new Set();
+let unreciprocatedCheckRunning = false;
+let unreciprocatedUnfollowRunning = false;
+let unreciprocatedUnfollowStopped = false;
+const unreciprocatedBusy = new Set();
+
+function normalizeUnreciprocatedConfig(cfg = {}) {
+  const defaults = {
+    enabled: false,
+    every: 60,
+    jitter: 10,
+    overdueDays: 14,
+    autoUnfollow: false,
+    batchLimit: 10,
+    unfollowDelay: 3,
+    whitelist: '',
+    lastRunAt: null,
+    lastSummary: '尚未执行回关监测'
+  };
+  const res = { ...defaults, ...(cfg || {}) };
+  res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
+  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
+  res.autoUnfollow = Boolean(res.autoUnfollow);
+  res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
+  res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.whitelist = String(res.whitelist || '').trim();
+  return res;
+}
+
+async function saveUnreciprocatedTracker() {
+  unreciprocatedTracker.updatedAt = new Date().toISOString();
+  await chrome.storage.local.set({
+    unreciprocatedTracker,
+    unreciprocatedSettings: unreciprocatedTracker.config
+  });
+  persist('unreciprocatedTracker', unreciprocatedTracker);
+  persist('unreciprocatedSettings', unreciprocatedTracker.config);
+  try {
+    if (chrome.storage?.sync) {
+      await chrome.storage.sync.set({ unreciprocatedSettings: unreciprocatedTracker.config });
+    }
+  } catch {}
+}
+
+async function appendUnreciprocatedLog(logEntry) {
+  const entry = {
+    at: new Date().toISOString(),
+    ...logEntry
+  };
+  unreciprocatedLogs.unshift(entry);
+  if (unreciprocatedLogs.length > 300) unreciprocatedLogs = unreciprocatedLogs.slice(0, 300);
+  await chrome.storage.local.set({ unreciprocatedLogs });
+  persist('unreciprocatedLogs', unreciprocatedLogs);
+  if (currentLogsScope === 'unreciprocated') {
+    renderLogsModal();
+  }
+}
+
+function registerTrackedFollow(user) {
+  if (!user?.handle) return;
+  const key = String(user.handle).toLowerCase();
+  const now = new Date().toISOString();
+  let item = (unreciprocatedTracker.users || []).find(u => String(u.handle || '').toLowerCase() === key);
+  if (!item) {
+    item = {
+      id: user.id || '',
+      handle: user.handle,
+      name: user.name || user.handle,
+      avatarUrl: user.avatarUrl || '',
+      bio: user.bio || '',
+      followersText: user.followersText || '',
+      followingText: user.followingText || '',
+      followedAt: now,
+      followBackAt: null,
+      relationship: { following: true, followedBy: false },
+      status: 'pending',
+      lastCheckedAt: now,
+      exempt: false
+    };
+    unreciprocatedTracker.users.unshift(item);
+  } else {
+    item.followedAt = item.followedAt || now;
+    item.relationship = { ...(item.relationship || {}), following: true, followedBy: false };
+    if (item.status !== 'mutual') item.status = 'pending';
+    item.lastCheckedAt = now;
+  }
+  saveUnreciprocatedTracker();
+  renderUnreciprocatedUI();
+}
+
+function syncAllActiveFollowedUsers() {
+  const existingMap = new Map((unreciprocatedTracker.users || []).map(u => [String(u.handle || '').toLowerCase(), u]));
+  const now = new Date().toISOString();
+  let added = 0;
+
+  const candidatePool = [
+    ...(monitor.followingUsers || []),
+    ...(monitor.users || []).filter(u => u.relationship?.following === true || u.state === 'following'),
+    ...(mutualNetwork.users || []).filter(u => u.relationship?.following === true || u.followedAt),
+    ...(commentTracking.users || []).filter(u => u.relationship?.following === true || u.followedAt)
+  ];
+
+  for (const user of candidatePool) {
+    if (!user?.handle) continue;
+    const key = String(user.handle).toLowerCase();
+    let item = existingMap.get(key);
+    if (!item) {
+      item = {
+        id: user.id || '',
+        handle: user.handle,
+        name: user.name || user.handle,
+        avatarUrl: user.avatarUrl || '',
+        bio: user.bio || '',
+        followersText: user.followersText || '',
+        followingText: user.followingText || '',
+        followedAt: user.followedAt || now,
+        followBackAt: user.followBackAt || null,
+        relationship: { following: true, followedBy: user.relationship?.followedBy === true },
+        status: user.relationship?.followedBy === true ? 'mutual' : 'pending',
+        lastCheckedAt: now,
+        exempt: false
+      };
+      existingMap.set(key, item);
+      unreciprocatedTracker.users.unshift(item);
+      added++;
+    } else {
+      if (user.id && !item.id) item.id = user.id;
+      if (user.name && !item.name) item.name = user.name;
+      if (user.avatarUrl && !item.avatarUrl) item.avatarUrl = user.avatarUrl;
+      if (user.bio && !item.bio) item.bio = user.bio;
+      if (user.followersText && !item.followersText) item.followersText = user.followersText;
+      if (user.followingText && !item.followingText) item.followingText = user.followingText;
+      if (user.followedAt && (!item.followedAt || Date.parse(user.followedAt) < Date.parse(item.followedAt))) {
+        item.followedAt = user.followedAt;
+      }
+    }
+  }
+  return added;
+}
+
+function evaluateUnreciprocatedUser(item, followerHandles, overdueDays) {
+  const key = String(item.handle || '').toLowerCase();
+  const isMutual = followerHandles.has(key) || item.relationship?.followedBy === true;
+  if (isMutual) {
+    item.relationship = { ...(item.relationship || {}), following: true, followedBy: true };
+    item.status = 'mutual';
+    item.followBackAt = item.followBackAt || new Date().toISOString();
+  } else {
+    item.relationship = { ...(item.relationship || {}), following: true, followedBy: false };
+    const followedTime = Date.parse(item.followedAt) || Date.now();
+    const elapsedDays = Math.floor((Date.now() - followedTime) / (24 * 3600 * 1000));
+    item.daysSinceFollowed = Math.max(0, elapsedDays);
+    if (elapsedDays >= overdueDays) {
+      item.status = 'overdue';
+    } else {
+      item.status = 'pending';
+    }
+  }
+  item.lastCheckedAt = new Date().toISOString();
+}
+
+async function runUnreciprocatedCheckCycle(source = 'manual') {
+  if (unreciprocatedCheckRunning) return { ok: false, error: '回关检测任务已在运行中' };
+  unreciprocatedCheckRunning = true;
+  const cfg = normalizeUnreciprocatedConfig(unreciprocatedTracker.config);
+  const statusEl = $('unreciprocatedStatus');
+  if (statusEl) statusEl.textContent = '正在对比最新粉丝列表检测回关状态…';
+
+  try {
+    syncAllActiveFollowedUsers();
+    const followerHandles = ownFollowerHandles();
+    let mutualCount = 0;
+    let pendingCount = 0;
+    let overdueCount = 0;
+    const overdueCandidates = [];
+    const whitelistSet = new Set(
+      cfg.whitelist.split(/[,，\n\s]+/).map(s => s.replace(/^@/, '').toLowerCase()).filter(Boolean)
+    );
+
+    for (const item of unreciprocatedTracker.users) {
+      if (item.status === 'unfollowed') continue;
+      evaluateUnreciprocatedUser(item, followerHandles, cfg.overdueDays);
+      if (item.status === 'mutual') {
+        mutualCount++;
+      } else if (item.status === 'overdue') {
+        overdueCount++;
+        const key = item.handle.toLowerCase();
+        if (!item.exempt && !whitelistSet.has(key)) {
+          overdueCandidates.push(item);
+        }
+      } else {
+        pendingCount++;
+      }
+    }
+
+    let unfollowedCount = 0;
+    let unfollowedHandles = [];
+
+    if (cfg.autoUnfollow && overdueCandidates.length > 0) {
+      overdueCandidates.sort((a,b) => (Date.parse(a.followedAt) || 0) - (Date.parse(b.followedAt) || 0));
+      const targets = overdueCandidates.slice(0, cfg.batchLimit);
+      if (statusEl) statusEl.textContent = `检测完毕：发现 ${overdueCount} 个超时未回关，正在自动安全取关前 ${targets.length} 人…`;
+
+      let tabId = null;
+      try {
+        tabId = await backgroundXActionTab();
+      } catch (err) {
+        console.warn('获取后台 X 标签页失败，跳过自动取关：', err);
+      }
+
+      if (tabId != null) {
+        for (let i = 0; i < targets.length; i++) {
+          const user = targets[i];
+          try {
+            const res = await unfollowViaNetwork(tabId, user);
+            if (res.ok) {
+              user.status = 'unfollowed';
+              user.unfollowedAt = new Date().toISOString();
+              removeUnfollowedUser(user.handle);
+              unfollowedCount++;
+              unfollowedHandles.push(user.handle);
+            }
+          } catch (e) {
+            console.error('自动取关失败：', user.handle, e);
+          }
+          if (i < targets.length - 1) {
+            await sleep((cfg.unfollowDelay || 3) * 1000);
+          }
+        }
+      }
+    }
+
+    const summaryText = `检测完成：监测中 ${unreciprocatedTracker.users.length} 人，已回关 ${mutualCount} 人，缓冲期待回关 ${pendingCount} 人，超时未回关 ${overdueCount} 人${unfollowedCount > 0 ? `，已自动取关 ${unfollowedCount} 人` : ''}。`;
+    cfg.lastRunAt = new Date().toISOString();
+    cfg.lastSummary = summaryText;
+    unreciprocatedTracker.config = cfg;
+    await saveUnreciprocatedTracker();
+
+    await appendUnreciprocatedLog({
+      source,
+      totalTracked: unreciprocatedTracker.users.length,
+      mutualCount,
+      pendingCount,
+      overdueCount,
+      unfollowedCount,
+      unfollowedHandles,
+      summary: summaryText,
+      result: 'success'
+    });
+
+    renderUnreciprocatedUI();
+    renderUnreciprocatedSettingsDrawer();
+    if (statusEl) statusEl.textContent = summaryText;
+    return { ok: true, summary: summaryText };
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `检测出错：${err.message}`;
+    await appendUnreciprocatedLog({
+      source,
+      summary: `检测失败：${err.message}`,
+      result: 'failed'
+    });
+    return { ok: false, error: err.message };
+  } finally {
+    unreciprocatedCheckRunning = false;
+  }
+}
+
+async function unfollowOneUnreciprocated(user, btn) {
+  const key = String(user.handle || '').toLowerCase();
+  if (!key || unreciprocatedBusy.has(key)) return;
+  unreciprocatedBusy.add(key);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '取关中…';
+  }
+  const statusEl = $('unreciprocatedStatus');
+  if (statusEl) statusEl.textContent = `正在取消关注 @${user.handle}…`;
+
+  try {
+    const tabId = await backgroundXActionTab();
+    const result = await unfollowViaNetwork(tabId, user);
+    if (result.ok) {
+      user.status = 'unfollowed';
+      user.unfollowedAt = new Date().toISOString();
+      removeUnfollowedUser(user.handle);
+      await saveUnreciprocatedTracker();
+      await chrome.storage.local.set({ monitor, mutualNetwork });
+      persist('monitor', monitor);
+      persist('mutualNetwork', mutualNetwork);
+      renderUnreciprocatedUI();
+      if (statusEl) statusEl.textContent = `已成功取消关注 @${user.handle}。`;
+      return;
+    }
+    if (statusEl) statusEl.textContent = `@${user.handle} 取关未完成：${result.error || result.reason}`;
+  } catch (error) {
+    if (statusEl) statusEl.textContent = `@${user.handle} 取关失败：${error.message}`;
+  } finally {
+    unreciprocatedBusy.delete(key);
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = '取消关注';
+    }
+  }
+}
+
+async function batchUnfollowUnreciprocated(targetsOverride = null) {
+  if (unreciprocatedUnfollowRunning) {
+    unreciprocatedUnfollowStopped = true;
+    const statusEl = $('unreciprocatedStatus');
+    if (statusEl) statusEl.textContent = '正在停止批量取关…';
+    return;
+  }
+  let targets = targetsOverride;
+  if (!targets) {
+    const activeList = getFilteredUnreciprocatedUsers();
+    targets = activeList.filter(u => selectedUnreciprocatedHandles.has(u.handle.toLowerCase()) && u.status !== 'unfollowed');
+  }
+  if (!targets.length) {
+    const statusEl = $('unreciprocatedStatus');
+    if (statusEl) statusEl.textContent = '请先勾选需要取消关注的账号。';
+    return;
+  }
+  if (!confirm(`确定要批量取消关注这 ${targets.length} 个账号吗？减少无信用的浑水摸鱼粉丝。`)) return;
+
+  unreciprocatedUnfollowRunning = true;
+  unreciprocatedUnfollowStopped = false;
+  const batchBtn = $('batchUnfollowUnreciprocatedBtn');
+  const allOverdueBtn = $('unfollowAllOverdueBtn');
+  if (batchBtn) { batchBtn.textContent = '停止取关'; batchBtn.disabled = false; }
+  if (allOverdueBtn) { allOverdueBtn.disabled = true; }
+
+  const statusEl = $('unreciprocatedStatus');
+  if (statusEl) statusEl.textContent = `准备批量取关 ${targets.length} 个账号…`;
+
+  let tabId;
+  try {
+    tabId = await backgroundXActionTab();
+  } catch (err) {
+    unreciprocatedUnfollowRunning = false;
+    if (batchBtn) batchBtn.textContent = '批量取关';
+    if (allOverdueBtn) allOverdueBtn.disabled = false;
+    if (statusEl) statusEl.textContent = `X 后台会话不可用：${err.message}`;
+    return;
+  }
+
+  let completed = 0;
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      if (unreciprocatedUnfollowStopped) {
+        if (statusEl) statusEl.textContent = `已停止批量取关，本次成功取关 ${completed} 个，剩余 ${targets.length - completed} 个。;`
+        break;
+      }
+      const user = targets[i];
+      if (statusEl) statusEl.textContent = `正在取关 (${i + 1}/${targets.length})：@${user.handle}…`;
+      try {
+        const result = await unfollowViaNetwork(tabId, user);
+        if (result.ok) {
+          user.status = 'unfollowed';
+          user.unfollowedAt = new Date().toISOString();
+          removeUnfollowedUser(user.handle);
+          selectedUnreciprocatedHandles.delete(user.handle.toLowerCase());
+          completed++;
+        }
+      } catch (e) {
+        console.error('取关出错：', user.handle, e);
+      }
+      if (i % 3 === 0 || i === targets.length - 1) {
+        await saveUnreciprocatedTracker();
+        await chrome.storage.local.set({ monitor, mutualNetwork });
+        persist('monitor', monitor);
+        persist('mutualNetwork', mutualNetwork);
+        renderUnreciprocatedUI();
+      }
+      if (i < targets.length - 1 && !unreciprocatedUnfollowStopped) {
+        await sleep(1500 + Math.floor(Math.random() * 1500));
+      }
+    }
+  } finally {
+    unreciprocatedUnfollowRunning = false;
+    if (batchBtn) { batchBtn.textContent = '批量取关'; batchBtn.disabled = selectedUnreciprocatedHandles.size === 0; }
+    if (allOverdueBtn) allOverdueBtn.disabled = false;
+    await saveUnreciprocatedTracker();
+    await chrome.storage.local.set({ monitor, mutualNetwork });
+    persist('monitor', monitor);
+    persist('mutualNetwork', mutualNetwork);
+    renderUnreciprocatedUI();
+    if (!unreciprocatedUnfollowStopped && statusEl) {
+      statusEl.textContent = `批量取关完成，本次成功取关 ${completed} 个账号。`;
+    }
+  }
+}
+
+function getFilteredUnreciprocatedUsers() {
+  const users = (unreciprocatedTracker.users || []).filter(u => u.status !== 'unfollowed');
+  const keyword = unreciprocatedSearch.trim().toLowerCase();
+
+  return users.filter(user => {
+    // 状态分类 Tab 过滤
+    if (activeUnreciprocatedTab === 'overdue' && user.status !== 'overdue') return false;
+    if (activeUnreciprocatedTab === 'pending' && user.status !== 'pending') return false;
+    if (activeUnreciprocatedTab === 'mutual' && user.status !== 'mutual') return false;
+
+    // 搜索过滤
+    if (keyword) {
+      const h = String(user.handle || '').toLowerCase();
+      const n = String(user.name || '').toLowerCase();
+      const b = String(user.bio || '').toLowerCase();
+      if (!h.includes(keyword) && !n.includes(keyword) && !b.includes(keyword)) return false;
+    }
+    return true;
+  }).sort((a,b) => {
+    // 超时账号排在前，超期天数大的排在前
+    if (a.status === 'overdue' && b.status !== 'overdue') return -1;
+    if (a.status !== 'overdue' && b.status === 'overdue') return 1;
+    return (Date.parse(a.followedAt) || 0) - (Date.parse(b.followedAt) || 0);
+  });
+}
+
+function renderUnreciprocatedUI() {
+  const allActive = (unreciprocatedTracker.users || []).filter(u => u.status !== 'unfollowed');
+  const overdueCount = allActive.filter(u => u.status === 'overdue').length;
+  const pendingCount = allActive.filter(u => u.status === 'pending').length;
+  const mutualCount = allActive.filter(u => u.status === 'mutual').length;
+  const totalCount = allActive.length;
+
+  if ($('unreciprocatedOverdueBadge')) $('unreciprocatedOverdueBadge').textContent = overdueCount;
+  if ($('unreciprocatedPendingBadge')) $('unreciprocatedPendingBadge').textContent = pendingCount;
+  if ($('unreciprocatedTotalBadge')) $('unreciprocatedTotalBadge').textContent = totalCount;
+  if ($('unreciprocatedCount')) $('unreciprocatedCount').textContent = overdueCount;
+
+  if ($('tabOverdueCount')) $('tabOverdueCount').textContent = overdueCount;
+  if ($('tabPendingCount')) $('tabPendingCount').textContent = pendingCount;
+  if ($('tabMutualCount')) $('tabMutualCount').textContent = mutualCount;
+  if ($('tabAllCount')) $('tabAllCount').textContent = totalCount;
+
+  const filtered = getFilteredUnreciprocatedUsers();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / unreciprocatedPageSize));
+  if (unreciprocatedPage > totalPages) unreciprocatedPage = totalPages;
+
+  const start = (unreciprocatedPage - 1) * unreciprocatedPageSize;
+  const pageUsers = filtered.slice(start, start + unreciprocatedPageSize);
+
+  if ($('unreciprocatedPageSummary')) {
+    $('unreciprocatedPageSummary').textContent = `第 ${unreciprocatedPage} / ${totalPages} 页（共 ${filtered.length} 人）`;
+  }
+  if ($('unreciprocatedPrevPage')) $('unreciprocatedPrevPage').disabled = unreciprocatedPage <= 1;
+  if ($('unreciprocatedNextPage')) $('unreciprocatedNextPage').disabled = unreciprocatedPage >= totalPages;
+
+  if ($('unreciprocatedSelectedCount')) $('unreciprocatedSelectedCount').textContent = selectedUnreciprocatedHandles.size;
+  if ($('unreciprocatedTotalVisibleCount')) $('unreciprocatedTotalVisibleCount').textContent = filtered.length;
+  if ($('batchUnfollowUnreciprocatedBtn')) {
+    $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0 || unreciprocatedUnfollowRunning;
+  }
+
+  const tbody = $('unreciprocatedResults');
+  const emptyEl = $('unreciprocatedEmpty');
+  if (!tbody) return;
+  tbody.replaceChildren();
+
+  if (!pageUsers.length) {
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+
+  const overdueDaysCfg = Number(unreciprocatedTracker.config?.overdueDays) || 14;
+
+  for (const user of pageUsers) {
+    const key = String(user.handle || '').toLowerCase();
+    const tr = document.createElement('tr');
+
+    // 1. 复选框
+    const tdCheck = document.createElement('td');
+    tdCheck.className = 'col-check';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = selectedUnreciprocatedHandles.has(key);
+    check.addEventListener('change', () => {
+      if (check.checked) selectedUnreciprocatedHandles.add(key);
+      else selectedUnreciprocatedHandles.delete(key);
+      if ($('unreciprocatedSelectedCount')) $('unreciprocatedSelectedCount').textContent = selectedUnreciprocatedHandles.size;
+      if ($('batchUnfollowUnreciprocatedBtn')) $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0;
+    });
+    tdCheck.append(check);
+    tr.append(tdCheck);
+
+    // 2. 账号与简介
+    const tdAccount = document.createElement('td');
+    tdAccount.className = 'col-account';
+    const accBox = document.createElement('div');
+    accBox.style.display = 'flex';
+    accBox.style.alignItems = 'flex-start';
+    accBox.style.gap = '8px';
+
+    if (user.avatarUrl) {
+      const img = document.createElement('img');
+      img.src = user.avatarUrl;
+      img.style.width = '32px';
+      img.style.height = '32px';
+      img.style.borderRadius = '50%';
+      img.style.flexShrink = '0';
+      accBox.append(img);
+    }
+    const accMeta = document.createElement('div');
+    const nameLink = document.createElement('a');
+    nameLink.href = `https://x.com/${encodeURIComponent(user.handle)}`;
+    nameLink.target = '_blank';
+    nameLink.rel = 'noopener noreferrer';
+    nameLink.style.fontWeight = '600';
+    nameLink.style.color = '#18302e';
+    nameLink.textContent = repairMojibake(user.name || user.handle);
+
+    const handleSpan = document.createElement('span');
+    handleSpan.style.fontSize = '12px';
+    handleSpan.style.color = '#52685d';
+    handleSpan.style.marginLeft = '4px';
+    handleSpan.textContent = '@' + user.handle;
+
+    const bioP = document.createElement('div');
+    bioP.style.fontSize = '12px';
+    bioP.style.color = '#455a64';
+    bioP.style.marginTop = '2px';
+    bioP.style.lineHeight = '1.3';
+    bioP.textContent = repairMojibake(user.bio || '暂无简介');
+
+    accMeta.append(nameLink, handleSpan, bioP);
+    accBox.append(accMeta);
+    tdAccount.append(accBox);
+    tr.append(tdAccount);
+
+    // 3. 关注记录与等待时长
+    const tdRecord = document.createElement('td');
+    tdRecord.className = 'col-record';
+    const followedTime = Date.parse(user.followedAt);
+    const dateStr = followedTime ? new Date(followedTime).toLocaleDateString() : '未知';
+    const elapsedDays = Math.max(0, Math.floor((Date.now() - (followedTime || Date.now())) / (24 * 3600 * 1000)));
+
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'record-time-text';
+    timeDiv.textContent = `关注于 ${dateStr}`;
+
+    const waitDiv = document.createElement('div');
+    if (user.status === 'overdue') {
+      waitDiv.className = 'record-overdue-warn';
+      waitDiv.textContent = `已等待 ${elapsedDays} 天（超期 ${elapsedDays - overdueDaysCfg} 天）`;
+    } else if (user.status === 'mutual') {
+      waitDiv.style.color = '#2e7d32';
+      waitDiv.textContent = '已成功回关';
+    } else {
+      waitDiv.style.color = '#b78103';
+      waitDiv.textContent = `已等待 ${elapsedDays} 天（缓冲期内）`;
+    }
+    tdRecord.append(timeDiv, waitDiv);
+    tr.append(tdRecord);
+
+    // 4. 回关状态徽章
+    const tdRelation = document.createElement('td');
+    tdRelation.className = 'col-relation';
+    const badge = document.createElement('span');
+    badge.className = 'badge-status';
+
+    if (user.status === 'overdue') {
+      badge.classList.add('badge-overdue');
+      badge.textContent = '超时未回关 ✕';
+      badge.title = `关注超过 ${overdueDaysCfg} 天仍未回关，疑似浑水摸鱼`;
+    } else if (user.status === 'mutual') {
+      badge.classList.add('badge-mutual');
+      badge.textContent = '双向互关 ✓';
+    } else {
+      badge.classList.add('badge-pending');
+      badge.textContent = '待回关中…';
+      badge.title = '关注仍在两周观察缓冲期内';
+    }
+    tdRelation.append(badge);
+
+    if (user.exempt) {
+      const exBadge = document.createElement('span');
+      exBadge.className = 'badge-status badge-exempt';
+      exBadge.textContent = '豁免';
+      exBadge.title = '白名单保护，定时任务不会自动取关';
+      tdRelation.append(exBadge);
+    }
+    tr.append(tdRelation);
+
+    // 5. 粉丝
+    const tdFollowers = document.createElement('td');
+    tdFollowers.className = 'col-count';
+    tdFollowers.textContent = user.followersText || '-';
+    tr.append(tdFollowers);
+
+    // 6. 关注
+    const tdFollowing = document.createElement('td');
+    tdFollowing.className = 'col-count';
+    tdFollowing.textContent = user.followingText || '-';
+    tr.append(tdFollowing);
+
+    // 7. 操作列
+    const tdActions = document.createElement('td');
+    tdActions.className = 'col-actions';
+    tdActions.style.whiteSpace = 'nowrap';
+
+    const unfollowBtn = document.createElement('button');
+    unfollowBtn.className = 'secondary danger-btn';
+    unfollowBtn.style.padding = '3px 8px';
+    unfollowBtn.style.fontSize = '12px';
+    unfollowBtn.textContent = '取消关注';
+    unfollowBtn.disabled = unreciprocatedBusy.has(key);
+    unfollowBtn.addEventListener('click', () => unfollowOneUnreciprocated(user, unfollowBtn));
+
+    const exemptBtn = document.createElement('button');
+    exemptBtn.className = 'secondary';
+    exemptBtn.style.padding = '3px 8px';
+    exemptBtn.style.fontSize = '12px';
+    exemptBtn.style.marginLeft = '4px';
+    exemptBtn.textContent = user.exempt ? '取消豁免' : '豁免';
+    exemptBtn.title = user.exempt ? '取消保护，允许自动清理' : '加入保护白名单，绝不自动取关';
+    exemptBtn.addEventListener('click', async () => {
+      user.exempt = !user.exempt;
+      await saveUnreciprocatedTracker();
+      renderUnreciprocatedUI();
+    });
+
+    tdActions.append(unfollowBtn, exemptBtn);
+    tr.append(tdActions);
+
+    tbody.append(tr);
+  }
+}
+
+function renderUnreciprocatedSettingsDrawer() {
+  const cfg = normalizeUnreciprocatedConfig(unreciprocatedTracker.config);
+  if ($('unreciprocatedAutoEvery')) $('unreciprocatedAutoEvery').value = cfg.every;
+  if ($('unreciprocatedAutoJitter')) $('unreciprocatedAutoJitter').value = cfg.jitter;
+  if ($('unreciprocatedOverdueDays')) $('unreciprocatedOverdueDays').value = cfg.overdueDays;
+  if ($('unreciprocatedAutoUnfollow')) $('unreciprocatedAutoUnfollow').checked = cfg.autoUnfollow;
+  if ($('unreciprocatedBatchLimit')) $('unreciprocatedBatchLimit').value = cfg.batchLimit;
+  if ($('unreciprocatedUnfollowDelay')) $('unreciprocatedUnfollowDelay').value = cfg.unfollowDelay;
+  if ($('unreciprocatedWhitelist')) $('unreciprocatedWhitelist').value = cfg.whitelist;
+  if ($('unreciprocatedAutoEnabled')) $('unreciprocatedAutoEnabled').checked = cfg.enabled;
+
+  if ($('unreciprocatedAutoSummary')) {
+    $('unreciprocatedAutoSummary').textContent = cfg.lastSummary || '尚未执行回关监测';
+  }
+  if ($('unreciprocatedAutoLastTime')) {
+    $('unreciprocatedAutoLastTime').textContent = cfg.lastRunAt ? new Date(cfg.lastRunAt).toLocaleString() : '';
+  }
+}
+
+function openUnreciprocatedDrawer() {
+  const drawer = $('unreciprocatedSettingsDrawer');
+  const mask = $('profileDrawerMask');
+  if (drawer) drawer.hidden = false;
+  if (mask) mask.hidden = false;
+  renderUnreciprocatedSettingsDrawer();
+}
+
+function closeUnreciprocatedDrawer() {
+  const drawer = $('unreciprocatedSettingsDrawer');
+  const mask = $('profileDrawerMask');
+  if (drawer) drawer.hidden = true;
+  if (mask) mask.hidden = true;
+}
+
+async function saveUnreciprocatedSettingsFromDrawer() {
+  const cfg = normalizeUnreciprocatedConfig({
+    every: $('unreciprocatedAutoEvery')?.value,
+    jitter: $('unreciprocatedAutoJitter')?.value,
+    overdueDays: $('unreciprocatedOverdueDays')?.value,
+    autoUnfollow: $('unreciprocatedAutoUnfollow')?.checked,
+    batchLimit: $('unreciprocatedBatchLimit')?.value,
+    unfollowDelay: $('unreciprocatedUnfollowDelay')?.value,
+    whitelist: $('unreciprocatedWhitelist')?.value,
+    enabled: $('unreciprocatedAutoEnabled')?.checked,
+    lastRunAt: unreciprocatedTracker.config?.lastRunAt || null,
+    lastSummary: unreciprocatedTracker.config?.lastSummary || ''
+  });
+  unreciprocatedTracker.config = cfg;
+  await saveUnreciprocatedTracker();
+  chrome.runtime.sendMessage({ cmd: 'configureUnreciprocatedTracker', config: cfg }).catch(() => {});
+  renderUnreciprocatedUI();
+}
+
+// 绑定回关监测面板交互事件
+$('openUnreciprocatedSettingsDrawer')?.addEventListener('click', openUnreciprocatedDrawer);
+$('closeUnreciprocatedSettingsDrawer')?.addEventListener('click', closeUnreciprocatedDrawer);
+$('openUnreciprocatedLogs')?.addEventListener('click', () => openLogsModal('unreciprocated'));
+
+bindSaveButton('saveUnreciprocatedSettings', () => saveUnreciprocatedSettingsFromDrawer(), err => alert('保存失败：' + err.message));
+
+$('runUnreciprocatedNow')?.addEventListener('click', async () => {
+  const btn = $('runUnreciprocatedNow');
+  const oldText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '检测中…'; }
+  try {
+    await runUnreciprocatedCheckCycle('manual');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
+});
+
+$('checkUnreciprocatedBtn')?.addEventListener('click', async () => {
+  const btn = $('checkUnreciprocatedBtn');
+  const oldText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '正在检测…'; }
+  try {
+    await runUnreciprocatedCheckCycle('manual');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
+});
+
+$('batchUnfollowUnreciprocatedBtn')?.addEventListener('click', () => batchUnfollowUnreciprocated());
+
+$('unfollowAllOverdueBtn')?.addEventListener('click', () => {
+  const overdueTargets = (unreciprocatedTracker.users || []).filter(u => u.status === 'overdue' && !u.exempt);
+  if (!overdueTargets.length) {
+    alert('当前没有超时未回关且未豁免的账号！');
+    return;
+  }
+  batchUnfollowUnreciprocated(overdueTargets);
+});
+
+// 分类 Tabs
+document.querySelectorAll('.unreciprocated-tab').forEach(tabBtn => {
+  tabBtn.addEventListener('click', () => {
+    document.querySelectorAll('.unreciprocated-tab').forEach(b => b.classList.remove('active'));
+    tabBtn.classList.add('active');
+    activeUnreciprocatedTab = tabBtn.dataset.unreciprocatedTab || 'overdue';
+    unreciprocatedPage = 1;
+    renderUnreciprocatedUI();
+  });
+});
+
+// 搜索
+$('unreciprocatedSearch')?.addEventListener('input', debounce(() => {
+  unreciprocatedSearch = $('unreciprocatedSearch')?.value || '';
+  unreciprocatedPage = 1;
+  renderUnreciprocatedUI();
+}, 250));
+$('unreciprocatedSearchBtn')?.addEventListener('click', () => {
+  unreciprocatedSearch = $('unreciprocatedSearch')?.value || '';
+  unreciprocatedPage = 1;
+  renderUnreciprocatedUI();
+});
+
+// 分页
+$('unreciprocatedPageSize')?.addEventListener('change', () => {
+  unreciprocatedPageSize = Number($('unreciprocatedPageSize')?.value) || 50;
+  unreciprocatedPage = 1;
+  renderUnreciprocatedUI();
+});
+$('unreciprocatedPrevPage')?.addEventListener('click', () => {
+  if (unreciprocatedPage > 1) {
+    unreciprocatedPage--;
+    renderUnreciprocatedUI();
+  }
+});
+$('unreciprocatedNextPage')?.addEventListener('click', () => {
+  unreciprocatedPage++;
+  renderUnreciprocatedUI();
+});
+
+// 全选
+$('unreciprocatedSelectAll')?.addEventListener('change', () => {
+  const checked = $('unreciprocatedSelectAll')?.checked;
+  const filtered = getFilteredUnreciprocatedUsers();
+  const start = (unreciprocatedPage - 1) * unreciprocatedPageSize;
+  const pageUsers = filtered.slice(start, start + unreciprocatedPageSize);
+  for (const u of pageUsers) {
+    const key = u.handle.toLowerCase();
+    if (checked) selectedUnreciprocatedHandles.add(key);
+    else selectedUnreciprocatedHandles.delete(key);
+  }
+  renderUnreciprocatedUI();
+});

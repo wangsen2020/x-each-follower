@@ -35,6 +35,42 @@ function normalizeAutoFollowConfig(cfg = {}) {
   return res;
 }
 
+export function normalizeUnreciprocatedConfig(cfg = {}) {
+  const defaults = {
+    enabled: false,
+    every: 60,
+    jitter: 10,
+    overdueDays: 14,
+    autoUnfollow: false,
+    batchLimit: 10,
+    unfollowDelay: 3,
+    whitelist: '',
+    lastRunAt: null,
+    lastSummary: '尚未执行回关监测'
+  };
+  const res = { ...defaults, ...(cfg || {}) };
+  res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
+  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
+  res.autoUnfollow = Boolean(res.autoUnfollow);
+  res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
+  res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.whitelist = String(res.whitelist || '').trim();
+  return res;
+}
+
+export function scheduleUnreciprocatedTracker(rawCfg = {}) {
+  const cfg = normalizeUnreciprocatedConfig(rawCfg);
+  chrome.alarms.clear('x-unreciprocated-tracker').then(() => {
+    if (!cfg.enabled) return;
+    const base = Number(cfg.every) || 60;
+    const jitter = Number(cfg.jitter) ?? 10;
+    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
+    const nextDelay = Math.max(5, base + delta);
+    chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
+  }).catch(() => {});
+}
+
 function scheduleCommentAutoFollow(rawCfg = {}) {
   const cfg = normalizeAutoFollowConfig(rawCfg);
   chrome.alarms.clear('x-comment-auto-follow').then(() => {
@@ -410,18 +446,53 @@ chrome.alarms.onAlarm.addListener(async alarm => {
       });
     }
   }
+
+  if (alarm.name === 'x-unreciprocated-tracker') {
+    let { unreciprocatedTracker, unreciprocatedSettings } = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings']);
+    if (!unreciprocatedSettings && !unreciprocatedTracker?.config) {
+      try {
+        if (chrome.storage?.sync) {
+          const syncData = await chrome.storage.sync.get('unreciprocatedSettings');
+          if (syncData?.unreciprocatedSettings) unreciprocatedSettings = syncData.unreciprocatedSettings;
+        }
+      } catch {}
+    }
+    const cfg = normalizeUnreciprocatedConfig(unreciprocatedSettings || unreciprocatedTracker?.config);
+    if (!cfg?.enabled) return;
+    const base = Number(cfg.every) || 60;
+    const jitter = Number(cfg.jitter) ?? 10;
+    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
+    const nextDelay = Math.max(5, base + delta);
+    await chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
+    let handledByPanel = false;
+    try {
+      const res = await chrome.runtime.sendMessage({ cmd: 'runUnreciprocatedTick' });
+      if (res?.ok) handledByPanel = true;
+    } catch {}
+    if (!handledByPanel) {
+      await chrome.notifications.create(`x-unreciprocated-${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icon128.svg',
+        title: 'X 回关监测 · 定时检测提醒',
+        message: `定时回关检测周期已到（默认一小时一次），请保持管理面板开启以自动检测对方回关状态并清理超时未回关账号。`
+      });
+    }
+  }
 });
 
 async function restoreSettingsFromSync() {
   try {
     if (chrome.storage?.sync) {
-      const syncData = await chrome.storage.sync.get(['mutualAutoFollowSettings', 'commentAutoFollowSettings']);
+      const syncData = await chrome.storage.sync.get(['mutualAutoFollowSettings', 'commentAutoFollowSettings', 'unreciprocatedSettings']);
       const toSet = {};
       if (syncData.mutualAutoFollowSettings) {
         toSet.mutualAutoFollowSettings = normalizeAutoFollowConfig(syncData.mutualAutoFollowSettings);
       }
       if (syncData.commentAutoFollowSettings) {
         toSet.commentAutoFollowSettings = normalizeAutoFollowConfig(syncData.commentAutoFollowSettings);
+      }
+      if (syncData.unreciprocatedSettings) {
+        toSet.unreciprocatedSettings = normalizeUnreciprocatedConfig(syncData.unreciprocatedSettings);
       }
       if (Object.keys(toSet).length) {
         await chrome.storage.local.set(toSet);
@@ -434,9 +505,17 @@ chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
   const tracking = await loadCommentTracking().catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
+  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
+  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
+    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
+  }
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
   const tracking = await loadCommentTracking().catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
+  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
+  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
+    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
+  }
 });

@@ -376,3 +376,27 @@ export function selectValuableMutualTargets(users = [], config = {}, profileCach
 }
 
 
+
+export function normalizeUnreciprocatedConfig(cfg = {}) {
+  const defaults = {
+    enabled: false,
+    every: 60,
+    jitter: 10,
+    overdueDays: 14,
+    autoUnfollow: false,
+    batchLimit: 10,
+    unfollowDelay: 3,
+    whitelist: '',
+    lastRunAt: null,
+    lastSummary: '尚未执行回关监测'
+  };
+  const res = { ...defaults, ...(cfg || {}) };
+  res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
+  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
+  res.autoUnfollow = Boolean(res.autoUnfollow);
+  res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
+  res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.whitelist = String(res.whitelist || '').trim();
+  return res;
+}
