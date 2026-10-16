@@ -238,19 +238,32 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
     return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
   };
   const composers = [];
+  const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+    [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+  );
+  const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+  const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+  const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
   for (const dialog of document.querySelectorAll('[role="dialog"]')) {
     if (!visible(dialog)) continue;
     const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
     if (!box) continue;
     const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+    const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+      .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+    const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+    const articleCardText = dialog.innerText || '';
+    const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+    ));
     const rect = dialog.getBoundingClientRect();
-    composers.push({dialog, box, originalLink, area: rect.width * rect.height});
+    composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
   }
   composers.sort((a, b) => a.area - b.area);
   const composer = composers[0];
   if (!composer) return { ok: true, ready: false, reason: '等待 X 的引用帖编辑框及原帖卡片' };
-  if (!composer.originalLink) return { ok: true, ready: false, reason: '引用编辑框尚未嵌入目标原帖' };
-  return { ok: true, ready: true, originalUrl: composer.originalLink.href, text: composer.box.innerText || '' };
+  if (!composer.originalLink && !composer.articleFallback) return { ok: true, ready: false, reason: '引用编辑框尚未嵌入目标原帖' };
+  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || location.href, text: composer.box.innerText || '' };
 }
 
 export function publishQuotePostOnPage(tweetUrl, quoteText) {
@@ -271,13 +284,26 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
     };
     const findComposer = () => {
       const composers = [];
+      const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+        [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+      );
+      const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+      const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+      const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
       for (const dialog of document.querySelectorAll('[role="dialog"]')) {
         if (!visible(dialog)) continue;
         const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
         if (!box) continue;
         const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+        const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+          .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+        const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+        const articleCardText = dialog.innerText || '';
+        const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+        ));
         const rect = dialog.getBoundingClientRect();
-        composers.push({dialog, box, originalLink, area: rect.width * rect.height});
+        composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
       }
       composers.sort((a, b) => a.area - b.area);
       return composers[0] || null;
@@ -291,7 +317,7 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       if (!composer) await sleep(300);
     }
     if (!composer) return { ok: false, reason: '没有弹出嵌入目标原帖的引用编辑框' };
-    if (!composer.originalLink) return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
+    if (!composer.originalLink && !composer.articleFallback) return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
 
     composer.box.focus();
     document.execCommand('insertText', false, text);

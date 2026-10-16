@@ -53,7 +53,7 @@ test('publishQuotePostOnPage refuses when the page is not the target status page
   assert.equal(empty.ok, false);
 });
 
-function makeQuotePage({embeddedOriginal = true} = {}) {
+function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
   globalThis.window = {innerHeight: 900};
   const events = [];
@@ -69,11 +69,20 @@ function makeQuotePage({embeddedOriginal = true} = {}) {
   const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(160, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
   const retweet = {click() { events.push('retweet'); }};
   const originalLink = {href: 'https://x.com/alice/status/123'};
+  const sourceAuthor = {getAttribute: () => 'UserAvatar-Container-alice'};
+  const currentAuthor = {getAttribute: () => 'UserAvatar-Container-me'};
+  const embeddedAuthor = {getAttribute: () => 'UserAvatar-Container-alice'};
+  const sourceText = {innerText: 'A post to quote'};
+  const articleTitle = {innerText: 'An article to quote'};
+  const embeddedText = {innerText: 'A post to quote'};
   const article = {
     querySelectorAll: selector => selector === 'a' ? [originalLink] : [],
     querySelector(selector) {
       if (selector === '[data-testid="retweet"]') return retweet;
       if (selector.includes('/status/123')) return originalLink;
+      if (selector.includes('UserAvatar-Container-')) return sourceAuthor;
+      if (selector === '[data-testid="tweetText"]') return articleQuote ? null : sourceText;
+      if (selector === '[data-testid="twitter-article-title"]') return articleQuote ? articleTitle : null;
       return null;
     }
   };
@@ -83,10 +92,14 @@ function makeQuotePage({embeddedOriginal = true} = {}) {
     querySelectorAll(selector) {
       if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
       if (selector === 'a') return embeddedOriginal ? [originalLink] : [];
+      if (selector.includes('UserAvatar-Container-')) return articleQuote ? [currentAuthor, embeddedAuthor] : [];
       return [];
     },
+    innerText: articleQuote ? 'An article to quote' : '',
     querySelector(selector) {
     if (selector.includes('/status/123')) return embeddedOriginal ? originalLink : null;
+    if (selector.includes('UserAvatar-Container-')) return currentAuthor;
+    if (selector === '[data-testid="tweetText"]') return articleQuote ? embeddedText : null;
     if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? box : null;
     if (selector === '[data-testid="tweetButton"]') return composerOpen && !closed ? send : null;
     return null;
@@ -135,6 +148,16 @@ test('publishQuotePostOnPage refuses to publish if the composer does not contain
   assert.equal(result.ok, false);
   assert.match(result.reason, /未嵌入目标原帖/);
   assert.equal(events.includes('publish'), false);
+});
+
+test('publishQuotePostOnPage verifies X article quotes by matching the source author and article title', async () => {
+  const {events} = makeQuotePage({embeddedOriginal: false, articleQuote: true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(inspected.ready, true);
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '对原帖的评价');
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.equal(events.includes('publish'), true);
 });
 
 test('postQuoteOnTab recovers when choosing Quote navigates away and destroys the injected page context', async () => {
