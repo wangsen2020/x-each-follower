@@ -2,7 +2,7 @@ import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile,
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
-import { randomizedSeconds } from './timing.js';
+import { randomizedInteger, randomizedSeconds } from './timing.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -38,8 +38,9 @@ const defaultMutualAutoFollow = () => ({
 function normalizeAutoFollowConfig(cfg = {}) {
   const defaults = defaultMutualAutoFollow();
   const res = { ...defaults, ...cfg };
+  res.jitter = Math.max(1, Math.min(120, Number(res.jitter) || defaults.jitter));
   res.dwellSeconds = Math.max(2, Math.min(60, Number(res.dwellSeconds) || defaults.dwellSeconds));
-  res.dwellJitterSeconds = Math.max(0, Math.min(30, Number(res.dwellJitterSeconds) || 0));
+  res.dwellJitterSeconds = Math.max(1, Math.min(30, Number(res.dwellJitterSeconds) || 0));
   if (res.every === 45) res.every = defaults.every;
   if (res.jitter === 15) res.jitter = defaults.jitter;
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
@@ -263,17 +264,17 @@ async function saveCommentAutoFollowSettings() {
     ...current,
     enabled: Boolean($('commentAutoEnabled')?.checked),
     every: Number($('commentAutoEvery')?.value || 5),
-    jitter: Number($('commentAutoJitter')?.value || 0),
+    jitter: Math.max(1, Number($('commentAutoJitter')?.value || 0)),
     batchLimit: Math.max(1, Math.min(20, Number($('commentAutoBatchSize')?.value || 10))),
     scrollRounds: Math.max(1, Math.min(8, Number($('commentAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('commentAutoDwellSec')?.value || 15))),
-    dwellJitterSeconds: Math.max(0, Math.min(30, Number($('commentAutoDwellJitterSec')?.value ?? 5))),
+    dwellJitterSeconds: Math.max(1, Math.min(30, Number($('commentAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true,
     grokAutoComment: Boolean($('commentAutoGrokComment')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('评论追踪定时周期至少 5 分钟。');
-  if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时周期。');
+  if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于定时周期。');
   commentTracking.autoFollow = next;
   await saveCommentTracking();
   await persistAutoFollowSettings('comment', next);
@@ -1713,25 +1714,24 @@ async function saveMutualAutoFollowSettings() {
     ...current,
     enabled: Boolean($('mutualAutoEnabled')?.checked),
     every: Number($('mutualAutoEvery')?.value || 5),
-    jitter: Number($('mutualAutoJitter')?.value || 0),
+    jitter: Math.max(1, Number($('mutualAutoJitter')?.value || 0)),
     batchLimit: Math.max(1, Math.min(20, Number($('mutualAutoBatchSize')?.value || 10))),
     scrollRounds: Math.max(1, Math.min(8, Number($('mutualAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('mutualAutoDwellSec')?.value || 15))),
-    dwellJitterSeconds: Math.max(0, Math.min(30, Number($('mutualAutoDwellJitterSec')?.value ?? 5))),
+    dwellJitterSeconds: Math.max(1, Math.min(30, Number($('mutualAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true,
     grokAutoComment: Boolean($('mutualAutoGrokComment')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('定时执行周期至少 5 分钟。');
-  if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于定时执行周期。');
+  if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于定时执行周期。');
   mutualNetwork.autoFollow = next;
   await saveMutualNetwork();
   await persistAutoFollowSettings('mutual', next);
   renderMutualSettingsDrawer();
   await chrome.alarms.clear('x-mutual-auto-follow');
   if (next.enabled) {
-    const delta = next.jitter > 0 ? Math.floor((Math.random() * 2 - 1) * next.jitter) : 0;
-    const delay = Math.max(5, next.every + delta);
+    const delay = randomizedInteger(next.every, next.jitter, 5, 1440);
     await chrome.alarms.create('x-mutual-auto-follow', {delayInMinutes: delay});
   }
 }
@@ -3043,17 +3043,16 @@ async function saveMonitorSettings() {
   const next = {
     enabled: $('monitorEnabled').checked,
     every: Number($('monitorEvery').value),
-    jitter: Number($('monitorJitter')?.value || 0)
+    jitter: Math.max(1, Number($('monitorJitter')?.value || 0))
   };
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
-  if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动必须大于等于 0 且小于基准间隔。');
+  if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
   monitor = {...monitor, ...next};
   await chrome.storage.local.set({monitor});
   persist('monitor', monitor);
   await chrome.alarms.clear('x-followers-scan');
   if (monitor.enabled) {
-    const delta = monitor.jitter > 0 ? Math.floor((Math.random() * 2 - 1) * monitor.jitter) : 0;
-    const delay = Math.max(10, monitor.every + delta);
+    const delay = randomizedInteger(monitor.every, monitor.jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', {delayInMinutes: delay});
   }
 }
@@ -3681,6 +3680,8 @@ $('grokAnalyzeMutual')?.addEventListener('click', async () => {
 try {
   const savedMonitor = await chrome.storage.local.get('monitor');
   monitor = {...monitor, ...(savedMonitor.monitor || {})};
+  monitor.every = Math.max(10, Math.min(1440, Number(monitor.every) || 60));
+  monitor.jitter = Math.max(1, Math.min(monitor.every - 1, Number(monitor.jitter) || 15));
   if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = [];
   const reconciledQueue = reconcileFollowBackQueue(monitor.queue, monitor.users, riskAssess);
   if (JSON.stringify(reconciledQueue) !== JSON.stringify(monitor.queue || [])) {
@@ -4288,12 +4289,12 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   };
   const res = { ...defaults, ...(cfg || {}) };
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
-  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.jitter = Math.max(1, Math.min(60, Number(res.jitter) || 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
-  res.unfollowDelayJitter = Math.max(0, Math.min(15, Number(res.unfollowDelayJitter) || 0));
+  res.unfollowDelayJitter = Math.max(1, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }

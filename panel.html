@@ -237,8 +237,8 @@
           <span>不定频随机浮动（±分钟）</span>
           <span class="info-tip" data-tip="实际执行间隔将在 基准间隔 ± 浮动分钟 内随机生成，避免固定机械规律被平台风控识别。" aria-label="随机浮动说明">?</span>
         </label>
-        <input id="monitorJitter" type="number" value="15" min="0" max="120">
-        <small class="drawer-setting-desc">突出频率与间隔的不定性，模拟真实人工作息习惯。</small>
+        <input id="monitorJitter" type="number" value="15" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，模拟自然作息间隔。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -287,8 +287,8 @@
           <span>随机浮动间隔（±分钟）</span>
           <span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问与关注的时间间隔自然不固定。" aria-label="随机浮动间隔说明">?</span>
         </label>
-        <input id="mutualAutoJitter" type="number" value="3" min="0" max="120">
-        <small class="drawer-setting-desc">不定频调度，避免固定时间点触发平台风控。</small>
+        <input id="mutualAutoJitter" type="number" value="3" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，避免固定时间点触发平台风控。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -319,8 +319,8 @@
       </div>
       <div class="drawer-setting-group">
         <label for="mutualAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
-        <input id="mutualAutoDwellJitterSec" type="number" value="5" min="0" max="30">
-        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒；设为 0 则固定按基准时长执行。</small>
+        <input id="mutualAutoDwellJitterSec" type="number" value="5" min="1" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒浮动；至少浮动 1 秒。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -401,8 +401,8 @@
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问和关注的时间间隔不固定。" aria-label="随机浮动间隔说明">?</span></label>
-        <input id="commentAutoJitter" type="number" value="3" min="0" max="120">
-        <small class="drawer-setting-desc">按基础周期及随机浮动范围调度。</small>
+        <input id="commentAutoJitter" type="number" value="3" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，按基础周期动态调度。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoBatchSize" class="drawer-setting-label"><span>单次关注人数上限</span><span class="info-tip" data-tip="每轮定时任务最多打开多少位评论用户主页并尝试关注。" aria-label="单次关注人数说明">?</span></label>
@@ -421,8 +421,8 @@
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
-        <input id="commentAutoDwellJitterSec" type="number" value="5" min="0" max="30">
-        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒；设为 0 则固定按基准时长执行。</small>
+        <input id="commentAutoDwellJitterSec" type="number" value="5" min="1" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒浮动；至少浮动 1 秒。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoMinFollowers" class="drawer-setting-label"><span>最低粉丝数门槛</span><span class="info-tip" data-tip="低于此粉丝数的账号将跳过，不会自动关注。" aria-label="最低粉丝数说明">?</span></label>
@@ -483,8 +483,8 @@
           <span>随机浮动间隔（±分钟）</span>
           <span class="info-tip" data-tip="在基础周期上随机浮动，模拟真人自然作息，避免机械规律。" aria-label="随机浮动说明">?</span>
         </label>
-        <input id="unreciprocatedAutoJitter" type="number" value="10" min="0" max="60">
-        <small class="drawer-setting-desc">实际检测将在 基准 ± 浮动 分钟内动态执行。</small>
+        <input id="unreciprocatedAutoJitter" type="number" value="10" min="1" max="60">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，实际检测按基准动态调度。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -520,12 +520,12 @@
           <span class="info-tip" data-tip="连续取消关注时以此秒数为中心，再按浮动范围随机等待。" aria-label="取关间隔说明">?</span>
         </label>
         <input id="unreciprocatedUnfollowDelay" type="number" value="3" min="1" max="30">
-        <small class="drawer-setting-desc">默认 3 秒基准、±2 秒；设为 0 则固定按基准时长执行。</small>
+        <small class="drawer-setting-desc">默认 3 秒基准、±2 秒浮动；至少浮动 1 秒。</small>
       </div>
 
       <div class="drawer-setting-group">
         <label for="unreciprocatedUnfollowDelayJitter" class="drawer-setting-label"><span>取关间隔随机浮动（±秒）</span></label>
-        <input id="unreciprocatedUnfollowDelayJitter" type="number" value="2" min="0" max="15">
+        <input id="unreciprocatedUnfollowDelayJitter" type="number" value="2" min="1" max="15">
         <small class="drawer-setting-desc">每次取关前的等待时间会在基准范围内随机变化。</small>
       </div>
 

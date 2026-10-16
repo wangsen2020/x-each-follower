@@ -393,12 +393,12 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   };
   const res = { ...defaults, ...(cfg || {}) };
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
-  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.jitter = Math.max(1, Math.min(60, Number(res.jitter) || 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
-  res.unfollowDelayJitter = Math.max(0, Math.min(15, Number(res.unfollowDelayJitter) || 0));
+  res.unfollowDelayJitter = Math.max(1, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
