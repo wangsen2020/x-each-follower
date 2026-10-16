@@ -232,7 +232,7 @@
           <span>定时执行周期（分钟）</span>
           <span class="info-tip" data-tip="每隔多少分钟自动挑选有意向、有价值的用户，打开其首页下拉看帖并关注。" aria-label="定时执行周期说明">?</span>
         </label>
-        <input id="mutualAutoEvery" type="number" value="45" min="5" max="1440">
+        <input id="mutualAutoEvery" type="number" value="5" min="5" max="1440">
         <small class="drawer-setting-desc">定时寻找价值互粉账号的基础间隔周期。</small>
       </div>
 
@@ -241,7 +241,7 @@
           <span>随机浮动间隔（±分钟）</span>
           <span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问与关注的时间间隔自然不固定。" aria-label="随机浮动间隔说明">?</span>
         </label>
-        <input id="mutualAutoJitter" type="number" value="15" min="0" max="120">
+        <input id="mutualAutoJitter" type="number" value="3" min="0" max="120">
         <small class="drawer-setting-desc">不定频调度，避免固定时间点触发平台风控。</small>
       </div>
 
@@ -250,7 +250,7 @@
           <span>单次关注人数上限</span>
           <span class="info-tip" data-tip="每轮定时任务最多打开多少位高价值用户的首页进行看帖和关注。" aria-label="单次关注人数说明">?</span>
         </label>
-        <input id="mutualAutoBatchSize" type="number" value="3" min="1" max="20">
+        <input id="mutualAutoBatchSize" type="number" value="10" min="1" max="20">
         <small class="drawer-setting-desc">建议单次 2–5 人，少量多次更接近真人习惯。</small>
       </div>
 
@@ -259,7 +259,7 @@
           <span>主页下拉看帖次数</span>
           <span class="info-tip" data-tip="打开对方个人主页后，模拟向下滚动阅读帖子的分段次数，同时提取前 5–10 条帖子校验互粉意向。" aria-label="下拉看帖次数说明">?</span>
         </label>
-        <input id="mutualAutoScrollRounds" type="number" value="3" min="1" max="8">
+        <input id="mutualAutoScrollRounds" type="number" value="5" min="1" max="8">
         <small class="drawer-setting-desc">打开首页后分多次平滑下拉看帖，随后再回顶部点击关注。</small>
       </div>
 
@@ -268,7 +268,7 @@
           <span>主页看帖停留时长（秒）</span>
           <span class="info-tip" data-tip="在对方主页下拉浏览帖子的总停留时间（秒），停留结束后再触发点击关注。" aria-label="看帖停留时长说明">?</span>
         </label>
-        <input id="mutualAutoDwellSec" type="number" value="6" min="2" max="30">
+        <input id="mutualAutoDwellSec" type="number" value="15" min="2" max="60">
         <small class="drawer-setting-desc">模拟真实阅读帖子的停留时间。</small>
       </div>
 
@@ -324,27 +324,27 @@
     <div class="profile-drawer-content settings-drawer-content">
       <div class="drawer-setting-group">
         <label for="commentAutoEvery" class="drawer-setting-label"><span>定时执行周期（分钟）</span><span class="info-tip" data-tip="每隔多少分钟自动挑选评论追踪中的未关注用户，读取最近帖子后执行关注。" aria-label="定时执行周期说明">?</span></label>
-        <input id="commentAutoEvery" type="number" value="45" min="5" max="1440">
+        <input id="commentAutoEvery" type="number" value="5" min="5" max="1440">
         <small class="drawer-setting-desc">评论用户定时看帖与关注的基础间隔周期。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问和关注的时间间隔不固定。" aria-label="随机浮动间隔说明">?</span></label>
-        <input id="commentAutoJitter" type="number" value="15" min="0" max="120">
+        <input id="commentAutoJitter" type="number" value="3" min="0" max="120">
         <small class="drawer-setting-desc">按基础周期及随机浮动范围调度。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoBatchSize" class="drawer-setting-label"><span>单次关注人数上限</span><span class="info-tip" data-tip="每轮定时任务最多打开多少位评论用户主页并尝试关注。" aria-label="单次关注人数说明">?</span></label>
-        <input id="commentAutoBatchSize" type="number" value="3" min="1" max="20">
+        <input id="commentAutoBatchSize" type="number" value="10" min="1" max="20">
         <small class="drawer-setting-desc">控制每轮处理量，降低连续操作频率。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoScrollRounds" class="drawer-setting-label"><span>主页下拉看帖次数</span><span class="info-tip" data-tip="打开评论用户主页后分段向下浏览，并提取近期帖子用于后续评估。" aria-label="下拉看帖次数说明">?</span></label>
-        <input id="commentAutoScrollRounds" type="number" value="3" min="1" max="8">
+        <input id="commentAutoScrollRounds" type="number" value="5" min="1" max="8">
         <small class="drawer-setting-desc">在读取最近 5 条帖子期间分段浏览主页。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留时长（秒）</span><span class="info-tip" data-tip="每位用户主页滚动浏览的总停留时长，完成后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
-        <input id="commentAutoDwellSec" type="number" value="6" min="2" max="30">
+        <input id="commentAutoDwellSec" type="number" value="15" min="2" max="60">
         <small class="drawer-setting-desc">设置阅读帖子时的总停留时间。</small>
       </div>
       <div class="drawer-setting-group">

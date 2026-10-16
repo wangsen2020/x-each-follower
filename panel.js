@@ -23,11 +23,11 @@ let drawerMode = 'profile';
 let drawerLoading = false;
 const defaultMutualAutoFollow = () => ({
   enabled: false,
-  every: 45,
-  jitter: 15,
-  batchLimit: 3,
-  scrollRounds: 3,
-  dwellSeconds: 6,
+  every: 5,
+  jitter: 3,
+  batchLimit: 10,
+  scrollRounds: 5,
+  dwellSeconds: 15,
   minFollowers: 50,
   onlyMutualIntent: true,
   processedHandles: [],
@@ -35,6 +35,16 @@ const defaultMutualAutoFollow = () => ({
   lastRunAt: null,
   lastSummary: ''
 });
+function normalizeAutoFollowConfig(cfg = {}) {
+  const defaults = defaultMutualAutoFollow();
+  const res = { ...defaults, ...cfg };
+  if (res.every === 45) res.every = defaults.every;
+  if (res.jitter === 15) res.jitter = defaults.jitter;
+  if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
+  if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
+  if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
+  return res;
+}
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null, autoFollow: defaultMutualAutoFollow()};
 let selectedMutualHandles = new Set();
 let mutualSearch = '';
@@ -42,7 +52,7 @@ let mutualAutoRunning = false;
 let commentTracking = {users:[], posts:[]};
 const defaultCommentAutoFollow = () => {
   const mutualDefaults = {...defaultMutualAutoFollow(), ...(mutualNetwork.autoFollow || {})};
-  return {enabled:false, every:mutualDefaults.every, jitter:mutualDefaults.jitter, batchLimit:mutualDefaults.batchLimit, scrollRounds:mutualDefaults.scrollRounds, dwellSeconds:mutualDefaults.dwellSeconds, minFollowers:mutualDefaults.minFollowers, onlyMutualIntent:mutualDefaults.onlyMutualIntent, lastRunAt:null, lastSummary:''};
+  return normalizeAutoFollowConfig({enabled:false, every:mutualDefaults.every, jitter:mutualDefaults.jitter, batchLimit:mutualDefaults.batchLimit, scrollRounds:mutualDefaults.scrollRounds, dwellSeconds:mutualDefaults.dwellSeconds, minFollowers:mutualDefaults.minFollowers, onlyMutualIntent:mutualDefaults.onlyMutualIntent, lastRunAt:null, lastSummary:''});
 };
 let commentTrackingStatus = null;
 let autoFollowLogs = [];
@@ -141,7 +151,7 @@ function archiveCommentRecentPosts(profile) {
 }
 
 function getCommentAutoFollow() {
-  return {...defaultCommentAutoFollow(), ...(commentTracking.autoFollow || {})};
+  return normalizeAutoFollowConfig(commentTracking.autoFollow || {});
 }
 
 async function saveCommentAutoFollowSettings() {
@@ -149,12 +159,12 @@ async function saveCommentAutoFollowSettings() {
   const next = {
     ...current,
     enabled: Boolean($('commentAutoEnabled')?.checked),
-    every: Number($('commentAutoEvery')?.value || 60),
+    every: Number($('commentAutoEvery')?.value || 5),
     jitter: Number($('commentAutoJitter')?.value || 0),
-    batchLimit: Math.max(1, Math.min(20, Number($('commentAutoBatchSize')?.value || 3))),
-    scrollRounds: Math.max(1, Math.min(8, Number($('commentAutoScrollRounds')?.value || 3))),
-    dwellSeconds: Math.max(2, Math.min(30, Number($('commentAutoDwellSec')?.value || 6))),
-    minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value || 0)),
+    batchLimit: Math.max(1, Math.min(20, Number($('commentAutoBatchSize')?.value || 10))),
+    scrollRounds: Math.max(1, Math.min(8, Number($('commentAutoScrollRounds')?.value || 5))),
+    dwellSeconds: Math.max(2, Math.min(60, Number($('commentAutoDwellSec')?.value || 15))),
+    minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('评论追踪定时周期至少 5 分钟。');
@@ -724,18 +734,18 @@ function openSettingsDrawer() {
 }
 
 function getMutualAutoConfig() {
-  return {...defaultMutualAutoFollow(), ...(mutualNetwork.autoFollow || {})};
+  return normalizeAutoFollowConfig(mutualNetwork.autoFollow || {});
 }
 
 function renderMutualSettingsDrawer() {
   if (!$('mutualSettingsDrawer')) return;
   const cfg = getMutualAutoConfig();
   if ($('mutualAutoEnabled')) $('mutualAutoEnabled').checked = !!cfg.enabled;
-  if ($('mutualAutoEvery')) $('mutualAutoEvery').value = cfg.every || 45;
-  if ($('mutualAutoJitter')) $('mutualAutoJitter').value = cfg.jitter ?? 15;
-  if ($('mutualAutoBatchSize')) $('mutualAutoBatchSize').value = cfg.batchLimit || 3;
-  if ($('mutualAutoScrollRounds')) $('mutualAutoScrollRounds').value = cfg.scrollRounds || 3;
-  if ($('mutualAutoDwellSec')) $('mutualAutoDwellSec').value = cfg.dwellSeconds || 6;
+  if ($('mutualAutoEvery')) $('mutualAutoEvery').value = cfg.every || 5;
+  if ($('mutualAutoJitter')) $('mutualAutoJitter').value = cfg.jitter ?? 3;
+  if ($('mutualAutoBatchSize')) $('mutualAutoBatchSize').value = cfg.batchLimit || 10;
+  if ($('mutualAutoScrollRounds')) $('mutualAutoScrollRounds').value = cfg.scrollRounds || 5;
+  if ($('mutualAutoDwellSec')) $('mutualAutoDwellSec').value = cfg.dwellSeconds || 15;
   if ($('mutualAutoMinFollowers')) $('mutualAutoMinFollowers').value = cfg.minFollowers ?? 50;
   if ($('mutualAutoOnlyIntent')) $('mutualAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
   const summaryEl = $('mutualAutoSummaryText');
@@ -1591,12 +1601,12 @@ async function saveMutualAutoFollowSettings() {
   const next = {
     ...current,
     enabled: Boolean($('mutualAutoEnabled')?.checked),
-    every: Number($('mutualAutoEvery')?.value || 45),
+    every: Number($('mutualAutoEvery')?.value || 5),
     jitter: Number($('mutualAutoJitter')?.value || 0),
-    batchLimit: Math.max(1, Math.min(20, Number($('mutualAutoBatchSize')?.value || 3))),
-    scrollRounds: Math.max(1, Math.min(8, Number($('mutualAutoScrollRounds')?.value || 3))),
-    dwellSeconds: Math.max(2, Math.min(30, Number($('mutualAutoDwellSec')?.value || 6))),
-    minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value || 0)),
+    batchLimit: Math.max(1, Math.min(20, Number($('mutualAutoBatchSize')?.value || 10))),
+    scrollRounds: Math.max(1, Math.min(8, Number($('mutualAutoScrollRounds')?.value || 5))),
+    dwellSeconds: Math.max(2, Math.min(60, Number($('mutualAutoDwellSec')?.value || 15))),
+    minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('定时执行周期至少 5 分钟。');
@@ -1634,8 +1644,8 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       if (bundle.pending) await sleep(650);
     }
 
-    const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 3));
-    const totalDwellMs = Math.max(2000, Math.min(30000, (Number(cfg.dwellSeconds) || 6) * 1000));
+    const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
+    const totalDwellMs = Math.max(2000, Math.min(60000, (Number(cfg.dwellSeconds) || 15) * 1000));
     const stepDelay = Math.max(600, Math.round(totalDwellMs / rounds));
 
     for (let r = 0; r < rounds; r++) {
@@ -1763,7 +1773,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             handle: target.handle,
             name: target.name,
             result: 'followed',
-            detail: `看帖停留 ${cfg.dwellSeconds || 6} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。`,
+            detail: `看帖停留 ${cfg.dwellSeconds || 15} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。`,
             posts: postsScanned
           });
         } else if (res.status === 'skipped') {
@@ -3034,7 +3044,7 @@ try {
   mutualNetwork = {
     ...mutualNetwork,
     ...(savedNetwork.mutualNetwork || {}),
-    autoFollow: {...defaultMutualAutoFollow, ...(savedNetwork.mutualNetwork?.autoFollow || {})}
+    autoFollow: normalizeAutoFollowConfig(savedNetwork.mutualNetwork?.autoFollow || {})
   };
   renderMutualNetwork();
   renderMutualSettingsDrawer();
@@ -3045,7 +3055,7 @@ try {
   const {autoFollowLogs: savedLocalLogs = []} = await chrome.storage.local.get('autoFollowLogs');
     if (Array.isArray(savedLocalLogs) && savedLocalLogs.length) { autoFollowLogs = savedLocalLogs; renderLogsModal(); }
     const savedComments = await chrome.storage.local.get(['commentTracking','commentTrackingStatus']);
-  commentTracking = {...commentTracking, ...(savedComments.commentTracking || {}), autoFollow:{...defaultCommentAutoFollow(), ...(savedComments.commentTracking?.autoFollow || {})}};
+  commentTracking = {...commentTracking, ...(savedComments.commentTracking || {}), autoFollow:normalizeAutoFollowConfig(savedComments.commentTracking?.autoFollow || {})};
   commentTrackingStatus = savedComments.commentTrackingStatus || null;
   renderCommentAutoFollowSettings();
   chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});

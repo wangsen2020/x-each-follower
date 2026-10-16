@@ -13,11 +13,32 @@ const COMMENT_REPLY_LIMIT = 3000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let commentFollowRunning = false;
 
-function scheduleCommentAutoFollow(cfg = {}) {
+function normalizeAutoFollowConfig(cfg = {}) {
+  const defaults = {
+    enabled: false,
+    every: 5,
+    jitter: 3,
+    batchLimit: 10,
+    scrollRounds: 5,
+    dwellSeconds: 15,
+    minFollowers: 50,
+    onlyMutualIntent: true
+  };
+  const res = { ...defaults, ...(cfg || {}) };
+  if (res.every === 45) res.every = defaults.every;
+  if (res.jitter === 15) res.jitter = defaults.jitter;
+  if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
+  if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
+  if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
+  return res;
+}
+
+function scheduleCommentAutoFollow(rawCfg = {}) {
+  const cfg = normalizeAutoFollowConfig(rawCfg);
   chrome.alarms.clear('x-comment-auto-follow').then(() => {
     if (!cfg.enabled) return;
-    const every = Math.max(5, Number(cfg.every) || 60);
-    const jitter = Math.max(0, Math.min(every - 1, Number(cfg.jitter) || 0));
+    const every = Math.max(5, Number(cfg.every) || 5);
+    const jitter = Math.max(0, Math.min(every - 1, Number(cfg.jitter) ?? 3));
     const delta = jitter ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
     chrome.alarms.create('x-comment-auto-follow', {delayInMinutes:Math.max(5, every + delta)});
   }).catch(() => {});
@@ -45,8 +66,8 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
-  const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 3));
-  const totalDwellMs = Math.max(2000, Math.min(30000, (Number(cfg.dwellSeconds) || 6) * 1000));
+  const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
+  const totalDwellMs = Math.max(2000, Math.min(60000, (Number(cfg.dwellSeconds) || 15) * 1000));
   const stepDelay = Math.max(600, Math.round(totalDwellMs / rounds));
   for (let round = 0; round < rounds; round++) {
     await chrome.scripting.executeScript({target:{tabId}, func:simulateProfileScrollStep, args:[round, 420]}).catch(() => []);
@@ -72,7 +93,7 @@ async function runCommentAutoFollow(source = 'alarm') {
   let tracking;
   try {
     tracking = await loadCommentTracking();
-    const cfg = {...{enabled:false, every:45, jitter:15, batchLimit:3, scrollRounds:3, dwellSeconds:6, minFollowers:50, onlyMutualIntent:true}, ...(tracking.autoFollow || {})};
+    const cfg = normalizeAutoFollowConfig(tracking.autoFollow);
     if (source === 'alarm' && !cfg.enabled) return {ok:false, error:'定时关注已关闭。'};
     const {monitor = {}} = await chrome.storage.local.get('monitor');
     if (monitor.pausedUntil && Date.now() < Date.parse(monitor.pausedUntil)) return {ok:false, error:`关注操作暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}`};
@@ -81,7 +102,7 @@ async function runCommentAutoFollow(source = 'alarm') {
       const handle = String(user.handle || '').toLowerCase();
       const mutual = user.relationship?.following === true && user.relationship?.followedBy === true;
       return handle && !user.followedAt && !ownFollowing.has(handle) && user.relationship?.following !== true && !mutual;
-    }).sort((a,b) => String(a.lastSeenAt || '').localeCompare(String(b.lastSeenAt || ''))).slice(0, Math.max(1, Math.min(20, Number(cfg.batchLimit) || 3)));
+    }).sort((a,b) => String(a.lastSeenAt || '').localeCompare(String(b.lastSeenAt || ''))).slice(0, Math.max(1, Math.min(20, Number(cfg.batchLimit) || 10)));
     if (!candidates.length) {
       cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = '没有待关注的评论用户。';
       tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
@@ -358,10 +379,10 @@ chrome.alarms.onAlarm.addListener(async alarm => {
 
   if (alarm.name === 'x-mutual-auto-follow') {
     const { mutualNetwork } = await chrome.storage.local.get('mutualNetwork');
-    const cfg = mutualNetwork?.autoFollow;
+    const cfg = normalizeAutoFollowConfig(mutualNetwork?.autoFollow);
     if (!cfg?.enabled) return;
-    const base = Number(cfg.every) || 45;
-    const jitter = Number(cfg.jitter) || 0;
+    const base = Number(cfg.every) || 5;
+    const jitter = Number(cfg.jitter) ?? 3;
     const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
     const nextDelay = Math.max(5, base + delta);
     await chrome.alarms.create('x-mutual-auto-follow', { delayInMinutes: nextDelay });

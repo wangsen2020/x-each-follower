@@ -330,7 +330,7 @@ export function selectValuableMutualTargets(users = [], config = {}, profileCach
     ? config.onlyIntent
     : (config.onlyMutualIntent !== false);
   const minFollowers = Number.isFinite(Number(config.minFollowers)) ? Number(config.minFollowers) : 50;
-  const batchLimit = Math.max(1, Math.min(20, Number(config.batchSize || config.batchLimit) || 3));
+  const batchLimit = Math.max(1, Math.min(20, Number(config.batchSize || config.batchLimit) || 10));
   const visitedList = config.visitedHandles || config.processedHandles || [];
   const processedSet = new Set(visitedList.map(h => String(h || '').toLowerCase()));
   const scored = [];
