@@ -3,7 +3,7 @@ import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulate
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -3442,41 +3442,6 @@ async function applyGrokAnalysisResults(parsedMap) {
   return updatedCount;
 }
 
-async function pollGrokResponseAndApply(tabId, handles, reportStatus = analysisStatus) {
-  const targetHandles = (handles || []).filter(Boolean);
-  if (!tabId || !targetHandles.length) return;
-  const deadline = Date.now() + 75000;
-  let bestCount = 0;
-  let stableRounds = 0;
-  while (Date.now() < deadline) {
-    await sleep(2500);
-    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!currentTab) break;
-    const textResult = (await chrome.scripting.executeScript({
-      target: {tabId},
-      func: () => document.body?.innerText || ''
-    }).catch(() => []))?.[0]?.result || '';
-    if (!textResult) continue;
-    const markerIdx = textResult.lastIndexOf('[@用户名 | 互粉意向:');
-    const responseText = markerIdx >= 0 ? textResult.slice(markerIdx + 18) : textResult;
-    const parsed = parseGrokMutualAnalysis(responseText, targetHandles);
-    const matchedCount = Object.keys(parsed).length;
-    if (matchedCount > 0) {
-      await applyGrokAnalysisResults(parsed);
-      const mutualCount = Object.values(parsed).filter(item => item.grokMutualIntent).length;
-      reportStatus(`Grok 已回填 ${matchedCount}/${targetHandles.length} 个账号标签（其中“互粉” ${mutualCount} 个）。`);
-      if (matchedCount >= targetHandles.length) break;
-      if (matchedCount === bestCount) {
-        stableRounds++;
-        if (stableRounds >= 4) break;
-      } else {
-        bestCount = matchedCount;
-        stableRounds = 0;
-      }
-    }
-  }
-}
-
 async function closeGrokAnalysisWindow(windowId) {
   if (!windowId) return;
   await chrome.windows.remove(windowId).catch(() => {});
@@ -3525,7 +3490,6 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
   await collectSelectedProfiles(customCandidates, reportStatus);
   const prompt = grokPrompt();
   const created = await createBackgroundGrokWindow('https://x.com/i/grok');
-  let waitForPollToClose = false;
   try {
     let tabId = created.tabs?.[0]?.id;
     if (!tabId && created.id) {
@@ -3534,44 +3498,33 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
     }
     if (!tabId) throw new Error('Grok 窗口创建失败。');
     await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
-    const deadline = Date.now() + 30000;
+    const handles = analysisRows.map(r => r.handle);
+    const submitDeadline = Date.now() + 30000;
     let lastReason = 'Grok 页面尚未准备好';
-    while (Date.now() < deadline) {
+    while (Date.now() < submitDeadline) {
       await sleep(1000);
-      const result = (await chrome.scripting.executeScript({target:{tabId}, func:(text) => {
-        const input = document.querySelector('textarea, [contenteditable="true"]');
-        if (!input) return {ok:false, reason:'找不到 Grok 输入框'};
-        if (input.tagName === 'TEXTAREA') {
-          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-          setter?.call(input, text);
-        } else {
-          input.textContent = text;
-        }
-        input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
-        input.dispatchEvent(new Event('change', {bubbles:true}));
-        const send = [...document.querySelectorAll('button')].find(button => {
-          const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
-          return /send|提交|发送/i.test(label) && !button.disabled;
-        });
-        if (!send) return {ok:false, reason:'找不到 Grok 发送按钮'};
-        send.click();
-        return {ok:true};
-      }, args:[prompt]}))[0]?.result;
-      if (result?.ok) {
-        const handles = analysisRows.map(r => r.handle);
-        reportStatus(`已在 800×600 Grok 窗口提交 ${handles.length} 个账号的互粉倾向分析，正在等待 Grok 回填标签…`);
-        waitForPollToClose = true;
-        pollGrokResponseAndApply(tabId, handles, reportStatus)
-          .catch(error => reportStatus(`Grok 回填读取失败：${error.message}`))
-          .finally(() => closeGrokAnalysisWindow(created.id));
-        return;
+      const result = (await chrome.scripting.executeScript({
+        target:{tabId}, func:submitGrokPromptAndWaitForCopyIconOnPage, args:[prompt, 75000, handles]
+      }))[0]?.result;
+      if (!result?.submitted) {
+        lastReason = result?.reason || 'Grok 尚未准备好接收消息';
+        continue;
       }
-      lastReason = result?.reason || lastReason;
+      if (!result.completed) throw new Error(`${result.reason || 'Grok 回复未完成'}。窗口已关闭，请检查 Grok 后重试。`);
+      const markerIdx = String(result.text || '').lastIndexOf('[@用户名 | 互粉意向:');
+      const responseText = markerIdx >= 0 ? result.text.slice(markerIdx + 18) : result.text;
+      const parsed = parseGrokMutualAnalysis(responseText, handles);
+      const matchedCount = Object.keys(parsed).length;
+      if (!matchedCount) throw new Error('已检测到 Grok 回复的复制按钮，但未能解析出互粉分析标签。');
+      await applyGrokAnalysisResults(parsed);
+      const mutualCount = Object.values(parsed).filter(item => item.grokMutualIntent).length;
+      reportStatus(`检测到 Grok 回复的复制按钮，分析完成：已回填 ${matchedCount}/${handles.length} 个账号标签（其中“互粉” ${mutualCount} 个）。`);
+      return;
     }
     await navigator.clipboard.writeText(prompt);
-    throw new Error(`${lastReason}。分析包已复制到剪贴板；自动提交窗口将关闭。`);
+    throw new Error(`${lastReason}。分析包已复制到剪贴板，800×600 Grok 窗口将关闭。`);
   } finally {
-    if (!waitForPollToClose) await closeGrokAnalysisWindow(created.id);
+    await closeGrokAnalysisWindow(created.id);
   }
 }
 
