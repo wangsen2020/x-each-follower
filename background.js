@@ -88,6 +88,19 @@ function scheduleCommentAutoFollow(rawCfg = {}) {
   }).catch(() => {});
 }
 
+async function createNotification(id, options) {
+  try {
+    await chrome.notifications.create(id, {
+      ...options,
+      // Chrome's notification image decoder is not reliable for SVG icons.
+      // Use the packaged PNG used by the extension manifest instead.
+      iconUrl: chrome.runtime.getURL('icon128.png')
+    });
+  } catch (error) {
+    console.warn('Unable to show XFollower notification:', error?.message || error);
+  }
+}
+
 async function loadCommentTracking() {
   const {commentTracking:stored = {users:[], posts:[]}} = await chrome.storage.local.get('commentTracking');
   const durable = await durableGet('commentTracking').catch(() => null);
@@ -430,10 +443,10 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     if (!cfg.enabled) return;
     scheduleCommentAutoFollow(cfg);
     const result = await runCommentAutoFollow('alarm');
-    await chrome.notifications.create(`x-comment-auto-${Date.now()}`, {
-      type:'basic', iconUrl:'icon128.svg', title:'X 评论追踪 · 自动关注',
+    await createNotification(`x-comment-auto-${Date.now()}`, {
+      type:'basic', title:'X 评论追踪 · 自动关注',
       message:result.ok ? result.summary || '评论用户关注任务已完成。' : `评论追踪任务未完成：${result.error || '请检查状态'}`
-    }).catch(() => {});
+    });
     return;
   }
   if (alarm.name === 'x-followers-scan') {
@@ -443,9 +456,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Math.max(1, Number(monitor.jitter) || 1);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    await chrome.notifications.create(`x-followers-${Date.now()}`, {
+    await createNotification(`x-followers-${Date.now()}`, {
       type: 'basic',
-      iconUrl: 'icon128.svg',
       title: 'X 关注与粉丝检索提醒',
       message: `增量检索周期已到（下次检索约 ${nextDelay} 分钟后），点击同步增量数据。`
     });
@@ -474,9 +486,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
       if (res?.ok) handledByPanel = true;
     } catch {}
     if (!handledByPanel) {
-      await chrome.notifications.create(`x-mutual-auto-${Date.now()}`, {
+      await createNotification(`x-mutual-auto-${Date.now()}`, {
         type: 'basic',
-        iconUrl: 'icon128.svg',
         title: 'X 互粉追踪 · 定时浏览与关注',
         message: `定时互粉浏览周期已到（下次约 ${nextDelay} 分钟后），请保持管理面板开启以自动浏览主页并点击关注。`
       });
@@ -505,9 +516,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
       if (res?.ok) handledByPanel = true;
     } catch {}
     if (!handledByPanel) {
-      await chrome.notifications.create(`x-unreciprocated-${Date.now()}`, {
+      await createNotification(`x-unreciprocated-${Date.now()}`, {
         type: 'basic',
-        iconUrl: 'icon128.svg',
         title: 'X 回关监测 · 定时检测提醒',
         message: `定时回关检测周期已到（默认一小时一次），请保持管理面板开启以自动检测对方回关状态并清理超时未回关账号。`
       });
