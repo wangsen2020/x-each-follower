@@ -1,8 +1,9 @@
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
-import { readProfileBundle, simulateProfileScrollStep } from './page-reader.js';
-import { evaluateMutualProfile, parseCount } from './scoring.js';
+import { readProfileBundle, simulateProfileScrollStep, publishReplyToTweetOnPage } from './page-reader.js';
+import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
+import { requestGrokComment, postReplyOnTab, deliverGrokStream } from './grok-comment.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -166,6 +167,7 @@ async function runCommentAutoFollow(source = 'alarm') {
       const handle = String(user.handle || '').replace(/^@/, '');
       let didFollow = false;
       let actualDwellSeconds = cfg.dwellSeconds;
+      let commentRes = {status:'off'};
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
@@ -227,12 +229,32 @@ async function runCommentAutoFollow(source = 'alarm') {
           user.relationship = {...(user.relationship || {}), following:true}; delete user.followFailureReason;
           user.autoFollowState = 'followed'; delete user.autoFollowReason;
           didFollow = true;
+          if (cfg.grokAutoComment) {
+            const posts = (user.recentPosts || []).filter(p => String(p?.text || '').trim().length >= 8 && /\/status\/\d+/.test(p?.url || ''));
+            if (!posts.length) commentRes = {status:'skipped', reason:'没有读到带链接的帖子，无法定位评论目标'};
+            else {
+              const chosen = posts[Math.floor(Math.random() * posts.length)];
+              const g = await requestGrokComment(handle, chosen, user.name, {sleep, fix:repairMojibake});
+              if (!g.ok) commentRes = {status:'grok_failed', reason:g.reason};
+              else {
+                const pub = await postReplyOnTab(tabId, chosen, g.reply, publishReplyToTweetOnPage, sleep);
+                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:g.reply, post:g.postText, postUrl:g.postUrl, channel:g.channel};
+                if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = g.reply; user.grokCommentPostUrl = g.postUrl; }
+              }
+            }
+          }
         } else { user.followFailedAt = new Date().toISOString(); user.autoFollowState = 'failed'; }
       } catch (error) {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       await saveCommentTrackingData(tracking);
-      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? `主页看帖目标停留约 ${actualDwellSeconds} 秒后关注成功` : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5)}).catch(() => {});
+      const commentNote = {
+        posted: `；✔ 已通过 Grok（${commentRes.channel}）在其帖子下发表评论`,
+        post_failed: `；Grok 已写好评论但发表失败：${commentRes.reason}`,
+        grok_failed: `；Grok 未能写出评论：${commentRes.reason}`,
+        skipped: `；未评论：${commentRes.reason}`
+      }[commentRes.status] || '';
+      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? `主页看帖目标停留约 ${actualDwellSeconds} 秒后关注成功${commentNote}` : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5), grokComment:commentRes.reply || '', grokCommentPost:commentRes.post || '', grokCommentPostUrl:commentRes.postUrl || '', commentPosted:commentRes.status === 'posted'}).catch(() => {});
       processedCount++;
       if (didFollow) followedCount++;
       if (rateLimited) {
@@ -359,6 +381,10 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd === 'grokStreamAnswer') {
+    deliverGrokStream(message.text || '');
+    return;
+  }
   if (message?.cmd === 'configureCommentAutoFollow') {
     scheduleCommentAutoFollow(message.config || {});
     sendResponse({ok:true});

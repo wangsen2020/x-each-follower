@@ -187,75 +187,56 @@ export function clickAnyFollowOnProfile(handle) {
 }
 
 export function publishReplyToTweetOnPage(tweetUrl, replyText) {
+  // 经 executeScript 序列化注入，必须自包含。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const cleanText = String(replyText || '').trim();
-    if (!cleanText) return { ok: false, reason: '回复内容为空' };
+    const text = String(replyText || '').trim();
+    if (!text) return { ok: false, reason: '回复内容为空' };
+    const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+    if (!tweetId || !location.pathname.includes(`/status/${tweetId}`)) return { ok: false, reason: '当前页面不是目标帖子详情页' };
+    const visible = el => el && el.offsetParent !== null;
+    const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
+      (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
 
-    let targetArticle = null;
-    let replyButton = null;
-
-    if (tweetUrl) {
-      const match = String(tweetUrl).match(/\/status\/(\d+)/);
-      const tweetId = match ? match[1] : '';
-      if (tweetId) {
-        const articles = Array.from(document.querySelectorAll('article'));
-        targetArticle = articles.find(a => a.querySelector(`a[href*="/status/${tweetId}"]`));
-      }
+    // 目标帖：详情页里链接到该 tweetId 的 article；找不到就说明页面没渲染出目标帖，直接失败，不乱回复别的帖子
+    let article = null;
+    for (let i = 0; i < 30 && !article; i++) {
+      article = [...document.querySelectorAll('article')].find(a => a.querySelector(`a[href*="/status/${tweetId}"]`));
+      if (!article) await sleep(400);
     }
+    if (!article) return { ok: false, reason: '没有在页面中找到目标帖子' };
 
-    if (!targetArticle) {
-      targetArticle = document.querySelector('article');
-    }
+    const replyBtn = article.querySelector('[data-testid="reply"]');
+    if (!replyBtn) return { ok: false, reason: '目标帖没有回复按钮（可能限制了回复）' };
+    replyBtn.click();
 
-    if (targetArticle) {
-      replyButton = targetArticle.querySelector('[data-testid="reply"]');
-      if (replyButton) {
-        replyButton.click();
-        await sleep(900);
-      }
-    }
+    const findBox = () => document.querySelector('[role="dialog"] [data-testid="tweetTextarea_0"]');
+    let box = null;
+    for (let i = 0; i < 30 && !box; i++) { box = findBox(); if (!visible(box)) box = null; if (!box) await sleep(300); }
+    if (!box) return { ok: false, reason: '没有弹出回复输入框' };
 
-    let textarea = null;
+    box.focus();
+    document.execCommand('insertText', false, text);
+    await sleep(500);
+    const typed = (box.innerText || '').replace(/\s+/g, '');
+    if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '评论文字没有写入输入框' };
+
+    let send = null;
     for (let i = 0; i < 25; i++) {
-      textarea = document.querySelector('[role="dialog"] [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]');
-      if (textarea && textarea.offsetParent !== null) break;
-      await sleep(200);
+      send = document.querySelector('[role="dialog"] [data-testid="tweetButton"]');
+      if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
+      send = null; await sleep(300);
     }
+    if (!send) return { ok: false, reason: '发送按钮一直不可用（可能超长或被限制）' };
+    send.click();
 
-    if (!textarea) {
-      return { ok: false, reason: '未找到推文回复输入框' };
+    // 确认发出：回复弹窗关闭 = X 已接受；出现失败提示 = 失败
+    for (let i = 0; i < 40; i++) {
+      await sleep(300);
+      if (blocked()) return { ok: false, reason: 'X 拒绝发布评论（限流或风控）' };
+      if (!document.querySelector('[role="dialog"] [data-testid="tweetTextarea_0"]')) return { ok: true };
     }
-
-    textarea.focus();
-    try {
-      document.execCommand('insertText', false, cleanText);
-    } catch (e) {}
-
-    const textLen = (textarea.innerText || textarea.textContent || '').trim().length;
-    if (textLen < cleanText.length * 0.5) {
-      textarea.innerText = cleanText;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-
-    await sleep(600);
-
-    let sendBtn = null;
-    for (let i = 0; i < 20; i++) {
-      const modal = document.querySelector('[role="dialog"]') || document;
-      sendBtn = modal.querySelector('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]');
-      if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') break;
-      await sleep(200);
-    }
-
-    if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
-      return { ok: false, reason: '回复发送按钮不可用' };
-    }
-
-    sendBtn.click();
-    await sleep(1500);
-
-    return { ok: true };
+    return { ok: false, reason: '点击发送后弹窗未关闭，无法确认已发出' };
   })();
 }
 
