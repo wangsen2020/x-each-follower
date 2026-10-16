@@ -126,6 +126,32 @@ const defaultCommentAutoFollow = () => {
 };
 let commentTrackingStatus = null;
 let autoFollowLogs = [];
+let unreciprocatedTracker = {
+  users: [],
+  config: {
+    enabled: false,
+    every: 60,
+    jitter: 10,
+    overdueDays: 14,
+    autoUnfollow: false,
+    batchLimit: 10,
+    unfollowDelay: 3,
+    whitelist: '',
+    lastRunAt: null,
+    lastSummary: '尚未执行回关监测'
+  },
+  updatedAt: ''
+};
+let unreciprocatedLogs = [];
+let activeUnreciprocatedTab = 'overdue';
+let unreciprocatedSearch = '';
+let unreciprocatedPage = 1;
+let unreciprocatedPageSize = 50;
+const selectedUnreciprocatedHandles = new Set();
+let unreciprocatedCheckRunning = false;
+let unreciprocatedUnfollowRunning = false;
+let unreciprocatedUnfollowStopped = false;
+const unreciprocatedBusy = new Set();
 let activeGrokStreamResolver = null;
 let activeCommentFilter = 'notMutual';
 let commentPage = 1;
@@ -3983,32 +4009,6 @@ $('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
 // ==============================================================================
 // 回关监测模块核心实现 (Unreciprocated Followback Tracker Module)
 // ==============================================================================
-let unreciprocatedTracker = {
-  users: [],
-  config: {
-    enabled: false,
-    every: 60,
-    jitter: 10,
-    overdueDays: 14,
-    autoUnfollow: false,
-    batchLimit: 10,
-    unfollowDelay: 3,
-    whitelist: '',
-    lastRunAt: null,
-    lastSummary: '尚未执行回关监测'
-  },
-  updatedAt: ''
-};
-let unreciprocatedLogs = [];
-let activeUnreciprocatedTab = 'overdue';
-let unreciprocatedSearch = '';
-let unreciprocatedPage = 1;
-let unreciprocatedPageSize = 50;
-const selectedUnreciprocatedHandles = new Set();
-let unreciprocatedCheckRunning = false;
-let unreciprocatedUnfollowRunning = false;
-let unreciprocatedUnfollowStopped = false;
-const unreciprocatedBusy = new Set();
 
 function normalizeUnreciprocatedConfig(cfg = {}) {
   const defaults = {
