@@ -1154,7 +1154,10 @@ async function collectRelations(handle, perSideLimit = 500) {
 }
 
 async function saveMutualNetwork() { await chrome.storage.local.set({mutualNetwork}); persist('mutualNetwork', mutualNetwork); }
-function networkStatus(text) { $('networkStatus').textContent = text; }
+function networkStatus(text) {
+  const root = $('networkStatus');
+  if (root) root.textContent = text;
+}
 function mergeNetworkAccount(existing = {}, user = {}) {
   const relationship = {...(existing.relationship || {})};
   for (const [key, value] of Object.entries(user.relationship || {})) if (value !== null && value !== undefined) relationship[key] = value;
