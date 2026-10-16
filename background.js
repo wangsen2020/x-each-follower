@@ -2,6 +2,7 @@ import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, find
 import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep } from './page-reader.js';
 import { evaluateMutualProfile, parseCount } from './scoring.js';
+import { randomizedSeconds } from './timing.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -21,11 +22,14 @@ function normalizeAutoFollowConfig(cfg = {}) {
     batchLimit: 10,
     scrollRounds: 5,
     dwellSeconds: 15,
+    dwellJitterSeconds: 5,
     minFollowers: 50,
     onlyMutualIntent: true,
     grokAutoComment: false
   };
   const res = { ...defaults, ...(cfg || {}) };
+  res.dwellSeconds = Math.max(2, Math.min(60, Number(res.dwellSeconds) || defaults.dwellSeconds));
+  res.dwellJitterSeconds = Math.max(0, Math.min(30, Number(res.dwellJitterSeconds) || 0));
   if (res.every === 45) res.every = defaults.every;
   if (res.jitter === 15) res.jitter = defaults.jitter;
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
@@ -44,6 +48,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollow: false,
     batchLimit: 10,
     unfollowDelay: 3,
+    unfollowDelayJitter: 2,
     whitelist: '',
     lastRunAt: null,
     lastSummary: '尚未执行回关监测'
@@ -55,6 +60,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.unfollowDelayJitter = Math.max(0, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
@@ -105,15 +111,19 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
   }
   if (data.pending) throw new Error('公开资料读取超时');
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
-  const totalDwellMs = Math.max(2000, Math.min(60000, (Number(cfg.dwellSeconds) || 15) * 1000));
-  const stepDelay = Math.max(600, Math.round(totalDwellMs / rounds));
+  const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
+  const totalDwellMs = dwellSeconds * 1000;
+  const stepDelay = Math.max(1, Math.floor(totalDwellMs / rounds));
+  let remainingDwellMs = totalDwellMs;
   for (let round = 0; round < rounds; round++) {
     await chrome.scripting.executeScript({target:{tabId}, func:simulateProfileScrollStep, args:[round, 420]}).catch(() => []);
-    await sleep(stepDelay + Math.floor(Math.random() * 350));
+    const currentStepDelay = round === rounds - 1 ? remainingDwellMs : stepDelay;
+    await sleep(currentStepDelay);
+    remainingDwellMs -= currentStepDelay;
   }
   const afterScroll = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result;
   if (afterScroll && !afterScroll.pending && (afterScroll.posts || []).length >= (data.posts || []).length) data = afterScroll;
-  return data;
+  return {...data, dwellSeconds};
 }
 
 // 定时关注执行日志：时间、访问的账号、扫描的帖子、关注结果（面板与后台共用 storage 键 autoFollowLogs）
@@ -156,9 +166,11 @@ async function runCommentAutoFollow(source = 'alarm') {
     for (const user of candidates) {
       const handle = String(user.handle || '').replace(/^@/, '');
       let didFollow = false;
+      let actualDwellSeconds = cfg.dwellSeconds;
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
+        actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
         user.recentPosts = mergeRecentPosts(user.recentPosts || [], profile.posts || [], 100);
         user.recentPostsFetchedAt = new Date().toISOString();
         user.recentPostsCount = user.recentPosts.length;
@@ -220,7 +232,7 @@ async function runCommentAutoFollow(source = 'alarm') {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       await saveCommentTrackingData(tracking);
-      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? '已点击并关注成功' : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5)}).catch(() => {});
+      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? `主页看帖目标停留约 ${actualDwellSeconds} 秒后关注成功` : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5)}).catch(() => {});
       processedCount++;
       if (didFollow) followedCount++;
       if (rateLimited) {

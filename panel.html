@@ -311,11 +311,16 @@
 
       <div class="drawer-setting-group">
         <label for="mutualAutoDwellSec" class="drawer-setting-label">
-          <span>主页看帖停留时长（秒）</span>
-          <span class="info-tip" data-tip="在对方主页下拉浏览帖子的总停留时间（秒），停留结束后再触发点击关注。" aria-label="看帖停留时长说明">?</span>
+          <span>主页看帖停留基准（秒）</span>
+          <span class="info-tip" data-tip="以此秒数为中心，再按下方浮动范围随机确定本次停留时长，之后再触发关注。" aria-label="看帖停留时长说明">?</span>
         </label>
         <input id="mutualAutoDwellSec" type="number" value="15" min="2" max="60">
-        <small class="drawer-setting-desc">模拟真实阅读帖子的停留时间。</small>
+        <small class="drawer-setting-desc">每次执行按基准随机浮动后分段浏览，日志记录本次目标时长。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="mutualAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
+        <input id="mutualAutoDwellJitterSec" type="number" value="5" min="0" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒；设为 0 则固定按基准时长执行。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -410,9 +415,14 @@
         <small class="drawer-setting-desc">在读取最近 5 条帖子期间分段浏览主页。</small>
       </div>
       <div class="drawer-setting-group">
-        <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留时长（秒）</span><span class="info-tip" data-tip="每位用户主页滚动浏览的总停留时长，完成后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
+        <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留基准（秒）</span><span class="info-tip" data-tip="以此秒数为中心，再按下方浮动范围随机确定本次停留时长，之后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
         <input id="commentAutoDwellSec" type="number" value="15" min="2" max="60">
-        <small class="drawer-setting-desc">设置阅读帖子时的总停留时间。</small>
+        <small class="drawer-setting-desc">每次执行按基准随机浮动后分段浏览，日志记录本次目标时长。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
+        <input id="commentAutoDwellJitterSec" type="number" value="5" min="0" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒；设为 0 则固定按基准时长执行。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoMinFollowers" class="drawer-setting-label"><span>最低粉丝数门槛</span><span class="info-tip" data-tip="低于此粉丝数的账号将跳过，不会自动关注。" aria-label="最低粉丝数说明">?</span></label>
@@ -506,11 +516,17 @@
 
       <div class="drawer-setting-group">
         <label for="unreciprocatedUnfollowDelay" class="drawer-setting-label">
-          <span>取关操作仿真间隔（秒）</span>
-          <span class="info-tip" data-tip="连续取消关注每两个账号之间的等待停顿时间，默认 3 秒。" aria-label="取关间隔说明">?</span>
+          <span>取关操作间隔基准（秒）</span>
+          <span class="info-tip" data-tip="连续取消关注时以此秒数为中心，再按浮动范围随机等待。" aria-label="取关间隔说明">?</span>
         </label>
         <input id="unreciprocatedUnfollowDelay" type="number" value="3" min="1" max="30">
-        <small class="drawer-setting-desc">模拟真人手速停顿，保护账号安全。</small>
+        <small class="drawer-setting-desc">默认 3 秒基准、±2 秒；设为 0 则固定按基准时长执行。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="unreciprocatedUnfollowDelayJitter" class="drawer-setting-label"><span>取关间隔随机浮动（±秒）</span></label>
+        <input id="unreciprocatedUnfollowDelayJitter" type="number" value="2" min="0" max="15">
+        <small class="drawer-setting-desc">每次取关前的等待时间会在基准范围内随机变化。</small>
       </div>
 
       <div class="drawer-setting-group">

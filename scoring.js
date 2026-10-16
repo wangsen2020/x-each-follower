@@ -386,6 +386,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollow: false,
     batchLimit: 10,
     unfollowDelay: 3,
+    unfollowDelayJitter: 2,
     whitelist: '',
     lastRunAt: null,
     lastSummary: '尚未执行回关监测'
@@ -397,6 +398,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.unfollowDelayJitter = Math.max(0, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
