@@ -572,7 +572,10 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 /* ============================================================
    回关监测模块样式 (Unreciprocated Followback Tracker)
    严格遵循统一 UI 规范：
-   1. 面板容器与列表全局默认 padding: 10px, margin: 0, 
+   1. 面板容器与列表默认 padding: 10px、margin: 0，行距紧凑
+============================================================ */
+#unreciprocatedSection {
+  display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 10px;

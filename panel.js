@@ -3937,7 +3937,7 @@ function renderLogsModal() {
 
     const scopeSpan = document.createElement('span');
     scopeSpan.className = 'log-scope-badge';
-    scopeSpan.textContent = log.scope === 'comment' ? '互关追踪' : '互粉追踪';
+    scopeSpan.textContent = log.scope === 'comment' ? '评论追踪' : '互关追踪';
 
     const sourceSpan = document.createElement('span');
     sourceSpan.className = 'log-scope-badge';
