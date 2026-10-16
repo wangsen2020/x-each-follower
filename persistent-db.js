@@ -19,7 +19,12 @@ async function storageTab() {
   const usable = tabs.find(tab => tab.status === 'complete');
   if (usable) { dbTabId = usable.id; return dbTabId; }
   const win = await chrome.windows.create({url:'https://x.com/home', type:'popup', state:'minimized', focused:false});
-  dbTabId = win.tabs?.[0]?.id;
+  let tabId = win.tabs?.[0]?.id;
+  if (!tabId && win.id) {
+    const tabs = await chrome.tabs.query({windowId: win.id});
+    tabId = tabs?.[0]?.id;
+  }
+  dbTabId = tabId;
   if (!dbTabId) throw new Error('无法打开 X 本地数据库页面');
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) { const tab = await chrome.tabs.get(dbTabId); if (tab.status === 'complete') break; await new Promise(resolve => setTimeout(resolve, 500)); }

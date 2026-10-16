@@ -77,6 +77,7 @@
       <button id="batchRefreshMutual" class="secondary" title="优先批量更新已勾选账号，未勾选时更新当前页公开资料及关注关系">批量更新</button>
       <button id="grokAnalyzeMutual" class="secondary" title="优先将已勾选账号（最多 20 个）提交给 Grok 分析互粉倾向并回填标签">Grok 分析</button>
       
+      <button id="openMutualSettingsDrawer" class="icon-button secondary settings-gear-btn" title="互关追踪与定时看帖关注设置" aria-label="互关追踪与定时看帖关注设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div>
     <div class="mutual-subbar">
       <div class="subbar-left">
@@ -92,24 +93,22 @@
           <button id="mutualSearchBtn" type="button" class="secondary search-btn">搜索</button>
         </div>
       </div>
-      <div class="subbar-right">
-        <div id="mutualPagination" class="monitor-pagination" hidden>
-        <label>
-          <span>每页</span>
-          <select id="mutualPageSize">
-            <option value="20">20</option>
-            <option value="50" selected>50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
-        </label>
-        <span id="mutualPageSummary" class="page-summary">第 1 / 1 页</span>
-        <div class="page-actions">
-          <button id="mutualPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button>
-          <button id="mutualNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button>
+      <div id="mutualPagination" class="monitor-pagination" hidden>
+          <label>
+            <span>每页</span>
+            <select id="mutualPageSize">
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <span id="mutualPageSummary" class="page-summary">第 1 / 1 页</span>
+          <div class="page-actions">
+            <button id="mutualPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button>
+            <button id="mutualNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button>
+          </div>
         </div>
-      </div>
-    </div>
     </div>
     <p id="networkStatus" class="monitor-status network-status" role="status" aria-live="polite">输入互粉锚点后开始追踪。</p>
     <div class="table-wrap">
@@ -127,6 +126,7 @@
             <th class="th-relation">与你的关系 <span class="info-tip" data-tip="按当前登录 X 账号与候选账号之间的关注关系显示；锚点仅用于扩展候选网络。" aria-label="你的关系说明">?</span></th>
             <th class="th-count">粉丝</th>
             <th class="th-count">关注</th>
+            <th class="th-count th-record">关注记录 <span class="info-tip" data-tip="记录你通过本工具关注该用户的时间，以及对方是否已回关（待回关/已回关），方便日后核实并清理未回关账号。" aria-label="关注记录说明">?</span></th>
             <th class="th-actions">操作</th>
           </tr>
         </thead>
@@ -137,11 +137,14 @@
   </div>
   <section id="commentsSection" class="tab-panel comments-panel" data-panel="comments" aria-label="评论追踪" hidden>
     <div class="comments-head">
-      <div class="comments-title"><h2>评论追踪</h2><span id="commentsUserCount" class="page-summary">0 位用户</span><button id="openCommentAutoFollowSettings" class="icon-button secondary" title="评论追踪与定时看帖关注设置" aria-label="评论追踪与定时看帖关注设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
-      <div class="follower-tabs comment-tabs" role="tablist" aria-label="评论用户筛选">
-        <button class="follower-tab active" data-comment-filter="notMutual" role="tab" aria-selected="true">未互关 <span id="commentNotMutualCount">0</span></button>
-        <button class="follower-tab" data-comment-filter="all" role="tab" aria-selected="false">全部 <span id="commentAllCount">0</span></button>
+      <div class="comments-head-left">
+        <div class="comments-title"><h2>评论追踪</h2><span id="commentsUserCount" class="page-summary">0 位用户</span></div>
+        <div class="follower-tabs comment-tabs" role="tablist" aria-label="评论用户筛选">
+          <button class="follower-tab active" data-comment-filter="notMutual" role="tab" aria-selected="true">未互关 <span id="commentNotMutualCount">0</span></button>
+          <button class="follower-tab" data-comment-filter="all" role="tab" aria-selected="false">全部 <span id="commentAllCount">0</span></button>
+        </div>
       </div>
+      <button id="openCommentAutoFollowSettings" class="icon-button secondary settings-gear-btn" title="评论追踪与定时看帖关注设置" aria-label="评论追踪与定时看帖关注设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div>
     <div class="comments-toolbar">
       <div class="search-wrap"><input id="commentSearch" type="search" placeholder="搜索账号、评论或帖子链接" autocomplete="off"><button id="commentSearchBtn" class="secondary search-btn" type="button">搜索</button></div>
@@ -161,7 +164,7 @@
             <th class="th-relation">与你的关系</th>
             <th class="th-count">粉丝</th>
             <th class="th-count">关注</th>
-            <th class="th-count">关注记录 <span class="info-tip" data-tip="记录你通过本工具关注该用户的时间，以及对方是否已回关（待回关/已回关），方便日后核实并清理未回关账号。" aria-label="关注记录说明">?</span></th>
+            <th class="th-count th-record">关注记录 <span class="info-tip" data-tip="记录你通过本工具关注该用户的时间，以及对方是否已回关（待回关/已回关），方便日后核实并清理未回关账号。" aria-label="关注记录说明">?</span></th>
             <th class="th-actions">操作</th>
           </tr>
         </thead>

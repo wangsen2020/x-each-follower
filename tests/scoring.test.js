@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCount, normalizeHandle, assess, riskAssess, csv} from '../scoring.js';
+import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../scoring.js';
+
+test('formatPageSummary formats exact pagination summary', () => {
+  assert.equal(formatPageSummary(1, 3, 42), '1 / 3 · 42');
+  assert.equal(formatPageSummary(2, 5, 100), '2 / 5 · 100');
+  assert.equal(formatPageSummary(0, 0, 0), '0 / 0 · 0');
+});
 
 test('parse public profile count formats without turning missing values into zero', () => {
   for (const [text, expected] of [['1,234 Followers',1234],['1.2K Followers',1200],['2.5M',2500000],['1.3万 位关注者',13000],['2萬',20000],['1\u202f234 Followers',1234],['0 Following',0],['Followers',null],['',null]]) assert.equal(parseCount(text),expected,text);
@@ -14,7 +20,7 @@ const options = {minRatio:0.7,maxRatio:1.4,minCount:50,requirePromise:true};
 const base = {name:'Alice',bio:'互关，欢迎交流',followers:100,following:110,status:'ok'};
 test('candidate requires readable counts, sufficient population and optional promise', () => {
   assert.equal(assess(base, options).verdict,'候选');
-  assert.equal(assess({...base,followers:10000}, options).verdict,'疑似骗关注');
+  assert.equal(assess({...base,followers:10000}, options).verdict,'不推荐');
   assert.equal(assess({...base,followers:100,following:300}, options).verdict,'候选');
   assert.equal(assess({...base,followers:null}, options).verdict,'需复核');
   assert.equal(assess({...base,following:0}, options).verdict,'需复核');
@@ -35,3 +41,134 @@ test('risk rules mark adult, private-content and high-risk funnel signals', () =
   assert.equal(riskAssess({name:'Alice', bio:'AI research and photography', posts:[{text:'分享今天的项目进展'}]}).level, 'normal');
   assert.equal(assess({name:'',bio:'NSFW 18+',followers:100,following:100,status:'ok'}, {...options,requirePromise:false}).verdict, '危险');
 });
+
+test('repairMojibake restores CP1252/latin1-decoded UTF-8 text and keeps normal text untouched', () => {
+  const showhand = Buffer.from('梭哈姐（互浇版）', 'utf-8').toString('latin1');
+  assert.equal(repairMojibake(showhand), '梭哈姐（互浇版）');
+  assert.equal(repairMojibake('é˜¿å…°'), '阿兰');
+  assert.equal(repairMojibake('åˆ›'), '创');
+  assert.equal(repairMojibake('小晚风（互关版）'), '小晚风（互关版）');
+  assert.equal(repairMojibake('Alice 123'), 'Alice 123');
+  assert.equal(repairMojibake(''), '');
+  assert.equal(repairMojibake(null), null);
+});
+
+test('evaluateMutualProfile marks following >= 80% of followers (within 1/5 gap, e.g. 4000/5000) as 推荐 and assigns mutual tag with hover reasons', () => {
+  const safeMutual = evaluateMutualProfile({
+    name: 'Alice',
+    bio: '互关必回，长期活跃',
+    followersText: '5,000',
+    followingText: '4,000'
+  });
+  assert.equal(safeMutual.hasBaitRisk, false);
+  assert.equal(safeMutual.noBaitRisk, true);
+  assert.equal(safeMutual.recommendLabel, '推荐');
+  assert.equal(safeMutual.baitRiskLabel, '推荐');
+  assert.equal(safeMutual.tag, '互粉');
+  assert.match(safeMutual.recommendReason, /^推荐原因：/);
+  assert.match(safeMutual.intentTooltip, /^推荐原因：/);
+
+  const notRecommendedUser = evaluateMutualProfile({
+    name: 'Bob',
+    bio: '互关必回',
+    followersText: '5,000',
+    followingText: '3,500'
+  });
+  assert.equal(notRecommendedUser.hasBaitRisk, true);
+  assert.equal(notRecommendedUser.recommendLabel, '不推荐');
+  assert.equal(notRecommendedUser.baitRiskLabel, '不推荐');
+  assert.equal(notRecommendedUser.tag, '无');
+  assert.match(notRecommendedUser.recommendReason, /^不推荐原因：/);
+  assert.match(notRecommendedUser.intentTooltip, /^不推荐原因：/);
+
+  const grokTaggedUser = evaluateMutualProfile({
+    name: 'Carol',
+    bio: 'Web3 builder',
+    followersText: '5000',
+    followingText: '4200',
+    grokMutualIntent: true
+  });
+  assert.equal(grokTaggedUser.intentSource, 'grok');
+  assert.equal(grokTaggedUser.tag, '互粉');
+  assert.equal(grokTaggedUser.recommendLabel, '推荐');
+});
+
+test('matchMutualKeywords and evaluateMutualProfile detect mutual intent from top 5-10 posts in Chinese and English', () => {
+  const cnPostsUser = evaluateMutualProfile({
+    name: '普通昵称',
+    bio: '记录日常',
+    followersText: '5000',
+    followingText: '4300',
+    posts: [
+      { text: '今天天气不错' },
+      { text: '早安出摊！欢迎大家来串门，看到必回，多评多互动冲蓝V！' }
+    ]
+  });
+  assert.equal(cnPostsUser.tag, '互粉');
+  assert.equal(cnPostsUser.intentSource, 'posts');
+  assert.ok(cnPostsUser.postKeywordHits.includes('串门'));
+  assert.ok(cnPostsUser.postKeywordHits.includes('出摊'));
+  assert.ok(cnPostsUser.postKeywordHits.includes('必回'));
+  assert.ok(cnPostsUser.postKeywordHits.includes('蓝V'));
+
+  const enPostsUser = matchMutualKeywords({
+    name: 'Dev',
+    bio: 'Building apps',
+    posts: [
+      { text: "Looking for active mutuals! Let's connect and grow together, I follow back everyone." }
+    ]
+  });
+  assert.equal(enPostsUser.matched, true);
+  assert.equal(enPostsUser.matchedInPosts, true);
+  assert.ok(enPostsUser.postHits.includes('mutuals'));
+  assert.ok(enPostsUser.postHits.includes("let's connect"));
+  assert.ok(enPostsUser.postHits.includes('follow back'));
+});
+
+test('parseGrokMutualAnalysis extracts mutual intent and tags from Grok output', () => {
+  const sample = [
+    '账号 1 分析完毕：',
+    '[@alice_1 | 互粉意向: 有 | 互粉标签: 互粉 | 推荐评估: 推荐 | 理由: 关注4000粉丝5000比例健康且经常互动]',
+    '账号 2 分析完毕：',
+    '[@bob_2 | 互粉意向: 无 | 互粉标签: 无 | 推荐评估: 不推荐 | 理由: 关注远少于粉丝数的4/5]'
+  ].join('\n');
+  const parsed = parseGrokMutualAnalysis(sample, ['alice_1', 'bob_2']);
+  assert.equal(parsed.alice_1.grokMutualIntent, true);
+  assert.equal(parsed.alice_1.mutualTag, '互粉');
+  assert.match(parsed.alice_1.grokReason, /4000/);
+  assert.equal(parsed.bob_2.grokMutualIntent, false);
+  assert.equal(parsed.bob_2.mutualTag, '无');
+});
+
+test('filterMutualTrackingUsers filters by handle, name, bio, or cached posts keywords', () => {
+  const users = [
+    { handle: 'alice_web3', name: 'Alice', bio: 'AI & Crypto builder' },
+    { handle: 'bob_daily', name: '小王', bio: '日常记录生活' },
+    { handle: 'charlie_x', name: 'Charlie', bio: 'Photographer' }
+  ];
+  const cache = {
+    charlie_x: { posts: [{ text: '早安出摊，欢迎大家来串门互关！' }] }
+  };
+  assert.equal(filterMutualTrackingUsers(users, '', cache).length, 3);
+  assert.deepEqual(filterMutualTrackingUsers(users, '@alice', cache).map(u => u.handle), ['alice_web3']);
+  assert.deepEqual(filterMutualTrackingUsers(users, '日常', cache).map(u => u.handle), ['bob_daily']);
+  assert.deepEqual(filterMutualTrackingUsers(users, '串门', cache).map(u => u.handle), ['charlie_x']);
+});
+
+test('selectValuableMutualTargets selects unfollowed valuable accounts sorted by followback and mutual intent', () => {
+  const users = [
+    { handle: 'already_followed', name: 'Done', bio: '互关必回', followersText: '1000', followingText: '950', relationship: { following: true, followedBy: true } },
+    { handle: 'bait_account', name: 'BigV', bio: '互关', followersText: '10000', followingText: '200', relationship: { following: false, followedBy: false } },
+    { handle: 'valuable_peer', name: 'Peer', bio: '互粉必回，每天串门', followersText: '2000', followingText: '1900', relationship: { following: false, followedBy: false } },
+    { handle: 'valuable_fan', name: 'Fan', bio: '互关冲蓝V', followersText: '1500', followingText: '1400', relationship: { following: false, followedBy: true } },
+    { handle: 'unscanned_peer', name: 'NewPeer', bio: '普通简介', relationship: { following: false, followedBy: false } }
+  ];
+  const selectedStrict = selectValuableMutualTargets(users, { batchSize: 5, minFollowers: 100, onlyIntent: true }, {}, new Set());
+  assert.deepEqual(selectedStrict.map(u => u.handle), ['valuable_fan', 'valuable_peer']);
+
+  const selectedRelaxed = selectValuableMutualTargets(users, { batchSize: 5, minFollowers: 100, onlyIntent: false }, {}, new Set());
+  assert.deepEqual(selectedRelaxed.map(u => u.handle), ['valuable_fan', 'valuable_peer', 'unscanned_peer']);
+});
+
+
+

@@ -328,7 +328,7 @@ function renderCommentTracking() {
     }
 
     const followCell = document.createElement('td');
-    followCell.className = 'col-count';
+    followCell.className = 'col-count col-record';
     if (user.followedAt) {
       const back = commentRelationship(user) === '互相关注' || user.followBackAt;
       followCell.textContent = `${new Date(user.followedAt).toLocaleString()} · ${back ? '已回关' : '待回关'}`;
@@ -1307,6 +1307,16 @@ function renderMutualNetwork() {
     const relationLabel = personalRelationshipLabel(user);
     const badge = document.createElement('span'); badge.className=`badge ${relationLabel === '互相关注' ? 'candidate' : relationLabel === '关系未知' ? 'review' : ''}`; badge.textContent=relationLabel; relation.append(badge); row.append(relation);
     for (const text of [followersText, followingText]) { const cell=document.createElement('td'); cell.className = 'col-count'; cell.textContent=text; row.append(cell); }
+    const followRecordTd = document.createElement('td');
+    followRecordTd.className = 'col-count col-record';
+    if (user.followedAt) {
+      const isMutual = user.relationship?.following === true && user.relationship?.followedBy === true;
+      const back = isMutual || user.followBackAt;
+      followRecordTd.textContent = `${new Date(user.followedAt).toLocaleString()} · ${back ? '已回关' : '待回关'}`;
+    } else {
+      followRecordTd.textContent = '未关注';
+    }
+    row.append(followRecordTd);
     const actions = document.createElement('td');
     actions.className = 'col-actions';
 

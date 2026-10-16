@@ -1,0 +1,368 @@
+/**
+ * Client Transaction ID Generator for X (formerly Twitter) API requests
+ *
+ * This module provides functionality to generate the x-client-transaction-id
+ * header value required for authenticated API requests to X.
+ */
+import Cubic from "./cubic.js";
+import { AnimationFrameDataError, ClientTransactionNotInitializedError, IndicesNotInitializedError, KeyByteIndicesExtractionError, OnDemandFileFetchError, OnDemandFileUrlResolutionError, SiteVerificationKeyNotFoundError, } from "./errors.js";
+import { interpolate } from "./interpolate.js";
+import { convertRotationToMatrix } from "./rotation.js";
+import { floatToHex, isOdd } from "./utils.js";
+import { decodeBase64, encodeBase64 } from "./encoding.js";
+const ON_DEMAND_CHUNK_NAME = "ondemand.s";
+const INDICES_REGEX = /\(\w\[(\d{1,2})\],\s*16\)/g;
+const ON_DEMAND_FILE_HASH_REGEX = /(\d+):\s*["']ondemand\.s["'][\s\S]*?\}\)\[e\]\s*\|\|\s*e\)\s*\+\s*["']\.["']\s*\+\s*\(\{[\s\S]*?\b\1:\s*["']([a-zA-Z0-9_-]+)["']/s;
+function resolveOnDemandFileUrlFromRuntime(runtimeSource) {
+    const onDemandFileMatch = ON_DEMAND_FILE_HASH_REGEX.exec(runtimeSource);
+    if (!onDemandFileMatch) {
+        return null;
+    }
+    return `https://abs.twimg.com/responsive-web/client-web/${ON_DEMAND_CHUNK_NAME}.${onDemandFileMatch[2]}a.js`;
+}
+/**
+ * Main class responsible for generating client transaction IDs
+ * used in authenticated API requests to X
+ */
+class ClientTransaction {
+    /**
+     * Creates a new ClientTransaction instance
+     * @param homePageDocument DOM Document object from X's responsive web app
+     */
+    constructor(homePageDocument) {
+        Object.defineProperty(this, "DEFAULT_ROW_INDEX", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
+        Object.defineProperty(this, "DEFAULT_KEY_BYTES_INDICES", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
+        Object.defineProperty(this, "homePageDocument", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: void 0
+        });
+        Object.defineProperty(this, "key", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
+        Object.defineProperty(this, "keyBytes", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
+        Object.defineProperty(this, "animationKey", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
+        Object.defineProperty(this, "isInitialized", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: false
+        });
+        this.homePageDocument = homePageDocument;
+    }
+    /**
+     * Initializes the ClientTransaction instance
+     * Must be called after constructor and before using other methods
+     * @returns Promise that resolves when initialization is complete
+     * @throws Error if initialization fails
+     */
+    async initialize() {
+        if (this.isInitialized)
+            return;
+        // Initialize indices
+        [this.DEFAULT_ROW_INDEX, this.DEFAULT_KEY_BYTES_INDICES] = await this
+            .getIndices(this.homePageDocument);
+        // Get key from document
+        this.key = this.getKey(this.homePageDocument);
+        // Convert key to byte array
+        this.keyBytes = this.getKeyBytes(this.key);
+        // Generate animation key
+        this.animationKey = this.getAnimationKey(this.keyBytes, this.homePageDocument);
+        // Mark initialization as complete
+        this.isInitialized = true;
+    }
+    /**
+     * Static factory method that creates and initializes a ClientTransaction instance
+     * @param homePageDocument DOM Document object from X's responsive web app
+     * @returns Initialized ClientTransaction instance
+     */
+    static async create(homePageDocument) {
+        const instance = new ClientTransaction(homePageDocument);
+        await instance.initialize();
+        return instance;
+    }
+    /**
+     * Extracts key byte indices from the X responsive web app document
+     * @param homePageDocument Optional document to use instead of stored one
+     * @returns Tuple of [rowIndex, keyByteIndices]
+     * @private
+     */
+    async getIndices(homePageDocument) {
+        const keyByteIndices = [];
+        const response = homePageDocument || this.homePageDocument;
+        const onDemandFileUrl = this.getOnDemandFileUrl(response);
+        const onDemandFileResponse = await fetch(onDemandFileUrl);
+        if (!onDemandFileResponse.ok) {
+            throw new OnDemandFileFetchError(onDemandFileUrl, onDemandFileResponse.status, onDemandFileResponse.statusText);
+        }
+        const responseText = await onDemandFileResponse.text();
+        // Extract indices using regex
+        let match;
+        INDICES_REGEX.lastIndex = 0; // Reset regex index
+        while ((match = INDICES_REGEX.exec(responseText)) !== null) {
+            keyByteIndices.push(match[1]);
+        }
+        if (!keyByteIndices.length) {
+            throw new KeyByteIndicesExtractionError();
+        }
+        // Convert strings to numbers
+        const numericIndices = keyByteIndices.map((index) => parseInt(index, 10));
+        return [numericIndices[0], numericIndices.slice(1)];
+    }
+    /**
+     * Resolves the current ondemand chunk URL from webpack runtime metadata.
+     * @param response Optional document to use instead of stored one
+     * @returns Absolute URL for the ondemand chunk file
+     * @private
+     */
+    getOnDemandFileUrl(response) {
+        const document = response || this.homePageDocument;
+        const runtimeSources = Array.from(document.querySelectorAll("script"))
+            .map((script) => script.textContent || "")
+            .filter((scriptText) => scriptText.includes(ON_DEMAND_CHUNK_NAME));
+        runtimeSources.push(document.documentElement.outerHTML);
+        for (const runtimeSource of runtimeSources) {
+            const onDemandFileUrl = resolveOnDemandFileUrlFromRuntime(runtimeSource);
+            if (onDemandFileUrl) {
+                return onDemandFileUrl;
+            }
+        }
+        throw new OnDemandFileUrlResolutionError();
+    }
+    /**
+     * Extracts verification key from document
+     * @param response Optional document to use instead of stored one
+     * @returns X site verification key
+     * @private
+     */
+    getKey(response) {
+        response = response || this.homePageDocument;
+        let content = "";
+        // Extract key from meta tag
+        const element = response.querySelector("[name='twitter-site-verification']");
+        if (element) {
+            content = element.getAttribute("content") ?? "";
+        }
+        if (!content) {
+            throw new SiteVerificationKeyNotFoundError();
+        }
+        return content;
+    }
+    /**
+     * Converts key string to byte array
+     * @param key Base64 encoded key string
+     * @returns Array of byte values
+     * @private
+     */
+    getKeyBytes(key) {
+        return Array.from(decodeBase64(key));
+    }
+    /**
+     * Gets animation frames from document
+     * @param response Optional document to use instead of stored one
+     * @returns Array of frame elements
+     * @private
+     */
+    getFrames(response) {
+        response = response || this.homePageDocument;
+        return Array.from(response.querySelectorAll("[id^='loading-x-anim']"));
+    }
+    /**
+     * Parses SVG paths to extract coordinate arrays
+     * @param keyBytes Key bytes from site verification
+     * @param response Optional document to use
+     * @param frames Optional frame elements if already fetched
+     * @returns 2D array of frame coordinates
+     * @private
+     */
+    get2dArray(keyBytes, response, frames) {
+        if (!frames) {
+            frames = this.getFrames(response);
+        }
+        if (!frames || !frames.length) {
+            return [[]]; // Return empty 2D array
+        }
+        // 1. Select frame and navigate DOM to get "d" attribute
+        const frame = frames[keyBytes[5] % 4];
+        const firstChild = frame.children[0];
+        const targetChild = firstChild.children[1];
+        const dAttr = targetChild.getAttribute("d");
+        if (dAttr === null) {
+            return [];
+        }
+        // 2. Remove first 9 chars and split by "C"
+        const items = dAttr.substring(9).split("C");
+        // 3. Extract and convert numbers from each segment
+        return items.map((item) => {
+            // a) Replace non-digits with spaces
+            const cleaned = item.replace(/[^\d]+/g, " ").trim();
+            // b) Split by whitespace
+            const parts = cleaned === "" ? [] : cleaned.split(/\s+/);
+            // c) Convert string to integers
+            return parts.map((str) => parseInt(str, 10));
+        });
+    }
+    /**
+     * Calculates value within specified range
+     * @param value Input value (0-255)
+     * @param minVal Minimum output value
+     * @param maxVal Maximum output value
+     * @param rounding When true, uses Math.floor; when false, rounds to 2 decimal places
+     * @returns Calculated value
+     * @private
+     */
+    solve(value, minVal, maxVal, rounding) {
+        const result = (value * (maxVal - minVal)) / 255 + minVal;
+        return rounding ? Math.floor(result) : Math.round(result * 100) / 100;
+    }
+    /**
+     * Generates animation key from frame data
+     * @param frames Array of frame values
+     * @param targetTime Target time for animation
+     * @returns Animation key string
+     * @private
+     */
+    animate(frames, targetTime) {
+        const fromColor = frames.slice(0, 3).concat(1).map(Number);
+        const toColor = frames.slice(3, 6).concat(1).map(Number);
+        const fromRotation = [0.0];
+        const toRotation = [this.solve(frames[6], 60.0, 360.0, true)];
+        const remainingFrames = frames.slice(7);
+        const curves = remainingFrames.map((item, counter) => this.solve(item, isOdd(counter), 1.0, false));
+        const cubic = new Cubic(curves);
+        const val = cubic.getValue(targetTime);
+        const color = interpolate(fromColor, toColor, val).map((value) => value > 0 ? value : 0);
+        const rotation = interpolate(fromRotation, toRotation, val);
+        const matrix = convertRotationToMatrix(rotation[0]);
+        // Convert color and matrix values to hex string
+        const strArr = color
+            .slice(0, -1)
+            .map((value) => Math.round(value).toString(16));
+        for (const value of matrix) {
+            let rounded = Math.round(value * 100) / 100;
+            if (rounded < 0) {
+                rounded = -rounded;
+            }
+            const hexValue = floatToHex(rounded);
+            strArr.push(hexValue.startsWith(".")
+                ? `0${hexValue}`.toLowerCase()
+                : hexValue || "0");
+        }
+        strArr.push("0", "0");
+        const animationKey = strArr.join("").replace(/[.-]/g, "");
+        return animationKey;
+    }
+    /**
+     * Generates animation key used in transaction ID
+     * @param keyBytes Key bytes from site verification
+     * @param response Optional document to use
+     * @returns Animation key string
+     * @private
+     */
+    getAnimationKey(keyBytes, response) {
+        const totalTime = 4096;
+        if (this.DEFAULT_ROW_INDEX == null || this.DEFAULT_KEY_BYTES_INDICES == null) {
+            throw new IndicesNotInitializedError();
+        }
+        const rowIndex = keyBytes[this.DEFAULT_ROW_INDEX] % 16;
+        // Generate frame time using key byte indices
+        let frameTime = this.DEFAULT_KEY_BYTES_INDICES.reduce((num1, num2) => {
+            return num1 * (keyBytes[num2] % 16);
+        }, 1);
+        frameTime = Math.round(frameTime / 10) * 10;
+        const arr = this.get2dArray(keyBytes, response);
+        if (!arr || !arr[rowIndex]) {
+            throw new AnimationFrameDataError(rowIndex);
+        }
+        const frameRow = arr[rowIndex];
+        const targetTime = frameTime / totalTime;
+        const animationKey = this.animate(frameRow, targetTime);
+        return animationKey;
+    }
+    /**
+     * Generates a transaction ID for X API requests
+     * @param method HTTP method (GET, POST, etc.)
+     * @param path API endpoint path
+     * @param response Optional document to use
+     * @param key Optional key to use
+     * @param animationKey Optional animation key to use
+     * @param timeNow Optional timestamp (defaults to current time)
+     * @returns Base64 encoded transaction ID with padding removed
+     */
+    async generateTransactionId(method, path, response, key, animationKey, timeNow) {
+        // Check if instance is initialized
+        if (!this.isInitialized) {
+            throw new ClientTransactionNotInitializedError();
+        }
+        timeNow = timeNow || Math.floor((Date.now() - 1682924400 * 1000) / 1000);
+        const timeNowBytes = [
+            timeNow & 0xff,
+            (timeNow >> 8) & 0xff,
+            (timeNow >> 16) & 0xff,
+            (timeNow >> 24) & 0xff,
+        ];
+        key = key || this.key || this.getKey(response);
+        const keyBytes = key
+            ? this.getKeyBytes(key)
+            : this.keyBytes || this.getKeyBytes(key);
+        animationKey = animationKey ||
+            this.animationKey ||
+            this.getAnimationKey(keyBytes, response);
+        // Generate hash data
+        const data = `${method}!${path}!${timeNow}${ClientTransaction.DEFAULT_KEYWORD}${animationKey}`;
+        // Calculate SHA-256 hash
+        const encoder = new TextEncoder();
+        const dataBuffer = encoder.encode(data);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+        const hashBytes = Array.from(new Uint8Array(hashBuffer));
+        const randomNum = Math.floor(Math.random() * 256);
+        const bytesArr = [
+            ...keyBytes,
+            ...timeNowBytes,
+            ...hashBytes.slice(0, 16),
+            ClientTransaction.ADDITIONAL_RANDOM_NUMBER,
+        ];
+        const out = new Uint8Array([
+            randomNum,
+            ...bytesArr.map((item) => item ^ randomNum),
+        ]);
+        return encodeBase64(out).replace(/=/g, "");
+    }
+}
+Object.defineProperty(ClientTransaction, "ADDITIONAL_RANDOM_NUMBER", {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+    value: 3
+});
+Object.defineProperty(ClientTransaction, "DEFAULT_KEYWORD", {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+    value: "obfiowerehiring"
+});
+export default ClientTransaction;
