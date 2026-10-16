@@ -186,76 +186,162 @@ export function clickAnyFollowOnProfile(handle) {
   return {ok:true};
 }
 
-export function publishReplyToTweetOnPage(tweetUrl, replyText) {
+export function openQuoteComposerOnPage(tweetUrl) {
+  // 经 executeScript 序列化注入，必须自包含。点击 Quote 可能让 X 导航到 /compose/post，
+  // 因此本阶段只打开编辑框，填写和发布必须在 background 等待路由稳定后重新注入。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const cleanText = String(replyText || '').trim();
-    if (!cleanText) return { ok: false, reason: '回复内容为空' };
+    const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+    if (!tweetId) return { ok: false, reason: '帖子链接无效' };
+    const visible = el => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+    };
+    const hasQuoteComposer = () => [...document.querySelectorAll('[role="dialog"]')].some(dialog => {
+      const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
+      return visible(dialog) && box && [...dialog.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
+    });
+    if (hasQuoteComposer()) return { ok: true, stage: 'already_open' };
 
-    let targetArticle = null;
-    let replyButton = null;
-
-    if (tweetUrl) {
-      const match = String(tweetUrl).match(/\/status\/(\d+)/);
-      const tweetId = match ? match[1] : '';
-      if (tweetId) {
-        const articles = Array.from(document.querySelectorAll('article'));
-        targetArticle = articles.find(a => a.querySelector(`a[href*="/status/${tweetId}"]`));
-      }
+    let article = null;
+    for (let i = 0; i < 30 && !article; i++) {
+      article = [...document.querySelectorAll('article')].find(a => [...a.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
+      if (!article) await sleep(400);
     }
+    if (!article) return { ok: false, reason: '没有在页面中找到目标帖子' };
+    const repostBtn = article.querySelector('[data-testid="retweet"]');
+    if (!repostBtn) return { ok: false, reason: '目标帖没有引用/转发按钮' };
+    repostBtn.click();
 
-    if (!targetArticle) {
-      targetArticle = document.querySelector('article');
+    let quoteItem = null;
+    for (let i = 0; i < 25 && !quoteItem; i++) {
+      quoteItem = [...document.querySelectorAll('[role="menuitem"]')].find(item =>
+        /^(quote|quote post|引用|引用帖子|引用推文)$/i.test((item.innerText || item.getAttribute('aria-label') || '').trim())
+      );
+      if (!visible(quoteItem)) quoteItem = null;
+      if (!quoteItem) await sleep(250);
     }
-
-    if (targetArticle) {
-      replyButton = targetArticle.querySelector('[data-testid="reply"]');
-      if (replyButton) {
-        replyButton.click();
-        await sleep(900);
-      }
-    }
-
-    let textarea = null;
-    for (let i = 0; i < 25; i++) {
-      textarea = document.querySelector('[role="dialog"] [data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]');
-      if (textarea && textarea.offsetParent !== null) break;
-      await sleep(200);
-    }
-
-    if (!textarea) {
-      return { ok: false, reason: '未找到推文回复输入框' };
-    }
-
-    textarea.focus();
-    try {
-      document.execCommand('insertText', false, cleanText);
-    } catch (e) {}
-
-    const textLen = (textarea.innerText || textarea.textContent || '').trim().length;
-    if (textLen < cleanText.length * 0.5) {
-      textarea.innerText = cleanText;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-
-    await sleep(600);
-
-    let sendBtn = null;
-    for (let i = 0; i < 20; i++) {
-      const modal = document.querySelector('[role="dialog"]') || document;
-      sendBtn = modal.querySelector('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]');
-      if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') break;
-      await sleep(200);
-    }
-
-    if (!sendBtn || sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
-      return { ok: false, reason: '回复发送按钮不可用' };
-    }
-
-    sendBtn.click();
-    await sleep(1500);
-
-    return { ok: true };
+    if (!quoteItem) return { ok: false, reason: '没有找到 X 的“Quote/引用”菜单项' };
+    quoteItem.click();
+    return { ok: true, stage: 'quote_selected' };
   })();
 }
+
+export function inspectQuoteComposerOnPage(tweetUrl) {
+  // 经 executeScript 序列化注入，必须自包含。
+  const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+  if (!tweetId) return { ok: false, ready: false, reason: '帖子链接无效' };
+  const visible = el => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+  };
+  const composers = [];
+  const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+    [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+  );
+  const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+  const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+  const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
+  for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+    if (!visible(dialog)) continue;
+    const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
+    if (!box) continue;
+    const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+    const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+      .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+    const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+    const articleCardText = dialog.innerText || '';
+    const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+    ));
+    const rect = dialog.getBoundingClientRect();
+    composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+  }
+  composers.sort((a, b) => a.area - b.area);
+  const composer = composers[0];
+  if (!composer) return { ok: true, ready: false, reason: '等待 X 的引用帖编辑框及原帖卡片' };
+  if (!composer.originalLink && !composer.articleFallback) return { ok: true, ready: false, reason: '引用编辑框尚未嵌入目标原帖' };
+  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || location.href, text: composer.box.innerText || '' };
+}
+
+export function publishQuotePostOnPage(tweetUrl, quoteText) {
+  // 经 executeScript 序列化注入，必须自包含。
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const text = String(quoteText || '').trim();
+    if (!text) return { ok: false, reason: '引用评价内容为空' };
+    const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+    if (!tweetId) return { ok: false, reason: '帖子链接无效' };
+    if (/\/status\/\d+/.test(location.pathname) && !location.pathname.includes(`/status/${tweetId}`)) {
+      return { ok: false, reason: '当前帖子详情页不是目标原帖' };
+    }
+    const visible = el => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+    };
+    const findComposer = () => {
+      const composers = [];
+      const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+        [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+      );
+      const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+      const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+      const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
+      for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+        if (!visible(dialog)) continue;
+        const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
+        if (!box) continue;
+        const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+        const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+          .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+        const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+        const articleCardText = dialog.innerText || '';
+        const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+        ));
+        const rect = dialog.getBoundingClientRect();
+        composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+      }
+      composers.sort((a, b) => a.area - b.area);
+      return composers[0] || null;
+    };
+    const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
+      (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
+
+    let composer = null;
+    for (let i = 0; i < 50 && !composer; i++) {
+      composer = findComposer();
+      if (!composer) await sleep(300);
+    }
+    if (!composer) return { ok: false, reason: '没有弹出嵌入目标原帖的引用编辑框' };
+    if (!composer.originalLink && !composer.articleFallback) return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
+
+    composer.box.focus();
+    document.execCommand('insertText', false, text);
+    await sleep(500);
+    const typed = (composer.box.innerText || '').replace(/\s+/g, '');
+    if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '引用评价没有写入输入框' };
+
+    let send = null;
+    for (let i = 0; i < 25; i++) {
+      send = composer.dialog.querySelector('[data-testid="tweetButton"]');
+      if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
+      send = null; await sleep(300);
+    }
+    if (!send) return { ok: false, reason: '引用帖发送按钮一直不可用（可能超长或被限制）' };
+    send.click();
+
+    // 确认发出：引用编辑框关闭且没有失败提示 = X 已接受。
+    for (let i = 0; i < 40; i++) {
+      await sleep(300);
+      if (blocked()) return { ok: false, reason: 'X 拒绝发布引用帖（限流或风控）' };
+      if (!findComposer()) return { ok: true, mode: 'quote' };
+    }
+    return { ok: false, reason: '点击发送后引用编辑框未关闭，无法确认已发出' };
+  })();
+}
+
 
