@@ -6,16 +6,12 @@ export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
 const X_QUOTE_LIMIT = 280;
 
-// Grok tasks run in a small, minimized popup placed outside the usual desktop area.
-// Keep the viewport usable for scripted page interaction without covering the user's work.
+// Keep Grok windows visible so progress can be observed, while avoiding focus theft.
 export function buildBackgroundGrokWindowOptions(url) {
   return {
     url,
     type: 'popup',
-    state: 'minimized',
     focused: false,
-    left: 10000,
-    top: 0,
     width: 800,
     height: 600
   };

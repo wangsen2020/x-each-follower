@@ -43,10 +43,10 @@ test('makeNonce is unique per call', () => {
   assert.notEqual(makeNonce(), makeNonce());
 });
 
-test('Grok windows use a small, minimized, unfocused off-screen popup', () => {
+test('Grok windows use a visible, compact popup without taking focus', () => {
   assert.deepEqual(buildBackgroundGrokWindowOptions('https://grok.com/'), {
-    url: 'https://grok.com/', type: 'popup', state: 'minimized', focused: false,
-    left: 10000, top: 0, width: 800, height: 600
+    url: 'https://grok.com/', type: 'popup', focused: false,
+    width: 800, height: 600
   });
 });
 
