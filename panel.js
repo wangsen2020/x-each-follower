@@ -121,6 +121,7 @@ async function loadPersistedAutoFollowSettings(type) {
 let mutualNetwork = {anchor:'', anchors:[], users:[], lastCollected:null, autoFollow: defaultMutualAutoFollow()};
 let selectedMutualHandles = new Set();
 let mutualSearch = '';
+let activeMutualTags = new Set();
 let mutualAutoRunning = false;
 let commentTracking = {users:[], posts:[]};
 const defaultCommentAutoFollow = () => {
@@ -1354,9 +1355,9 @@ function getAllMutualUsersWithSnapshot() {
     .sort((a,b) => personalRelationRank(a) - personalRelationRank(b) || String(a.name || a.handle).localeCompare(String(b.name || b.handle)));
 }
 
-function getFilteredMutualUsers(tab = activeMutualTab, keyword = mutualSearch) {
+function getFilteredMutualUsers(tab = activeMutualTab, keyword = mutualSearch, tags = activeMutualTags) {
   const byTab = getAllMutualUsersWithSnapshot().filter(user => mutualUserCategory(user) === tab);
-  return filterMutualTrackingUsers(byTab, keyword, profileCache);
+  return filterMutualTrackingUsers(byTab, keyword, profileCache, tags);
 }
 
 function selectedMutualUsersList() {
@@ -1392,7 +1393,7 @@ function renderMutualNetwork() {
   });
 
   const tabUsers = groups[activeMutualTab] || [];
-  const users = filterMutualTrackingUsers(tabUsers, mutualSearch, profileCache);
+  const users = filterMutualTrackingUsers(tabUsers, mutualSearch, profileCache, activeMutualTags);
   const total = users.length;
   if ($('mutualSelectedCount')) $('mutualSelectedCount').textContent = String(selectedMutualHandles.size);
   if ($('mutualTotalVisibleCount')) $('mutualTotalVisibleCount').textContent = String(total);
@@ -1521,8 +1522,17 @@ function renderMutualNetwork() {
   if (allUsers.length === 0) {
     $('mutualEmpty').textContent = mutualNetwork.anchor ? '该锚点尚未读取到可展示的账号。' : '还没有互关追踪记录。';
   } else if (users.length === 0) {
-    if (mutualSearch.trim()) {
-      $('mutualEmpty').textContent = `未找到匹配“${mutualSearch.trim()}”的账号。`;
+    if (mutualSearch.trim() || activeMutualTags.size > 0) {
+      const parts = [];
+      if (mutualSearch.trim()) parts.push(`“${mutualSearch.trim()}”`);
+      if (activeMutualTags.size > 0) {
+        const tagNames = [...activeMutualTags].map(t => {
+          const btn = document.querySelector(`#mutualTagPills [data-tag-filter="${t}"]`);
+          return btn ? btn.textContent.trim() : t;
+        });
+        parts.push(`标签 [${tagNames.join('、')}]`);
+      }
+      $('mutualEmpty').textContent = `未找到符合 ${parts.join(' 且 ')} 的账号。`;
     } else {
       const emptyMap = {
         mutual: '当前没有已互关账号。',
@@ -2395,6 +2405,35 @@ $('mutualSearch')?.addEventListener('keydown', event => {
     mutualPage = 1;
     renderMutualNetwork();
   }
+});
+
+$('mutualTagPills')?.addEventListener('click', event => {
+  const btn = event.target.closest('.tag-filter-pill');
+  if (!btn) return;
+  const tagKey = btn.dataset.tagFilter;
+  if (!tagKey) return;
+
+  if (tagKey === 'all') {
+    activeMutualTags.clear();
+  } else {
+    if (activeMutualTags.has(tagKey)) {
+      activeMutualTags.delete(tagKey);
+    } else {
+      activeMutualTags.add(tagKey);
+    }
+  }
+
+  document.querySelectorAll('#mutualTagPills .tag-filter-pill').forEach(pill => {
+    const key = pill.dataset.tagFilter;
+    if (key === 'all') {
+      pill.classList.toggle('active', activeMutualTags.size === 0);
+    } else {
+      pill.classList.toggle('active', activeMutualTags.has(key));
+    }
+  });
+
+  mutualPage = 1;
+  renderMutualNetwork();
 });
 
 $('openMutualSettingsDrawer')?.addEventListener('click', openMutualSettingsDrawer);

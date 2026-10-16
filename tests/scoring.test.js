@@ -155,6 +155,30 @@ test('filterMutualTrackingUsers filters by handle, name, bio, or cached posts ke
   assert.deepEqual(filterMutualTrackingUsers(users, '串门', cache).map(u => u.handle), ['charlie_x']);
 });
 
+test('filterMutualTrackingUsers filters by activeTags and excludes bait risk', () => {
+  const users = [
+    { handle: 'ai_dev', name: 'AIDev', bio: 'AI & LLM 独立开发者', followers: 1200, following: 1100, is_blue_verified: true },
+    { handle: 'crypto_guy', name: 'Web3Bro', bio: 'Crypto Airdrop', followers: 1500, following: 1400 },
+    { handle: 'scam_kol', name: 'BigFake', bio: '关注我 t.me/scam', followers: 8000, following: 200 }
+  ];
+
+  // 1. 过滤蓝V
+  const blueOnly = filterMutualTrackingUsers(users, '', {}, new Set(['identity:blue_v']));
+  assert.deepEqual(blueOnly.map(u => u.handle), ['ai_dev']);
+
+  // 2. 过滤 Web3 赛道
+  const cryptoOnly = filterMutualTrackingUsers(users, '', {}, new Set(['niche:crypto_web3']));
+  assert.deepEqual(cryptoOnly.map(u => u.handle), ['crypto_guy']);
+
+  // 3. 排除骗关风险
+  const excludeBait = filterMutualTrackingUsers(users, '', {}, new Set(['exclude:bait_risk']));
+  assert.deepEqual(excludeBait.map(u => u.handle), ['ai_dev', 'crypto_guy']);
+
+  // 4. 复合筛选：Web3 且排除骗关
+  const multiFilter = filterMutualTrackingUsers(users, '', {}, new Set(['niche:crypto_web3', 'exclude:bait_risk']));
+  assert.deepEqual(multiFilter.map(u => u.handle), ['crypto_guy']);
+});
+
 test('selectValuableMutualTargets selects unfollowed valuable accounts sorted by followback and mutual intent', () => {
   const users = [
     { handle: 'already_followed', name: 'Done', bio: '互关必回', followersText: '1000', followingText: '950', relationship: { following: true, followedBy: true } },

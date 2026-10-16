@@ -101,6 +101,21 @@
           </div>
         </div>
     </div>
+    <div id="mutualTagFilterBar" class="tag-filter-bar">
+      <span class="tag-filter-label">🏷️ 标签筛选:</span>
+      <div class="tag-filter-pills" id="mutualTagPills">
+        <button type="button" class="tag-filter-pill active" data-tag-filter="all">全部</button>
+        <button type="button" class="tag-filter-pill tag-quick-back" data-tag-filter="reputation:quick_back">⚡ 秒回关</button>
+        <button type="button" class="tag-filter-pill tag-mutual-credit" data-tag-filter="reputation:mutual_credit">🤝 诚信互关</button>
+        <button type="button" class="tag-filter-pill tag-blue-v" data-tag-filter="identity:blue_v">🔷 蓝V</button>
+        <button type="button" class="tag-filter-pill tag-niche-ai" data-tag-filter="niche:ai_tech">💻 AI/科技</button>
+        <button type="button" class="tag-filter-pill tag-niche-crypto" data-tag-filter="niche:crypto_web3">🪙 Web3</button>
+        <button type="button" class="tag-filter-pill tag-niche-ecom" data-tag-filter="niche:ecommerce">📈 跨境电商</button>
+        <button type="button" class="tag-filter-pill tag-niche-design" data-tag-filter="niche:creator">🎨 创意设计</button>
+        <button type="button" class="tag-filter-pill tag-active-daily" data-tag-filter="activity:daily">🔥 日更高频</button>
+        <button type="button" class="tag-filter-pill tag-bait-risk tag-filter-exclude" data-tag-filter="exclude:bait_risk" title="勾选后自动排除关注少于粉丝 80% 的骗关嫌疑账号">🚫 排除骗关</button>
+      </div>
+    </div>
     <p id="networkStatus" class="monitor-status network-status" role="status" aria-live="polite">输入互粉锚点后开始追踪。</p>
     <div class="table-wrap">
       <table class="mutual-table">

@@ -435,10 +435,14 @@ export function repairMojibake(str) {
   }
 }
 
-export function filterMutualTrackingUsers(users = [], keyword = '', profileCache = {}) {
+export function filterMutualTrackingUsers(users = [], keyword = '', profileCache = {}, activeTags = null) {
   const q = String(keyword || '').trim().toLowerCase();
-  if (!q) return [...users];
   const qNoAt = q.replace(/^@+/, '');
+  const hasTags = activeTags && (activeTags instanceof Set ? activeTags.size > 0 : Array.isArray(activeTags) ? activeTags.length > 0 : false);
+  const tagSet = hasTags ? (activeTags instanceof Set ? activeTags : new Set(activeTags)) : null;
+
+  if (!q && !hasTags) return [...users];
+
   return users.filter(user => {
     const key = String(user?.handle || '').toLowerCase();
     const cached = profileCache[key] || {};
@@ -450,6 +454,26 @@ export function filterMutualTrackingUsers(users = [], keyword = '', profileCache
       posts: Array.isArray(cached.posts) && cached.posts.length ? cached.posts : (user.posts || [])
     };
     const evalRes = evaluateMutualProfile(merged);
+
+    // 1. 多维标签筛选逻辑
+    if (tagSet && tagSet.size > 0) {
+      const userTagIds = new Set(evalRes.multiTags?.tagIds || []);
+
+      // 特殊排除项：排除骗关风险
+      if (tagSet.has('exclude:bait_risk') && userTagIds.has('reputation:bait_risk')) {
+        return false;
+      }
+
+      // 常规标签匹配：如果选了除排除项之外的标签，必须命中选中的任一常规标签 (OR 语义)
+      const positiveTags = [...tagSet].filter(t => !t.startsWith('exclude:'));
+      if (positiveTags.length > 0) {
+        const matchesAny = positiveTags.some(t => userTagIds.has(t));
+        if (!matchesAny) return false;
+      }
+    }
+
+    // 2. 关键字搜索逻辑
+    if (!q) return true;
     const postTexts = (merged.posts || []).map(p => String(typeof p === 'string' ? p : (p?.text || ''))).join(' ');
     const fields = [
       merged.handle,
@@ -459,7 +483,8 @@ export function filterMutualTrackingUsers(users = [], keyword = '', profileCache
       postTexts,
       evalRes.tag,
       evalRes.recommendLabel,
-      ...(evalRes.keywordHits || [])
+      ...(evalRes.keywordHits || []),
+      ...(evalRes.multiTags?.tags?.map(t => t.label) || [])
     ];
     return fields.some(val => {
       const text = String(val || '').toLowerCase();
