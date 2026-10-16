@@ -186,6 +186,77 @@ export function clickAnyFollowOnProfile(handle) {
   return {ok:true};
 }
 
+export function publishQuotePostOnPage(tweetUrl, quoteText) {
+  // 经 executeScript 序列化注入，必须自包含。
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const text = String(quoteText || '').trim();
+    if (!text) return { ok: false, reason: '引用评价内容为空' };
+    const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
+    if (!tweetId || !location.pathname.includes(`/status/${tweetId}`)) return { ok: false, reason: '当前页面不是目标帖子详情页' };
+    const visible = el => el && el.offsetParent !== null;
+    const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
+      (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
+
+    // 目标帖：详情页里链接到该 tweetId 的 article；找不到就说明页面没渲染出目标帖，直接失败。
+    let article = null;
+    for (let i = 0; i < 30 && !article; i++) {
+      article = [...document.querySelectorAll('article')].find(a => a.querySelector(`a[href*="/status/${tweetId}"]`));
+      if (!article) await sleep(400);
+    }
+    if (!article) return { ok: false, reason: '没有在页面中找到目标帖子' };
+
+    const repostBtn = article.querySelector('[data-testid="retweet"]');
+    if (!repostBtn) return { ok: false, reason: '目标帖没有引用/转发按钮' };
+    repostBtn.click();
+
+    let quoteItem = null;
+    for (let i = 0; i < 25 && !quoteItem; i++) {
+      quoteItem = [...document.querySelectorAll('[role="menuitem"]')].find(item =>
+        /^(quote|quote post|引用|引用帖子|引用推文)$/i.test((item.innerText || item.getAttribute('aria-label') || '').trim())
+      );
+      if (!visible(quoteItem)) quoteItem = null;
+      if (!quoteItem) await sleep(250);
+    }
+    if (!quoteItem) return { ok: false, reason: '没有找到 X 的“Quote/引用”菜单项' };
+    quoteItem.click();
+
+    const findDialog = () => document.querySelector('[role="dialog"]');
+    const findBox = () => findDialog()?.querySelector('[data-testid="tweetTextarea_0"]');
+    let box = null;
+    for (let i = 0; i < 30 && !box; i++) { box = findBox(); if (!visible(box)) box = null; if (!box) await sleep(300); }
+    if (!box) return { ok: false, reason: '没有弹出引用帖编辑框' };
+
+    const dialog = findDialog();
+    if (!dialog.querySelector(`a[href*="/status/${tweetId}"]`)) {
+      return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
+    }
+
+    box.focus();
+    document.execCommand('insertText', false, text);
+    await sleep(500);
+    const typed = (box.innerText || '').replace(/\s+/g, '');
+    if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '引用评价没有写入输入框' };
+
+    let send = null;
+    for (let i = 0; i < 25; i++) {
+      send = findDialog()?.querySelector('[data-testid="tweetButton"]');
+      if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
+      send = null; await sleep(300);
+    }
+    if (!send) return { ok: false, reason: '引用帖发送按钮一直不可用（可能超长或被限制）' };
+    send.click();
+
+    // 确认发出：引用帖编辑框关闭且没有失败提示 = X 已接受。
+    for (let i = 0; i < 40; i++) {
+      await sleep(300);
+      if (blocked()) return { ok: false, reason: 'X 拒绝发布引用帖（限流或风控）' };
+      if (!findBox()) return { ok: true, mode: 'quote' };
+    }
+    return { ok: false, reason: '点击发送后引用编辑框未关闭，无法确认已发出' };
+  })();
+}
+
 export function publishReplyToTweetOnPage(tweetUrl, replyText) {
   // 经 executeScript 序列化注入，必须自包含。
   return (async () => {
@@ -239,4 +310,5 @@ export function publishReplyToTweetOnPage(tweetUrl, replyText) {
     return { ok: false, reason: '点击发送后弹窗未关闭，无法确认已发出' };
   })();
 }
+
 
