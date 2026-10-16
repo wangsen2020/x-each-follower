@@ -5,10 +5,7 @@ import { durableGet, durableSet } from './persistent-db.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
-let running = false;
-let stopped = false;
 let inspectionTab;
-let options;
 let monitor = {enabled:false, every:60, jitter:15, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
 let analysisRows = [];
 let profileCache = {};
@@ -219,7 +216,7 @@ function setTab(tab) {
   document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
   const h1 = document.querySelector('main > header > h1');
-  if (h1) h1.textContent = {monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测', settings:'设置'}[tab] || '粉丝管理';
+  if (h1) h1.textContent = {monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测'}[tab] || '粉丝管理';
   if (tab === 'unreciprocated') {
     syncAllActiveFollowedUsers();
     renderUnreciprocatedUI();
@@ -1124,71 +1121,6 @@ async function refreshFollowerProfile(user) {
     }
   }
 }
-const optionKeys = ['target', 'limit', 'minRatio', 'maxRatio', 'minCount', 'delay', 'requirePromise'];
-
-function settings() {
-  const result = Object.fromEntries(optionKeys.map(key => [key, key === 'requirePromise' ? $(key).checked : $(key).value]));
-  result.target = normalizeHandle(result.target);
-  for (const key of ['limit', 'minRatio', 'maxRatio', 'minCount', 'delay']) {
-    result[key] = Number(result[key]);
-    if (!Number.isFinite(result[key])) throw new Error('筛选条件必须是有效数字。');
-  }
-  if (!Number.isInteger(result.limit) || result.limit < 1 || result.limit > 500 || result.minRatio <= 0 || result.minRatio > result.maxRatio || result.minCount < 0 || result.delay < 3 || result.delay > 60) throw new Error('请检查设置：数量 1–500，比例下限不大于上限，访问间隔 3–60 秒。');
-  return result;
-}
-
-function render() {
-  if ($('mutualResults')) { renderMutualNetwork(); return; }
-  const body = $('results');
-  body.replaceChildren();
-  const visible = rows.map(row => assess(row, options || { minRatio: 0.7, maxRatio: 1.4, minCount: 50, requirePromise: true })).filter(row => $('filter').value === 'all' || row.verdict === $('filter').value);
-  for (const row of visible) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    const link = document.createElement('a');
-    link.href = row.url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = `${row.name || row.handle} · @${row.handle}`;
-    td.append(link);
-    for (const text of [row.bio, row.status === 'ok' ? '' : row.error, `检查时间：${new Date(row.checkedAt).toLocaleString()}`]) {
-      if (!text) continue;
-      const p = document.createElement('p');
-      p.textContent = text;
-      td.append(p);
-    }
-    tr.append(td);
-    for (const text of [row.followers === null ? '未读取' : row.followers.toLocaleString(), row.following === null ? '未读取' : row.following.toLocaleString(), row.ratio === null ? '—' : row.ratio.toFixed(2), row.promise ? '有相关描述' : '未发现']) {
-      const cell = document.createElement('td');
-      cell.textContent = text;
-      tr.append(cell);
-    }
-    const result = document.createElement('td');
-    const badge = document.createElement('span');
-    badge.className = `badge ${row.verdict === '候选' ? 'candidate' : row.verdict === '未命中' ? '' : 'review'}`;
-    badge.textContent = row.verdict;
-    result.append(badge);
-    if (row.verdict === '候选') {
-      const explore = document.createElement('button');
-      explore.className = 'secondary';
-      explore.style.marginLeft = '8px';
-      explore.textContent = '查看资料';
-      explore.addEventListener('click', () => openProfileDrawer(row));
-      result.append(explore);
-      const follow = document.createElement('button');
-      follow.className = 'queue-status';
-      follow.style.marginLeft = '8px';
-      follow.textContent = '打开并关注';
-      follow.addEventListener('click', () => followCandidate(row, follow));
-      result.append(follow);
-    }
-    tr.append(result);
-    body.append(tr);
-  }
-  $('empty').hidden = visible.length > 0;
-  $('empty').textContent = rows.length ? '当前筛选下没有结果。' : '还没有检查记录。输入目标账号开始。';
-}
-
 async function backgroundProfileTab(handle) {
   const tab = await chrome.tabs.create({url:`https://x.com/${handle}`, active:false});
   if (!tab?.id) throw new Error('后台标签页创建失败');
@@ -1937,6 +1869,183 @@ function readGrokDomAnswer(anchor) {
   return { text, done };
 }
 
+// ==============================================================================
+// Grok 多平台（x.com 与 grok.com）可用性探测与降级驱动机制
+// ==============================================================================
+let cachedGrokAvailability = null;
+let lastGrokCheckTime = 0;
+
+function probeXGrokInPage() {
+  const root = document.getElementById('react-root');
+  if (!root) return { ok: false, reason: '未找到 X 页面根容器' };
+  const text = (document.body.innerText || '').slice(0, 3000);
+  if (/Subscribe to Premium|Upgrade to Premium|Upgrade to SuperGrok|Grok is not available in your region/i.test(text)) {
+    return { ok: false, reason: 'x.com 账号未开通 Grok 权限（需订阅 Premium）' };
+  }
+  if (/Grok was unable to reply|Something went wrong, please refresh/i.test(text)) {
+    return { ok: false, reason: 'x.com Grok 服务暂时异常或被限流' };
+  }
+  const ta = Array.prototype.find.call(
+    document.querySelectorAll('textarea'),
+    t => root.contains(t) && t.offsetParent !== null && t.getBoundingClientRect().width > 80
+  );
+  if (!ta) return { ok: false, reason: '未找到 x.com 输入框（未开通或被限制）' };
+  return { ok: true, reason: 'x.com Grok 正常可用' };
+}
+
+function probeGrokComInPage() {
+  const url = window.location.href;
+  if (/login|signin/i.test(url)) {
+    return { ok: false, reason: 'grok.com 用户未登录' };
+  }
+  const text = (document.body.innerText || '').slice(0, 3000);
+  if (/(Sign in|Log in to continue|Sign in with X)/i.test(text) && !document.querySelector('textarea, [contenteditable="true"]')) {
+    return { ok: false, reason: 'grok.com 用户未登录' };
+  }
+  if (/Subscription required|Upgrade to continue|Limit reached/i.test(text)) {
+    return { ok: false, reason: 'grok.com 未开通使用权限或额度耗尽' };
+  }
+  const inputEl = document.querySelector('textarea, [contenteditable="true"], [data-placeholder], input[type="text"]');
+  if (inputEl) {
+    return { ok: true, reason: 'grok.com 已登录且开通可用' };
+  }
+  return { ok: false, reason: '未在 grok.com 找到对话输入框' };
+}
+
+function driveGrokComInput(prompt) {
+  const inputEl = document.querySelector('textarea, [contenteditable="true"]');
+  if (!inputEl) return { ok: false, err: '未找到 grok.com 输入框' };
+  if (inputEl.tagName === 'TEXTAREA') {
+    const proto = Object.getPrototypeOf(inputEl);
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(inputEl, prompt);
+    else inputEl.value = prompt;
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    inputEl.focus();
+    inputEl.textContent = prompt;
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  const submitBtn = document.querySelector('button[type="submit"], button[aria-label*="Send"], button[aria-label*="提交"], button svg[data-icon="arrow-up"]')?.closest('button');
+  if (submitBtn && !submitBtn.disabled) {
+    submitBtn.click();
+    return { ok: true };
+  }
+  inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  return { ok: true };
+}
+
+function readGrokComDomAnswer(anchor) {
+  const text = document.body.innerText || '';
+  const i = text.lastIndexOf(anchor);
+  if (i < 0) return { text: '', done: false };
+  const slice = text.slice(i + anchor.length).trim();
+  const done = !document.querySelector('button[aria-label*="Stop"], .animate-spin') && slice.length > 10;
+  return { text: slice, done };
+}
+
+async function checkGrokAvailability(force = false) {
+  const now = Date.now();
+  if (!force && cachedGrokAvailability && (now - lastGrokCheckTime < 300000)) {
+    return cachedGrokAvailability;
+  }
+
+  let xOk = false;
+  let xReason = '';
+  let grokComOk = false;
+  let grokComReason = '';
+
+  // 1. 测试 x.com/i/grok
+  let winX = null;
+  try {
+    winX = await chrome.windows.create({
+      url: 'https://x.com/i/grok',
+      type: 'popup',
+      state: 'minimized',
+      focused: false
+    });
+    const tabId = winX.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winX.id }))?.[0]?.id;
+    if (tabId) {
+      await sleep(3500);
+      const res = (await chrome.scripting.executeScript({
+        target: { tabId },
+        func: probeXGrokInPage
+      }).catch(() => []))?.[0]?.result;
+      if (res) {
+        xOk = Boolean(res.ok);
+        xReason = res.reason;
+      }
+    }
+  } catch (err) {
+    xReason = err.message;
+  } finally {
+    if (winX?.id) await chrome.windows.remove(winX.id).catch(() => {});
+  }
+
+  // 2. 如果 x.com 正常，优先使用 x.com
+  if (xOk) {
+    cachedGrokAvailability = {
+      available: true,
+      activeChannel: 'x.com',
+      message: 'x.com Grok 正常开通且可用',
+      xReason,
+      grokComReason: '未测试（x.com 已可用）'
+    };
+    lastGrokCheckTime = now;
+    return cachedGrokAvailability;
+  }
+
+  // 3. x.com 不可用时，探测 grok.com 用户是否已开通
+  let winGrok = null;
+  try {
+    winGrok = await chrome.windows.create({
+      url: 'https://grok.com/',
+      type: 'popup',
+      state: 'minimized',
+      focused: false
+    });
+    const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
+    if (tabId) {
+      await sleep(3500);
+      const res = (await chrome.scripting.executeScript({
+        target: { tabId },
+        func: probeGrokComInPage
+      }).catch(() => []))?.[0]?.result;
+      if (res) {
+        grokComOk = Boolean(res.ok);
+        grokComReason = res.reason;
+      }
+    }
+  } catch (err) {
+    grokComReason = err.message;
+  } finally {
+    if (winGrok?.id) await chrome.windows.remove(winGrok.id).catch(() => {});
+  }
+
+  // 4. 综合判断：若 grok.com 可用，使用 grok.com；若两者均不可用，则评论不可用
+  if (grokComOk) {
+    cachedGrokAvailability = {
+      available: true,
+      activeChannel: 'grok.com',
+      message: `x.com 不可用（${xReason}），已切换为 grok.com 备用通道`,
+      xReason,
+      grokComReason
+    };
+  } else {
+    cachedGrokAvailability = {
+      available: false,
+      activeChannel: null,
+      message: `x.com（${xReason || '不可用'}）与 grok.com（${grokComReason || '未登录/未开通'}）均不可用，评论生成不可用`,
+      xReason,
+      grokComReason
+    };
+  }
+
+  lastGrokCheckTime = now;
+  return cachedGrokAvailability;
+}
+
 async function requestGrokReplyForPost(handle, post, authorName = '') {
   if (!post || !post.text) return null;
   const postText = (post.text || '').trim();
@@ -1996,7 +2105,6 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
     let stableRounds = 0;
 
     while (Date.now() < deadline) {
-      // 通道一：网络响应流（net-hook 拦截的 add_response.json）
       if (streamText) {
         reply = extractGrokCommentReply(streamText, cleanHandle);
         if (reply) break;
@@ -2004,7 +2112,6 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
 
       await sleep(2000);
 
-      // 通道二：智能 DOM 读取（Regenerate / Copy text 完成信号判定）
       try {
         const out = await chrome.scripting.executeScript({
           target: {tabId},
@@ -2040,16 +2147,79 @@ async function requestGrokReplyForPost(handle, post, authorName = '') {
         postUrl: post.url || ''
       };
     }
-    return null;
   } catch (e) {
-    console.warn('Grok 回评生成异常:', e);
-    return null;
+    console.warn('x.com Grok 调用异常，尝试备用通道:', e);
   } finally {
     activeGrokStreamResolver = null;
     if (createdWindow?.id) {
       await chrome.windows.remove(createdWindow.id).catch(() => {});
     }
   }
+
+  // 备用通道：尝试 grok.com
+  let grokComWindow = null;
+  try {
+    grokComWindow = await chrome.windows.create({
+      url: 'https://grok.com/',
+      type: 'popup',
+      state: 'minimized',
+      focused: false
+    });
+    const gTabId = grokComWindow.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: grokComWindow.id }))?.[0]?.id;
+    if (gTabId) {
+      await sleep(3500);
+      const probeRes = (await chrome.scripting.executeScript({
+        target: { tabId: gTabId },
+        func: probeGrokComInPage
+      }).catch(() => []))?.[0]?.result;
+
+      if (probeRes?.ok) {
+        await chrome.scripting.executeScript({
+          target: { tabId: gTabId },
+          func: driveGrokComInput,
+          args: [prompt]
+        }).catch(() => {});
+
+        const gDeadline = Date.now() + 40000;
+        let gReply = '';
+        while (Date.now() < gDeadline) {
+          await sleep(2500);
+          const out = await chrome.scripting.executeScript({
+            target: { tabId: gTabId },
+            func: readGrokComDomAnswer,
+            args: [anchorLine]
+          }).catch(() => []);
+          const res = out?.[0]?.result;
+          if (res?.text) {
+            const ext = extractGrokCommentReply(res.text, cleanHandle);
+            if (res.done && ext) {
+              gReply = ext;
+              break;
+            }
+          }
+        }
+
+        if (gReply) {
+          return {
+            reply: gReply,
+            postText: postText.slice(0, 140),
+            postUrl: post.url || ''
+          };
+        }
+      } else {
+        console.warn('grok.com 备用通道不可用:', probeRes?.reason || '未开通或未登录');
+      }
+    }
+  } catch (grokErr) {
+    console.warn('grok.com 备用通道执行异常:', grokErr);
+  } finally {
+    if (grokComWindow?.id) {
+      await chrome.windows.remove(grokComWindow.id).catch(() => {});
+    }
+  }
+
+  console.warn('x.com 与 grok.com 均未能生成回评，评论功能不可用');
+  return null;
 }
 
 async function visitScrollAndFollowCandidate(user, cfg) {
@@ -2451,12 +2621,6 @@ async function collectMutualNetwork(rawAnchor, reset = false) {
   } catch (error) { networkStatus(`@${anchor} 收集失败：${error.message}`); }
   finally { mutualNetworkRunning=false; $('collectNetwork').disabled=false; }
 }
-$('start').addEventListener('click', event => {
-  event.preventDefault(); event.stopImmediatePropagation();
-  $('networkAnchor').value = $('target').value;
-  setTab('candidates');
-  collectMutualNetwork($('target').value, true);
-}, true);
 async function markQueueFollowed(user) {
   const key = user.handle.toLowerCase();
   registerTrackedFollow(user);
@@ -2819,110 +2983,13 @@ async function invoke(func, args) {
 async function navigate(url) {
   await chrome.tabs.update(inspectionTab, { url });
   const deadline = Date.now() + 30000;
-  while (!stopped && Date.now() < deadline) {
+  while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(inspectionTab);
     if (tab.status === 'complete' && tab.url?.replace(/\/$/, '') === url.replace(/\/$/, '')) return;
     await sleep(500);
   }
-  if (!stopped) throw new Error('页面未能加载，已停止。请检查网络、登录或 X 的访问限制。');
+  throw new Error('页面未能加载。请检查网络、登录或 X 的访问限制。');
 }
-
-async function waitInterruptibly(ms) {
-  const deadline = Date.now() + ms;
-  while (!stopped && Date.now() < deadline) await sleep(Math.min(250, deadline - Date.now()));
-}
-
-$('start').addEventListener('click', async () => {
-  if (running) return;
-  try { options = settings(); } catch (error) { status(error.message); return; }
-  running = true;
-  stopped = false;
-  $('start').disabled = true;
-  $('stop').disabled = false;
-  $('clear').disabled = true;
-  for (const key of optionKeys) $(key).disabled = true;
-  rows = [];
-  render();
-  try {
-    await chrome.storage.local.set({ options, rows });
-    persist('rows', rows);
-    const tab = await chrome.tabs.create({ url: `https://x.com/${options.target}/following`, active: true });
-    inspectionTab = tab.id;
-    await navigate(`https://x.com/${options.target}/following`);
-    const handles = new Map();
-    let idleRounds = 0;
-    let ready = false;
-    const networkHandles = await scanFollowingFromNetwork(inspectionTab, options.target, options.limit).catch(() => null);
-    if (networkHandles?.length) {
-      for (const handle of networkHandles) handles.set(handle.toLowerCase(), handle);
-      ready = true;
-      status(`已通过 X 网络接口静默读取 ${handles.size} 个 following 账号。`);
-    }
-    for (let round = 0; !stopped && !networkHandles?.length && round < 150 && handles.size < options.limit && idleRounds < 8; round++) {
-      const result = await invoke(collectVisible, [options.target]);
-      ready ||= result.ready;
-      const before = handles.size;
-      for (const handle of result.handles) {
-        if (handles.size >= options.limit) break;
-        handles.set(handle.toLowerCase(), handle);
-      }
-      idleRounds = handles.size === before ? idleRounds + 1 : 0;
-      status(`正在滚动 following，已收集 ${handles.size} 个账号。可随时停止。`);
-      await waitInterruptibly(1800);
-    }
-    if (!stopped && !handles.size) throw new Error(ready ? '未读取到 following。可能列表为空、不可见或尚未加载；请在检查标签页确认后重试。' : '未读取到列表。请确认已登录 X，且目标账号的 following 可访问。');
-    let failed = 0;
-    for (const handle of handles.values()) {
-      if (stopped) break;
-      status(`正在查看 @${handle} 的 profile（${rows.length + 1}/${handles.size}）`);
-      const url = `https://x.com/${handle}`;
-      await navigate(url);
-      if (stopped) break;
-      let data = { pending: true };
-      const deadline = Date.now() + 18000;
-      while (!stopped && Date.now() < deadline) {
-        data = await invoke(readProfile, [handle]);
-        if (!data.pending) break;
-        await waitInterruptibly(700);
-      }
-      if (stopped) break;
-      const profile = { ...data, handle, url, followers: data.pending ? null : parseCount(data.followersText), following: data.pending ? null : parseCount(data.followingText), checkedAt: new Date().toISOString(), sourceTarget: options.target };
-      profile.status = !data.pending && profile.followers !== null && profile.following !== null ? 'ok' : 'unreadable';
-      profile.error = profile.status === 'ok' ? '' : '资料不可读、访问受限、人数缺失或页面结构变化，请打开主页复核。';
-      failed = profile.status === 'ok' ? 0 : failed + 1;
-      rows.push(profile);
-      await chrome.storage.local.set({ rows });
-      persist('rows', rows);
-      render();
-      if (failed >= 3) throw new Error('连续 3 个 profile 未能读取，已停止。请检查登录状态、访问限制或页面变化，已有结果已保存。');
-      await waitInterruptibly(options.delay * 1000);
-    }
-    status(`${stopped ? '已停止' : '本轮结束'}，已检查 ${rows.length} 个账号。列表受 X 可见范围限制，不保证收集完整。`);
-  } catch (error) {
-    status(`检查中断：${error.message}`);
-  } finally {
-    running = false;
-    $('start').disabled = false;
-    $('stop').disabled = true;
-    $('clear').disabled = false;
-    for (const key of optionKeys) $(key).disabled = false;
-  }
-});
-$('stop').addEventListener('click', () => { stopped = true; status('正在停止，已完成的记录会保留。'); });
-$('filter')?.addEventListener('change', render);
-for (const key of ['minRatio', 'maxRatio', 'minCount', 'requirePromise']) $(key).addEventListener('change', () => {
-  try { options = settings(); render(); chrome.storage.local.set({ options }); } catch (error) { status(error.message); }
-});
-$('export').addEventListener('click', () => {
-  const assessed = rows.map(row => assess(row, options || settings()));
-  const url = URL.createObjectURL(new Blob([csv(assessed)], { type: 'text/csv;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `x-following-${options?.target || 'results'}-${new Date().toISOString().slice(0, 10)}.csv`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-});
-$('clear').addEventListener('click', async () => { rows = []; await chrome.storage.local.remove('rows'); persist('rows', []); render(); status('本地检查记录已清空。'); });
 
 async function saveMonitorSettings() {
   const next = {
@@ -3563,21 +3630,6 @@ $('grokAnalyzeMutual')?.addEventListener('click', async () => {
     networkStatus(`Grok 分析失败：${error.message}`);
   }
 });
-window.addEventListener('beforeunload', event => { if (running) { event.preventDefault(); event.returnValue = ''; } });
-try {
-  const saved = await chrome.storage.local.get(['rows', 'options']);
-  rows = saved.rows || [];
-  options = saved.options;
-  if (options) for (const key of optionKeys) {
-    if (options[key] !== undefined) {
-      if (key === 'requirePromise') $(key).checked = options[key];
-      else $(key).value = options[key];
-    }
-  }
-  if (rows.length) status(`已恢复 ${rows.length} 条本地记录。未完成的检查需重新开始。`);
-  render();
-} catch (error) { status(`本地记录加载失败：${error.message}`); }
-
 try {
   const savedMonitor = await chrome.storage.local.get('monitor');
   monitor = {...monitor, ...(savedMonitor.monitor || {})};
@@ -3710,7 +3762,10 @@ Promise.all([
     renderCommentAutoFollowSettings();
   }
   if (Array.isArray(savedLogs) && savedLogs.length && !autoFollowLogs.length) { autoFollowLogs = savedLogs; await chrome.storage.local.set({autoFollowLogs}); renderLogsModal(); }
-  if (!rows.length && Array.isArray(savedRows) && savedRows.length) { rows = savedRows; await chrome.storage.local.set({rows}); render(); status(`已从 X 本地数据库恢复 ${rows.length} 条历史记录。`); }
+  if (!rows.length && Array.isArray(savedRows) && savedRows.length) {
+    rows = savedRows;
+    await chrome.storage.local.set({rows});
+  }
   if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = []; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
   if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
   if (!Object.keys(profileCache).length && savedProfiles && typeof savedProfiles === 'object') { profileCache=savedProfiles; await chrome.storage.local.set({profileCache}); }
@@ -4079,6 +4134,33 @@ async function clearAutoFollowLogs() {
 }
 
 // 绑定日志弹窗事件
+async function handleTestGrokClick(buttonId, displayId) {
+  const btn = $(buttonId);
+  const handleEl = $(displayId);
+  if (!btn) return;
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '探测中…';
+  if (handleEl) handleEl.textContent = '正在并发探测 x.com 与 grok.com 运行环境…';
+
+  try {
+    const res = await checkGrokAvailability(true);
+    if (handleEl) {
+      handleEl.textContent = res.message;
+      handleEl.style.color = res.available ? '#1d5c3a' : '#c62828';
+    }
+    alert(res.available ? `Grok 可用 ✓\n${res.message}` : `Grok 暂不可用 ✕\n${res.message}\n\n此时定时关注将自动跳过生成评论，不影响正常看帖和关注。如需使用评论建议，请先登录 grok.com 或开通 X Premium。`);
+  } catch (err) {
+    if (handleEl) handleEl.textContent = '探测失败：' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+}
+
+$('testMutualGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testMutualGrokBtn', 'mutualGrokStatusHandle'));
+$('testCommentGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testCommentGrokBtn', 'commentGrokStatusHandle'));
+
 $('openMutualLogs')?.addEventListener('click', openLogsModal);
 $('openCommentLogs')?.addEventListener('click', openLogsModal);
 $('viewMutualLogsLink')?.addEventListener('click', openLogsModal);

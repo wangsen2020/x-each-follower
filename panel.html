@@ -9,20 +9,9 @@
     <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.25.0<br>本地数据</div>
+    <div class="sidebar-foot">v0.25.2<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v0.25.0</span><h1>粉丝管理</h1></header>
-  <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置" hidden>
-    <label class="target">默认互粉锚点<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
-    <label>资料采集上限<input id="limit" type="number" value="50" min="1" max="500"></label>
-    <label>粉丝 / 关注下限<input id="minRatio" type="number" value="0.7" min="0.01" step="0.1"></label>
-    <label>粉丝 / 关注上限<input id="maxRatio" type="number" value="1.4" min="0.01" step="0.1"></label>
-    <label>两项人数至少<input id="minCount" type="number" value="50" min="0"></label>
-    <label>访问间隔（秒）<input id="delay" type="number" value="5" min="3" max="60"></label>
-    <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
-    <div class="actions"><button id="start">打开互关追踪</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
-  </section>
+  <header><span class="eyebrow">XFollower · v0.25.2</span><h1>粉丝管理</h1></header>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
       <div class="follower-tabs" role="tablist">
@@ -356,6 +345,18 @@
       </div>
 
       <div class="drawer-setting-group">
+        <div class="drawer-setting-label-row">
+          <span class="drawer-setting-label">Grok 运行环境探测</span>
+          <button id="testMutualGrokBtn" class="text-link-btn" type="button">测试 Grok 可用性</button>
+        </div>
+        <div id="mutualGrokStatusDisplay" class="drawer-checkpoint-display">
+          <span id="mutualGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
+          <span id="mutualGrokStatusTime" class="checkpoint-time"></span>
+        </div>
+        <small class="drawer-setting-desc">自动测试 x.com 与 grok.com 用户是否已开通。若两者均不可用，则自动跳过生成评论，避免卡顿。</small>
+      </div>
+
+      <div class="drawer-setting-group">
         <label class="drawer-setting-label">
           <span>执行状态与记录</span>
         </label>
@@ -425,6 +426,18 @@
       <div class="drawer-setting-group drawer-setting-switch">
         <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成高情商回评（提升曝光与回粉）</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评建议，并在执行日志中生成可一键复制的回复草稿。" aria-label="Grok回评说明">?</span></label>
         <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论草稿，提高曝光与回评率。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <div class="drawer-setting-label-row">
+          <span class="drawer-setting-label">Grok 运行环境探测</span>
+          <button id="testCommentGrokBtn" class="text-link-btn" type="button">测试 Grok 可用性</button>
+        </div>
+        <div id="commentGrokStatusDisplay" class="drawer-checkpoint-display">
+          <span id="commentGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
+          <span id="commentGrokStatusTime" class="checkpoint-time"></span>
+        </div>
+        <small class="drawer-setting-desc">自动测试 x.com 与 grok.com 用户是否已开通。若两者均不可用，则自动跳过生成评论，避免卡顿。</small>
       </div>
       <div class="drawer-setting-group">
         <label class="drawer-setting-label"><span>执行状态与记录</span></label>

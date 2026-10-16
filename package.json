@@ -1,1 +1,1 @@
-{"name":"x-each-follower","version":"0.25.0","private":true,"type":"module","scripts":{"test":"node --test","check":"node --check panel.js && node --check network-api.js && node --check page-reader.js && node --check scoring.js && node --check background.js"}}
+{"name":"x-each-follower","version":"0.25.2","private":true,"type":"module","scripts":{"test":"node --test","check":"node --check panel.js && node --check network-api.js && node --check page-reader.js && node --check scoring.js && node --check background.js"}}
