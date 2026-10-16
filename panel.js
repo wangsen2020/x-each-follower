@@ -3477,6 +3477,15 @@ async function pollGrokResponseAndApply(tabId, handles, reportStatus = analysisS
   }
 }
 
+async function closeGrokAnalysisWindow(windowId) {
+  if (!windowId) return;
+  await chrome.windows.remove(windowId).catch(() => {});
+  const {grokWindowId} = await chrome.storage.local.get('grokWindowId').catch(() => ({}));
+  if (grokWindowId === windowId) {
+    await chrome.storage.local.remove(['grokWindowId', 'grokSubmittedAt']).catch(() => {});
+  }
+}
+
 async function collectSelectedProfiles(customCandidates = null, reportStatus = analysisStatus) {
   const candidates = (customCandidates || selectedFollowerUsers()).slice(0, 20);
   if (!candidates.length) throw new Error('请先选择或加载要分析的账号。');
@@ -3516,46 +3525,54 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
   await collectSelectedProfiles(customCandidates, reportStatus);
   const prompt = grokPrompt();
   const created = await createBackgroundGrokWindow('https://x.com/i/grok');
-  let tabId = created.tabs?.[0]?.id;
-  if (!tabId && created.id) {
-    const tabs = await chrome.tabs.query({windowId: created.id});
-    tabId = tabs?.[0]?.id;
-  }
-  if (!tabId) throw new Error('Grok 窗口创建失败。');
-  await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
-  const deadline = Date.now() + 30000;
-  let lastReason = 'Grok 页面尚未准备好';
-  while (Date.now() < deadline) {
-    await sleep(1000);
-    const result = (await chrome.scripting.executeScript({target:{tabId}, func:(text) => {
-      const input = document.querySelector('textarea, [contenteditable="true"]');
-      if (!input) return {ok:false, reason:'找不到 Grok 输入框'};
-      if (input.tagName === 'TEXTAREA') {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        setter?.call(input, text);
-      } else {
-        input.textContent = text;
-      }
-      input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
-      input.dispatchEvent(new Event('change', {bubbles:true}));
-      const send = [...document.querySelectorAll('button')].find(button => {
-        const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
-        return /send|提交|发送/i.test(label) && !button.disabled;
-      });
-      if (!send) return {ok:false, reason:'找不到 Grok 发送按钮'};
-      send.click();
-      return {ok:true};
-    }, args:[prompt]}))[0]?.result;
-    if (result?.ok) {
-      const handles = analysisRows.map(r => r.handle);
-      reportStatus(`已在最小化 Grok 窗口提交 ${handles.length} 个账号的互粉倾向分析，正在等待 Grok 回填标签…`);
-      pollGrokResponseAndApply(tabId, handles, reportStatus).catch(() => {});
-      return;
+  let waitForPollToClose = false;
+  try {
+    let tabId = created.tabs?.[0]?.id;
+    if (!tabId && created.id) {
+      const tabs = await chrome.tabs.query({windowId: created.id});
+      tabId = tabs?.[0]?.id;
     }
-    lastReason = result?.reason || lastReason;
+    if (!tabId) throw new Error('Grok 窗口创建失败。');
+    await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
+    const deadline = Date.now() + 30000;
+    let lastReason = 'Grok 页面尚未准备好';
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      const result = (await chrome.scripting.executeScript({target:{tabId}, func:(text) => {
+        const input = document.querySelector('textarea, [contenteditable="true"]');
+        if (!input) return {ok:false, reason:'找不到 Grok 输入框'};
+        if (input.tagName === 'TEXTAREA') {
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+          setter?.call(input, text);
+        } else {
+          input.textContent = text;
+        }
+        input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
+        input.dispatchEvent(new Event('change', {bubbles:true}));
+        const send = [...document.querySelectorAll('button')].find(button => {
+          const label = `${button.getAttribute('aria-label') || ''} ${button.innerText || ''} ${button.getAttribute('data-testid') || ''}`;
+          return /send|提交|发送/i.test(label) && !button.disabled;
+        });
+        if (!send) return {ok:false, reason:'找不到 Grok 发送按钮'};
+        send.click();
+        return {ok:true};
+      }, args:[prompt]}))[0]?.result;
+      if (result?.ok) {
+        const handles = analysisRows.map(r => r.handle);
+        reportStatus(`已在 800×600 Grok 窗口提交 ${handles.length} 个账号的互粉倾向分析，正在等待 Grok 回填标签…`);
+        waitForPollToClose = true;
+        pollGrokResponseAndApply(tabId, handles, reportStatus)
+          .catch(error => reportStatus(`Grok 回填读取失败：${error.message}`))
+          .finally(() => closeGrokAnalysisWindow(created.id));
+        return;
+      }
+      lastReason = result?.reason || lastReason;
+    }
+    await navigator.clipboard.writeText(prompt);
+    throw new Error(`${lastReason}。分析包已复制到剪贴板；自动提交窗口将关闭。`);
+  } finally {
+    if (!waitForPollToClose) await closeGrokAnalysisWindow(created.id);
   }
-  await navigator.clipboard.writeText(prompt);
-  throw new Error(`${lastReason}。分析包已复制到剪贴板，请在 Grok 窗口粘贴发送。`);
 }
 
 function sanitizeUserMojibake(user) {
