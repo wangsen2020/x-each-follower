@@ -1,10 +1,1 @@
-{
-  "name": "x-each-follower",
-  "version": "0.17.0",
-  "private": true,
-  "type": "module",
-  "scripts": {"test": "node --test", "check": "node --check panel.js && node --check page-reader.js && node --check scoring.js && node --check background.js"}
-}
-
-
-
+{"name":"x-each-follower","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test","check":"node --check panel.js && node --check network-api.js && node --check page-reader.js && node --check scoring.js && node --check background.js && node --check grok-comment.js && node --check timing.js && node --check tweet-comment-button.js"}}

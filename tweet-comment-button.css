@@ -1,0 +1,55 @@
+html body [data-testid="tweet"] [data-xef-comment-tracker] {
+  width: 32px;
+  height: 47px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #657786;
+  cursor: pointer;
+}
+
+html body [data-testid="tweet"] [data-xef-comment-tracker]:hover,
+html body [data-testid="tweet"] [data-xef-comment-tracker]:focus-visible {
+  background: #e8f5fd;
+  color: #1d9bf0;
+}
+
+html body [data-testid="tweet"] [data-xef-comment-tracker] svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+html body [data-testid="tweet"] [data-xef-comment-tracker][data-state="loading"] {
+  color: #1d9bf0;
+}
+
+html body [data-xef-comment-toast] {
+  position: fixed;
+  z-index: 2147483647;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 10px 14px;
+  border: 1px solid #dce7df;
+  border-radius: 9px;
+  background: #fff;
+  color: #18302e;
+  box-shadow: 0 6px 24px #102b2226;
+  font: 13px/1.45 system-ui, sans-serif;
+}
+
+html body [data-xef-comment-toast][data-state="error"] {
+  border-color: #e9b3a9;
+  color: #8f2e20;
+}

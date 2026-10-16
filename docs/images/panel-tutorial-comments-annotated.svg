@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="200" viewBox="0 0 1600 200" role="img" aria-labelledby="title desc">
+  <title id="title">评论追踪页面入口</title>
+  <desc id="desc">红圈标出评论追踪的设置齿轮，可从这里打开定时看帖与关注设置。</desc>
+  <image href="panel-tutorial-comments.png" x="0" y="0" width="1600" height="200" />
+  <ellipse cx="1557" cy="89" rx="24" ry="24" fill="none" stroke="#e4432f" stroke-width="4" />
+  <rect x="1160" y="8" width="345" height="37" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="1173" y="32" fill="#d73320" font-family="Arial, sans-serif" font-size="16" font-weight="700">打开评论追踪的定时设置</text>
+  <path d="M1505 45 L1538 66" fill="none" stroke="#e4432f" stroke-width="4" />
+  <path d="M1524 65 L1541 68 L1536 52" fill="none" stroke="#e4432f" stroke-width="4" />
+</svg>
