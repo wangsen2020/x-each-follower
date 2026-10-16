@@ -37,33 +37,63 @@ main>.tab-panel,main>.monitor-card,main>.controls,main>.queue-card,main>.note,ma
 .monitor-empty small{font-size:12px;color:#809188}
 .monitor-empty button{margin-top:7px;padding:8px 12px;font-size:12px}
 .monitor-list{flex:1 1 0;min-height:0;max-height:none;height:auto;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;padding:0 4px 6px 0;margin:0;box-sizing:border-box}
-.monitor-list-header{display:grid;grid-template-columns:18px minmax(0,1fr) 142px 90px 96px;align-items:center;padding:6px 12px;font-size:12px;font-weight:600;color:#556d61;border-bottom:1px solid #e4ece6;margin:0 0 4px 0;flex-shrink:0;box-sizing:border-box}
+.monitor-list-header{display:grid;grid-template-columns:18px minmax(180px, 1fr) minmax(190px, 1.4fr) 88px 96px;align-items:center;padding:6px 12px;font-size:12px;font-weight:600;color:#556d61;border-bottom:1px solid #e4ece6;margin:0 0 4px 0;flex-shrink:0;box-sizing:border-box}
 .monitor-list-header .col-check{width:18px;display:flex;align-items:center;justify-content:center}
 .monitor-list-header .col-check input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer}
 .monitor-list-header .col-profile{display:flex;align-items:center;text-align:left}
 .monitor-list-header .selected-count-badge{font-size:11px;font-weight:normal;color:#6b8075;background:#ebf2ed;padding:2px 8px;border-radius:10px}
 .monitor-list-header .selected-count-badge b{color:#1a4d36}
-.monitor-list-header .col-tag{text-align:center}
+.monitor-list-header .col-tag{text-align:left;padding-left:4px}
 .monitor-list-header .col-status{text-align:center}
 .monitor-list-header .col-actions{text-align:right;padding-right:2px}
 button.danger-btn{background:#fff0eb;color:#b03a2e;border:1px solid #f2c7bd}
 button.danger-btn:hover{background:#fde3db;border-color:#e8aca0}
 button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-color:#d7e0d9;cursor:default}
-.monitor-item{display:grid;grid-template-columns:18px minmax(0,1fr) 142px 90px 96px;align-items:center;padding:8px 12px;border:1px solid #e0e9e3;border-radius:8px;background:#fbfdfb;min-width:0;flex-shrink:0;box-sizing:border-box;transition:background .12s,border-color .12s}
+.monitor-item{display:grid;grid-template-columns:18px minmax(180px, 1fr) minmax(190px, 1.4fr) 88px 96px;align-items:center;padding:8px 12px;border:1px solid #e0e9e3;border-radius:8px;background:#fbfdfb;min-width:0;flex-shrink:0;box-sizing:border-box;transition:background .12s,border-color .12s}
 .monitor-item:hover{background:#f6f9f7;border-color:#cbdacf}
 .monitor-item>input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer}
 .monitor-info{min-width:0;display:flex;flex-direction:column;justify-content:center;line-height:1.35}
 .monitor-info a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1d5c3a;text-decoration:none;font-weight:600;font-size:13px;line-height:1.3}
 .monitor-info a:hover{text-decoration:underline}
 .monitor-info small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#73847a;font-size:11px;line-height:1.35}
-.monitor-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;height:24px;min-height:24px;padding:0 8px;border-radius:99px;background:#edf4ee;color:#2e6248;font-size:12px;line-height:24px;white-space:nowrap;text-align:center;justify-self:center;font-weight:500;box-sizing:border-box}
-.monitor-badge[data-tip]{cursor:help}
-.monitor-badge[data-tip]::after{position:absolute;z-index:45;left:50%;bottom:calc(100% + 7px);width:max-content;max-width:260px;padding:7px 10px;transform:translateX(-50%);border-radius:6px;background:#24332e;color:#fff;box-shadow:0 6px 16px rgba(14,28,22,.22);content:attr(data-tip);font-size:11.5px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;opacity:0;pointer-events:none;transition:opacity .12s ease}
-.monitor-badge[data-tip]:hover::after{opacity:1}
-/* The first data row sits directly below the sticky table header. Open its
-   hover tip downward and raise the hovered badge above that header. */
-.mutual-table tbody tr:first-child .monitor-badge[data-tip]::after{top:calc(100% + 7px);bottom:auto}
-.mutual-table tbody .monitor-badge[data-tip]:hover{z-index:5}
+
+/* 标签通用尺寸：字体12px、高度24px、行高24px、紧凑胶囊 */
+.monitor-badge, .tag-badge{position:relative;display:inline-flex;align-items:center;justify-content:center;height:24px;min-height:24px;max-height:24px;padding:0 7px;border-radius:4px;background:#edf4ee;color:#2e6248;font-size:12px;line-height:24px;white-space:nowrap;text-align:center;font-weight:550;box-sizing:border-box;border:1px solid transparent;user-select:none}
+.monitor-badge[data-tip], .tag-badge[data-tip]{cursor:help}
+.monitor-badge[data-tip]::after, .tag-badge[data-tip]::after{position:absolute;z-index:45;left:50%;bottom:calc(100% + 7px);width:max-content;max-width:260px;padding:7px 10px;transform:translateX(-50%);border-radius:6px;background:#24332e;color:#fff;box-shadow:0 6px 16px rgba(14,28,22,.22);content:attr(data-tip);font-size:11.5px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;opacity:0;pointer-events:none;transition:opacity .12s ease}
+.monitor-badge[data-tip]:hover::after, .tag-badge[data-tip]:hover::after{opacity:1}
+.tag-badge:hover{filter:brightness(.96)}
+
+/* 多维标签色彩体系（按维度区分色彩） */
+/* 1. 信誉回关 */
+.tag-quick-back{background:#dcf5e6;color:#0b6832;border-color:#b7e8c7;font-weight:650}
+.tag-mutual-credit{background:#e0f2f1;color:#00695c;border-color:#b2dfdb}
+.tag-slow-back{background:#fef7e0;color:#9c5c00;border-color:#feefc3}
+.tag-bait-risk{background:#fce8e6;color:#c5221f;border-color:#fad2cf;font-weight:600}
+
+/* 2. 身份认证 */
+.tag-blue-v{background:#e8f0fe;color:#1967d2;border-color:#d2e3fc;font-weight:600}
+.tag-kol{background:#f3e8fd;color:#7627bb;border-color:#e9d2fd;font-weight:650}
+.tag-rising{background:#e8f5e9;color:#2e7d32;border-color:#c8e6c9}
+.tag-marketer{background:#fff3e0;color:#d84315;border-color:#ffe0b2}
+
+/* 3. 垂直赛道 */
+.tag-niche-ai{background:#e8eaf6;color:#283593;border-color:#c5cae9}
+.tag-niche-crypto{background:#fff8e1;color:#d66900;border-color:#ffecb3}
+.tag-niche-ecom{background:#f1f8e9;color:#33691e;border-color:#dcedc8}
+.tag-niche-design{background:#fce4ec;color:#ad1457;border-color:#f8bbd0}
+.tag-niche-life{background:#f5f5f5;color:#5f6368;border-color:#e0e0e0}
+
+/* 4. 活跃行为 */
+.tag-active-daily{background:#fbe9e7;color:#bf360c;border-color:#ffccbc}
+.tag-active-engager{background:#e0f7fa;color:#00838f;border-color:#b2ebf2}
+.tag-active-dormant{background:#eceff1;color:#546e7a;border-color:#cfd8dc}
+
+/* 5. 用户标记 */
+.tag-custom-star{background:#fff9c4;color:#e65100;border-color:#fff59d}
+.tag-custom-white{background:#e1f5fe;color:#0277bd;border-color:#b3e5fc}
+
+/* 兼容原有状态 */
 .monitor-badge.badge-pending{background:#fef4e8;color:#925816}
 .monitor-badge.badge-followed{background:#e2f4ea;color:#17603c;font-weight:600}
 .monitor-badge.badge-danger{background:#fff0eb;color:#a24f3f}
@@ -73,7 +103,7 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .monitor-badge.badge-no-intent{background:#eef2ef;color:#6e8076;font-weight:500}
 .monitor-badge.badge-safe-ratio{background:#e8f5ec;color:#1d6543;font-weight:500}
 .monitor-badge.badge-bait-risk{background:#fff0eb;color:#b03a2e;font-weight:600;border:1px solid #f2c7bd}
-.col-tag-cell{display:flex;align-items:center;justify-content:center;flex-wrap:wrap}
+.col-tag-cell{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:4px;min-width:0}
 .monitor-actions{display:flex;align-items:center;flex-shrink:0;justify-content:flex-end;justify-self:end}
 .monitor-icon-button{width:28px;height:28px;padding:0;display:inline-grid;place-items:center;border-radius:6px;border:1px solid #cbdacf;background:#fff;color:#315847;cursor:pointer;box-sizing:border-box;line-height:1;transition:all .12s ease}
 .monitor-icon-button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:block;pointer-events:none}

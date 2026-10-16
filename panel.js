@@ -764,30 +764,43 @@ function createMutualTagCell(user, cellTag = 'div') {
   const merged = getMergedUserForEvaluation(user);
   const evalResult = evaluateMutualProfile(merged);
 
-  const intentBadge = document.createElement('span');
-  if (evalResult.tag === '互粉') {
-    intentBadge.className = 'monitor-badge badge-mutual-intent';
-    intentBadge.textContent = '互粉';
-  } else {
-    intentBadge.className = 'monitor-badge badge-no-intent';
-    intentBadge.textContent = '无';
-  }
-  intentBadge.title = evalResult.intentTooltip;
-  intentBadge.dataset.tip = evalResult.intentTooltip;
-  wrap.append(intentBadge);
-
-  if (evalResult.countsKnown || evalResult.isNotRecommended) {
-    const ratioBadge = document.createElement('span');
-    if (evalResult.isNotRecommended) {
-      ratioBadge.className = 'monitor-badge badge-bait-risk';
-      ratioBadge.textContent = '不推荐';
-    } else {
-      ratioBadge.className = 'monitor-badge badge-safe-ratio';
-      ratioBadge.textContent = '推荐';
+  // 优先在一列中展现多维标签组（字体12px、高24px、行高24px、色彩区分）
+  const multiTags = evalResult.multiTags?.tags || [];
+  if (multiTags.length > 0) {
+    for (const tag of multiTags) {
+      const badge = document.createElement('span');
+      badge.className = `tag-badge ${tag.colorClass}`;
+      badge.textContent = tag.label;
+      badge.title = tag.desc || tag.label;
+      badge.dataset.tip = tag.desc || tag.label;
+      wrap.append(badge);
     }
-    ratioBadge.title = evalResult.recommendReason;
-    ratioBadge.dataset.tip = evalResult.recommendReason;
-    wrap.append(ratioBadge);
+  } else {
+    const intentBadge = document.createElement('span');
+    if (evalResult.tag === '互粉') {
+      intentBadge.className = 'monitor-badge badge-mutual-intent';
+      intentBadge.textContent = '互粉';
+    } else {
+      intentBadge.className = 'monitor-badge badge-no-intent';
+      intentBadge.textContent = '无';
+    }
+    intentBadge.title = evalResult.intentTooltip;
+    intentBadge.dataset.tip = evalResult.intentTooltip;
+    wrap.append(intentBadge);
+
+    if (evalResult.countsKnown || evalResult.isNotRecommended) {
+      const ratioBadge = document.createElement('span');
+      if (evalResult.isNotRecommended) {
+        ratioBadge.className = 'monitor-badge badge-bait-risk';
+        ratioBadge.textContent = '不推荐';
+      } else {
+        ratioBadge.className = 'monitor-badge badge-safe-ratio';
+        ratioBadge.textContent = '推荐';
+      }
+      ratioBadge.title = evalResult.recommendReason;
+      ratioBadge.dataset.tip = evalResult.recommendReason;
+      wrap.append(ratioBadge);
+    }
   }
   return cell;
 }
@@ -923,6 +936,26 @@ function renderProfileDrawer() {
     drawerField('推荐评估', evalResult.recommendLabel)
   );
   root.append(facts);
+
+  if (evalResult.multiTags?.tags?.length) {
+    const multiTagSec = document.createElement('section');
+    multiTagSec.className = 'drawer-section';
+    const tagTitle = document.createElement('h3');
+    tagTitle.textContent = '多维画像标签';
+    const tagWrap = document.createElement('div');
+    tagWrap.className = 'col-tag-cell';
+    tagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;';
+    for (const tag of evalResult.multiTags.tags) {
+      const badge = document.createElement('span');
+      badge.className = `tag-badge ${tag.colorClass}`;
+      badge.textContent = tag.label;
+      badge.title = tag.desc;
+      badge.dataset.tip = tag.desc;
+      tagWrap.append(badge);
+    }
+    multiTagSec.append(tagTitle, tagWrap);
+    root.append(multiTagSec);
+  }
   const bio = document.createElement('section'); bio.className = 'drawer-section'; const bioTitle = document.createElement('h3'); bioTitle.textContent = '简介'; const bioText = document.createElement('p'); bioText.textContent = repairMojibake(profile.bio) || '暂无简介'; bio.append(bioTitle, bioText); root.append(bio);
   const mutualSection = document.createElement('section'); mutualSection.className = `drawer-section drawer-risk ${evalResult.isNotRecommended ? 'is-danger' : ''}`;
   const mutualTitle = document.createElement('h3'); mutualTitle.textContent = '互粉意向与推荐评估';

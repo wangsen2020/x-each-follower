@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../scoring.js';
+import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, computeMultiDimensionTags, TAG_DEFINITIONS, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../scoring.js';
 
 test('formatPageSummary formats exact pagination summary', () => {
   assert.equal(formatPageSummary(1, 3, 42), '1 / 3 · 42');
@@ -168,6 +168,63 @@ test('selectValuableMutualTargets selects unfollowed valuable accounts sorted by
 
   const selectedRelaxed = selectValuableMutualTargets(users, { batchSize: 5, minFollowers: 100, onlyIntent: false }, {}, new Set());
   assert.deepEqual(selectedRelaxed.map(u => u.handle), ['valuable_fan', 'valuable_peer', 'unscanned_peer']);
+});
+
+test('computeMultiDimensionTags correctly identifies multi-dimensional tags across 5 categories', () => {
+  // 1. 诚信蓝V + AI科技开发者
+  const techUser = {
+    handle: 'tech_dev',
+    name: 'TechDev',
+    bio: 'AI & LLM 独立开发者，Prompt 爱好者',
+    followers: 1200,
+    following: 1100,
+    is_blue_verified: true
+  };
+  const techTags = computeMultiDimensionTags(techUser);
+  assert.ok(techTags.tagIds.includes('identity:blue_v'));
+  assert.ok(techTags.tagIds.includes('niche:ai_tech'));
+  assert.ok(techTags.tagIds.includes('reputation:mutual_credit'));
+
+  // 2. 骗关风险 + 营销引流账号
+  const marketerUser = {
+    handle: 'scam_lead',
+    name: '营销达人',
+    bio: '加V领绝密资料，进群看置顶 t.me/free_crypto',
+    followers: 8000,
+    following: 200
+  };
+  const marketerTags = computeMultiDimensionTags(marketerUser);
+  assert.ok(marketerTags.tagIds.includes('reputation:bait_risk'));
+  assert.ok(marketerTags.tagIds.includes('identity:marketer'));
+  assert.ok(marketerTags.tagIds.includes('niche:crypto_web3'));
+
+  // 3. 秒回承诺 + 日更活跃
+  const activeUser = {
+    handle: 'quick_man',
+    name: '秒回小分队',
+    bio: '有粉必回，常互动多串门',
+    followers: 800,
+    following: 850,
+    posts: [
+      { text: '今天新动态', created_at: new Date(Date.now() - 3600000).toISOString() }
+    ]
+  };
+  const activeTags = computeMultiDimensionTags(activeUser);
+  assert.ok(activeTags.tagIds.includes('reputation:quick_back'));
+  assert.ok(activeTags.tagIds.includes('activity:engager'));
+  assert.ok(activeTags.tagIds.includes('activity:daily'));
+
+  // 4. 自定义白名单与标星
+  const customUser = {
+    handle: 'vip_friend',
+    name: '老朋友',
+    bio: '日常随笔',
+    whitelist: true,
+    starred: true
+  };
+  const customTags = computeMultiDimensionTags(customUser);
+  assert.ok(customTags.tagIds.includes('custom:whitelist'));
+  assert.ok(customTags.tagIds.includes('custom:starred'));
 });
 
 
