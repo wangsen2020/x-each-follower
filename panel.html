@@ -9,20 +9,9 @@
     <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="settings">设置</button>
-    <div class="sidebar-foot">v0.25.0<br>本地数据</div>
+    <div class="sidebar-foot">v0.25.2<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v0.25.0</span><h1>粉丝管理</h1></header>
-  <section id="settingsSection" class="controls tab-panel" data-panel="settings" aria-label="筛选设置" hidden>
-    <label class="target">默认互粉锚点<input id="target" placeholder="@username 或个人主页链接" autocomplete="off"></label>
-    <label>资料采集上限<input id="limit" type="number" value="50" min="1" max="500"></label>
-    <label>粉丝 / 关注下限<input id="minRatio" type="number" value="0.7" min="0.01" step="0.1"></label>
-    <label>粉丝 / 关注上限<input id="maxRatio" type="number" value="1.4" min="0.01" step="0.1"></label>
-    <label>两项人数至少<input id="minCount" type="number" value="50" min="0"></label>
-    <label>访问间隔（秒）<input id="delay" type="number" value="5" min="3" max="60"></label>
-    <label class="check"><input id="requirePromise" type="checkbox" checked>候选必须包含互关 / 回关相关描述</label>
-    <div class="actions"><button id="start">打开互关追踪</button><button id="stop" disabled class="secondary">停止</button><button id="export" class="secondary">导出 CSV</button><button id="clear" class="secondary">清空记录</button></div>
-  </section>
+  <header><span class="eyebrow">XFollower · v0.25.2</span><h1>粉丝管理</h1></header>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
       <div class="follower-tabs" role="tablist">
@@ -248,8 +237,8 @@
           <span>不定频随机浮动（±分钟）</span>
           <span class="info-tip" data-tip="实际执行间隔将在 基准间隔 ± 浮动分钟 内随机生成，避免固定机械规律被平台风控识别。" aria-label="随机浮动说明">?</span>
         </label>
-        <input id="monitorJitter" type="number" value="15" min="0" max="120">
-        <small class="drawer-setting-desc">突出频率与间隔的不定性，模拟真实人工作息习惯。</small>
+        <input id="monitorJitter" type="number" value="15" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，模拟自然作息间隔。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -277,7 +266,7 @@
   </aside>
   <aside id="mutualSettingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="mutualSettingsDrawerTitle" hidden>
     <div class="profile-drawer-head">
-      <strong id="mutualSettingsDrawerTitle">互粉追踪 · 定时看帖与关注设置</strong>
+      <strong id="mutualSettingsDrawerTitle">互关追踪 · 定时看帖与关注设置</strong>
       <div class="drawer-head-actions">
         <button id="openMutualLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
         <button id="closeMutualSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
@@ -298,8 +287,8 @@
           <span>随机浮动间隔（±分钟）</span>
           <span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问与关注的时间间隔自然不固定。" aria-label="随机浮动间隔说明">?</span>
         </label>
-        <input id="mutualAutoJitter" type="number" value="3" min="0" max="120">
-        <small class="drawer-setting-desc">不定频调度，避免固定时间点触发平台风控。</small>
+        <input id="mutualAutoJitter" type="number" value="3" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，避免固定时间点触发平台风控。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -322,11 +311,16 @@
 
       <div class="drawer-setting-group">
         <label for="mutualAutoDwellSec" class="drawer-setting-label">
-          <span>主页看帖停留时长（秒）</span>
-          <span class="info-tip" data-tip="在对方主页下拉浏览帖子的总停留时间（秒），停留结束后再触发点击关注。" aria-label="看帖停留时长说明">?</span>
+          <span>主页看帖停留基准（秒）</span>
+          <span class="info-tip" data-tip="以此秒数为中心，再按下方浮动范围随机确定本次停留时长，之后再触发关注。" aria-label="看帖停留时长说明">?</span>
         </label>
         <input id="mutualAutoDwellSec" type="number" value="15" min="2" max="60">
-        <small class="drawer-setting-desc">模拟真实阅读帖子的停留时间。</small>
+        <small class="drawer-setting-desc">每次执行按基准随机浮动后分段浏览，日志记录本次目标时长。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="mutualAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
+        <input id="mutualAutoDwellJitterSec" type="number" value="5" min="1" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒浮动；至少浮动 1 秒。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -349,10 +343,22 @@
       <div class="drawer-setting-group drawer-setting-switch">
         <label class="drawer-switch-label">
           <input id="mutualAutoGrokComment" type="checkbox">
-          <span>看帖时调用 Grok 生成高情商回评（提升曝光与回粉）</span>
-          <span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评建议，并在执行日志中生成可一键复制的回复草稿，助力博主回评互动与回关。" aria-label="Grok回评说明">?</span>
+          <span>看帖时调用 Grok 生成并发表高情商回评（提升曝光与回粉）</span>
+          <span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评，并自动向推文发表回复，留下真实可见的推特互动痕迹以大幅提高回关率。" aria-label="Grok回评说明">?</span>
         </label>
-        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论草稿，提高曝光与回评率。</small>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论并自动向推文发表回复，在推特上留下真实互动痕迹。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <div class="drawer-setting-label-row">
+          <span class="drawer-setting-label">Grok 运行环境实测</span>
+          <button id="testMutualGrokBtn" class="text-link-btn" type="button">实测推文回评与发表</button>
+        </div>
+        <div id="mutualGrokStatusDisplay" class="drawer-checkpoint-display">
+          <span id="mutualGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
+          <span id="mutualGrokStatusTime" class="checkpoint-time"></span>
+        </div>
+        <small class="drawer-setting-desc">点击可即时调用 Grok 生成高情商回评，并支持一键发布到 X 推特上验证真实发表痕迹。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -395,8 +401,8 @@
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机增减分钟数，使每次访问和关注的时间间隔不固定。" aria-label="随机浮动间隔说明">?</span></label>
-        <input id="commentAutoJitter" type="number" value="3" min="0" max="120">
-        <small class="drawer-setting-desc">按基础周期及随机浮动范围调度。</small>
+        <input id="commentAutoJitter" type="number" value="3" min="1" max="120">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，按基础周期动态调度。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoBatchSize" class="drawer-setting-label"><span>单次关注人数上限</span><span class="info-tip" data-tip="每轮定时任务最多打开多少位评论用户主页并尝试关注。" aria-label="单次关注人数说明">?</span></label>
@@ -409,9 +415,14 @@
         <small class="drawer-setting-desc">在读取最近 5 条帖子期间分段浏览主页。</small>
       </div>
       <div class="drawer-setting-group">
-        <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留时长（秒）</span><span class="info-tip" data-tip="每位用户主页滚动浏览的总停留时长，完成后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
+        <label for="commentAutoDwellSec" class="drawer-setting-label"><span>主页看帖停留基准（秒）</span><span class="info-tip" data-tip="以此秒数为中心，再按下方浮动范围随机确定本次停留时长，之后再尝试关注。" aria-label="看帖停留时长说明">?</span></label>
         <input id="commentAutoDwellSec" type="number" value="15" min="2" max="60">
-        <small class="drawer-setting-desc">设置阅读帖子时的总停留时间。</small>
+        <small class="drawer-setting-desc">每次执行按基准随机浮动后分段浏览，日志记录本次目标时长。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="commentAutoDwellJitterSec" class="drawer-setting-label"><span>停留随机浮动（±秒）</span></label>
+        <input id="commentAutoDwellJitterSec" type="number" value="5" min="1" max="30">
+        <small class="drawer-setting-desc">默认 15 秒基准、±5 秒浮动；至少浮动 1 秒。</small>
       </div>
       <div class="drawer-setting-group">
         <label for="commentAutoMinFollowers" class="drawer-setting-label"><span>最低粉丝数门槛</span><span class="info-tip" data-tip="低于此粉丝数的账号将跳过，不会自动关注。" aria-label="最低粉丝数说明">?</span></label>
@@ -423,8 +434,20 @@
         <small class="drawer-setting-desc">读取主页帖子后若账号不符合设置条件，将保存帖子并跳过关注。</small>
       </div>
       <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成高情商回评（提升曝光与回粉）</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评建议，并在执行日志中生成可一键复制的回复草稿。" aria-label="Grok回评说明">?</span></label>
-        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论草稿，提高曝光与回评率。</small>
+        <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成并发表高情商回评（提升曝光与回粉）</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评，并自动向推文发表回复，留下真实可见的推特互动痕迹。" aria-label="Grok回评说明">?</span></label>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论并自动向推文发表回复，在推特上留下真实互动痕迹。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <div class="drawer-setting-label-row">
+          <span class="drawer-setting-label">Grok 运行环境实测</span>
+          <button id="testCommentGrokBtn" class="text-link-btn" type="button">实测推文回评与发表</button>
+        </div>
+        <div id="commentGrokStatusDisplay" class="drawer-checkpoint-display">
+          <span id="commentGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
+          <span id="commentGrokStatusTime" class="checkpoint-time"></span>
+        </div>
+        <small class="drawer-setting-desc">点击可即时调用 Grok 生成高情商回评，并支持一键发布到 X 推特上验证真实发表痕迹。</small>
       </div>
       <div class="drawer-setting-group">
         <label class="drawer-setting-label"><span>执行状态与记录</span></label>
@@ -460,8 +483,8 @@
           <span>随机浮动间隔（±分钟）</span>
           <span class="info-tip" data-tip="在基础周期上随机浮动，模拟真人自然作息，避免机械规律。" aria-label="随机浮动说明">?</span>
         </label>
-        <input id="unreciprocatedAutoJitter" type="number" value="10" min="0" max="60">
-        <small class="drawer-setting-desc">实际检测将在 基准 ± 浮动 分钟内动态执行。</small>
+        <input id="unreciprocatedAutoJitter" type="number" value="10" min="1" max="60">
+        <small class="drawer-setting-desc">每次至少浮动 1 分钟，实际检测按基准动态调度。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -493,11 +516,17 @@
 
       <div class="drawer-setting-group">
         <label for="unreciprocatedUnfollowDelay" class="drawer-setting-label">
-          <span>取关操作仿真间隔（秒）</span>
-          <span class="info-tip" data-tip="连续取消关注每两个账号之间的等待停顿时间，默认 3 秒。" aria-label="取关间隔说明">?</span>
+          <span>取关操作间隔基准（秒）</span>
+          <span class="info-tip" data-tip="连续取消关注时以此秒数为中心，再按浮动范围随机等待。" aria-label="取关间隔说明">?</span>
         </label>
         <input id="unreciprocatedUnfollowDelay" type="number" value="3" min="1" max="30">
-        <small class="drawer-setting-desc">模拟真人手速停顿，保护账号安全。</small>
+        <small class="drawer-setting-desc">默认 3 秒基准、±2 秒浮动；至少浮动 1 秒。</small>
+      </div>
+
+      <div class="drawer-setting-group">
+        <label for="unreciprocatedUnfollowDelayJitter" class="drawer-setting-label"><span>取关间隔随机浮动（±秒）</span></label>
+        <input id="unreciprocatedUnfollowDelayJitter" type="number" value="2" min="1" max="15">
+        <small class="drawer-setting-desc">每次取关前的等待时间会在基准范围内随机变化。</small>
       </div>
 
       <div class="drawer-setting-group">

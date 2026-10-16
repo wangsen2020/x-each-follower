@@ -2,6 +2,7 @@ import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, find
 import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep } from './page-reader.js';
 import { evaluateMutualProfile, parseCount } from './scoring.js';
+import { randomizedInteger, randomizedSeconds } from './timing.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -21,11 +22,15 @@ function normalizeAutoFollowConfig(cfg = {}) {
     batchLimit: 10,
     scrollRounds: 5,
     dwellSeconds: 15,
+    dwellJitterSeconds: 5,
     minFollowers: 50,
     onlyMutualIntent: true,
     grokAutoComment: false
   };
   const res = { ...defaults, ...(cfg || {}) };
+  res.jitter = Math.max(1, Math.min(120, Number(res.jitter) || defaults.jitter));
+  res.dwellSeconds = Math.max(2, Math.min(60, Number(res.dwellSeconds) || defaults.dwellSeconds));
+  res.dwellJitterSeconds = Math.max(1, Math.min(30, Number(res.dwellJitterSeconds) || 0));
   if (res.every === 45) res.every = defaults.every;
   if (res.jitter === 15) res.jitter = defaults.jitter;
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
@@ -44,17 +49,19 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollow: false,
     batchLimit: 10,
     unfollowDelay: 3,
+    unfollowDelayJitter: 2,
     whitelist: '',
     lastRunAt: null,
     lastSummary: '尚未执行回关监测'
   };
   const res = { ...defaults, ...(cfg || {}) };
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
-  res.jitter = Math.max(0, Math.min(60, Number(res.jitter) ?? 10));
+  res.jitter = Math.max(1, Math.min(60, Number(res.jitter) || 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.unfollowDelayJitter = Math.max(1, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
@@ -64,9 +71,8 @@ export function scheduleUnreciprocatedTracker(rawCfg = {}) {
   chrome.alarms.clear('x-unreciprocated-tracker').then(() => {
     if (!cfg.enabled) return;
     const base = Number(cfg.every) || 60;
-    const jitter = Number(cfg.jitter) ?? 10;
-    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
-    const nextDelay = Math.max(5, base + delta);
+    const jitter = Number(cfg.jitter) || 1;
+    const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
   }).catch(() => {});
 }
@@ -76,9 +82,8 @@ function scheduleCommentAutoFollow(rawCfg = {}) {
   chrome.alarms.clear('x-comment-auto-follow').then(() => {
     if (!cfg.enabled) return;
     const every = Math.max(5, Number(cfg.every) || 5);
-    const jitter = Math.max(0, Math.min(every - 1, Number(cfg.jitter) ?? 3));
-    const delta = jitter ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
-    chrome.alarms.create('x-comment-auto-follow', {delayInMinutes:Math.max(5, every + delta)});
+    const jitter = Math.max(1, Math.min(every - 1, Number(cfg.jitter) || 1));
+    chrome.alarms.create('x-comment-auto-follow', {delayInMinutes:randomizedInteger(every, jitter, 5, 1440)});
   }).catch(() => {});
 }
 
@@ -105,15 +110,19 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
   }
   if (data.pending) throw new Error('公开资料读取超时');
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
-  const totalDwellMs = Math.max(2000, Math.min(60000, (Number(cfg.dwellSeconds) || 15) * 1000));
-  const stepDelay = Math.max(600, Math.round(totalDwellMs / rounds));
+  const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
+  const totalDwellMs = dwellSeconds * 1000;
+  const stepDelay = Math.max(1, Math.floor(totalDwellMs / rounds));
+  let remainingDwellMs = totalDwellMs;
   for (let round = 0; round < rounds; round++) {
     await chrome.scripting.executeScript({target:{tabId}, func:simulateProfileScrollStep, args:[round, 420]}).catch(() => []);
-    await sleep(stepDelay + Math.floor(Math.random() * 350));
+    const currentStepDelay = round === rounds - 1 ? remainingDwellMs : stepDelay;
+    await sleep(currentStepDelay);
+    remainingDwellMs -= currentStepDelay;
   }
   const afterScroll = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result;
   if (afterScroll && !afterScroll.pending && (afterScroll.posts || []).length >= (data.posts || []).length) data = afterScroll;
-  return data;
+  return {...data, dwellSeconds};
 }
 
 // 定时关注执行日志：时间、访问的账号、扫描的帖子、关注结果（面板与后台共用 storage 键 autoFollowLogs）
@@ -156,9 +165,12 @@ async function runCommentAutoFollow(source = 'alarm') {
     for (const user of candidates) {
       const handle = String(user.handle || '').replace(/^@/, '');
       let didFollow = false;
+      let actualDwellSeconds = cfg.dwellSeconds;
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
+        actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
+        delete profile.dwellSeconds;
         user.recentPosts = mergeRecentPosts(user.recentPosts || [], profile.posts || [], 100);
         user.recentPostsFetchedAt = new Date().toISOString();
         user.recentPostsCount = user.recentPosts.length;
@@ -185,7 +197,7 @@ async function runCommentAutoFollow(source = 'alarm') {
           processedCount++;
           skippedCount++;
           await appendAutoFollowLog({scope:'comment', source, handle, result:'skipped', detail:skipReason, posts:profile.posts || []});
-          await sleep(500);
+          await sleep(500 + Math.floor(Math.random() * 1000));
           continue;
         }
         let followed = false;
@@ -220,7 +232,7 @@ async function runCommentAutoFollow(source = 'alarm') {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       await saveCommentTrackingData(tracking);
-      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? '已点击并关注成功' : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5)}).catch(() => {});
+      await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? `主页看帖目标停留约 ${actualDwellSeconds} 秒后关注成功` : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5)}).catch(() => {});
       processedCount++;
       if (didFollow) followedCount++;
       if (rateLimited) {
@@ -402,9 +414,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const { monitor } = await chrome.storage.local.get('monitor');
     if (!monitor?.enabled) return;
     const base = Number(monitor.every) || 60;
-    const jitter = Number(monitor.jitter) || 0;
-    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
-    const nextDelay = Math.max(10, base + delta);
+    const jitter = Math.max(1, Number(monitor.jitter) || 1);
+    const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
     await chrome.notifications.create(`x-followers-${Date.now()}`, {
       type: 'basic',
@@ -428,9 +439,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const cfg = normalizeAutoFollowConfig(mutualAutoFollowSettings || mutualNetwork?.autoFollow);
     if (!cfg?.enabled) return;
     const base = Number(cfg.every) || 5;
-    const jitter = Number(cfg.jitter) ?? 3;
-    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
-    const nextDelay = Math.max(5, base + delta);
+    const jitter = Number(cfg.jitter) || 1;
+    const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     await chrome.alarms.create('x-mutual-auto-follow', { delayInMinutes: nextDelay });
     let handledByPanel = false;
     try {
@@ -460,9 +470,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const cfg = normalizeUnreciprocatedConfig(unreciprocatedSettings || unreciprocatedTracker?.config);
     if (!cfg?.enabled) return;
     const base = Number(cfg.every) || 60;
-    const jitter = Number(cfg.jitter) ?? 10;
-    const delta = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
-    const nextDelay = Math.max(5, base + delta);
+    const jitter = Number(cfg.jitter) || 1;
+    const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     await chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
     let handledByPanel = false;
     try {

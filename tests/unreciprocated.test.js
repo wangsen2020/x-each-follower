@@ -6,10 +6,13 @@ test('normalizeUnreciprocatedConfig sets robust default parameters for followbac
   const cfg = normalizeUnreciprocatedConfig();
   assert.equal(cfg.every, 60, '默认一小时一次');
   assert.equal(cfg.jitter, 10, '默认随机浮动10分钟');
+  assert.equal(normalizeUnreciprocatedConfig({jitter:0}).jitter, 10, '旧固定周期迁移到默认浮动区间');
   assert.equal(cfg.overdueDays, 14, '默认2周未回关判定超时');
   assert.equal(cfg.autoUnfollow, false, '默认自动取关关闭');
   assert.equal(cfg.batchLimit, 10, '单次默认处理10人');
   assert.equal(cfg.unfollowDelay, 3, '取关默认间隔3秒');
+  assert.equal(cfg.unfollowDelayJitter, 2, '取关默认随机浮动2秒');
+  assert.equal(normalizeUnreciprocatedConfig({unfollowDelayJitter:0}).unfollowDelayJitter, 1, '旧固定配置至少迁移为1秒浮动');
   assert.equal(cfg.whitelist, '', '默认无白名单');
 });
 
@@ -21,6 +24,7 @@ test('normalizeUnreciprocatedConfig respects custom options within safe bounds',
     autoUnfollow: true,
     batchLimit: 20,
     unfollowDelay: 5,
+    unfollowDelayJitter: 4,
     whitelist: 'elonmusk, OpenAI'
   });
   assert.equal(cfg.every, 120);
@@ -29,6 +33,7 @@ test('normalizeUnreciprocatedConfig respects custom options within safe bounds',
   assert.equal(cfg.autoUnfollow, true);
   assert.equal(cfg.batchLimit, 20);
   assert.equal(cfg.unfollowDelay, 5);
+  assert.equal(cfg.unfollowDelayJitter, 4);
   assert.equal(cfg.whitelist, 'elonmusk, OpenAI');
 });
 
