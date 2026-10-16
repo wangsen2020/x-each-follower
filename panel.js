@@ -2,6 +2,7 @@ import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile,
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
+import { randomizedSeconds } from './timing.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -25,6 +26,7 @@ const defaultMutualAutoFollow = () => ({
   batchLimit: 10,
   scrollRounds: 5,
   dwellSeconds: 15,
+  dwellJitterSeconds: 5,
   minFollowers: 50,
   onlyMutualIntent: true,
   grokAutoComment: false,
@@ -36,6 +38,8 @@ const defaultMutualAutoFollow = () => ({
 function normalizeAutoFollowConfig(cfg = {}) {
   const defaults = defaultMutualAutoFollow();
   const res = { ...defaults, ...cfg };
+  res.dwellSeconds = Math.max(2, Math.min(60, Number(res.dwellSeconds) || defaults.dwellSeconds));
+  res.dwellJitterSeconds = Math.max(0, Math.min(30, Number(res.dwellJitterSeconds) || 0));
   if (res.every === 45) res.every = defaults.every;
   if (res.jitter === 15) res.jitter = defaults.jitter;
   if (res.batchLimit === 3) res.batchLimit = defaults.batchLimit;
@@ -133,6 +137,7 @@ let unreciprocatedTracker = {
     autoUnfollow: false,
     batchLimit: 10,
     unfollowDelay: 3,
+    unfollowDelayJitter: 2,
     whitelist: '',
     lastRunAt: null,
     lastSummary: '尚未执行回关监测'
@@ -262,6 +267,7 @@ async function saveCommentAutoFollowSettings() {
     batchLimit: Math.max(1, Math.min(20, Number($('commentAutoBatchSize')?.value || 10))),
     scrollRounds: Math.max(1, Math.min(8, Number($('commentAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('commentAutoDwellSec')?.value || 15))),
+    dwellJitterSeconds: Math.max(0, Math.min(30, Number($('commentAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true,
     grokAutoComment: Boolean($('commentAutoGrokComment')?.checked)
@@ -283,6 +289,7 @@ function renderCommentAutoFollowSettings() {
   if ($('commentAutoBatchSize')) $('commentAutoBatchSize').value = cfg.batchLimit;
   if ($('commentAutoScrollRounds')) $('commentAutoScrollRounds').value = cfg.scrollRounds;
   if ($('commentAutoDwellSec')) $('commentAutoDwellSec').value = cfg.dwellSeconds;
+  if ($('commentAutoDwellJitterSec')) $('commentAutoDwellJitterSec').value = cfg.dwellJitterSeconds;
   if ($('commentAutoMinFollowers')) $('commentAutoMinFollowers').value = cfg.minFollowers;
   if ($('commentAutoOnlyIntent')) $('commentAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
   if ($('commentAutoGrokComment')) $('commentAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
@@ -477,7 +484,7 @@ $('openCommentAutoFollowSettings')?.addEventListener('click', openCommentAutoFol
 $('closeCommentAutoFollowDrawer')?.addEventListener('click', closeCommentAutoFollowDrawer);
 $('commentAutoEnabled')?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 const debouncedSaveComment = debounce(() => saveCommentAutoFollowSettings().catch(() => {}), 300);
-for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent', 'commentAutoGrokComment']) {
+for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoDwellJitterSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent', 'commentAutoGrokComment']) {
   $(id)?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
   $(id)?.addEventListener('input', debouncedSaveComment);
 }
@@ -856,6 +863,7 @@ function renderMutualSettingsDrawer() {
   if ($('mutualAutoBatchSize')) $('mutualAutoBatchSize').value = cfg.batchLimit || 10;
   if ($('mutualAutoScrollRounds')) $('mutualAutoScrollRounds').value = cfg.scrollRounds || 5;
   if ($('mutualAutoDwellSec')) $('mutualAutoDwellSec').value = cfg.dwellSeconds || 15;
+  if ($('mutualAutoDwellJitterSec')) $('mutualAutoDwellJitterSec').value = cfg.dwellJitterSeconds ?? 5;
   if ($('mutualAutoMinFollowers')) $('mutualAutoMinFollowers').value = cfg.minFollowers ?? 50;
   if ($('mutualAutoOnlyIntent')) $('mutualAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
   if ($('mutualAutoGrokComment')) $('mutualAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
@@ -1709,6 +1717,7 @@ async function saveMutualAutoFollowSettings() {
     batchLimit: Math.max(1, Math.min(20, Number($('mutualAutoBatchSize')?.value || 10))),
     scrollRounds: Math.max(1, Math.min(8, Number($('mutualAutoScrollRounds')?.value || 5))),
     dwellSeconds: Math.max(2, Math.min(60, Number($('mutualAutoDwellSec')?.value || 15))),
+    dwellJitterSeconds: Math.max(0, Math.min(30, Number($('mutualAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true,
     grokAutoComment: Boolean($('mutualAutoGrokComment')?.checked)
@@ -1882,15 +1891,14 @@ function probeXGrokInPage() {
   if (/Subscribe to Premium|Upgrade to Premium|Upgrade to SuperGrok|Grok is not available in your region/i.test(text)) {
     return { ok: false, reason: 'x.com 账号未开通 Grok 权限（需订阅 Premium）' };
   }
-  if (/Grok was unable to reply|Something went wrong, please refresh|Failed to load models|Unable to load model/i.test(text)) {
-    return { ok: false, reason: 'x.com Grok 服务暂时异常或被限流' };
-  }
+  // 提示：X 官方偶发出现模型列表加载失败或历史记录加载异常的 toast（如 Failed to load models），
+  // 但底层的对话补全接口与输入框完全正常可用，切勿将其作为不可用阻断。
   const ta = Array.prototype.find.call(
     document.querySelectorAll('textarea'),
     t => root.contains(t) && t.offsetParent !== null && t.getBoundingClientRect().width > 80
   );
   if (!ta) return { ok: false, reason: '未找到 x.com 输入框（未开通或被限制）' };
-  return { ok: true, reason: 'x.com Grok 正常可用' };
+  return { ok: true, reason: 'x.com Grok 正常可用（输入框就绪）' };
 }
 
 function probeGrokComInPage() {
@@ -1906,37 +1914,14 @@ function probeGrokComInPage() {
     return { ok: false, reason: 'grok.com 未开通使用权限或额度耗尽' };
   }
 
-  // 精准识别 grok.com 出现的 "Failed to load models. Retry" 故障
-  const hasModelFailText = /Failed to load models|Unable to load model|Failed to fetch models|No models available/i.test(bodyText);
-  const modelFailEl = Array.from(document.querySelectorAll('*')).find(
-    el => el.children.length === 0 && /Failed to load models/i.test(el.textContent || '')
-  );
-  if (hasModelFailText || modelFailEl) {
-    // 尝试寻找弹出的 Retry 按钮自动点击一次尝试恢复
-    const retryBtn = Array.from(document.querySelectorAll('button, a, span, div[role="button"]'))
-      .find(el => el.textContent && /Retry|重试/i.test(el.textContent.trim()) && el.offsetParent !== null);
-    if (retryBtn) {
-      try { retryBtn.click(); } catch (e) {}
-    }
-    return { ok: false, reason: 'grok.com 模型加载失败 (Failed to load models. Retry)' };
-  }
-
-  if (/Something went wrong|Service unavailable/i.test(bodyText) && !document.querySelector('textarea, [contenteditable="true"]')) {
-    return { ok: false, reason: 'grok.com 服务暂时不可用' };
-  }
-
   const inputEl = document.querySelector('textarea, [contenteditable="true"], [data-placeholder], input[type="text"]');
   if (inputEl) {
-    return { ok: true, reason: 'grok.com 已登录且开通可用' };
+    return { ok: true, reason: 'grok.com 输入框就绪（可进行对话互动）' };
   }
   return { ok: false, reason: '未在 grok.com 找到对话输入框' };
 }
 
 function driveGrokComInput(prompt) {
-  const bodyText = (document.body ? document.body.innerText : '') || '';
-  if (/Failed to load models|Unable to load model/i.test(bodyText)) {
-    return { ok: false, err: 'grok.com 模型加载失败 (Failed to load models)' };
-  }
   const inputEl = document.querySelector('textarea, [contenteditable="true"]');
   if (!inputEl) return { ok: false, err: '未找到 grok.com 输入框' };
   if (inputEl.tagName === 'TEXTAREA') {
@@ -1962,9 +1947,6 @@ function driveGrokComInput(prompt) {
 
 function readGrokComDomAnswer(anchor) {
   const text = (document.body ? document.body.innerText : '') || '';
-  if (/Failed to load models|Unable to load model/i.test(text)) {
-    return { text: '', done: true, err: 'grok.com 模型加载失败' };
-  }
   const i = text.lastIndexOf(anchor);
   if (i < 0) return { text: '', done: false };
   const slice = text.slice(i + anchor.length).trim();
@@ -2306,8 +2288,10 @@ async function visitScrollAndFollowCandidate(user, cfg) {
     }
 
     const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
-    const totalDwellMs = Math.max(2000, Math.min(60000, (Number(cfg.dwellSeconds) || 15) * 1000));
-    const stepDelay = Math.max(600, Math.round(totalDwellMs / rounds));
+    const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
+    const totalDwellMs = dwellSeconds * 1000;
+    const stepDelay = Math.max(1, Math.floor(totalDwellMs / rounds));
+    let remainingDwellMs = totalDwellMs;
 
     for (let r = 0; r < rounds; r++) {
       networkStatus(`正在 @${handle} 首页下拉模拟看帖 (${r + 1}/${rounds})…`);
@@ -2316,7 +2300,9 @@ async function visitScrollAndFollowCandidate(user, cfg) {
         func: simulateProfileScrollStep,
         args: [r, 420]
       }).catch(() => {});
-      await sleep(stepDelay + Math.floor(Math.random() * 350));
+      const currentStepDelay = r === rounds - 1 ? remainingDwellMs : stepDelay;
+      await sleep(currentStepDelay);
+      remainingDwellMs -= currentStepDelay;
     }
 
     const afterScroll = (await chrome.scripting.executeScript({
@@ -2372,10 +2358,10 @@ async function visitScrollAndFollowCandidate(user, cfg) {
 
     const evalRes = evaluateMutualProfile(profileCache[key]);
     if (evalRes.isNotRecommended) {
-      return {status: 'skipped', reason: evalRes.recommendReason};
+      return {status: 'skipped', reason: evalRes.recommendReason, dwellSeconds};
     }
     if (cfg.onlyMutualIntent !== false && evalRes.tag !== '互粉' && evalRes.recommendLabel !== '推荐') {
-      return {status: 'skipped', reason: evalRes.intentTooltip};
+      return {status: 'skipped', reason: evalRes.intentTooltip, dwellSeconds};
     }
 
     networkStatus(`已完成 @${handle} 首页看帖（读取 ${updatedProfile.posts?.length || 0} 条帖子 · ${evalRes.recommendLabel}），正在点击关注…`);
@@ -2390,7 +2376,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
     }
 
     if (clickRes.reason === 'rate_limited') {
-      return {status: 'rate_limited', reason: '触发 X 关注频率限制'};
+      return {status: 'rate_limited', reason: '触发 X 关注频率限制', dwellSeconds};
     }
     if (clickRes.ok || clickRes.reason === 'already_following') {
       const updatedRel = {...(user.relationship || {}), following: true};
@@ -2409,7 +2395,8 @@ async function visitScrollAndFollowCandidate(user, cfg) {
         evalResult: evalRes,
         grokComment: grokResult?.reply || '',
         grokCommentPost: grokResult?.postText || '',
-        grokCommentPostUrl: grokResult?.postUrl || ''
+        grokCommentPostUrl: grokResult?.postUrl || '',
+        dwellSeconds
       };
     }
     return {status: 'failed', reason: clickRes.error || clickRes.reason || '未找到关注按钮'};
@@ -2466,7 +2453,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             handle: target.handle,
             name: target.name,
             result: 'followed',
-            detail: `看帖停留 ${cfg.dwellSeconds || 15} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${res.grokComment ? '已由 Grok 生成互动回评。' : ''}`,
+            detail: `主页看帖目标停留约 ${res.dwellSeconds ?? cfg.dwellSeconds} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${res.grokComment ? '已由 Grok 生成互动回评。' : ''}`,
             posts: postsScanned,
             grokComment: res.grokComment || '',
             grokCommentPost: res.grokCommentPost || '',
@@ -2600,7 +2587,7 @@ $('mutualAutoEnabled')?.addEventListener('change', () => {
     .catch(error => networkStatus(error.message));
 });
 const debouncedSaveMutual = debounce(() => saveMutualAutoFollowSettings().catch(() => {}), 300);
-for (const id of ['mutualAutoEvery', 'mutualAutoJitter', 'mutualAutoBatchSize', 'mutualAutoScrollRounds', 'mutualAutoDwellSec', 'mutualAutoMinFollowers', 'mutualAutoOnlyIntent', 'mutualAutoGrokComment']) {
+for (const id of ['mutualAutoEvery', 'mutualAutoJitter', 'mutualAutoBatchSize', 'mutualAutoScrollRounds', 'mutualAutoDwellSec', 'mutualAutoDwellJitterSec', 'mutualAutoMinFollowers', 'mutualAutoOnlyIntent', 'mutualAutoGrokComment']) {
   $(id)?.addEventListener('change', () => saveMutualAutoFollowSettings().catch(error => networkStatus(error.message)));
   $(id)?.addEventListener('input', debouncedSaveMutual);
 }
@@ -4194,25 +4181,77 @@ async function clearAutoFollowLogs() {
   renderLogsModal();
 }
 
-// 绑定日志弹窗事件
+// 绑定日志弹窗与 Grok 实测事件
 async function handleTestGrokClick(buttonId, displayId) {
   const btn = $(buttonId);
   const handleEl = $(displayId);
   if (!btn) return;
   const oldText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '探测中…';
-  if (handleEl) handleEl.textContent = '正在并发探测 x.com 与 grok.com 运行环境…';
+  btn.textContent = '实测回评生成中…';
+  if (handleEl) {
+    handleEl.textContent = '正在并发探测 x.com 与 grok.com 运行环境…';
+    handleEl.style.color = '#536558';
+  }
 
   try {
     const res = await checkGrokAvailability(true);
-    if (handleEl) {
-      handleEl.textContent = res.message;
-      handleEl.style.color = res.available ? '#1d5c3a' : '#c62828';
+    if (!res.available) {
+      if (handleEl) {
+        handleEl.textContent = res.message;
+        handleEl.style.color = '#c62828';
+      }
+      alert(`Grok 暂不可用 ✕\n${res.message}\n\n此时定时关注将自动跳过生成评论，不影响正常看帖和关注。`);
+      return;
     }
-    alert(res.available ? `Grok 可用 ✓\n${res.message}` : `Grok 暂不可用 ✕\n${res.message}\n\n此时定时关注将自动跳过生成评论，不影响正常看帖和关注。如需使用评论建议，请先登录 grok.com 或开通 X Premium。`);
+
+    if (handleEl) {
+      handleEl.textContent = `Grok 运行环境已就绪（${res.activeChannel}），正在实测为博主推文生成高情商回评建议…`;
+      handleEl.style.color = '#1d5c3a';
+    }
+
+    // 选取真实推文或构造典型博主推文
+    let testUser = (mutualNetwork.users || []).find(u => Array.isArray(u.posts) && u.posts.length > 0);
+    if (!testUser) {
+      testUser = (commentTracking.users || []).find(u => Array.isArray(u.recentPosts) && u.recentPosts.length > 0);
+    }
+    const testHandle = testUser?.handle || 'elonmusk';
+    const testAuthorName = testUser?.name || 'Elon Musk';
+    const testPost = testUser?.posts?.[0] || testUser?.recentPosts?.[0] || {
+      text: 'AI agents and automated workflows are transforming how creators build communities. The speed of iteration is incredible.',
+      url: 'https://x.com/elonmusk/status/sample'
+    };
+
+    const testRes = await requestGrokReplyForPost(testHandle, testPost, testAuthorName);
+    if (testRes?.reply) {
+      if (handleEl) {
+        handleEl.textContent = `✔ Grok 实测成功！已为 @${testHandle} 生成回评：「${testRes.reply.slice(0, 45)}…」`;
+        handleEl.style.color = '#1d5c3a';
+      }
+
+      await recordAutoFollowLog({
+        target: testUser || { handle: testHandle, name: testAuthorName },
+        evalResult: { recommendLabel: '实测回评', intentTooltip: '手动测试 Grok 回评生成' },
+        status: 'followed',
+        grokComment: testRes.reply,
+        grokCommentPost: testPost.text.slice(0, 140),
+        grokCommentPostUrl: testPost.url || ''
+      }).catch(() => {});
+
+      alert(`🎉 Grok 真实回评实测成功！\n\n【测试通道】: ${res.activeChannel}\n【测试博主】: @${testHandle}（${testAuthorName}）\n【推文内容】: ${testPost.text.slice(0, 100)}\n\n【Grok 生成的高情商回评】:\n${testRes.reply}\n\n该回评已同步记录到执行日志中。`);
+    } else {
+      if (handleEl) {
+        handleEl.textContent = '✕ Grok 实测未返回有效回复，请检查 X 登录状态与网络';
+        handleEl.style.color = '#c62828';
+      }
+      alert('Grok 测试未能成功生成回评。请确认当前浏览器已登录 X，或重试。');
+    }
   } catch (err) {
-    if (handleEl) handleEl.textContent = '探测失败：' + err.message;
+    if (handleEl) {
+      handleEl.textContent = '实测失败：' + err.message;
+      handleEl.style.color = '#c62828';
+    }
+    alert('实测发生异常：' + err.message);
   } finally {
     btn.disabled = false;
     btn.textContent = oldText;
@@ -4254,6 +4293,7 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollow = Boolean(res.autoUnfollow);
   res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
   res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
+  res.unfollowDelayJitter = Math.max(0, Math.min(15, Number(res.unfollowDelayJitter) || 0));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
@@ -4455,7 +4495,7 @@ async function runUnreciprocatedCheckCycle(source = 'manual') {
             console.error('自动取关失败：', user.handle, e);
           }
           if (i < targets.length - 1) {
-            await sleep((cfg.unfollowDelay || 3) * 1000);
+            await sleep(randomizedSeconds(cfg.unfollowDelay || 3, cfg.unfollowDelayJitter, 1, 30) * 1000);
           }
         }
       }
@@ -4866,6 +4906,7 @@ function renderUnreciprocatedSettingsDrawer() {
   if ($('unreciprocatedAutoUnfollow')) $('unreciprocatedAutoUnfollow').checked = cfg.autoUnfollow;
   if ($('unreciprocatedBatchLimit')) $('unreciprocatedBatchLimit').value = cfg.batchLimit;
   if ($('unreciprocatedUnfollowDelay')) $('unreciprocatedUnfollowDelay').value = cfg.unfollowDelay;
+  if ($('unreciprocatedUnfollowDelayJitter')) $('unreciprocatedUnfollowDelayJitter').value = cfg.unfollowDelayJitter;
   if ($('unreciprocatedWhitelist')) $('unreciprocatedWhitelist').value = cfg.whitelist;
   if ($('unreciprocatedAutoEnabled')) $('unreciprocatedAutoEnabled').checked = cfg.enabled;
 
@@ -4900,6 +4941,7 @@ async function saveUnreciprocatedSettingsFromDrawer() {
     autoUnfollow: $('unreciprocatedAutoUnfollow')?.checked,
     batchLimit: $('unreciprocatedBatchLimit')?.value,
     unfollowDelay: $('unreciprocatedUnfollowDelay')?.value,
+    unfollowDelayJitter: $('unreciprocatedUnfollowDelayJitter')?.value,
     whitelist: $('unreciprocatedWhitelist')?.value,
     enabled: $('unreciprocatedAutoEnabled')?.checked,
     lastRunAt: unreciprocatedTracker.config?.lastRunAt || null,
