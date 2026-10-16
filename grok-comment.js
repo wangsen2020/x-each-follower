@@ -1,9 +1,9 @@
-// Grok 取评 + 发评的共用模块。面板（互关追踪）与后台（评论追踪定时任务）都调用这里。
+// Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
 
-export const START = '【回评开始】';
-export const END = '【回评结束】';
-const X_REPLY_LIMIT = 280;
+export const START = '【引用评价开始】';
+export const END = '【引用评价结束】';
+const X_QUOTE_LIMIT = 280;
 
 /** X 的字数权重：CJK 等宽字符计 2，其余计 1。 */
 export function tweetWeight(text) {
@@ -18,12 +18,12 @@ export function makeNonce() {
 
 export function buildGrokCommentPrompt({ handle, name, postText, nonce }) {
   return [
-    `你是推特（X）上很会互动的真实用户。请针对博主 @${handle}（昵称：${name || handle}）的下面这条推文，写一条自然、有共鸣、能引发对方回复的评论。`,
+    `你是推特（X）上真实、自然的用户。请针对博主 @${handle}（昵称：${name || handle}）的下面这条推文，写一段适合“引用原帖”发布的评价。它会作为一条独立帖子公开发布，并嵌入原帖卡片，不是发给作者的站内回复。`,
     '要求：',
-    '1. 评论正文 25~80 个汉字（若推文是英文则用英文，40~140 个字符）；',
-    '2. 紧扣推文具体内容，给出真诚的观点、共鸣或一个具体的问题，不要空泛客套；',
-    '3. 不要出现“作为AI”“非常赞同”等套话，不要带话题标签和链接，不要 @ 任何人；',
-    `4. 只输出一次，并且必须用 ${START} 和 ${END} 把评论正文包起来，标记之外不要写任何解释。`,
+    '1. 评价正文 25~80 个汉字（若推文是英文则用英文，40~140 个字符）；',
+    '2. 紧扣原帖具体内容，表达一个清楚、有价值的观点或补充信息，适合公开传播；不要写成对作者发问的回复，不要只复述原帖；',
+    '3. 不要出现“作为AI”“非常赞同”等套话，不要带话题标签和外部链接，不要额外 @ 任何人；',
+    `4. 只输出一次，并且必须用 ${START} 和 ${END} 把评价正文包起来，标记之外不要写任何解释。`,
     '',
     '推文正文：',
     String(postText || '').slice(0, 500),
@@ -32,7 +32,7 @@ export function buildGrokCommentPrompt({ handle, name, postText, nonce }) {
   ].join('\n');
 }
 
-/** 从 Grok 的回答里取出评论正文；格式不对、占位符、超长都返回空串。 */
+/** 从 Grok 的回答里取出引用评价正文；格式不对、占位符、超长都返回空串。 */
 export function extractGrokComment(raw) {
   const text = String(raw || '');
   const s = text.lastIndexOf(START);
@@ -43,7 +43,7 @@ export function extractGrokComment(raw) {
   const body = rest.slice(0, e).replace(/\s+/g, ' ').trim().replace(/^["'“‘「]+|["'”’」]+$/g, '').trim();
   if (body.length < 4) return '';
   if (/你的评论内容|评论正文|此处填写/.test(body)) return '';
-  if (tweetWeight(body) > X_REPLY_LIMIT) return '';
+  if (tweetWeight(body) > X_QUOTE_LIMIT) return '';
   return body;
 }
 
@@ -176,7 +176,7 @@ async function askOnX(prompt, nonce, sleep) {
       const fromDom = extractGrokComment(dom?.text);
       if (fromDom) return { ok: true, reply: fromDom, channel: 'x.com' };
     }
-    return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的评论' };
+    return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的引用评价' };
   } finally {
     streamResolver = null;
     if (winId) await chrome.windows.remove(winId).catch(() => {});
@@ -206,7 +206,7 @@ async function askOnGrokCom(prompt, nonce, sleep) {
 }
 
 /**
- * 让 Grok 针对一条推文写评论。先 x.com，失败再 grok.com，两者都不行才算不可用。
+ * 让 Grok 针对一条推文写引用评价。先 x.com，失败再 grok.com，两者都不行才算不可用。
  * 永远返回对象：成功 {ok:true, reply, channel, postText, postUrl}；失败 {ok:false, reason}。
  */
 export async function requestGrokComment(handle, post, authorName, { sleep, fix = s => s }) {
@@ -227,10 +227,10 @@ export async function requestGrokComment(handle, post, authorName, { sleep, fix 
 }
 
 /**
- * 把评论发到指定帖子下：在 tabId 里打开该帖详情页 → 回复 → 校验发出。
+ * 把 Grok 评价作为引用帖发布：打开原帖详情页 → Quote/引用 → 发布并校验。
  * 返回 {ok} 或 {ok:false, reason}。
  */
-export async function postReplyOnTab(tabId, post, text, publishFn, sleep) {
+export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
   await chrome.tabs.update(tabId, { url });

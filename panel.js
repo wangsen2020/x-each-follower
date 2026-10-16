@@ -1,9 +1,9 @@
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
-import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishReplyToTweetOnPage } from './page-reader.js';
+import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, postReplyOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -949,7 +949,7 @@ function renderProfileDrawer() {
     const grokSec = document.createElement('section');
     grokSec.className = 'drawer-section';
     const grokTitle = document.createElement('h3');
-    grokTitle.textContent = '🤖 Grok 互动回评建议（草稿）';
+    grokTitle.textContent = '🤖 Grok 引用评价（草稿）';
     const grokBox = document.createElement('div');
     grokBox.className = 'log-grok-box';
     grokBox.style.margin = '6px 0 0';
@@ -957,7 +957,7 @@ function renderProfileDrawer() {
     grokHdr.className = 'log-grok-header';
     const grokTag = document.createElement('span');
     grokTag.className = 'log-grok-tag';
-    grokTag.textContent = '推荐回评';
+    grokTag.textContent = '引用评价';
     grokHdr.append(grokTag);
     if (profile.grokCommentPostUrl) {
       const a = document.createElement('a');
@@ -970,12 +970,12 @@ function renderProfileDrawer() {
     }
     const btn = document.createElement('button');
     btn.className = 'log-copy-btn';
-    btn.textContent = '复制回评';
+    btn.textContent = '复制评价';
     btn.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(profile.grokComment);
         btn.textContent = '已复制！';
-        setTimeout(() => { btn.textContent = '复制回评'; }, 1800);
+        setTimeout(() => { btn.textContent = '复制评价'; }, 1800);
       } catch {
         btn.textContent = '复制失败';
       }
@@ -1433,7 +1433,7 @@ function renderMutualNetwork() {
       grokNote.style.margin = '4px 0 0';
       grokNote.style.padding = '4px 8px';
       grokNote.style.fontSize = '12px';
-      grokNote.innerHTML = `<span style="font-weight:600;color:${isPosted ? '#1d5c3a' : '#2e7d32'}">${isPosted ? '✔ 已发表回评' : '💬 Grok回评'}:</span> 「${commentText}」${postUrl ? ` <a href="${postUrl}" target="_blank" rel="noopener noreferrer" style="font-size:11px;margin-left:4px">查看推文 ↗</a>` : ''}`;
+      grokNote.innerHTML = `<span style="font-weight:600;color:${isPosted ? '#1d5c3a' : '#2e7d32'}">${isPosted ? '✔ 引用评价已发布' : '💬 Grok 引用评价'}:</span> 「${commentText}」${postUrl ? ` <a href="${postUrl}" target="_blank" rel="noopener noreferrer" style="font-size:11px;margin-left:4px">查看原帖 ↗</a>` : ''}`;
       account.append(grokNote);
     }
     row.append(account);
@@ -1748,35 +1748,6 @@ async function saveMutualAutoFollowSettings() {
     const delay = randomizedInteger(next.every, next.jitter, 5, 1440);
     await chrome.alarms.create('x-mutual-auto-follow', {delayInMinutes: delay});
   }
-}
-
-function extractGrokCommentReply(rawText, cleanHandle) {
-  if (!rawText) return '';
-  const text = String(rawText).trim();
-  const marker = `[@${cleanHandle} | 回评:`;
-  const idx = text.lastIndexOf(marker);
-  if (idx !== -1) {
-    const after = text.slice(idx + marker.length);
-    const endIdx = after.indexOf(']');
-    const candidate = (endIdx !== -1 ? after.slice(0, endIdx) : after).trim();
-    if (candidate.length >= 4) {
-      return candidate.replace(/\n+/g, ' ').trim();
-    }
-  }
-
-  const match = /回评[:：]\s*([^\n\]]{6,160})/i.exec(text.slice(-1500));
-  if (match && match[1]) {
-    return match[1].replace(/\n+/g, ' ').trim();
-  }
-
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (line.length >= 8 && line.length <= 150 && !/Thinking about|Regenerate|Copy text|Go to grok/i.test(line)) {
-      return line.replace(/^["'“‘]|["'”’]$/g, '').trim();
-    }
-  }
-  return '';
 }
 
 function driveGrokInput(prompt) {
@@ -2184,14 +2155,14 @@ async function visitScrollAndFollowCandidate(user, cfg) {
           Object.assign(comment, {status: 'skipped', reason: '没有读到带链接的帖子，无法定位评论目标'});
         } else {
           const chosen = withUrl[Math.floor(Math.random() * withUrl.length)];
-          networkStatus(`正在让 Grok 为 @${handle} 的帖子写评论…`);
+            networkStatus(`正在让 Grok 为 @${handle} 的帖子写引用评价…`);
           const g = await requestGrokReplyForPost(handle, chosen, updatedProfile.name);
           if (!g.ok) {
             Object.assign(comment, {status: 'grok_failed', reason: g.reason});
           } else {
             Object.assign(comment, {reply: g.reply, post: g.postText, postUrl: g.postUrl, channel: g.channel});
-            networkStatus(`Grok（${g.channel}）已写好评论，正在向 @${handle} 的帖子发表…`);
-            const pub = await postReplyOnTab(tabId, chosen, g.reply, publishReplyToTweetOnPage, sleep);
+            networkStatus(`Grok（${g.channel}）已写好评价，正在引用 @${handle} 的原帖发布…`);
+            const pub = await postQuoteOnTab(tabId, chosen, g.reply, publishQuotePostOnPage, sleep);
             Object.assign(comment, pub.ok ? {status: 'posted'} : {status: 'post_failed', reason: pub.reason});
           }
         }
@@ -2268,10 +2239,10 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             name: target.name,
             result: 'followed',
             detail: `主页看帖目标停留约 ${res.dwellSeconds ?? cfg.dwellSeconds} 秒，评估通过（${res.evalResult?.recommendLabel || '推荐'}），点击关注成功。${{
-              posted: `✔ 已通过 Grok（${res.commentChannel}）在其帖子下发表评论。`,
-              post_failed: `Grok 已写好评论，但发表失败：${res.commentReason}`,
-              grok_failed: `Grok 未能写出评论：${res.commentReason}`,
-              skipped: `未评论：${res.commentReason}`
+              posted: `✔ 已通过 Grok（${res.commentChannel}）引用原帖发布评价。`,
+              post_failed: `Grok 已写好评价，但引用发布失败：${res.commentReason}`,
+              grok_failed: `Grok 未能写出评价：${res.commentReason}`,
+              skipped: `未发布引用评价：${res.commentReason}`
             }[res.commentStatus] || ''}`,
             posts: postsScanned,
             grokComment: res.grokComment || '',
@@ -3818,7 +3789,7 @@ function renderLogsModal() {
     if (log.source === 'manual' && log.grokComment) {
       if (log.commentPosted) {
         resultBadge.classList.add('candidate');
-        resultBadge.textContent = '回评已发表 ✓';
+        resultBadge.textContent = '引用评价已发布 ✓';
       } else {
         resultBadge.classList.add('review');
         resultBadge.textContent = '仅生成草稿';
@@ -3919,9 +3890,9 @@ function renderLogsModal() {
       if (log.commentPosted) {
         grokTag.style.background = '#d9eee1';
         grokTag.style.color = '#1d5c3a';
-        grokTag.textContent = '✔ 已在推特发表 Grok 回评';
+        grokTag.textContent = '✔ 已发布 Grok 引用评价';
       } else {
-        grokTag.textContent = '🤖 Grok 互动回评建议（草稿）';
+        grokTag.textContent = '🤖 Grok 引用评价（草稿）';
       }
       grokHeader.append(grokTag);
 
@@ -3931,18 +3902,18 @@ function renderLogsModal() {
         postLink.href = log.grokCommentPostUrl;
         postLink.target = '_blank';
         postLink.rel = 'noopener noreferrer';
-        postLink.textContent = '原推链接 ↗';
+        postLink.textContent = '被引用原帖 ↗';
         grokHeader.append(postLink);
       }
 
       const copyBtn = document.createElement('button');
       copyBtn.className = 'log-copy-btn';
-      copyBtn.textContent = '一键复制回评';
+      copyBtn.textContent = '一键复制评价';
       copyBtn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(log.grokComment);
           copyBtn.textContent = '已复制！';
-          setTimeout(() => { copyBtn.textContent = '一键复制回评'; }, 1800);
+          setTimeout(() => { copyBtn.textContent = '一键复制评价'; }, 1800);
         } catch {
           copyBtn.textContent = '复制失败';
         }
@@ -4022,7 +3993,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
   if (!btn) return;
   const oldText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '实测回评生成中…';
+  btn.textContent = '实测引用评价生成中…';
   if (handleEl) {
     handleEl.textContent = '正在并发探测 x.com 与 grok.com 运行环境…';
     handleEl.style.color = '#536558';
@@ -4045,30 +4016,30 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
     const testHandle = testUser.handle;
     const testAuthorName = testUser.name || testUser.handle;
 
-    if (handleEl) { handleEl.textContent = `正在让 Grok 为 @${testHandle} 的真实帖子写评论…（x.com 优先，失败再试 grok.com）`; handleEl.style.color = '#536558'; }
+    if (handleEl) { handleEl.textContent = `正在让 Grok 为 @${testHandle} 的真实帖子写引用评价…（x.com 优先，失败再试 grok.com）`; handleEl.style.color = '#536558'; }
     const testRes = await requestGrokReplyForPost(testHandle, testPost, testAuthorName);
     if (testRes?.ok) {
       let isPublished = false;
       let publishReason = '';
-      if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好评论：\n\n【帖子】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【评论】「${testRes.reply}」\n\n是否现在就用你的账号把它发到这条帖子下？（会产生真实的公开评论）`)) {
-        if (handleEl) handleEl.textContent = `正在向 @${testHandle} 的帖子发表评论…`;
+      if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${testRes.reply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
+        if (handleEl) handleEl.textContent = `正在引用 @${testHandle} 的原帖发布评价…`;
         const postTab = await chrome.tabs.create({ url: 'about:blank', active: false });
         try {
-          const pub = await postReplyOnTab(postTab.id, testPost, testRes.reply, publishReplyToTweetOnPage, sleep);
+          const pub = await postQuoteOnTab(postTab.id, testPost, testRes.reply, publishQuotePostOnPage, sleep);
           isPublished = Boolean(pub.ok);
           publishReason = pub.reason || '';
         } finally {
           await chrome.tabs.remove(postTab.id).catch(() => {});
         }
         alert(isPublished
-          ? `评论已发出。\n请打开核对：${testPost.url}`
-          : `评论已由 Grok 写好，但发表失败：${publishReason}\n你可以在执行日志里一键复制后手动发送。`);
+          ? `引用评价已发布。\n原帖：${testPost.url}`
+          : `Grok 已写好引用评价，但发布失败：${publishReason}\n你可以在执行日志里一键复制后手动发布。`);
       }
 
       if (handleEl) {
         handleEl.textContent = isPublished
-          ? `✔ 已发表：@${testHandle} →「${testRes.reply.slice(0, 40)}…」`
-          : `Grok 已出评论（${testRes.channel}）${publishReason ? '，但发表失败：' + publishReason : '，尚未发表'}：「${testRes.reply.slice(0, 40)}…」`;
+        ? `✔ 引用评价已发表：@${testHandle} →「${testRes.reply.slice(0, 40)}…」`
+        : `Grok 已生成评价（${testRes.channel}）${publishReason ? '，但引用发布失败：' + publishReason : '，尚未发布'}：「${testRes.reply.slice(0, 40)}…」`;
         handleEl.style.color = isPublished ? '#1d5c3a' : '#8a6d00';
       }
 
@@ -4078,7 +4049,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
         handle: testHandle,
         name: testAuthorName,
         result: isPublished ? 'commented' : 'draft',
-        detail: isPublished ? `手动实测：Grok（${testRes.channel}）写评论并已发表到帖子下。` : `手动实测：Grok（${testRes.channel}）已写评论，${publishReason ? '发表失败：' + publishReason : '未选择发表'}。`,
+        detail: isPublished ? `手动实测：Grok（${testRes.channel}）已引用原帖发布评价。` : `手动实测：Grok（${testRes.channel}）已写评价，${publishReason ? '引用发布失败：' + publishReason : '未选择发布'}。`,
         posts: [testPost],
         grokComment: testRes.reply,
         grokCommentPost: testPost.text.slice(0, 140),
@@ -4087,10 +4058,10 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
       }).catch(() => {});
     } else {
       if (handleEl) {
-        handleEl.textContent = `✕ Grok 未能写出评论：${testRes?.reason || '未知原因'}`;
+        handleEl.textContent = `✕ Grok 未能写出引用评价：${testRes?.reason || '未知原因'}`;
         handleEl.style.color = '#c62828';
       }
-      alert(`Grok 未能写出评论。\n\n原因：${testRes?.reason || '未知原因'}`);
+      alert(`Grok 未能写出引用评价。\n\n原因：${testRes?.reason || '未知原因'}`);
     }
   } catch (err) {
     if (handleEl) {

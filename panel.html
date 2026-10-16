@@ -343,22 +343,22 @@
       <div class="drawer-setting-group drawer-setting-switch">
         <label class="drawer-switch-label">
           <input id="mutualAutoGrokComment" type="checkbox">
-          <span>看帖时调用 Grok 生成并发表高情商回评（提升曝光与回粉）</span>
-          <span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评，并自动向推文发表回复，留下真实可见的推特互动痕迹以大幅提高回关率。" aria-label="Grok回评说明">?</span>
+          <span>看帖时调用 Grok 生成并发布引用评价</span>
+          <span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其一篇推文生成评价，再发布一条嵌入原帖的公开引用帖；这不是发给作者的站内回复。" aria-label="Grok引用评价说明">?</span>
         </label>
-        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论并自动向推文发表回复，在推特上留下真实互动痕迹。</small>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文，Grok 生成评价后以公开引用帖发布，并保留原帖卡片。</small>
       </div>
 
       <div class="drawer-setting-group">
         <div class="drawer-setting-label-row">
           <span class="drawer-setting-label">Grok 运行环境实测</span>
-          <button id="testMutualGrokBtn" class="text-link-btn" type="button">实测推文回评与发表</button>
+          <button id="testMutualGrokBtn" class="text-link-btn" type="button">实测引用评价发布</button>
         </div>
         <div id="mutualGrokStatusDisplay" class="drawer-checkpoint-display">
           <span id="mutualGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
           <span id="mutualGrokStatusTime" class="checkpoint-time"></span>
         </div>
-        <small class="drawer-setting-desc">点击可即时调用 Grok 生成高情商回评，并支持一键发布到 X 推特上验证真实发表痕迹。</small>
+        <small class="drawer-setting-desc">将调用 Grok 生成评价；确认后会用当前 X 账号公开发布一条引用原帖的帖子。</small>
       </div>
 
       <div class="drawer-setting-group">
@@ -434,20 +434,20 @@
         <small class="drawer-setting-desc">读取主页帖子后若账号不符合设置条件，将保存帖子并跳过关注。</small>
       </div>
       <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成并发表高情商回评（提升曝光与回粉）</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其发布的一篇推文调用 Grok 生成真实自然、高共鸣的回评，并自动向推文发表回复，留下真实可见的推特互动痕迹。" aria-label="Grok回评说明">?</span></label>
-        <small class="drawer-setting-desc">随机挑选对方一篇推文让 Grok 生成高情商评论并自动向推文发表回复，在推特上留下真实互动痕迹。</small>
+        <label class="drawer-switch-label"><input id="commentAutoGrokComment" type="checkbox"><span>看帖时调用 Grok 生成并发布引用评价</span><span class="info-tip" data-tip="在浏览未关注用户主页时，随机挑选其一篇推文生成评价，再发布一条嵌入原帖的公开引用帖；这不是发给作者的站内回复。" aria-label="Grok引用评价说明">?</span></label>
+        <small class="drawer-setting-desc">随机挑选对方一篇推文，Grok 生成评价后以公开引用帖发布，并保留原帖卡片。</small>
       </div>
 
       <div class="drawer-setting-group">
         <div class="drawer-setting-label-row">
           <span class="drawer-setting-label">Grok 运行环境实测</span>
-          <button id="testCommentGrokBtn" class="text-link-btn" type="button">实测推文回评与发表</button>
+          <button id="testCommentGrokBtn" class="text-link-btn" type="button">实测引用评价发布</button>
         </div>
         <div id="commentGrokStatusDisplay" class="drawer-checkpoint-display">
           <span id="commentGrokStatusHandle" class="checkpoint-handle">未测试 Grok 状态（优先 x.com，备用 grok.com）</span>
           <span id="commentGrokStatusTime" class="checkpoint-time"></span>
         </div>
-        <small class="drawer-setting-desc">点击可即时调用 Grok 生成高情商回评，并支持一键发布到 X 推特上验证真实发表痕迹。</small>
+        <small class="drawer-setting-desc">将调用 Grok 生成评价；确认后会用当前 X 账号公开发布一条引用原帖的帖子。</small>
       </div>
       <div class="drawer-setting-group">
         <label class="drawer-setting-label"><span>执行状态与记录</span></label>

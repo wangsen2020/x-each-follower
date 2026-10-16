@@ -1,9 +1,9 @@
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
-import { readProfileBundle, simulateProfileScrollStep, publishReplyToTweetOnPage } from './page-reader.js';
+import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, postReplyOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -237,7 +237,7 @@ async function runCommentAutoFollow(source = 'alarm') {
               const g = await requestGrokComment(handle, chosen, user.name, {sleep, fix:repairMojibake});
               if (!g.ok) commentRes = {status:'grok_failed', reason:g.reason};
               else {
-                const pub = await postReplyOnTab(tabId, chosen, g.reply, publishReplyToTweetOnPage, sleep);
+                const pub = await postQuoteOnTab(tabId, chosen, g.reply, publishQuotePostOnPage, sleep);
                 commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:g.reply, post:g.postText, postUrl:g.postUrl, channel:g.channel};
                 if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = g.reply; user.grokCommentPostUrl = g.postUrl; }
               }
@@ -249,10 +249,10 @@ async function runCommentAutoFollow(source = 'alarm') {
       }
       await saveCommentTrackingData(tracking);
       const commentNote = {
-        posted: `；✔ 已通过 Grok（${commentRes.channel}）在其帖子下发表评论`,
-        post_failed: `；Grok 已写好评论但发表失败：${commentRes.reason}`,
-        grok_failed: `；Grok 未能写出评论：${commentRes.reason}`,
-        skipped: `；未评论：${commentRes.reason}`
+        posted: `；✔ 已通过 Grok（${commentRes.channel}）引用原帖发布评价`,
+        post_failed: `；Grok 已写好评价但引用发布失败：${commentRes.reason}`,
+        grok_failed: `；Grok 未能写出评价：${commentRes.reason}`,
+        skipped: `；未发布引用评价：${commentRes.reason}`
       }[commentRes.status] || '';
       await appendAutoFollowLog({scope:'comment', source, handle, result:didFollow ? 'followed' : 'failed', detail:didFollow ? `主页看帖目标停留约 ${actualDwellSeconds} 秒后关注成功${commentNote}` : (user.followFailureReason || '关注未成功'), posts:(user.recentPosts || []).slice(0, 5), grokComment:commentRes.reply || '', grokCommentPost:commentRes.post || '', grokCommentPostUrl:commentRes.postUrl || '', commentPosted:commentRes.status === 'posted'}).catch(() => {});
       processedCount++;

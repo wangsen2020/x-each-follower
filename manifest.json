@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XFollower · 粉丝管理",
-  "version": "0.25.3",
+  "version": "0.25.4",
   "description": "本地保存 X 粉丝画像，管理待回关账号，并批量提交选中账号给 Grok 分析。",
   "permissions": ["scripting", "storage", "alarms", "notifications", "tabs", "windows", "clipboardWrite"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://grok.com/*"],
