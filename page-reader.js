@@ -198,10 +198,12 @@ export function openQuoteComposerOnPage(tweetUrl) {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
     };
-    const hasQuoteComposer = () => [...document.querySelectorAll('[role="dialog"]')].some(dialog => {
-      const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-      return visible(dialog) && box && [...dialog.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
-    });
+    const hasQuoteComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')]
+      .filter(visible)
+      .some(box => {
+        const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+        return (root === document || visible(root)) && [...root.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
+      });
     if (hasQuoteComposer()) return { ok: true, stage: 'already_open' };
 
     let article = null;
@@ -244,20 +246,20 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
   const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
   const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
   const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
-  for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-    if (!visible(dialog)) continue;
-    const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-    if (!box) continue;
-    const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
-    const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
-      .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
-    const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
-    const articleCardText = dialog.innerText || '';
+  const boxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible);
+  for (const box of boxes) {
+    const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+    if (root !== document && !visible(root)) continue;
+    const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+    const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+      .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+    const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+    const articleCardText = root.innerText || '';
     const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
       sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
     ));
-    const rect = dialog.getBoundingClientRect();
-    composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+    const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
+    composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
   }
   composers.sort((a, b) => a.area - b.area);
   const composer = composers[0];
@@ -273,13 +275,21 @@ export function dismissQuoteComposerOnPage(tweetUrl) {
     const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
     if (!tweetId) return {ok:false, closed:false, reason:'帖子链接无效'};
     const dialogs = [...document.querySelectorAll('[role="dialog"]')];
-    const dialog = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
-    if (!dialog) return {ok:true, closed:false};
-    const close = dialog.querySelector('[data-testid="app-bar-close"]') || [...dialog.querySelectorAll('button')].find(button =>
+    let composer = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
+    if (!composer) {
+      const visibleBoxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(box => {
+        const rect = box.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+      });
+      composer = visibleBoxes.map(box => box.closest?.('main') || document)
+        .find(root => [...root.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))) || null;
+    }
+    if (!composer) return {ok:true, closed:false};
+    const close = composer.querySelector('[data-testid="app-bar-close"]') || [...composer.querySelectorAll('button')].find(button =>
       /^(close|关闭)$/i.test((button.getAttribute('aria-label') || button.innerText || '').trim())
     );
     if (close) close.click();
-    else dialog.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
+    else composer.dispatchEvent?.(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
     await sleep(200);
     const discard = [...document.querySelectorAll('[role="dialog"] button')].find(button =>
       /^(discard|discard post|丢弃|丢弃帖子)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim())
@@ -313,20 +323,19 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
       const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
       const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
-      for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-        if (!visible(dialog)) continue;
-        const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-        if (!box) continue;
-        const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
-        const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
-          .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
-        const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
-        const articleCardText = dialog.innerText || '';
+      for (const box of [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible)) {
+        const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+        if (root !== document && !visible(root)) continue;
+        const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+        const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+          .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+        const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+        const articleCardText = root.innerText || '';
         const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
           sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
         ));
-        const rect = dialog.getBoundingClientRect();
-        composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+        const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
+        composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
       }
       composers.sort((a, b) => a.area - b.area);
       return composers[0] || null;
@@ -344,13 +353,19 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
 
     composer.box.focus();
     document.execCommand('insertText', false, text);
+    // X 的编辑器由 React 管理。Chromium 的 execCommand 通常会发 input，
+    // 但在路由刚切换后的编辑器里偶尔只改了 DOM；补发 input 让 React 同步内部状态。
+    const inputEvent = typeof InputEvent === 'function'
+      ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
+      : new Event('input', {bubbles:true});
+    composer.box.dispatchEvent?.(inputEvent);
     await sleep(500);
     const typed = (composer.box.innerText || '').replace(/\s+/g, '');
     if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '引用评价没有写入输入框' };
 
     let send = null;
     for (let i = 0; i < 25; i++) {
-      send = composer.dialog.querySelector('[data-testid="tweetButton"]');
+      send = composer.root.querySelector('[data-testid="tweetButton"]');
       if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
       send = null; await sleep(300);
     }

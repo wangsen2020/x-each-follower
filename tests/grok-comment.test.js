@@ -126,16 +126,22 @@ test('dismissQuoteComposerOnPage only closes the draft for the requested source 
   assert.equal(closeClicks, 1);
 });
 
-function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
+function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
   globalThis.window = {innerHeight: 900};
   const events = [];
   let closed = false;
   let composerOpen = false;
+  let reactInputSynced = false;
   const rect = (top, width, height) => ({top, bottom: top + height, width, height});
-  const box = {innerText: '', getBoundingClientRect: () => rect(120, 500, 28), focus() { events.push('focus'); }};
+  const box = {
+    innerText: '', getBoundingClientRect: () => rect(120, 500, 28),
+    closest(selector) { return selector === '[role="dialog"]' ? (pageComposer ? null : dialog) : selector === 'main' ? (pageComposer ? main : null) : null; },
+    focus() { events.push('focus'); },
+    dispatchEvent(event) { if (event.type === 'input') { reactInputSynced = true; events.push('input'); } return true; }
+  };
   const send = {
-    disabled: false,
+    get disabled() { return !reactInputSynced; },
     getAttribute: () => null,
     click() { events.push('publish'); closed = true; }
   };
@@ -183,11 +189,30 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
     querySelectorAll: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? [box] : [],
     querySelector: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? box : null
   };
+  const main = {
+    innerText: articleQuote ? 'An article to quote' : 'A post to quote',
+    getBoundingClientRect: () => rect(10, 800, 700),
+    querySelectorAll(selector) {
+      if (selector === 'a') return embeddedOriginal ? [originalLink] : [];
+      if (selector.includes('UserAvatar-Container-')) return articleQuote ? [currentAuthor, embeddedAuthor] : [];
+      if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
+      return [];
+    },
+    querySelector(selector) {
+      if (selector === '[data-testid="app-bar-close"]') return composerOpen && !closed ? {click() { events.push('close'); closed = true; }} : null;
+      if (selector === '[data-testid^="UserAvatar-Container-"]') return currentAuthor;
+      if (selector === '[data-testid="tweetText"]') return articleQuote ? embeddedText : sourceText;
+      if (selector === '[data-testid="tweetButton"]') return composerOpen && !closed ? send : null;
+      return null;
+    }
+  };
   globalThis.document = {
     querySelectorAll(selector) {
       if (selector === 'article') return [article];
       if (selector === '[role="menuitem"]') return events.includes('retweet') ? [quoteItem] : [];
-      if (selector === '[role="dialog"]') return composerOpen && !closed ? [hiddenDialog, dialog] : [];
+      if (selector === '[role="dialog"]') return !pageComposer && composerOpen && !closed ? [hiddenDialog, dialog] : [];
+      if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
+      if (selector === 'main') return pageComposer && composerOpen && !closed ? [main] : [];
       return [];
     },
     querySelector(selector) {
@@ -211,7 +236,25 @@ test('publishQuotePostOnPage embeds the exact original and publishes through Quo
   assert.equal(inspected.ready, true);
   const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
-  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'publish']);
+  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
+});
+
+test('quote composer on /compose/post is detected outside a dialog and React receives input', async () => {
+  const {events} = makeQuotePage({pageComposer: true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(inspected.ready, true);
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
+});
+
+test('failed quote draft on /compose/post can be dismissed without a dialog', async () => {
+  const {events} = makeQuotePage({pageComposer: true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const result = await dismissQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.deepEqual(result, {ok:true, closed:true});
+  assert.deepEqual(events, ['retweet', 'quote', 'close']);
 });
 
 test('publishQuotePostOnPage refuses to publish if the composer does not contain the target original', async () => {
