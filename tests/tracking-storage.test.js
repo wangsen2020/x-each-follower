@@ -41,7 +41,7 @@ test('startup can load comment tracking without opening the X IndexedDB page', a
   let durableRead = false;
   const result = await loadCommentTracking({
     includeDurable:false,
-    storage:{get:async key => ({[key]:stored})},
+    storage:{get:async key => key === 'commentTracking' ? {commentTracking:stored} : {}},
     readDurable:async () => { durableRead = true; return {users:[], posts:[]}; }
   });
 
@@ -53,9 +53,22 @@ test('normal comment tracking reads still prefer newer durable data', async () =
   const stored = {updatedAt:'2026-10-16T10:00:00.000Z', users:[], posts:[]};
   const durable = {updatedAt:'2026-10-17T10:00:00.000Z', users:[{handle:'alice'}], posts:[]};
   const result = await loadCommentTracking({
-    storage:{get:async key => ({[key]:stored})},
+    storage:{get:async key => key === 'commentTracking' ? {commentTracking:stored} : {}},
     readDurable:async () => durable
   });
 
   assert.equal(result, durable);
+});
+
+test('comment execution uses explicitly saved Grok switches even with newer durable tracking data', async () => {
+  const settings = {enabled:true,grokAutoComment:true};
+  const result = await loadCommentTracking({
+    storage:{get:async key => key === 'commentTracking'
+      ? {commentTracking:{updatedAt:'2026-10-16',autoFollow:{enabled:false}}}
+      : {commentAutoFollowSettings:settings}},
+    readDurable:async()=>({updatedAt:'2026-10-17',users:[{handle:'alice'}],autoFollow:{enabled:false,grokAutoComment:false}})
+  });
+  assert.equal(result.autoFollow.enabled,true);
+  assert.equal(result.autoFollow.grokAutoComment,true);
+  assert.equal(result.users[0].handle,'alice');
 });

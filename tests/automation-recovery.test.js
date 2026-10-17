@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {recoverAutomationAlarms, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../automation-recovery.js';
+
+test('durable panel hydration preserves explicit local settings', async () => {
+  const local={enabled:true,grokAutoComment:true};
+  const selected=await restoreMissingLocalSetting({get:async key=>({[key]:local}),set:async()=>assert.fail('must preserve local')},'mutualAutoFollowSettings',{enabled:false,grokAutoComment:false});
+  assert.equal(selected,local);
+});
+
+test('recover enabled mutual alarm after restart without changing existing deadlines', async () => {
+  const saved = {mutualAutoFollowSettings:{enabled:true,every:8,jitter:3},commentAutoFollowSettings:{enabled:true}};
+  const created = [];
+  const alarms = {getAll:async()=>[{name:'x-comment-auto-follow',scheduledTime:123}],create:async(name,options)=>created.push({name,...options})};
+  assert.deepEqual(await recoverAutomationAlarms({storage:{get:async()=>saved},alarms}), ['x-mutual-auto-follow']);
+  assert.equal(created.length,1);
+  assert.ok(created[0].delayInMinutes>=5 && created[0].delayInMinutes<=11);
+});
+
+test('explicit disabled settings take priority over stale enabled tracking data', async () => {
+  const saved = {mutualAutoFollowSettings:{enabled:false},mutualNetwork:{autoFollow:{enabled:true}}};
+  await recoverAutomationAlarms({storage:{get:async()=>saved},alarms:{getAll:async()=>[],create:async()=>assert.fail('disabled task must not be scheduled')}});
+});
+
+test('legacy tracking settings restore all enabled missing alarms with no page access', async () => {
+  const saved = {mutualNetwork:{autoFollow:{enabled:true}},commentTracking:{autoFollow:{enabled:true}},unreciprocatedTracker:{config:{enabled:true}},monitor:{enabled:true}};
+  const created=[];
+  await recoverAutomationAlarms({storage:{get:async()=>saved},alarms:{getAll:async()=>[],create:async name=>created.push(name)}});
+  assert.deepEqual(created,['x-mutual-auto-follow','x-comment-auto-follow','x-unreciprocated-tracker','x-followers-scan']);
+});
+
+test('stale sync cannot disable locally enabled Grok or re-enable a disabled task', async () => {
+  const saved = {mutualAutoFollowSettings:{enabled:false,grokAutoComment:true},commentAutoFollowSettings:{enabled:true},unreciprocatedSettings:{enabled:false}};
+  await restoreMissingSyncedSettings({local:{get:async()=>saved,set:async()=>assert.fail('must not overwrite local settings')},sync:{get:async()=>assert.fail('local settings already exist')}});
+});
+
+test('sync fills only genuinely missing settings on first installation', async () => {
+  const saved={mutualAutoFollowSettings:{enabled:true,grokAutoComment:true}};
+  let written;
+  await restoreMissingSyncedSettings({local:{get:async()=>saved,set:async value=>{written=value;}},sync:{get:async keys=>{
+    assert.ok(!keys.includes('mutualAutoFollowSettings'));
+    return {commentAutoFollowSettings:{enabled:false}};
+  }}});
+  assert.deepEqual(written,{commentAutoFollowSettings:{enabled:false}});
+});

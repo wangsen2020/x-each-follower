@@ -186,6 +186,47 @@ export function clickAnyFollowOnProfile(handle) {
   return {ok:true};
 }
 
+export function setQuoteFrameFallbackOnPage(enabled) {
+  // 在 MAIN world 临时运行。被遮挡的小窗口会暂停 rAF，X 的弹窗虚拟列表因此不渲染。
+  const key = '__xfollowerQuoteFrameFallback';
+  if (!enabled) { window[key]?.restore(); return; }
+  if (window[key]) return;
+  const request = window.requestAnimationFrame;
+  const cancel = window.cancelAnimationFrame;
+  const pending = new Map();
+  let expiry;
+  const restore = () => {
+    clearTimeout(expiry);
+    window.requestAnimationFrame = request;
+    window.cancelAnimationFrame = cancel;
+    for (const [id, timer] of pending) { clearTimeout(timer); cancel.call(window, id); }
+    pending.clear();
+    delete window[key];
+  };
+  window[key] = {restore};
+  window.requestAnimationFrame = function(callback) {
+    if (!document.hidden) return request.call(window, callback);
+    let done = false;
+    const finish = time => {
+      if (done) return;
+      done = true;
+      clearTimeout(pending.get(id));
+      pending.delete(id);
+      cancel.call(window, id);
+      callback(time);
+    };
+    const id = request.call(window, finish);
+    pending.set(id, setTimeout(() => finish(performance.now()), 100));
+    return id;
+  };
+  window.cancelAnimationFrame = function(id) {
+    clearTimeout(pending.get(id));
+    pending.delete(id);
+    cancel.call(window, id);
+  };
+  expiry = setTimeout(restore, 120000);
+}
+
 export function openQuoteComposerOnPage(tweetUrl) {
   // 经 executeScript 序列化注入，必须自包含。点击 Quote 可能让 X 导航到 /compose/post，
   // 因此本阶段只打开编辑框，填写和发布必须在 background 等待路由稳定后重新注入。
@@ -218,6 +259,9 @@ export function openQuoteComposerOnPage(tweetUrl) {
     if (!article) return { ok: false, reason: '没有在页面中找到目标帖子' };
     const repostBtn = article.querySelector('[data-testid="retweet"]');
     if (!repostBtn) return { ok: false, reason: '目标帖没有引用/转发按钮' };
+    // 长帖的操作栏可能在视窗外；先定位按钮，避免 X 将菜单放在屏幕下方。
+    repostBtn.scrollIntoView?.({block: 'center', inline: 'nearest', behavior: 'instant'});
+    await sleep(200);
     repostBtn.click();
 
     let quoteItem = null;

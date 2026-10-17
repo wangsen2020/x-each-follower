@@ -6,7 +6,8 @@ import { durableGet } from './persistent-db.js';
  */
 export async function loadCommentTracking({ includeDurable = true, storage = chrome.storage.local, readDurable = durableGet } = {}) {
   const {commentTracking:stored = {users:[], posts:[]}} = await storage.get('commentTracking');
-  if (!includeDurable) return stored;
-  const durable = await readDurable('commentTracking').catch(() => null);
-  return durable?.updatedAt > stored?.updatedAt ? durable : stored;
+  const {commentAutoFollowSettings} = await storage.get('commentAutoFollowSettings');
+  const durable = includeDurable ? await readDurable('commentTracking').catch(() => null) : null;
+  const tracking = durable?.updatedAt > stored?.updatedAt ? durable : stored;
+  return commentAutoFollowSettings != null ? {...tracking, autoFollow:{...(tracking.autoFollow || {}), ...commentAutoFollowSettings}} : tracking;
 }

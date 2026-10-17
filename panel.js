@@ -1,4 +1,5 @@
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
+import { restoreMissingLocalSetting } from './automation-recovery.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -3729,13 +3730,11 @@ Promise.all([
     await chrome.storage.local.set({ unreciprocatedLogs });
   }
   if (durableMutualAuto) {
-    mutualNetwork.autoFollow = normalizeAutoFollowConfig({ ...mutualNetwork.autoFollow, ...durableMutualAuto });
-    await chrome.storage.local.set({ mutualAutoFollowSettings: mutualNetwork.autoFollow });
+    mutualNetwork.autoFollow = normalizeAutoFollowConfig(await restoreMissingLocalSetting(chrome.storage.local, 'mutualAutoFollowSettings', durableMutualAuto));
     renderMutualSettingsDrawer();
   }
   if (durableCommentAuto) {
-    commentTracking.autoFollow = normalizeAutoFollowConfig({ ...commentTracking.autoFollow, ...durableCommentAuto });
-    await chrome.storage.local.set({ commentAutoFollowSettings: commentTracking.autoFollow });
+    commentTracking.autoFollow = normalizeAutoFollowConfig(await restoreMissingLocalSetting(chrome.storage.local, 'commentAutoFollowSettings', durableCommentAuto));
     renderCommentAutoFollowSettings();
   }
   if (Array.isArray(savedLogs) && savedLogs.length && !autoFollowLogs.length) { autoFollowLogs = savedLogs; await chrome.storage.local.set({autoFollowLogs}); renderLogsModal(); }

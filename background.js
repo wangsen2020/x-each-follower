@@ -5,6 +5,7 @@ import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js'
 import { randomizedInteger, randomizedSeconds } from './timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
 import { loadCommentTracking } from './tracking-storage.js';
+import { recoverAutomationAlarms, restoreMissingSyncedSettings } from './automation-recovery.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -525,46 +526,21 @@ chrome.alarms.onAlarm.addListener(async alarm => {
 });
 
 async function restoreSettingsFromSync() {
-  try {
-    if (chrome.storage?.sync) {
-      const syncData = await chrome.storage.sync.get(['mutualAutoFollowSettings', 'commentAutoFollowSettings', 'unreciprocatedSettings']);
-      const toSet = {};
-      if (syncData.mutualAutoFollowSettings) {
-        toSet.mutualAutoFollowSettings = normalizeAutoFollowConfig(syncData.mutualAutoFollowSettings);
-      }
-      if (syncData.commentAutoFollowSettings) {
-        toSet.commentAutoFollowSettings = normalizeAutoFollowConfig(syncData.commentAutoFollowSettings);
-      }
-      if (syncData.unreciprocatedSettings) {
-        toSet.unreciprocatedSettings = normalizeUnreciprocatedConfig(syncData.unreciprocatedSettings);
-      }
-      if (Object.keys(toSet).length) {
-        await chrome.storage.local.set(toSet);
-      }
-    }
-  } catch {}
+  await restoreMissingSyncedSettings().catch(() => {});
 }
 
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking({includeDurable:false}).catch(() => null);
-  if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
-  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
-  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
-    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
-  }
+  await recoverAutomationAlarms();
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking({includeDurable:false}).catch(() => null);
-  if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
-  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
-  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
-    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
-  }
+  await recoverAutomationAlarms();
 });
 
 // ---------------- 本地 Grok 协同开发桥接 (Dev Bridge) ----------------
+recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
+
 let bridgeActive = false;
 async function pollGrokDevBridge() {
   if (bridgeActive) return;

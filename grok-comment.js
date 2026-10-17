@@ -1,6 +1,6 @@
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
-import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage } from './page-reader.js';
+import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage, setQuoteFrameFallbackOnPage } from './page-reader.js';
 
 export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
@@ -500,6 +500,7 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep) {
   // X reports the document as complete before its React post view has hydrated.
   // Opening Quote during that interval can navigate to an empty /compose/post shell.
   await sleep(5500 + Math.floor(Math.random() * 2000));
+  await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:setQuoteFrameFallbackOnPage, args:[true]});
   const opened = (await chrome.scripting.executeScript({ target: { tabId }, func: openQuoteComposerOnPage, args: [url] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
 
@@ -553,6 +554,8 @@ export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep) {
     } catch (error) {
       return {ok:false, reason:String(error?.message || error)};
     } finally {
+      const quoteTabId = quoteWindow?.tabs?.[0]?.id;
+      if (quoteTabId != null) await chrome.scripting.executeScript({target:{tabId:quoteTabId}, world:'MAIN', func:setQuoteFrameFallbackOnPage, args:[false]}).catch(() => {});
       if (quoteWindow?.id != null) await chrome.windows.remove(quoteWindow.id).catch(() => {});
     }
     await sleep(1000 + Math.floor(Math.random() * 1000));

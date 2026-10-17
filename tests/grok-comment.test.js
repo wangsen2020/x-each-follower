@@ -239,7 +239,7 @@ test('dismissQuoteComposerOnPage only closes the draft for the requested source 
   assert.equal(closeClicks, 1);
 });
 
-function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false, quoteLabel = true} = {}) {
+function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false, quoteLabel = true, longPost = false} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
   globalThis.window = {innerHeight: 900};
   const events = [];
@@ -258,8 +258,9 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageCompo
     getAttribute: () => null,
     click() { events.push('publish'); closed = true; }
   };
-  const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(160, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
-  const retweet = {click() { events.push('retweet'); }};
+  let actionsVisible = !longPost;
+  const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(actionsVisible ? 160 : 1800, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
+  const retweet = {scrollIntoView() { actionsVisible = true; }, click() { events.push('retweet'); }};
   const originalLink = {href: 'https://x.com/alice/status/123'};
   const sourceAuthor = {getAttribute: () => 'UserAvatar-Container-alice'};
   const currentAuthor = {getAttribute: () => 'UserAvatar-Container-me'};
@@ -352,6 +353,13 @@ test('publishQuotePostOnPage embeds the exact original and publishes through Quo
   const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容', 'A post to quote', 'alice');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
   assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
+});
+
+test('Quote menu on a long post is brought into view before selecting it', async () => {
+  const {events} = makeQuotePage({longPost: true});
+  const result = await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ['retweet', 'quote']);
 });
 
 test('Quote composer matching tolerates punctuation reshaping while still requiring the source author', async () => {
@@ -502,9 +510,11 @@ test('postQuoteOnTab recovers when choosing Quote navigates away and destroys th
   assert.deepEqual(calls, [
     'window:' + targetUrl,
     'navigate:' + targetUrl,
+    'setQuoteFrameFallbackOnPage',
     'openQuoteComposerOnPage',
     'inspectQuoteComposerOnPage',
     'publishQuotePostOnPage',
+    'setQuoteFrameFallbackOnPage',
     'close:9'
   ]);
 });
