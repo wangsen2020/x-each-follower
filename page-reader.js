@@ -43,6 +43,14 @@ export function readProfileBundle(handle, recentLimit = 8) {
   const followers = countLink(['followers', 'verified_followers']);
   const avatarUrl = root.querySelector(`a[href="/${handle}/photo"] img`)?.src || '';
   if (!name || !following || !followers) return {pending:true, name, bio};
+  const action = [...root.querySelectorAll('button[data-testid]')].find(button => {
+    const label = button.getAttribute('aria-label') || '';
+    const target = label.match(/@([a-zA-Z0-9_]{1,15})(?![a-zA-Z0-9_])/);
+    return target?.[1].toLowerCase() === handle.toLowerCase() && /-(?:unfollow|follow)$/.test(button.getAttribute('data-testid') || '');
+  });
+  const actionId = action?.getAttribute('data-testid') || '';
+  const relationship = action ? {following:actionId.endsWith('-unfollow')} : {};
+  const id = actionId.match(/^(\d+)-(?:unfollow|follow)$/)?.[1];
   const articles = [...(root?.querySelectorAll('article') || [])];
   if (articles.length < Math.min(5, recentLimit) && typeof window !== 'undefined' && typeof window.scrollBy === 'function') {
     window.scrollBy(0, 700);
@@ -53,7 +61,7 @@ export function readProfileBundle(handle, recentLimit = 8) {
     const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
     return {text, time, url: link ? new URL(link.href, location.origin).href : ''};
   });
-  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts};
+  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts, relationship, ...(id ? {id} : {})};
 }
 
 export function scanFollowers() {

@@ -120,6 +120,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
+  if (data.relationship?.following === true) return {...data, dwellSeconds:0};
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
   const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
   const totalDwellMs = dwellSeconds * 1000;
@@ -175,6 +176,8 @@ async function runCommentAutoFollow(source = 'alarm') {
     let processedCount = 0;
     let followedCount = 0;
     let skippedCount = 0;
+    let alreadyFollowingCount = 0;
+    const skipReasons = {};
     for (const user of candidates) {
       const handle = String(user.handle || '').replace(/^@/, '');
       let didFollow = false;
@@ -186,6 +189,19 @@ async function runCommentAutoFollow(source = 'alarm') {
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
         actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
         delete profile.dwellSeconds;
+        if (profile.relationship?.following === true) {
+          user.relationship = {...(user.relationship || {}), following:true};
+          if (profile.id) user.id = profile.id;
+          user.autoFollowState = 'followed';
+          user.autoFollowCheckedAt = new Date().toISOString();
+          delete user.autoFollowReason;
+          await recordAutoFollowAttempt(handle, 'followed', '主页确认已关注');
+          await saveCommentTrackingData(tracking);
+          await appendAutoFollowLog({scope:'comment', source, handle, result:'already_following', detail:'主页确认已关注，已纠正本地关系；无需再次看帖或关注。'});
+          processedCount++;
+          alreadyFollowingCount++;
+          continue;
+        }
         user.recentPosts = mergeRecentPosts(user.recentPosts || [], profile.posts || [], 100);
         user.recentPostsFetchedAt = new Date().toISOString();
         user.recentPostsCount = user.recentPosts.length;
@@ -207,6 +223,8 @@ async function runCommentAutoFollow(source = 'alarm') {
         else if (evaluation.isNotRecommended) skipReason = evaluation.recommendReason || '主页风险评估未通过';
         else if (cfg.onlyMutualIntent !== false && evaluation.tag !== '互粉' && evaluation.recommendLabel !== '推荐') skipReason = evaluation.intentTooltip || '未达到互粉意向或推荐条件';
         if (skipReason) {
+          const category = followers === null ? '资料未读全' : followers < minFollowers ? '粉丝数低于门槛' : evaluation.hasBaitRisk ? '关注/粉丝比例不足80%' : evaluation.isNotRecommended ? '内容风险规则' : '未命中互粉或推荐条件';
+          skipReasons[category] = (skipReasons[category] || 0) + 1;
           await recordAutoFollowAttempt(handle, 'skipped', skipReason);
           user.autoFollowState = 'skipped'; user.autoFollowReason = skipReason; user.autoFollowCheckedAt = new Date().toISOString();
           await saveCommentTrackingData(tracking);
@@ -283,7 +301,7 @@ async function runCommentAutoFollow(source = 'alarm') {
       }
       await sleep(1200 + Math.floor(Math.random() * 1000));
     }
-    cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = `本轮处理 ${processedCount} 人，成功关注 ${followedCount} 人${skippedCount ? `，条件不符跳过 ${skippedCount} 人` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
+    cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
     tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
     return {ok:true, summary:cfg.lastSummary};
   } catch (error) {
