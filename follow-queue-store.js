@@ -5,8 +5,6 @@ const DB_VERSION = 1;
 const DEFAULT_DB_NAME = 'x-each-follower-follow-queue';
 const STORES = ['jobs', 'outcomes', 'settings'];
 
-const TERMINAL_OR_HELD = new Set(['running', 'followed', 'skipped', 'uncertain', 'excluded']);
-
 export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
   every: 8,
@@ -128,9 +126,12 @@ function mergeEvaluations(existing, incoming, followJobId) {
   for (const item of incoming || []) {
     if (!item || typeof item !== 'object' || !item.taskId) continue;
     const prev = map.get(item.taskId) || {};
-    const attempts = Array.isArray(item.attempts)
-      ? item.attempts.map(attempt => clone(attempt))
-      : Array.isArray(prev.attempts) ? prev.attempts : [];
+    let attempts;
+    if (typeof item.attempts === 'number' && item.attempts > 0) attempts = item.attempts;
+    else if (Array.isArray(item.attempts)) attempts = item.attempts.map(attempt => clone(attempt));
+    else if (typeof prev.attempts === 'number' && prev.attempts > 0) attempts = prev.attempts;
+    else if (Array.isArray(prev.attempts)) attempts = prev.attempts;
+    else attempts = [];
     map.set(item.taskId, {
       taskId: String(item.taskId),
       followJobId: item.followJobId || prev.followJobId || followJobId,
@@ -139,6 +140,8 @@ function mergeEvaluations(existing, incoming, followJobId) {
       originalPostId: item.originalPostId || prev.originalPostId || '',
       originalPostUrl: item.originalPostUrl || prev.originalPostUrl || '',
       text: item.text != null ? String(item.text) : (prev.text || ''),
+      reason: item.reason != null ? String(item.reason) : (prev.reason || ''),
+      channel: item.channel || prev.channel || '',
       status: item.status || prev.status || '',
       publishedPostId: item.publishedPostId || prev.publishedPostId || '',
       publishedPostUrl: item.publishedPostUrl || prev.publishedPostUrl || '',
@@ -250,7 +253,7 @@ function importedHoldActive(job) {
 }
 
 function succeededFollowResult(result) {
-  return !!(result && typeof result === 'object' && (result.added === true || result.following === true));
+  return !!(result && typeof result === 'object' && (result.added === true || result.following === true || result.succeeded === true));
 }
 
 function writeImportedHold(job, state, followResult) {
@@ -313,8 +316,7 @@ function absorbProvenance(target, extra, shown, canonical, seenAt, normalizedSou
 
 function statesBlockCollapse(left, right) {
   if (!left || !right || left === right || left.id === right.id) return false;
-  if (leaseHeld(left) && leaseHeld(right)) return true;
-  return TERMINAL_OR_HELD.has(left.state) && TERMINAL_OR_HELD.has(right.state) && left.state !== right.state;
+  return leaseHeld(left) && leaseHeld(right);
 }
 
 function pickDurable(durable, account, job, canonical) {
@@ -333,6 +335,9 @@ function pickDurable(durable, account, job, canonical) {
 }
 
 function pickHeldState(left, right) {
+  const leftImport = IMPORT_RANK[left] || 0;
+  const rightImport = IMPORT_RANK[right] || 0;
+  if (leftImport !== rightImport) return leftImport > rightImport ? left : right;
   return (STATE_RANK[left] || 0) >= (STATE_RANK[right] || 0) ? left : right;
 }
 
@@ -462,7 +467,15 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           absorbProvenance(survivor, other, shown, canonical, seenAt, normalizedSources);
           survivor.lease = lease;
           survivor.state = state === 'running' ? 'running' : pickHeldState(state, other.state);
-          if (!realUserId(survivor) && (userId || realUserId(other))) {
+          if (leaseHeld(survivor) && DURABLE_STATES.includes(other.state)) {
+            writeImportedHold(survivor, other.state, other.followResult);
+            survivor.evaluations = mergeEvaluations(survivor.evaluations, other.evaluations, survivor.id);
+            const promotedId = userId || realUserId(other) || realUserId(survivor);
+            if (promotedId) {
+              survivor.targetUserId = promotedId;
+              survivor.targetKey = `id:${survivor.targetUserId}`;
+            }
+          } else if (!realUserId(survivor) && (userId || realUserId(other))) {
             survivor.targetUserId = userId || realUserId(other);
             survivor.targetKey = `id:${survivor.targetUserId}`;
           }
@@ -603,7 +616,6 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         const all = await readJobs(jobs);
         const job = all.find(item => item.id === id);
         if (!job) return {ok: false, reason: 'missing'};
-        if (importedHoldActive(job)) return {ok: false, reason: 'imported-hold'};
         const lease = job.lease || {owner: '', version: 0, expiresAt: 0};
         if (lease.owner !== owner || lease.version !== version) {
           return {ok: false, reason: 'stale'};
@@ -615,6 +627,35 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           return {ok: false, reason: 'stale'};
         }
         const changes = patch && typeof patch === 'object' ? patch : {};
+        if (importedHoldActive(job)) {
+          if (state === 'running') return {ok: false, reason: 'imported-hold'};
+          if (state === 'followed' || succeededFollowResult(changes.followResult)) {
+            delete job.importedHold;
+            if (typeof changes.stage === 'string') job.stage = changes.stage;
+            if (Number.isFinite(changes.nextEligibleAt)) job.nextEligibleAt = changes.nextEligibleAt;
+            if (changes.followResult && typeof changes.followResult === 'object') {
+              job.followResult = clone(changes.followResult);
+            }
+            if (Array.isArray(changes.evaluations)) {
+              job.evaluations = mergeEvaluations(job.evaluations, changes.evaluations, job.id);
+            }
+            job.state = 'followed';
+            job.updatedAt = seenAt;
+            releaseLease(job);
+            jobs.put(job);
+            rememberOutcome(outcomes, job);
+            return {ok: true, job: clone(job)};
+          }
+          applyImportedHold(job);
+          if (Array.isArray(changes.evaluations)) {
+            job.evaluations = mergeEvaluations(job.evaluations, changes.evaluations, job.id);
+          }
+          releaseLease(job);
+          job.updatedAt = seenAt;
+          jobs.put(job);
+          rememberOutcome(outcomes, job);
+          return {ok: false, reason: 'imported-hold', job: clone(job)};
+        }
         if (typeof changes.stage === 'string') job.stage = changes.stage;
         if (Number.isFinite(changes.nextEligibleAt)) job.nextEligibleAt = changes.nextEligibleAt;
         if (changes.followResult && typeof changes.followResult === 'object') {
@@ -630,6 +671,56 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
         jobs.put(job);
         rememberOutcome(outcomes, job);
+        return {ok: true, job: clone(job)};
+      });
+    },
+
+    async resolveJob({accountId, id, state, stage, followResult, nextEligibleAt, evaluations} = {}) {
+      const account = requireAccountId(accountId);
+      if (typeof id !== 'string' || id === '') throw new Error('job id is required');
+      if (state != null && (!Object.prototype.hasOwnProperty.call(STATE_RANK, state) || state === 'running')) {
+        throw new Error('invalid follow queue state');
+      }
+      const seenAt = now();
+      return withTransaction('readwrite', async ({jobs, outcomes}) => {
+        const all = await readJobs(jobs);
+        const job = all.find(item => item.id === id && item.accountId === account);
+        if (!job) return {ok: false, reason: 'missing'};
+        if (leaseHeld(job) && job.lease.expiresAt > seenAt) return {ok: false, reason: 'leased'};
+        if (state != null) job.state = state;
+        if (typeof stage === 'string') job.stage = stage;
+        if (followResult && typeof followResult === 'object') job.followResult = clone(followResult);
+        if (Number.isFinite(nextEligibleAt)) job.nextEligibleAt = nextEligibleAt;
+        if (Array.isArray(evaluations)) {
+          job.evaluations = mergeEvaluations(job.evaluations, evaluations, job.id);
+        }
+        delete job.importedHold;
+        releaseLease(job);
+        job.updatedAt = seenAt;
+        if (job.state === 'pending' || job.state === 'retry') {
+          const durable = await readOutcomes(outcomes);
+          for (const outcome of durable) {
+            if (outcome.accountId !== account) continue;
+            const keyMatch = outcome.key === outcomeKey(account, job.targetKey);
+            const idMatch = !!job.targetUserId && outcome.targetUserId === job.targetUserId;
+            const handleMatch = !!job.handleCanonical && outcome.handleCanonical === job.handleCanonical;
+            if (keyMatch || idMatch || handleMatch) outcomes.delete(outcome.key);
+          }
+        } else if (DURABLE_STATES.includes(job.state)) {
+          await rememberOutcome(outcomes, job);
+          outcomes.put({
+            key: outcomeKey(job.accountId, job.targetKey),
+            accountId: job.accountId,
+            targetKey: job.targetKey,
+            targetUserId: job.targetUserId || '',
+            handleCanonical: job.handleCanonical || '',
+            state: job.state,
+            followResult: clone(job.followResult),
+            evaluations: clone(job.evaluations || []),
+            updatedAt: job.updatedAt
+          });
+        }
+        jobs.put(job);
         return {ok: true, job: clone(job)};
       });
     },

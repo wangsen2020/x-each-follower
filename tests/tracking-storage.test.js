@@ -79,3 +79,37 @@ test('comment loading preserves handled users when separate settings contain an 
     : {commentAutoFollowSettings:{enabled:true,processedHandles:[]}}}});
   assert.deepEqual(result.autoFollow.processedHandles,['kimmykimol']);
 });
+
+test('comment loading preserves newer runtime progress (followedCount, lastRunAt, lastSummary) over stale settings defaults', async () => {
+  const result = await loadCommentTracking({
+    includeDurable: false,
+    storage: {
+      get: async key => key === 'commentTracking'
+        ? {
+            commentTracking: {
+              autoFollow: {
+                enabled: true,
+                followedCount: 7,
+                lastRunAt: '2026-10-17T15:30:00.000Z',
+                lastSummary: '本轮处理 5 人，新增关注 3 人 · 累计已关注 7 人。',
+                processedHandles: ['user1', 'user2']
+              }
+            }
+          }
+        : {
+            commentAutoFollowSettings: {
+              enabled: true,
+              followedCount: 0,
+              lastRunAt: null,
+              lastSummary: '',
+              processedHandles: []
+            }
+          }
+    }
+  });
+  assert.equal(result.autoFollow.followedCount, 7);
+  assert.equal(result.autoFollow.lastRunAt, '2026-10-17T15:30:00.000Z');
+  assert.equal(result.autoFollow.lastSummary, '本轮处理 5 人，新增关注 3 人 · 累计已关注 7 人。');
+  assert.deepEqual(result.autoFollow.processedHandles, ['user1', 'user2']);
+});
+

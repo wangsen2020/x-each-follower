@@ -37,7 +37,6 @@ export function findPublishedQueueQuoteOnPage(handle, originalId, text, after) {
     const body = article.querySelector('[data-testid="tweetText"]')?.innerText || '';
     if (normalized(body) !== normalized(text)) continue;
     const links = [...article.querySelectorAll('a[href*="/status/"]')];
-    if (!links.some(a => a.href.includes(`/status/${originalId}`))) continue;
     for (const link of links) {
       const match = new URL(link.href).pathname.match(/^\/([^/]+)\/status\/(\d+)$/);
       if (!match || match[1].toLowerCase() !== handle.toLowerCase() || match[2] === originalId) continue;
@@ -48,7 +47,7 @@ export function findPublishedQueueQuoteOnPage(handle, originalId, text, after) {
   return null;
 }
 
-export function createFollowQueueRuntime({api = chrome, store} = {}) {
+export function createFollowQueueRuntime({api = chrome, store, fetchUser} = {}) {
   if (!store) {
     let opened;
     store = new Proxy({}, {get(_target, key) { opened ||= createFollowQueueStore(); return opened[key]?.bind(opened); }});
@@ -56,6 +55,11 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
   let syncing = Promise.resolve();
   const readBinding = async () => (await api.storage.local.get(BINDING_KEY))[BINDING_KEY];
   const script = async (tabId, func, args = []) => (await api.scripting.executeScript({target:{tabId}, func, args}))?.[0]?.result;
+  const safeLog = async entry => {
+    if (typeof api?.storage?.local?.get === 'function' && typeof api?.storage?.local?.set === 'function') {
+      await appendExecutionLog(entry, api.storage.local).catch(() => {});
+    }
+  };
   async function viewer(tabId) { return canonical(await script(tabId, readQueueViewerOnPage)); }
   async function identity() {
     const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
@@ -102,7 +106,8 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
         const prior = existing.get(canonical(item.handle));
         const newSource = !prior || item.sources.some(source=>!prior.sources.some(s=>s.module===source.module && s.url===source.url));
         const priorState = prior?.followResult?.succeeded ? 'followed' : prior?.importedHold?.state || prior?.state;
-        const newOutcome = (ranks[item.state] || 0) > (ranks[priorState] || 0);
+        const blockedByActiveOrVerified = (prior?.state === 'running' || prior?.followResult?.verifiedAt) && item.state !== 'followed';
+        const newOutcome = !blockedByActiveOrVerified && (ranks[item.state] || 0) > (ranks[priorState] || 0);
         if (prior && !newSource && !newOutcome) continue;
         if (item.state && item.state !== 'pending' && newOutcome) await store.importOutcome(item);
         else await store.enqueue(item);
@@ -139,6 +144,18 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
       if (!target?.id) return {state:'retry',reason:'无法解析目标用户 ID'};
       if (job.targetUserId && job.targetUserId !== target.id) return {state:'excluded',reason:'账号名称对应的用户 ID 已变化'};
       const merged = await store.enqueue({accountId:job.accountId,targetUserId:target.id,handle:job.handle,sources:job.sources});
+      if (merged.importedHold?.state) {
+        const holdState = merged.importedHold.state;
+        const holdRes = merged.importedHold.followResult || {};
+        return {
+          state: holdState,
+          followResult: holdState === 'followed'
+            ? {...holdRes, ...followResult, succeeded:true, alreadyFollowing:true, targetUserId:target.id, at:Date.now()}
+            : {...followResult, ...holdRes, targetUserId:target.id},
+          evaluations: merged.evaluations || evaluations,
+          reason: holdRes.reason || '命中历史去重记录'
+        };
+      }
       await guard();
       if (merged.id !== job.id) return {state:'excluded',reason:'相同用户已有队列记录'};
       const duplicates = (await store.list({accountId:job.accountId})).filter(other => other.id !== job.id && other.targetUserId === target.id);
@@ -189,6 +206,7 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
       await control.checkpoint({stage:'evaluating',followResult,evaluations});
       const generated = await requestGrokComment(job.handle,post,profile.name,{sleep});
       evaluation.text = generated.reply || '';
+      evaluation.channel = generated.channel || '';
       evaluation.status = generated.ok ? 'draft' : 'failed';
       evaluation.reason = generated.reason || '';
       await control.checkpoint({stage:'evaluated',followResult,evaluations});
@@ -239,6 +257,231 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
     }
     if (Object.keys(changed).length) await api.storage.local.set(changed);
   }
+  async function withVerifiedXTab(binding, work) {
+    const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+    let temporary;
+    try {
+      let targetTab = null;
+      for (const tab of tabs) {
+        const handle = await viewer(tab.id).catch(() => '');
+        if (handle && handle === canonical(binding.handle)) { targetTab = tab; break; }
+      }
+      if (!targetTab) {
+        temporary = await api.tabs.create({url:'https://x.com/home',active:false});
+        for (let i=0;i<20;i++) {
+          const handle = await viewer(temporary.id).catch(() => '');
+          if (handle) {
+            if (handle !== canonical(binding.handle)) throw new Error('当前 X 登录账号与队列绑定账号不一致');
+            targetTab = temporary;
+            break;
+          }
+          await sleep(500);
+        }
+      }
+      if (!targetTab) throw new Error('无法打开已登录的 X 页面进行核实');
+      return await work(targetTab);
+    } finally {
+      if (temporary) await api.tabs.remove(temporary.id).catch(() => {});
+    }
+  }
+  async function verifyUncertain(binding, {jobId, mode = 'check'} = {}) {
+    const jobs = await store.list({accountId:binding.accountId});
+    const job = jobs.find(item => item.id === jobId);
+    if (!job) throw new Error('未找到对应的待核实任务');
+    if (job.state !== 'uncertain') throw new Error('仅结果待核实的任务支持人工核验恢复');
+    if (mode === 'exclude') {
+      const resolved = await store.resolveJob({
+        accountId:binding.accountId,
+        id:job.id,
+        state:'excluded',
+        stage:'excluded',
+        followResult:{...(job.followResult || {}), reason:'人工核实排除', verifiedAt:Date.now()}
+      });
+      if (!resolved?.ok) throw new Error(resolved?.reason === 'leased' ? '任务正在执行中，请稍后操作' : '排除任务失败');
+      await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'excluded',detail:`人工排除待核实任务 @${job.handle}`});
+      return {ok:true,resolvedState:'excluded',job:resolved.job,summary:`已排除 @${job.handle}`};
+    }
+    return withVerifiedXTab(binding, async tab => {
+      const target = typeof fetchUser === 'function'
+        ? await fetchUser(tab.id, job.handle)
+        : await (async () => {
+            const lookup = await networkFetch(tab.id,'UserByScreenName',{screen_name:job.handle});
+            return lookup.status === 200 && parseNetworkUsers(lookup.json).find(u => canonical(u.handle) === canonical(job.handle));
+          })();
+      if (!target?.id) throw new Error(`无法读取 @${job.handle} 的最新关注关系，请稍后重试`);
+      if (job.targetUserId && job.targetUserId !== target.id) {
+        const excluded = await store.resolveJob({
+          accountId:binding.accountId,
+          id:job.id,
+          state:'excluded',
+          stage:'excluded',
+          followResult:{...(job.followResult || {}), reason:'账号名称对应的用户 ID 已变化', verifiedAt:Date.now()}
+        });
+        return {ok:true,resolvedState:'excluded',job:excluded.job,summary:`@${job.handle} 的用户 ID 已变化，已排除`};
+      }
+      if (!job.targetUserId) {
+        await store.enqueue({accountId:binding.accountId,targetUserId:target.id,handle:job.handle,sources:job.sources});
+      }
+      if (target.relationship?.following === true) {
+        const resolved = await store.resolveJob({
+          accountId:binding.accountId,
+          id:job.id,
+          state:'followed',
+          stage:'followed',
+          followResult:{...(job.followResult || {}), succeeded:true, following:true, alreadyFollowing:true, targetUserId:target.id, verifiedAt:Date.now(), reason:'核实确认已关注'}
+        });
+        if (!resolved?.ok) throw new Error('更新任务关注状态失败');
+        await reflectFollowed(binding.accountId);
+        await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'followed',detail:`核实确认 @${job.handle} 已关注，已同步状态`});
+        return {ok:true,resolvedState:'followed',job:resolved.job,summary:`已核实 @${job.handle} 处于已关注状态`};
+      }
+      const reopened = await store.resolveJob({
+        accountId:binding.accountId,
+        id:job.id,
+        state:'pending',
+        stage:'queued',
+        nextEligibleAt:Date.now(),
+        followResult:{targetUserId:target.id, verifiedAt:Date.now(), reason:'核实确认未关注，恢复待关注'}
+      });
+      if (!reopened?.ok) throw new Error('恢复待关注状态失败');
+      await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'pending',detail:`核实确认 @${job.handle} 未关注，已恢复为待关注`});
+      return {ok:true,resolvedState:'pending',job:reopened.job,summary:`已核实 @${job.handle} 尚未关注，已恢复待关注`};
+    });
+  }
+  async function retryEvaluation(binding, {jobId, taskId, publish = false} = {}) {
+    const jobs = await store.list({accountId:binding.accountId});
+    const job = jobs.find(item => item.id === jobId);
+    if (!job) throw new Error('未找到对应的队列任务');
+    if (job.state !== 'followed') throw new Error('仅已关注成功的任务支持独立重试引用评价，禁止回退关注步骤');
+    const existingEvals = Array.isArray(job.evaluations) ? job.evaluations : [];
+    const targetEval = (taskId ? existingEvals.find(e => e.taskId === taskId) : existingEvals[0]) || null;
+    if (targetEval && (targetEval.status === 'posted' || targetEval.status === 'published')) {
+      return {ok:true,job,evaluation:targetEval,summary:'该引用评价已发布，无需重复执行'};
+    }
+    let tab;
+    try {
+      tab = await api.tabs.create({url:`https://x.com/${encodeURIComponent(binding.handle)}`,active:false});
+      let viewerHandle = '';
+      for (let i=0;i<20;i++) {
+        viewerHandle = await viewer(tab.id).catch(() => '');
+        if (viewerHandle) break;
+        await sleep(500);
+      }
+      if (viewerHandle !== canonical(binding.handle)) throw new Error('当前 X 登录账号与队列绑定账号不一致');
+      let ev = targetEval ? {...targetEval} : null;
+      // Step 1: If uncertain or draft, verify on viewer's profile page first before any re-publish
+      if (ev && ev.originalPostId && ev.text) {
+        let proof = null;
+        for (let i = 0; i < 20; i++) {
+          await sleep(500);
+          proof = await script(tab.id, findPublishedQueueQuoteOnPage, [binding.handle, ev.originalPostId, ev.text, 0]).catch(() => null);
+          if (proof) break;
+        }
+        if (proof) {
+          ev = {...ev, status:'posted', publishedPostId:proof.id, publishedPostUrl:proof.url, reason:''};
+          const saved = await store.resolveJob({accountId:binding.accountId, id:job.id, evaluations:[ev]});
+          await safeLog({scope:'queue', accountId:binding.accountId, jobId:job.id, handle:job.handle, at:new Date().toISOString(), result:'posted', detail:`主页核实 @${job.handle} 的引用评价已发布`});
+          return {ok:true, job:saved.job, evaluation:ev, summary:'主页已确认该引用评价发布成功'};
+        }
+        if (ev.status === 'uncertain') {
+          ev = {...ev, status:ev.text ? 'draft' : 'failed', reason:'主页未发现已发布引用帖，已转为草稿可重试发布'};
+          await store.resolveJob({accountId:binding.accountId, id:job.id, evaluations:[ev]});
+          if (!publish) {
+            return {ok:true, job:job, evaluation:ev, summary:ev.reason};
+          }
+        }
+      }
+      // Step 2: Locate post if needed
+      const {profileCache = {}} = await api.storage.local.get('profileCache');
+      let cachedPosts = profileCache[canonical(job.handle)]?.posts || [];
+      let post = ev?.originalPostUrl
+        ? (cachedPosts.find(p => p.url === ev.originalPostUrl) || {url:ev.originalPostUrl,text:ev.originalPostText || ''})
+        : cachedPosts.find(p => {
+            const match = String(p.url || '').match(/^https:\/\/(?:x\.com|twitter\.com)\/([^/]+)\/status\/\d+/);
+            return match && canonical(match[1]) === canonical(job.handle) && String(p.text || '').length >= 8;
+          });
+      if (!post || (!post.text && !ev?.text)) {
+        await api.tabs.update(tab.id,{url:`https://x.com/${encodeURIComponent(job.handle)}`});
+        for (let i=0;i<20;i++) {
+          const bundle = await script(tab.id,readProfileBundle,[job.handle,5]).catch(() => null);
+          if (bundle && !bundle.pending && Array.isArray(bundle.posts)) {
+            cachedPosts = bundle.posts;
+            const prev = profileCache[canonical(job.handle)] || {};
+            profileCache[canonical(job.handle)] = {...prev,...bundle,posts:mergeRecentPosts(prev.posts || [],bundle.posts,100),profileCachedAt:new Date().toISOString()};
+            await api.storage.local.set({profileCache});
+            break;
+          }
+          await sleep(500);
+        }
+        post = (ev?.originalPostUrl && cachedPosts.find(p => p.url === ev.originalPostUrl)) || cachedPosts.find(p => {
+          const match = String(p.url || '').match(/^https:\/\/(?:x\.com|twitter\.com)\/([^/]+)\/status\/\d+/);
+          return match && canonical(match[1]) === canonical(job.handle) && String(p.text || '').length >= 8;
+        }) || post;
+      }
+      if (!post?.url) throw new Error('未找到可引用评价的原帖');
+      const originalPostId = ev?.originalPostId || post.url.match(/\/status\/(\d+)/)?.[1] || '';
+      if (!originalPostId) throw new Error('原帖链接缺少有效推文 ID');
+      const prevAttempts = Array.isArray(ev?.attempts) ? ev.attempts.length : (Number(ev?.attempts) || 0);
+      ev = {
+        taskId: ev?.taskId || `${binding.accountId}:${originalPostId}`,
+        followJobId: job.id,
+        targetUserId: job.targetUserId || '',
+        originalAuthorId: ev?.originalAuthorId || job.targetUserId || '',
+        originalPostId,
+        originalPostUrl: post.url,
+        originalPostText: post.text || ev?.originalPostText || '',
+        text: ev?.text || '',
+        channel: ev?.channel || '',
+        status: ev?.status || 'generating',
+        publishedPostId: ev?.publishedPostId || '',
+        publishedPostUrl: ev?.publishedPostUrl || '',
+        reason: '',
+        attempts: prevAttempts + 1
+      };
+      // Reuse existing draft text if available; only call Grok when draft text is empty
+      if (!ev.text) {
+        const generated = await requestGrokComment(job.handle,post,job.handle,{sleep});
+        ev.text = generated.reply || '';
+        ev.channel = generated.channel || ev.channel || '';
+        ev.status = generated.ok ? 'draft' : 'failed';
+        ev.reason = generated.reason || '';
+        if (!generated.ok) {
+          const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:false,error:ev.reason || 'Grok 生成评价失败',job:saved.job,evaluation:ev};
+        }
+      } else {
+        ev.status = 'draft';
+      }
+      const settings = await store.getSettings(binding.accountId);
+      if (!publish && !settings.autoPublish) {
+        const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`已为 @${job.handle} 生成评价草稿（未开启自动发布）`});
+        return {ok:true,job:saved.job,evaluation:ev,summary:'评价草稿已就绪（未自动发布）'};
+      }
+      const submittedAt = Date.now();
+      const published = await postQuoteOnTab(tab.id,post,ev.text,publishQuotePostOnPage,sleep);
+      ev.status = 'uncertain';
+      ev.reason = published.reason || '等待主页确认引用发布';
+      if (published.ok) {
+        await api.tabs.update(tab.id,{url:`https://x.com/${binding.handle}`});
+        for (let i=0;i<20;i++) {
+          await sleep(700);
+          const proof = await script(tab.id,findPublishedQueueQuoteOnPage,[binding.handle,originalPostId,ev.text,submittedAt]).catch(() => null);
+          if (proof) {
+            Object.assign(ev,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
+            break;
+          }
+        }
+      } else if (published.stage === 'composer') {
+        ev.status = 'failed';
+      }
+      const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+      await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:ev.status,detail:ev.status === 'posted' ? `已发布 @${job.handle} 的引用评价` : (ev.reason || '引用评价重试结束')});
+      return {ok:true,job:saved.job,evaluation:ev,summary:ev.status === 'posted' ? '引用评价已发布并核验' : ev.reason};
+    } finally {
+      if (tab) await api.tabs.remove(tab.id).catch(() => {});
+    }
+  }
   async function schedule({preserve = false} = {}) {
     const binding = await readBinding();
     if (!binding?.activated) return;
@@ -279,7 +522,7 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
       await syncCandidates(); await schedule(); return {ok:true};
     }
     const binding = await readBinding();
-    if (!binding?.activated || binding.accountId !== message.accountId) throw new Error('请先确认队列账号');
+    if (!binding?.activated || (message.accountId && binding.accountId !== message.accountId)) throw new Error('请先确认队列账号');
     switch(message.cmd) {
       case 'followQueueList': {
         await syncCandidates();
@@ -292,6 +535,27 @@ export function createFollowQueueRuntime({api = chrome, store} = {}) {
       }
       case 'followQueuePause': await scheduler.pause(binding.accountId); await schedule(); return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueRun': return run(true);
+      case 'followQueueVerify': return verifyUncertain(binding, message);
+      case 'followQueueRetryEvaluation': return retryEvaluation(binding, message);
+      case 'followQueueEnqueue': {
+        const rawList = Array.isArray(message.candidates) ? message.candidates : [message.candidate].filter(Boolean);
+        const enqueued = [];
+        for (const item of rawList) {
+          if (!item?.handle) continue;
+          const candidateSources = Array.isArray(item.sources) && item.sources.length > 0
+            ? item.sources.map(s => ({ module: s.module || 'comments', url: s.url || '', enabled: s.enabled !== false }))
+            : [{ module: item.module || 'comments', url: item.url || '', enabled: true }];
+          const res = await store.enqueue({
+            accountId: binding.accountId,
+            targetUserId: item.targetUserId || '',
+            handle: item.handle,
+            sources: candidateSources
+          });
+          enqueued.push(res);
+        }
+        await schedule();
+        return {ok: true, count: enqueued.length, jobs: enqueued};
+      }
       default: throw new Error('未知队列操作');
     }
   }

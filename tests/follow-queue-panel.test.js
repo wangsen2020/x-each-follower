@@ -11,17 +11,20 @@ import {
   mountFollowQueuePanel
 } from '../follow-queue-panel.js';
 
-test('resume button enables scheduling instead of sending another pause', async () => {
+test('automatic schedule switch enables scheduling when toggled on', async () => {
   const root=createMockElement('div'), calls=[];
   const request=async payload=>{
     calls.push(payload);
     if(payload.cmd==='followQueueList') return {ok:true,jobs:[],summary:{isPaused:true}};
-    if(payload.cmd==='followQueueSettings') return {ok:true,settings:{...DEFAULT_SETTINGS}};
+    if(payload.cmd==='followQueueSettings') return {ok:true,settings:{...DEFAULT_SETTINGS, enabled:false}};
     return {ok:true};
   };
   const panel=mountFollowQueuePanel(root,{request,accountId:'123'});
   await new Promise(r=>setTimeout(r,15));
-  root.querySelectorAll('button').find(button=>button.textContent.includes('恢复调度')).click();
+  const toggle = root.querySelector('.fq-switch-checkbox');
+  assert.ok(toggle);
+  toggle.checked = true;
+  toggle.dispatchEvent({type: 'change', target: {checked: true}});
   await new Promise(r=>setTimeout(r,15));
   assert.ok(calls.some(call=>call.cmd==='followQueueSaveSettings' && call.settings.enabled===true));
   assert.equal(calls.some(call=>call.cmd==='followQueuePause'),false);
@@ -672,10 +675,11 @@ test('manual actions run, pause, and refresh dispatch expected commands', async 
   await new Promise(r => setTimeout(r, 10));
   assert.ok(commands.includes('followQueueRun'));
 
-  // Pause button
-  const pauseBtn = root.querySelector('.fq-header-actions .fq-btn-danger');
-  assert.ok(pauseBtn);
-  pauseBtn.click();
+  // Pause / disable scheduling via toggle switch
+  const switchCheckbox = root.querySelector('.fq-switch-checkbox');
+  assert.ok(switchCheckbox);
+  switchCheckbox.checked = false;
+  switchCheckbox.dispatchEvent({ type: 'change', target: { checked: false } });
   await new Promise(r => setTimeout(r, 10));
   assert.ok(commands.includes('followQueuePause'));
 
@@ -889,8 +893,10 @@ test('run and pause handlers surface res.ok:false errors and do not erase them w
   assert.equal(listFetchCount, 1);
 
   // Trigger Pause which fails
-  const pauseBtn = root.querySelector('.fq-header-actions .fq-btn-danger');
-  pauseBtn.click();
+  const switchCheckbox = root.querySelector('.fq-switch-checkbox');
+  assert.ok(switchCheckbox);
+  switchCheckbox.checked = false;
+  switchCheckbox.dispatchEvent({ type: 'change', target: { checked: false } });
   await new Promise(r => setTimeout(r, 15));
 
   // Error must be surfaced in .fq-alert-error
@@ -1066,3 +1072,100 @@ test('settings fetch failure displays error banner and disables save button', as
 
   handle.destroy();
 });
+
+test('uncertain job and non-posted evaluation render verify/retry actions and array attempts count', async () => {
+  const root = createMockElement('div');
+  const calls = [];
+  const jobsData = [
+    {
+      id: 'job-uncertain',
+      accountId: 'WatsonTaylor23',
+      targetUserId: '101',
+      handle: 'UncertainUser',
+      state: 'uncertain',
+      sources: [{ module: 'mutual', enabled: true }],
+      evaluations: []
+    },
+    {
+      id: 'job-eval-retry',
+      accountId: 'WatsonTaylor23',
+      targetUserId: '102',
+      handle: 'FollowedDraftUser',
+      state: 'followed',
+      sources: [{ module: 'comments', url: 'https://x.com/FollowedDraftUser/status/555', enabled: true }],
+      evaluations: [{
+        taskId: 'comments:https://x.com/FollowedDraftUser/status/555',
+        originalPostUrl: 'https://x.com/FollowedDraftUser/status/555',
+        originalPostId: '555',
+        status: 'draft',
+        text: '很赞的观点',
+        attempts: [{ at: '2026-10-17T00:00:00Z' }, { at: '2026-10-17T00:05:00Z' }]
+      }]
+    }
+  ];
+
+  const request = async payload => {
+    calls.push(payload);
+    if (payload.cmd === 'followQueueList') return { ok: true, jobs: jobsData };
+    if (payload.cmd === 'followQueueSettings') return { ok: true, settings: { ...DEFAULT_SETTINGS } };
+    if (payload.cmd === 'followQueueVerify') {
+      jobsData[0] = { ...jobsData[0], state: 'followed' };
+      return { ok: true, resolvedState: 'followed' };
+    }
+    if (payload.cmd === 'followQueueRetryEvaluation') {
+      jobsData[1] = {
+        ...jobsData[1],
+        evaluations: [{ ...jobsData[1].evaluations[0], status: 'posted', publishedPostUrl: 'https://x.com/WatsonTaylor23/status/777' }]
+      };
+      return { ok: true };
+    }
+    return { ok: true };
+  };
+
+  const handle = mountFollowQueuePanel(root, { request, accountId: 'WatsonTaylor23' });
+  await new Promise(r => setTimeout(r, 15));
+
+  const rows = root.querySelectorAll('tbody tr');
+  assert.equal(rows.length, 2);
+
+  // First row has verify button
+  const row0Btns = rows[0].querySelectorAll('.fq-col-actions button');
+  assert.equal(row0Btns[0].textContent, '核对关系');
+  row0Btns[0].click();
+  await new Promise(r => setTimeout(r, 15));
+  assert.ok(calls.some(c => c.cmd === 'followQueueVerify' && c.jobId === 'job-uncertain' && c.mode === 'check'));
+
+  // Open traceability drawer on second row and verify array attempts length is rendered as '2'
+  const updatedRows = root.querySelectorAll('tbody tr');
+  const row1Btns = updatedRows[1].querySelectorAll('.fq-col-actions button');
+  assert.equal(row1Btns[0].textContent, '发布评价');
+  const traceBtn = row1Btns[row1Btns.length - 1];
+  traceBtn.click();
+
+  const drawer = root.querySelector('.fq-drawer');
+  assert.ok(drawer);
+  assert.ok(drawer.textContent.includes('尝试次数:2'), 'Array attempts should render numeric length 2');
+
+  // Trigger retry evaluation from drawer
+  const retryBtn = drawer.querySelector('.fq-eval-card .fq-btn-primary');
+  assert.ok(retryBtn);
+  assert.equal(retryBtn.textContent, '发布现有草稿');
+  retryBtn.click();
+  await new Promise(r => setTimeout(r, 15));
+  assert.ok(calls.some(c => c.cmd === 'followQueueRetryEvaluation' && c.jobId === 'job-eval-retry' && c.publish === true));
+
+  // Verify Run Now button re-enables after followQueueRun + fetchAll completes
+  const runBtn = root.querySelector('.fq-header-actions .fq-exec-run-btn');
+  assert.ok(runBtn);
+  assert.equal(runBtn.getAttribute('title'), '立即执行');
+  runBtn.click();
+  await new Promise(r => setTimeout(r, 20));
+  const runBtnAfter = root.querySelector('.fq-header-actions .fq-exec-run-btn');
+  assert.ok(runBtnAfter);
+  assert.equal(runBtnAfter.disabled, false, 'Run button must re-enable after followQueueRun + fetchAll completes');
+  assert.equal(runBtnAfter.getAttribute('title'), '立即执行');
+  assert.equal(runBtnAfter.textContent, '⚡');
+
+  handle.destroy();
+});
+

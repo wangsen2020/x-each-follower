@@ -202,12 +202,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let inspectingJob = null;
   let isSettingsOpen = false;
   let isExecuting = false;
+  const busyJobIds = new Set();
 
   const cleanups = [];
 
   function clearAccountState() {
     jobs = [];
     selectedJobIds.clear();
+    busyJobIds.clear();
     settings = { ...DEFAULT_SETTINGS };
     inspectingJob = null;
     isSettingsOpen = false;
@@ -261,6 +263,9 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       } else {
         jobs = Array.isArray(listRes.jobs) ? listRes.jobs : [];
         summary = listRes.summary || null;
+        if (inspectingJob) {
+          inspectingJob = jobs.find(j => j.id === inspectingJob.id) || inspectingJob;
+        }
       }
 
       if (!settingsRes || !settingsRes.ok) {
@@ -294,40 +299,127 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         return;
       }
       if (res.summary) summary = res.summary;
+      isExecuting = false;
       await fetchAll();
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       error = err?.message || '立即执行失败';
+      isExecuting = false;
       render();
     } finally {
-      if (!isDestroyed && currentAccountId === reqAccount && reqId === activeReqId) {
+      if (!isDestroyed && currentAccountId === reqAccount && isExecuting) {
         isExecuting = false;
         render();
       }
     }
   }
 
-  async function handleTogglePause() {
+  async function handleVerifyJob(job, mode = 'check') {
+    if (!currentAccountId || !job?.id || busyJobIds.has(job.id) || isDestroyed || typeof request !== 'function') return;
+    const reqAccount = currentAccountId;
+    busyJobIds.add(job.id);
+    error = null;
+    render();
+    try {
+      const res = await request({
+        cmd: 'followQueueVerify',
+        accountId: reqAccount,
+        jobId: job.id,
+        mode
+      });
+      if (isDestroyed || currentAccountId !== reqAccount) return;
+      if (!res || !res.ok) {
+        error = res?.error || res?.reason || '核对主页关系失败';
+        render();
+        return;
+      }
+      await fetchAll();
+    } catch (err) {
+      if (isDestroyed || currentAccountId !== reqAccount) return;
+      error = err?.message || '核对主页关系异常';
+      render();
+    } finally {
+      busyJobIds.delete(job.id);
+      if (!isDestroyed && currentAccountId === reqAccount) render();
+    }
+  }
+
+  async function handleRetryEvaluation(job, ev, publish = true) {
+    if (!currentAccountId || !job?.id || busyJobIds.has(job.id) || isDestroyed || typeof request !== 'function') return;
+    const reqAccount = currentAccountId;
+    busyJobIds.add(job.id);
+    error = null;
+    render();
+    try {
+      const res = await request({
+        cmd: 'followQueueRetryEvaluation',
+        accountId: reqAccount,
+        jobId: job.id,
+        taskId: ev?.taskId || '',
+        publish
+      });
+      if (isDestroyed || currentAccountId !== reqAccount) return;
+      if (!res || !res.ok) {
+        error = res?.error || res?.reason || '重试引用评价失败';
+        render();
+        return;
+      }
+      await fetchAll();
+    } catch (err) {
+      if (isDestroyed || currentAccountId !== reqAccount) return;
+      error = err?.message || '重试引用评价异常';
+      render();
+    } finally {
+      busyJobIds.delete(job.id);
+      if (!isDestroyed && currentAccountId === reqAccount) render();
+    }
+  }
+
+  async function handleToggleAutoSchedule(nextEnabled) {
     if (!currentAccountId || isDestroyed || typeof request !== 'function') return;
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     try {
-      const res = await request(summary?.isPaused
-        ? {cmd:'followQueueSaveSettings',accountId:reqAccount,settings:{enabled:true}}
-        : {cmd:'followQueuePause',accountId:reqAccount});
+      const res = await request(nextEnabled
+        ? { cmd: 'followQueueSaveSettings', accountId: reqAccount, settings: { enabled: true } }
+        : { cmd: 'followQueuePause', accountId: reqAccount });
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       if (!res || !res.ok) {
-        error = res?.error || '切换暂停状态失败';
+        error = res?.error || '切换自动调度状态失败';
         render();
         return;
       }
+      if (res.settings) settings = normalizeSettings(res.settings);
+      else settings.enabled = nextEnabled;
       if (res.summary) summary = res.summary;
       await fetchAll();
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
-      error = err?.message || '切换暂停状态失败';
+      error = err?.message || '切换自动调度状态异常';
       render();
     }
+  }
+
+  async function handleStopExecution() {
+    if (!currentAccountId || isDestroyed || typeof request !== 'function') return;
+    const reqAccount = currentAccountId;
+    const reqId = ++activeReqId;
+    isExecuting = false;
+    render();
+    try {
+      const res = await request({ cmd: 'followQueuePause', accountId: reqAccount });
+      if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
+      if (res?.summary) summary = res.summary;
+      await fetchAll();
+    } catch (err) {
+      if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
+      error = err?.message || '停止执行失败';
+      render();
+    }
+  }
+
+  async function handleTogglePause() {
+    return handleToggleAutoSchedule(!settings.enabled);
   }
 
   async function handleSaveSettings(formValues) {
@@ -344,17 +436,20 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       if (res && res.ok) {
         settings = normalizeSettings(res.settings || validated);
         isSettingsOpen = false;
+        isSettingsSaving = false;
         await fetchAll();
       } else {
         settingsError = res?.error || '保存配置失败';
+        isSettingsSaving = false;
         render();
       }
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       settingsError = err?.message || '保存配置请求异常';
+      isSettingsSaving = false;
       render();
     } finally {
-      if (!isDestroyed && currentAccountId === reqAccount && reqId === activeReqId) {
+      if (!isDestroyed && currentAccountId === reqAccount && isSettingsSaving) {
         isSettingsSaving = false;
         render();
       }
@@ -398,6 +493,62 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   // --- Render Helpers ---
 
   function renderHeader() {
+    const autoScheduleSwitch = el('label', {
+      className: 'fq-header-switch-label',
+      title: '开启后后台按设定周期自动在后台调度关注任务'
+    }, [
+      el('input', {
+        type: 'checkbox',
+        className: 'fq-switch-checkbox',
+        checked: Boolean(settings.enabled),
+        disabled: !currentAccountId,
+        onChange: e => handleToggleAutoSchedule(e.target.checked)
+      }),
+      el('span', { className: 'fq-switch-title' }, '定时自动调度')
+    ]);
+
+    const settingsBtn = el('button', {
+      type: 'button',
+      className: 'icon-button secondary fq-header-icon-btn',
+      title: '关注队列设置',
+      'aria-label': '关注队列设置',
+      onClick: () => { isSettingsOpen = true; render(); }
+    }, [
+      el('span', { className: 'fq-btn-icon-symbol' }, '⚙️')
+    ]);
+
+    const refreshBtn = el('button', {
+      type: 'button',
+      className: 'icon-button secondary fq-header-icon-btn',
+      title: '刷新队列',
+      'aria-label': '刷新队列',
+      onClick: () => fetchAll()
+    }, [
+      el('span', { className: 'fq-btn-icon-symbol' }, '↻')
+    ]);
+
+    const execBtn = isExecuting
+      ? el('button', {
+          type: 'button',
+          className: 'icon-button fq-action-icon-btn fq-btn-danger fq-exec-stop-btn fq-btn-executing',
+          title: '停止执行',
+          'aria-label': '停止执行',
+          disabled: !currentAccountId,
+          onClick: handleStopExecution
+        }, [
+          el('span', { className: 'fq-btn-icon-symbol' }, '⏹')
+        ])
+      : el('button', {
+          type: 'button',
+          className: 'icon-button fq-action-icon-btn fq-btn-primary fq-exec-run-btn',
+          title: '立即执行',
+          'aria-label': '立即执行',
+          disabled: !currentAccountId,
+          onClick: handleRunNow
+        }, [
+          el('span', { className: 'fq-btn-icon-symbol' }, '⚡')
+        ]);
+
     return el('div', { className: 'fq-header' }, [
       el('div', { className: 'fq-header-title-wrap' }, [
         el('h2', { className: 'fq-header-title' }, [
@@ -413,33 +564,10 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
               `当前账号: ${currentAccountId}`
             ])
           : el('span', { className: 'fq-account-badge fq-account-badge-missing' }, '未登录 X 账号'),
-        el('button', {
-          className: 'fq-btn fq-btn-secondary fq-btn-icon',
-          title: '关注队列设置',
-          'aria-label': '关注队列设置',
-          onClick: () => { isSettingsOpen = true; render(); }
-        }, [
-          el('span', {}, '⚙️'),
-          el('span', {}, '设置')
-        ]),
-        el('button', {
-          className: 'fq-btn fq-btn-secondary',
-          title: '刷新队列',
-          onClick: () => fetchAll()
-        }, [
-          el('span', {}, '🔄'),
-          el('span', {}, '刷新')
-        ]),
-        el('button', {
-          className: `fq-btn ${summary?.isPaused ? 'fq-btn-secondary' : 'fq-btn-danger'}`,
-          disabled: !currentAccountId,
-          onClick: handleTogglePause
-        }, summary?.isPaused ? '▶ 恢复调度' : '⏸ 全局暂停'),
-        el('button', {
-          className: 'fq-btn fq-btn-primary',
-          disabled: !currentAccountId || isExecuting,
-          onClick: handleRunNow
-        }, isExecuting ? '调度中...' : '⚡ 立即执行')
+        autoScheduleSwitch,
+        refreshBtn,
+        settingsBtn,
+        execBtn
       ])
     ]);
   }
@@ -502,6 +630,111 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     return el('div', { className: 'fq-summary-bar' }, items);
   }
 
+  function renderPaginationControls(totalCount) {
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const pageSizeSelect = el('select', {
+      className: 'fq-select fq-pagesize-select',
+      value: String(pageSize),
+      title: '选择每页展示条数',
+      onChange: e => {
+        pageSize = parseInt(e.target.value, 10) || 20;
+        currentPage = 1;
+        render();
+      }
+    }, [
+      el('option', { value: '10', selected: pageSize === 10 }, '10'),
+      el('option', { value: '20', selected: pageSize === 20 }, '20'),
+      el('option', { value: '50', selected: pageSize === 50 }, '50'),
+      el('option', { value: '100', selected: pageSize === 100 }, '100'),
+      el('option', { value: '200', selected: pageSize === 200 }, '200')
+    ]);
+
+    const prevBtn = el('button', {
+      type: 'button',
+      className: 'icon-button secondary fq-page-nav-btn',
+      disabled: currentPage <= 1,
+      title: '上一页',
+      'aria-label': '上一页',
+      onClick: () => {
+        if (currentPage > 1) {
+          currentPage--;
+          render();
+        }
+      }
+    }, '‹');
+
+    const nextBtn = el('button', {
+      type: 'button',
+      className: 'icon-button secondary fq-page-nav-btn',
+      disabled: currentPage >= totalPages,
+      title: '下一页',
+      'aria-label': '下一页',
+      onClick: () => {
+        if (currentPage < totalPages) {
+          currentPage++;
+          render();
+        }
+      }
+    }, '›');
+
+    const pageButtons = [];
+    const maxPageButtons = 7;
+    if (totalPages <= maxPageButtons) {
+      for (let p = 1; p <= totalPages; p++) {
+        pageButtons.push(el('button', {
+          type: 'button',
+          className: `fq-page-btn ${p === currentPage ? 'active' : ''}`,
+          title: `第 ${p} 页`,
+          disabled: p === currentPage,
+          onClick: () => { currentPage = p; render(); }
+        }, String(p)));
+      }
+    } else {
+      const left = Math.max(2, currentPage - 1);
+      const right = Math.min(totalPages - 1, currentPage + 1);
+      pageButtons.push(el('button', {
+        type: 'button',
+        className: `fq-page-btn ${1 === currentPage ? 'active' : ''}`,
+        title: '第 1 页',
+        disabled: 1 === currentPage,
+        onClick: () => { currentPage = 1; render(); }
+      }, '1'));
+      if (left > 2) pageButtons.push(el('span', { className: 'fq-page-ellipsis' }, '…'));
+      for (let p = left; p <= right; p++) {
+        pageButtons.push(el('button', {
+          type: 'button',
+          className: `fq-page-btn ${p === currentPage ? 'active' : ''}`,
+          title: `第 ${p} 页`,
+          disabled: p === currentPage,
+          onClick: () => { currentPage = p; render(); }
+        }, String(p)));
+      }
+      if (right < totalPages - 1) pageButtons.push(el('span', { className: 'fq-page-ellipsis' }, '…'));
+      pageButtons.push(el('button', {
+        type: 'button',
+        className: `fq-page-btn ${totalPages === currentPage ? 'active' : ''}`,
+        title: `第 ${totalPages} 页`,
+        disabled: totalPages === currentPage,
+        onClick: () => { currentPage = totalPages; render(); }
+      }, String(totalPages)));
+    }
+
+    return el('div', { className: 'monitor-pagination fq-pagination' }, [
+      el('label', { className: 'fq-pagesize-label' }, [
+        el('span', {}, '每页'),
+        pageSizeSelect
+      ]),
+      el('span', { className: 'page-summary fq-page-summary' }, `第 ${currentPage} / ${totalPages} 页 · 共 ${totalCount} 条`),
+      el('div', { className: 'page-actions fq-page-actions' }, [
+        prevBtn,
+        ...pageButtons,
+        nextBtn
+      ])
+    ]);
+  }
+
   function renderFilterBar(filteredTotal) {
     const states = [
       { id: 'all', label: '全部状态' },
@@ -522,6 +755,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     ];
 
     const stateTabs = states.map(s => el('button', {
+      type: 'button',
       className: `fq-filter-tab ${stateFilter === s.id ? 'active' : ''}`,
       onClick: () => {
         stateFilter = s.id;
@@ -534,7 +768,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       className: 'fq-select fq-module-select',
       value: moduleFilter,
       onChange: e => {
-        moduleFilter = e.target.value;
+        moduleFilter = e.target.value || 'all';
         currentPage = 1;
         render();
       }
@@ -552,12 +786,36 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       }
     });
 
+    const selectionInfo = selectedJobIds.size > 0
+      ? el('div', { className: 'fq-selection-info' }, [
+          el('span', {}, `已选 ${selectedJobIds.size} 项`),
+          el('button', {
+            type: 'button',
+            className: 'fq-btn fq-btn-sm fq-btn-secondary',
+            onClick: () => {
+              selectedJobIds.clear();
+              render();
+            }
+          }, '清空选择')
+        ])
+      : null;
+
+    const subbarLeft = el('div', { className: 'fq-subbar-left' }, [
+      el('label', { className: 'fq-filter-label' }, ['来源: ', moduleSelect]),
+      searchInput,
+      selectionInfo
+    ].filter(Boolean));
+
+    const subbarRight = renderPaginationControls(filteredTotal);
+
+    const subbar = el('div', { className: 'fq-subbar' }, [
+      subbarLeft,
+      subbarRight
+    ]);
+
     return el('div', { className: 'fq-filter-bar' }, [
       el('div', { className: 'fq-filter-tabs' }, stateTabs),
-      el('div', { className: 'fq-filter-controls' }, [
-        el('label', { className: 'fq-filter-label' }, ['来源: ', moduleSelect]),
-        searchInput
-      ])
+      subbar
     ]);
   }
 
@@ -731,6 +989,32 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         const evalCell = el('td', { className: 'fq-col-eval' }, [evalCellContent]);
 
         // Actions cell
+        const isJobBusy = busyJobIds.has(job.id);
+        const actionButtons = [];
+        if (job.state === 'uncertain') {
+          actionButtons.push(el('button', {
+            className: 'fq-btn fq-btn-sm fq-btn-primary',
+            disabled: isJobBusy,
+            onClick: () => handleVerifyJob(job, 'check')
+          }, isJobBusy ? '核对中…' : '核对关系'));
+          actionButtons.push(el('button', {
+            className: 'fq-btn fq-btn-sm fq-btn-secondary',
+            disabled: isJobBusy,
+            onClick: () => handleVerifyJob(job, 'exclude')
+          }, '排除'));
+        } else if (job.state === 'followed') {
+          const pendingEval = evals.find(ev => ev && ev.status !== 'posted' && ev.status !== 'published');
+          if (pendingEval) {
+            const retryLabel = pendingEval.status === 'uncertain'
+              ? '核对评价'
+              : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : '重试评价');
+            actionButtons.push(el('button', {
+              className: 'fq-btn fq-btn-sm fq-btn-primary',
+              disabled: isJobBusy,
+              onClick: () => handleRetryEvaluation(job, pendingEval, true)
+            }, isJobBusy ? '处理中…' : retryLabel));
+          }
+        }
         const traceBtn = el('button', {
           className: 'fq-btn fq-btn-sm fq-btn-secondary',
           onClick: () => {
@@ -738,7 +1022,10 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             render();
           }
         }, '溯源详情');
-        const actionsCell = el('td', { className: 'fq-col-actions' }, [traceBtn]);
+        actionButtons.push(traceBtn);
+        const actionsCell = el('td', { className: 'fq-col-actions' }, [
+          el('div', { className: 'fq-actions-group' }, actionButtons)
+        ]);
 
         return el('tr', {
           className: isSelected ? 'fq-row-selected' : '',
@@ -759,48 +1046,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const table = el('table', { className: 'fq-table' }, [thead, tbody]);
     const tableWrap = el('div', { className: 'fq-table-wrap' }, [table]);
 
-    // Pagination
-    const pageSizeSelect = el('select', {
-      className: 'fq-select fq-pagesize-select',
-      value: String(pageSize),
-      onChange: e => {
-        pageSize = parseInt(e.target.value, 10) || 20;
-        currentPage = 1;
-        render();
-      }
-    }, [
-      el('option', { value: '10' }, '每页 10 条'),
-      el('option', { value: '20' }, '每页 20 条'),
-      el('option', { value: '50' }, '每页 50 条'),
-      el('option', { value: '100' }, '每页 100 条')
-    ]);
-
-    const prevBtn = el('button', {
-      className: 'fq-btn fq-btn-sm fq-btn-secondary',
-      disabled: currentPage <= 1,
-      onClick: () => {
-        if (currentPage > 1) {
-          currentPage--;
-          render();
-        }
-      }
-    }, '‹ 上一页');
-
-    const nextBtn = el('button', {
-      className: 'fq-btn fq-btn-sm fq-btn-secondary',
-      disabled: currentPage >= totalPages,
-      onClick: () => {
-        if (currentPage < totalPages) {
-          currentPage++;
-          render();
-        }
-      }
-    }, '下一页 ›');
-
     const selectionSummary = selectedJobIds.size > 0
       ? el('div', { className: 'fq-selection-info' }, [
           el('span', {}, `已选 ${selectedJobIds.size} 项`),
           el('button', {
+            type: 'button',
             className: 'fq-btn fq-btn-sm fq-btn-secondary',
             onClick: () => {
               selectedJobIds.clear();
@@ -808,17 +1058,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             }
           }, '清空选择')
         ])
-      : el('span', {}, '');
+      : null;
 
-    const paginationWrap = el('div', { className: 'fq-pagination' }, [
+    const paginationWrap = el('div', { className: 'fq-pagination-wrap' }, [
       selectionSummary,
-      el('div', { className: 'fq-page-controls' }, [
-        pageSizeSelect,
-        el('span', { className: 'fq-page-summary' }, `第 ${currentPage} / ${totalPages} 页，共 ${totalCount} 条`),
-        prevBtn,
-        nextBtn
-      ])
-    ]);
+      renderPaginationControls(totalCount)
+    ].filter(Boolean));
 
     return el('div', { className: 'fq-list-section' }, [
       tableWrap,
@@ -831,6 +1076,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   function renderTraceabilityDrawer() {
     if (!inspectingJob) return null;
     const job = inspectingJob;
+    const isJobBusy = busyJobIds.has(job.id);
 
     const sources = Array.isArray(job.sources) ? job.sources : [];
     const evals = Array.isArray(job.evaluations) ? job.evaluations : [];
@@ -946,49 +1192,72 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('div', { className: 'fq-trace-section-title' }, `✍️ Grok 引用评价记录 (${evals.length})`),
       ...(evals.length === 0
         ? [el('p', { className: 'fq-text-muted' }, '该任务暂无关联引用评价')]
-        : evals.map((ev, idx) => el('div', { className: 'fq-eval-card' }, [
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, `子任务 #${idx + 1}:`),
-              el('span', { className: 'fq-trace-val' }, ev.taskId || '-')
-            ]),
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, '原帖作者:'),
-              el('span', { className: 'fq-trace-val' }, ev.originalAuthorId || '-')
-            ]),
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, '原帖链接:'),
-              el('span', { className: 'fq-trace-val' }, (() => {
-                if (!ev.originalPostUrl) return '-';
-                const safe = safeHttpsUrl(ev.originalPostUrl);
-                const label = ev.originalPostId || '查看原帖';
-                if (safe) {
-                  return el('a', { href: safe, target: '_blank', rel: 'noopener noreferrer' }, label);
-                }
-                return el('span', { className: 'fq-text-muted', title: '链接不安全，已禁用跳转' }, label);
-              })())
-            ]),
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, '评价状态:'),
-              el('span', { className: 'fq-trace-val' }, ev.status || '-')
-            ]),
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, '已发布链接:'),
-              el('span', { className: 'fq-trace-val' }, (() => {
-                if (!ev.publishedPostUrl) return '尚未发布';
-                const safe = safeHttpsUrl(ev.publishedPostUrl);
-                const label = ev.publishedPostId || '已发布引用帖';
-                if (safe) {
-                  return el('a', { href: safe, target: '_blank', rel: 'noopener noreferrer' }, label);
-                }
-                return el('span', { className: 'fq-text-muted', title: '链接不安全，已禁用跳转' }, label);
-              })())
-            ]),
-            el('div', { className: 'fq-trace-row' }, [
-              el('span', { className: 'fq-trace-label' }, '尝试次数:'),
-              el('span', { className: 'fq-trace-val' }, String(ev.attempts || 0))
-            ]),
-            ev.text ? el('blockquote', { className: 'fq-eval-quote' }, ev.text) : null
-          ])))
+        : evals.map((ev, idx) => {
+            const attemptCount = Array.isArray(ev.attempts) ? ev.attempts.length : (ev.attempts || 0);
+            const canRetryEval = job.state === 'followed' && ev.status !== 'posted' && ev.status !== 'published';
+            const evalActions = canRetryEval
+              ? el('div', { className: 'fq-trace-actions' }, [
+                  el('button', {
+                    className: 'fq-btn fq-btn-sm fq-btn-primary',
+                    disabled: isJobBusy,
+                    onClick: () => handleRetryEvaluation(job, ev, true)
+                  }, isJobBusy
+                    ? '处理中…'
+                    : (ev.status === 'uncertain' ? '核对并补发评价' : (ev.text ? '发布现有草稿' : '重新生成并发布'))),
+                  !ev.text
+                    ? el('button', {
+                        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+                        disabled: isJobBusy,
+                        onClick: () => handleRetryEvaluation(job, ev, false)
+                      }, '仅生成草稿')
+                    : null
+                ])
+              : null;
+            return el('div', { className: 'fq-eval-card' }, [
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, `子任务 #${idx + 1}:`),
+                el('span', { className: 'fq-trace-val' }, ev.taskId || '-')
+              ]),
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, '原帖作者:'),
+                el('span', { className: 'fq-trace-val' }, ev.originalAuthorId || '-')
+              ]),
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, '原帖链接:'),
+                el('span', { className: 'fq-trace-val' }, (() => {
+                  if (!ev.originalPostUrl) return '-';
+                  const safe = safeHttpsUrl(ev.originalPostUrl);
+                  const label = ev.originalPostId || '查看原帖';
+                  if (safe) {
+                    return el('a', { href: safe, target: '_blank', rel: 'noopener noreferrer' }, label);
+                  }
+                  return el('span', { className: 'fq-text-muted', title: '链接不安全，已禁用跳转' }, label);
+                })())
+              ]),
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, '评价状态:'),
+                el('span', { className: 'fq-trace-val' }, ev.status || '-')
+              ]),
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, '已发布链接:'),
+                el('span', { className: 'fq-trace-val' }, (() => {
+                  if (!ev.publishedPostUrl) return '尚未发布';
+                  const safe = safeHttpsUrl(ev.publishedPostUrl);
+                  const label = ev.publishedPostId || '已发布引用帖';
+                  if (safe) {
+                    return el('a', { href: safe, target: '_blank', rel: 'noopener noreferrer' }, label);
+                  }
+                  return el('span', { className: 'fq-text-muted', title: '链接不安全，已禁用跳转' }, label);
+                })())
+              ]),
+              el('div', { className: 'fq-trace-row' }, [
+                el('span', { className: 'fq-trace-label' }, '尝试次数:'),
+                el('span', { className: 'fq-trace-val' }, String(attemptCount))
+              ]),
+              ev.text ? el('blockquote', { className: 'fq-eval-quote' }, ev.text) : null,
+              evalActions
+            ]);
+          }))
     ]);
 
     let resultOutcome = '未执行';
@@ -1003,6 +1272,21 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     } else if (job.followResult?.error) {
       resultOutcome = job.followResult.error;
     }
+
+    const uncertainActions = job.state === 'uncertain'
+      ? el('div', { className: 'fq-trace-actions' }, [
+          el('button', {
+            className: 'fq-btn fq-btn-sm fq-btn-primary',
+            disabled: isJobBusy,
+            onClick: () => handleVerifyJob(job, 'check')
+          }, isJobBusy ? '正在核对…' : '核对主页关系'),
+          el('button', {
+            className: 'fq-btn fq-btn-sm fq-btn-secondary',
+            disabled: isJobBusy,
+            onClick: () => handleVerifyJob(job, 'exclude')
+          }, '标记排除')
+        ])
+      : null;
 
     const followResultSection = el('div', { className: 'fq-trace-section' }, [
       el('div', { className: 'fq-trace-section-title' }, '🎯 关注执行结果'),
@@ -1027,7 +1311,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             el('span', { className: 'fq-trace-label' }, '失败详情:'),
             el('span', { className: 'fq-trace-val' }, job.followResult.error)
           ])
-        : null
+        : null,
+      uncertainActions
     ]);
 
     const body = el('div', { className: 'fq-drawer-body' }, [
@@ -1080,6 +1365,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     function createNumberGroup(id, label, desc, key, min, max, step = 1) {
       const input = el('input', {
         id,
+        name: key,
         type: 'number',
         className: 'fq-setting-input',
         value: String(current[key] ?? SETTINGS_BOUNDS[key].default),
@@ -1103,6 +1389,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     function createSwitchGroup(id, label, desc, key) {
       const input = el('input', {
         id,
+        name: key,
         type: 'checkbox',
         checked: Boolean(current[key]),
         onChange: e => {
@@ -1157,10 +1444,6 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),
         createSwitchGroup('fq_grokEnabled', '启用 Grok 生成引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
         createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish')
-      ]),
-      el('div', { className: 'fq-setting-section' }, [
-        el('h4', { className: 'fq-setting-section-title' }, '⚡ 队列调度总开关'),
-        createSwitchGroup('fq_enabled', '开启后台定时关注队列调度', '若未配置或关闭，后台闹钟不会自动领取和执行任务。', 'enabled')
       ])
     ]);
 

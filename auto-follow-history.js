@@ -12,8 +12,30 @@ export async function recordAutoFollowAttempt(handle, state, reason = '', storag
   await storage.set({[keyFor(handle)]: {state, reason, at: Date.now()}});
 }
 export function mergeAutoFollowProgress(settings = {}, progress = {}) {
-  return {...progress, ...settings, processedHandles:[...new Set([
-    ...(progress.processedHandles || []), ...(settings.processedHandles || []),
-    ...(progress.visitedHandles || []), ...(settings.visitedHandles || [])
-  ].map(h => String(h || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))]};
+  const s = settings || {};
+  const p = progress || {};
+  const sTime = Date.parse(s.lastRunAt || '') || 0;
+  const pTime = Date.parse(p.lastRunAt || '') || 0;
+  const useProgressSummary = pTime >= sTime && Boolean(p.lastRunAt || p.lastSummary);
+  const followedCount = Math.max(Number(s.followedCount) || 0, Number(p.followedCount) || 0);
+  const merged = {
+    ...p,
+    ...s,
+    processedHandles: [...new Set([
+      ...(p.processedHandles || []), ...(s.processedHandles || []),
+      ...(p.visitedHandles || []), ...(s.visitedHandles || [])
+    ].map(h => String(h || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))]
+  };
+  if (followedCount > 0 || 'followedCount' in s || 'followedCount' in p) {
+    merged.followedCount = followedCount;
+  }
+  if (useProgressSummary) {
+    if (p.lastRunAt) merged.lastRunAt = p.lastRunAt;
+    if (p.lastSummary) merged.lastSummary = p.lastSummary;
+  } else {
+    if (s.lastRunAt || p.lastRunAt) merged.lastRunAt = s.lastRunAt || p.lastRunAt;
+    if (s.lastSummary || p.lastSummary) merged.lastSummary = s.lastSummary || p.lastSummary;
+  }
+  return merged;
 }
+

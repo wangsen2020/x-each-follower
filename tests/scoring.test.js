@@ -35,10 +35,15 @@ test('CSV quotes untrusted profile data and neutralizes spreadsheet formulas', (
   assert.ok(output.includes('"\'=CMD()"'));
   assert.ok(output.includes('"text,""quoted""\nnext"'));
 });
-test('risk rules mark adult, private-content and high-risk funnel signals', () => {
-  assert.equal(riskAssess({name:'', bio:'18+ 私密视频 加我 Telegram'}).level, 'danger');
+test('risk rules mark adult, private-content and high-risk funnel signals without false positives on normal phrases', () => {
+  assert.equal(riskAssess({name:'', bio:'18+ 私密视频 加微私聊看'}).level, 'danger');
   assert.match(riskAssess({name:'', bio:'OnlyFans creator'}).hits.join(','), /成人/);
   assert.equal(riskAssess({name:'Alice', bio:'AI research and photography', posts:[{text:'分享今天的项目进展'}]}).level, 'normal');
+  assert.equal(riskAssess({
+    name: '辰一（浇朋友版）',
+    bio: '裸辞独立开发，把握AI尺度，微信公众号同步更新，去机场路上在AI赛道下注，尝试AI写真',
+    posts: [{text:'今天在机场候机写代码'}]
+  }).level, 'normal');
   assert.equal(assess({name:'',bio:'NSFW 18+',followers:100,following:100,status:'ok'}, {...options,requirePromise:false}).verdict, '危险');
 });
 
@@ -192,6 +197,24 @@ test('selectValuableMutualTargets selects unfollowed valuable accounts sorted by
 
   const selectedRelaxed = selectValuableMutualTargets(users, { batchSize: 5, minFollowers: 100, onlyIntent: false }, {}, new Set());
   assert.deepEqual(selectedRelaxed.map(u => u.handle), ['valuable_fan', 'valuable_peer', 'unscanned_peer']);
+
+  // 验证已被跳过（autoFollowState === 'skipped'）的用户绝对不会被重复选为候选人
+  const skippedUser = { handle: 'unscanned_peer', name: 'NewPeer', bio: '普通简介', relationship: { following: false, followedBy: false }, autoFollowState: 'skipped' };
+  const usersWithSkipped = [users[0], users[1], users[2], users[3], skippedUser];
+  const selectedWithoutSkipped = selectValuableMutualTargets(usersWithSkipped, { batchSize: 5, minFollowers: 100, onlyIntent: false }, {}, new Set());
+  assert.deepEqual(selectedWithoutSkipped.map(u => u.handle), ['valuable_fan', 'valuable_peer']);
+
+  // 验证 profileCache 中已被跳过的用户也绝对不会被选为候选人
+  const cacheSkipped = { unscanned_peer: { autoFollowState: 'skipped' } };
+  const selectedWithCacheSkipped = selectValuableMutualTargets(users, { batchSize: 5, minFollowers: 100, onlyIntent: false }, cacheSkipped, new Set());
+  assert.deepEqual(selectedWithCacheSkipped.map(u => u.handle), ['valuable_fan', 'valuable_peer']);
+
+  // 针对类似 SquadBookHome 账号（关注12，粉丝4938，极低回关率）：必须被 evaluateMutualProfile 判定为不推荐且拒关
+  const squadBookUser = { handle: 'SquadBookHome', name: 'SquadBook.com', bio: 'Collect. Swap. Complete. Repeat.', followingText: '12', followersText: '4,938', relationship: { following: false, followedBy: false } };
+  const squadEval = evaluateMutualProfile(squadBookUser);
+  assert.equal(squadEval.isNotRecommended, true);
+  assert.equal(squadEval.recommendLabel, '不推荐');
+  assert.match(squadEval.recommendReason, /回关比例偏低/);
 });
 
 test('computeMultiDimensionTags correctly identifies multi-dimensional tags across 5 categories', () => {

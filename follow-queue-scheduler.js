@@ -829,6 +829,27 @@ export function createFollowQueueScheduler({
     });
 
     if (!settled || !settled.ok) {
+      if (settled?.reason === 'imported-hold' && settled.job) {
+        const heldState = settled.job.state;
+        if (heldState === 'followed') {
+          counters.alreadyFollowing += 1;
+        } else if (heldState === 'skipped') {
+          counters.skipped += 1;
+        } else if (heldState === 'excluded') {
+          counters.excluded += 1;
+        } else if (heldState === 'uncertain') {
+          counters.uncertain += 1;
+        }
+        await emit({
+          type: 'job-imported-hold-applied',
+          runId: runState.runId,
+          accountId: account,
+          jobId: currentJob.id,
+          state: heldState,
+          attemptedState: finalState
+        });
+        return;
+      }
       counters.failed += 1;
       await emit({
         type: 'job-settle-failed',

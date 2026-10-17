@@ -734,32 +734,47 @@ test('imported durable hold during active lease causes canAct and checkpoint to 
     sources: [{module: 'comments', url: 'https://x.com/p/c1', enabled: true}]
   });
 
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '1000',
+    handle: '@NextUser',
+    sources: [{module: 'fans', url: 'https://x.com/f/next', enabled: true}]
+  });
+
   const scheduler = createFollowQueueScheduler({
     store,
     now: () => clock.t,
     owner: 'worker-collision',
     canRun: async () => true,
-    execute: async (_job, _settings, control) => {
+    execute: async (job, _settings, control) => {
       assert.equal(await control.canAct(), true);
-      // While job is running, a durable outcome is imported for the same user (sets importedHold on running job)
-      await store.importOutcome({
-        accountId: 'acc-1',
-        targetUserId: '999',
-        handle: 'CollisionUser',
+      if (job.handle === 'CollisionUser') {
+        // While job is running, a durable outcome is imported for the same user (sets importedHold on running job)
+        await store.importOutcome({
+          accountId: 'acc-1',
+          targetUserId: '999',
+          handle: 'CollisionUser',
+          state: 'followed',
+          followResult: {following: true},
+          sources: [{module: 'fans', url: 'https://x.com/f/c1', enabled: false}]
+        });
+        // Native store + scheduler check: both canAct and checkpoint fail closed without any stubbing!
+        assert.equal(await control.canAct(), false);
+        await assert.rejects(() => control.checkpoint({stage: 'following'}), /checkpoint/);
+        return {state: 'uncertain', reason: 'collision detected'};
+      }
+      return {
         state: 'followed',
-        followResult: {following: true},
-        sources: [{module: 'fans', url: 'https://x.com/f/c1', enabled: false}]
-      });
-      // Native store + scheduler check: both canAct and checkpoint fail closed without any stubbing!
-      assert.equal(await control.canAct(), false);
-      await assert.rejects(() => control.checkpoint({stage: 'following'}), /checkpoint/);
-      return {state: 'uncertain', reason: 'collision detected'};
+        followResult: {succeeded: true, alreadyFollowing: false, targetUserId: job.targetUserId, at: clock.t}
+      };
     }
   });
 
   const res = await scheduler.run({accountId: 'acc-1'});
   assert.equal(res.ok, true);
-  assert.equal(res.counters.inspected, 1);
+  assert.equal(res.counters.inspected, 2);
+  assert.equal(res.counters.alreadyFollowing, 1);
+  assert.equal(res.counters.followed, 1);
 });
 
 test('checkpoint throws when lease is lost or expired, and one-run-in-memory blocks concurrent run calls', async () => {

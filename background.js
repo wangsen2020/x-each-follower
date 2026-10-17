@@ -1,14 +1,14 @@
 import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
-import {appendExecutionLog} from './execution-log.js';
-import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, appendFollowBackSuffix } from './grok-comment.js';
 import { loadCommentTracking } from './tracking-storage.js';
+import {appendExecutionLog} from './execution-log.js';
 import { recoverAutomationAlarms, restoreMissingSyncedSettings } from './automation-recovery.js';
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -32,7 +32,8 @@ function normalizeAutoFollowConfig(cfg = {}) {
     dwellJitterSeconds: 5,
     minFollowers: 50,
     onlyMutualIntent: true,
-    grokAutoComment: false
+    grokAutoComment: false,
+    grokFollowBackSuffix: false
   };
   const res = { ...defaults, ...(cfg || {}) };
   res.jitter = Math.max(1, Math.min(120, Number(res.jitter) || defaults.jitter));
@@ -44,6 +45,7 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
   res.grokAutoComment = Boolean(res.grokAutoComment);
+  res.grokFollowBackSuffix = Boolean(res.grokFollowBackSuffix);
   return res;
 }
 
@@ -110,8 +112,11 @@ async function createNotification(id, options) {
 
 async function saveCommentTrackingData(tracking) {
   tracking.updatedAt = new Date().toISOString();
-  await chrome.storage.local.set({commentTracking:tracking});
+  const payload = {commentTracking:tracking};
+  if (tracking.autoFollow) payload.commentAutoFollowSettings = tracking.autoFollow;
+  await chrome.storage.local.set(payload);
   await durableSet('commentTracking', tracking).catch(() => {});
+  if (tracking.autoFollow) await durableSet('commentAutoFollowSettings', tracking.autoFollow).catch(() => {});
 }
 
 async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
@@ -168,15 +173,27 @@ async function executeCommentAutoFollow(source = 'alarm') {
     const {monitor = {}} = await chrome.storage.local.get('monitor');
     if (monitor.pausedUntil && Date.now() < Date.parse(monitor.pausedUntil)) return {ok:false, error:`关注操作暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}`};
     const ownFollowing = new Set([...(monitor.followingUsers || []), ...(monitor.users || []).filter(user => user.state === 'following')].map(user => String(user.handle || '').toLowerCase()));
+    const processedSet = new Set((cfg.processedHandles || []).map(h => String(h || '').toLowerCase()));
     const attempts = await readAutoFollowAttempts(tracking.users || []);
+    const minFollowersCfg = Math.max(0, Number(cfg.minFollowers) || 0);
     const candidates = (tracking.users || []).filter(user => {
       const handle = String(user.handle || '').toLowerCase();
+      if (!handle) return false;
       if (wasAutoFollowAttempted(handle, attempts)) return false;
+      if (processedSet.has(handle)) return false;
+      if (['skipped', 'followed', 'failed'].includes(user.autoFollowState)) return false;
       const mutual = user.relationship?.following === true && user.relationship?.followedBy === true;
-      return handle && !user.followedAt && !ownFollowing.has(handle) && user.relationship?.following !== true && !mutual;
+      if (user.followedAt || ownFollowing.has(handle) || user.relationship?.following === true || mutual) return false;
+      const knownFollowers = parseCount(String(user.followersText || ''));
+      if (knownFollowers !== null && knownFollowers < minFollowersCfg) return false;
+      const preEval = evaluateMutualProfile(user);
+      if (preEval.countsKnown && preEval.isNotRecommended) return false;
+      return true;
     }).sort((a,b) => String(a.lastSeenAt || '').localeCompare(String(b.lastSeenAt || ''))).slice(0, Math.max(1, Math.min(20, Number(cfg.batchLimit) || 10)));
     if (!candidates.length) {
-      cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = '没有待关注的评论用户。';
+      cfg.lastRunAt = new Date().toISOString();
+      const totalFollowed = Number(cfg.followedCount) || 0;
+      cfg.lastSummary = `没有待关注的评论用户${totalFollowed ? `（累计已关注 ${totalFollowed} 人）` : ''}。`;
       tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
       return {ok:true, summary:cfg.lastSummary};
     }
@@ -218,16 +235,17 @@ async function executeCommentAutoFollow(source = 'alarm') {
         user.recentPostsCount = user.recentPosts.length;
         user.name = profile.name || user.name; user.bio = profile.bio || user.bio;
         user.followersText = profile.followersText || user.followersText; user.followingText = profile.followingText || user.followingText;
+        user.relationship = {...(user.relationship || {}), ...(profile.relationship || {})};
         if (profile.id) user.id = profile.id;
         const {profileCache = {}} = await chrome.storage.local.get('profileCache');
         const profileKey = handle.toLowerCase();
-        profileCache[profileKey] = {...(profileCache[profileKey] || {}), ...profile, handle, posts:user.recentPosts.slice(0, 10), profileCachedAt:user.recentPostsFetchedAt};
+        profileCache[profileKey] = {...(profileCache[profileKey] || {}), ...profile, relationship:user.relationship, handle, posts:user.recentPosts.slice(0, 10), profileCachedAt:user.recentPostsFetchedAt};
         await chrome.storage.local.set({profileCache});
         await durableSet('profileCache', profileCache).catch(() => {});
         await saveCommentTrackingData(tracking);
         const followers = parseCount(String(user.followersText || ''));
         const minFollowers = Math.max(0, Number(cfg.minFollowers) || 0);
-        const evaluation = evaluateMutualProfile({...user, ...profile, posts:user.recentPosts.slice(0, 10)});
+        const evaluation = evaluateMutualProfile({...user, ...profile, relationship:user.relationship, posts:user.recentPosts.slice(0, 10)});
         let skipReason = '';
         if (followers === null && minFollowers > 0) skipReason = '未能读取粉丝数，无法确认最低粉丝数门槛';
         else if (followers !== null && followers < minFollowers) skipReason = `粉丝数 ${followers} 低于最低门槛 ${minFollowers}`;
@@ -238,6 +256,8 @@ async function executeCommentAutoFollow(source = 'alarm') {
           skipReasons[category] = (skipReasons[category] || 0) + 1;
           await recordAutoFollowAttempt(handle, 'skipped', skipReason);
           user.autoFollowState = 'skipped'; user.autoFollowReason = skipReason; user.autoFollowCheckedAt = new Date().toISOString();
+          cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
+          tracking.autoFollow = cfg;
           await saveCommentTrackingData(tracking);
           processedCount++;
           skippedCount++;
@@ -284,9 +304,10 @@ async function executeCommentAutoFollow(source = 'alarm') {
               const g = await requestGrokComment(handle, chosen, user.name, {sleep, fix:repairMojibake});
               if (!g.ok) commentRes = {status:'grok_failed', reason:g.reason};
               else {
-                const pub = await postQuoteOnTab(tabId, chosen, g.reply, publishQuotePostOnPage, sleep);
-                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:g.reply, post:g.postText, postUrl:g.postUrl, channel:g.channel};
-                if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = g.reply; user.grokCommentPostUrl = g.postUrl; }
+                const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply) : g.reply;
+                const pub = await postQuoteOnTab(tabId, chosen, replyText, publishQuotePostOnPage, sleep);
+                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:replyText, post:g.postText, postUrl:g.postUrl, channel:g.channel};
+                if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = replyText; user.grokCommentPostUrl = g.postUrl; }
               }
             }
           }
@@ -294,8 +315,10 @@ async function executeCommentAutoFollow(source = 'alarm') {
       } catch (error) {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
-      await saveCommentTrackingData(tracking);
+      cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
       await recordAutoFollowAttempt(handle, didFollow ? 'followed' : 'failed', user.followFailureReason || '');
+      tracking.autoFollow = cfg;
+      await saveCommentTrackingData(tracking);
       const commentNote = {
         posted: `；✔ 已通过 Grok（${commentRes.channel}）引用原帖发布评价`,
         post_failed: `；Grok 已写好评价但引用发布失败：${commentRes.reason}`,
@@ -312,7 +335,10 @@ async function executeCommentAutoFollow(source = 'alarm') {
       }
       await sleep(1200 + Math.floor(Math.random() * 1000));
     }
-    cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
+    const totalFollowed = (Number(cfg.followedCount) || 0) + followedCount;
+    cfg.followedCount = totalFollowed;
+    cfg.lastRunAt = new Date().toISOString();
+    cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${totalFollowed ? ` · 累计已关注 ${totalFollowed} 人` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
     tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
     return {ok:true, summary:cfg.lastSummary};
   } catch (error) {
@@ -429,14 +455,17 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.1.0';
+export const BACKGROUND_BUILD_VERSION = '1.1.1';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.cmd === 'getBackgroundBuildVersion') { sendResponse({ok:true,version:BACKGROUND_BUILD_VERSION}); return; }
   if (message?.cmd?.startsWith('followQueue')) {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return; }
     followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
+  }
+  if (message?.cmd === 'getBackgroundBuildVersion') {
+    sendResponse({ok:true, version:BACKGROUND_BUILD_VERSION});
+    return;
   }
   if (message?.cmd === 'grokStreamAnswer') {
     deliverGrokStream(message.text || '');
@@ -477,6 +506,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd !== 'getNetworkTemplates') return;
   chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd !== 'appendExecutionLog') return;
+  if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false, error:'仅扩展页面可写入执行日志'}); return; }
+  appendExecutionLog(message.entry).then(logs => sendResponse({ok:true, logs}), error => sendResponse({ok:false, error:error.message}));
   return true;
 });
 
@@ -626,11 +662,4 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !['monitor','mutualNetwork','commentTracking'].some(key => changes[key])) return;
   clearTimeout(queueSourceSyncTimer);
   queueSourceSyncTimer = setTimeout(() => followQueueRuntime.syncCandidates().catch(error => console.warn('关注队列入队失败:', error)), 800);
-});
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.cmd !== 'appendExecutionLog') return;
-  if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false, error:'仅扩展页面可写入执行日志'}); return; }
-  appendExecutionLog(message.entry).then(logs => sendResponse({ok:true, logs}), error => sendResponse({ok:false, error:error.message}));
-  return true;
 });

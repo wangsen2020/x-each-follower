@@ -682,19 +682,45 @@ test('importedHold blocks renew and settle, then claim applies it after the leas
     leaseMs: 50
   });
   assert.deepEqual(renewed, {ok: false, reason: 'imported-hold'});
+  const checkpoint = await store.settle({
+    id: claimed.id,
+    owner: 'worker',
+    version: claimed.lease.version,
+    state: 'running',
+    patch: {stage: 'opening', followResult: {added: true}}
+  });
+  assert.deepEqual(checkpoint, {ok: false, reason: 'imported-hold'});
+  const during = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
+  assert.equal(during.state, 'running');
+  assert.equal(during.lease.owner, 'worker');
+  assert.equal(during.lease.version, claimed.lease.version);
+  assert.equal(during.followResult, null);
+  assert.equal(during.importedHold.state, 'followed');
   const settled = await store.settle({
     id: claimed.id,
     owner: 'worker',
     version: claimed.lease.version,
-    state: 'followed',
-    patch: {stage: 'followed', followResult: {added: true}}
+    state: 'skipped',
+    patch: {
+      stage: 'skipped',
+      followResult: {added: false},
+      evaluations: [{taskId: 'hold-eval', reason: 'from-patch', channel: 'comments', attempts: 2, status: 'failed'}]
+    }
   });
-  assert.deepEqual(settled, {ok: false, reason: 'imported-hold'});
+  assert.equal(settled.ok, false);
+  assert.equal(settled.reason, 'imported-hold');
+  assert.equal(settled.job.state, 'followed');
+  assert.equal(settled.job.lease.owner, '');
+  assert.equal(settled.job.lease.expiresAt, 0);
+  assert.equal(settled.job.followResult.following, true);
+  assert.equal(settled.job.importedHold, undefined);
+  assert.equal(settled.job.evaluations[0].taskId, 'hold-eval');
+  assert.equal(settled.job.evaluations[0].attempts, 2);
   const still = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
-  assert.equal(still.state, 'running');
-  assert.equal(still.lease.version, claimed.lease.version);
-  assert.equal(still.followResult, null);
-  assert.equal(still.importedHold.state, 'followed');
+  assert.equal(still.state, 'followed');
+  assert.equal(still.lease.owner, '');
+  assert.equal(still.followResult.following, true);
+  assert.equal(still.importedHold, undefined);
 
   clock.t += 50;
   assert.equal(await store.claim({accountId: 'acc-1', owner: 'next', leaseMs: 50}), null);
@@ -937,4 +963,212 @@ test('renew is fenced and updateSources applies explicit booleans without redisc
   });
   const jobs = await store.list({accountId: 'acc-1'});
   assert.equal(jobs.find(job => job.targetUserId === '9').sources.find(source => source.module === 'fans').enabled, false);
+});
+
+test('a live followed settle wins over importedHold and releases the lease', async () => {
+  const {store} = storeFor();
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '881',
+    handle: 'mia',
+    sources: [{module: 'fans', url: 'https://x.com/mia', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 80});
+  await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '881',
+    handle: 'mia',
+    state: 'uncertain',
+    followResult: {unknown: true},
+    sources: []
+  });
+  const stale = await store.settle({
+    id: claimed.id,
+    owner: 'other',
+    version: claimed.lease.version,
+    state: 'followed',
+    patch: {followResult: {added: true}}
+  });
+  assert.deepEqual(stale, {ok: false, reason: 'stale'});
+  const won = await store.settle({
+    id: claimed.id,
+    owner: 'worker',
+    version: claimed.lease.version,
+    state: 'skipped',
+    patch: {
+      stage: 'followed',
+      followResult: {added: true},
+      evaluations: [{taskId: 'live', reason: 'clicked', channel: 'fans', attempts: [{at: 1, result: 'ok'}]}]
+    }
+  });
+  assert.equal(won.ok, true);
+  assert.equal(won.job.state, 'followed');
+  assert.equal(won.job.followResult.added, true);
+  assert.equal(won.job.importedHold, undefined);
+  assert.equal(won.job.lease.owner, '');
+  assert.equal(won.job.evaluations[0].reason, 'clicked');
+  assert.equal(won.job.evaluations[0].channel, 'fans');
+  assert.equal(won.job.evaluations[0].attempts[0].result, 'ok');
+  const next = await store.claim({accountId: 'acc-1', owner: 'next', leaseMs: 40});
+  assert.equal(next, null);
+});
+
+test('collapsing a leased job with a durable twin records importedHold and followed outranks uncertain', async () => {
+  const {store, indexedDB} = storeFor();
+  const running = await store.enqueue({
+    accountId: 'acc-1',
+    handle: 'cara',
+    sources: [{module: 'comments', url: 'https://x.com/p/cara', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 200});
+  assert.equal(claimed.id, running.id);
+  indexedDB.databases.get('test-queue').db.data.jobs.set('fq_durable_cara', {
+    id: 'fq_durable_cara',
+    accountId: 'acc-1',
+    action: 'follow',
+    targetUserId: '640',
+    targetKey: 'id:640',
+    handle: 'cara',
+    handleCanonical: 'cara',
+    aliases: [],
+    sources: [{module: 'fans', url: 'https://x.com/cara', enabled: false, discoveredAt: 1}],
+    state: 'uncertain',
+    stage: 'verify',
+    createdAt: 1,
+    updatedAt: 1,
+    nextEligibleAt: 1,
+    lease: {owner: '', version: 0, expiresAt: 0},
+    followResult: {unknown: true},
+    evaluations: [{taskId: 'prior', reason: 'needs-verify', channel: 'fans', attempts: 3, status: 'failed'}]
+  });
+  const held = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '640',
+    handle: 'cara',
+    sources: [{module: 'mutual', url: 'https://x.com/mutual/cara', enabled: false}]
+  });
+  assert.equal(held.id, claimed.id);
+  assert.equal(held.state, 'running');
+  assert.equal(held.targetUserId, '640');
+  assert.equal(held.targetKey, 'id:640');
+  assert.equal(held.lease.owner, 'worker');
+  assert.deepEqual(held.importedHold, {state: 'uncertain', followResult: {unknown: true}});
+  assert.equal(held.evaluations[0].reason, 'needs-verify');
+  assert.equal(held.evaluations[0].channel, 'fans');
+  assert.equal(held.evaluations[0].attempts, 3);
+  assert.equal((await store.list({accountId: 'acc-1'})).length, 1);
+
+  const {store: quiet, indexedDB: quietDb} = storeFor();
+  const followed = await quiet.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '641',
+    handle: 'dee',
+    state: 'followed',
+    followResult: {following: true, added: true},
+    sources: [{module: 'fans', url: 'https://x.com/dee', enabled: false}]
+  });
+  quietDb.databases.get('test-queue').db.data.jobs.set('fq_uncertain_dee', {
+    id: 'fq_uncertain_dee',
+    accountId: 'acc-1',
+    action: 'follow',
+    targetUserId: '',
+    targetKey: 'handle:dee',
+    handle: 'dee',
+    handleCanonical: 'dee',
+    aliases: [],
+    sources: [],
+    state: 'uncertain',
+    stage: 'verify',
+    createdAt: 2,
+    updatedAt: 2,
+    nextEligibleAt: 2,
+    lease: {owner: '', version: 0, expiresAt: 0},
+    followResult: {unknown: true},
+    evaluations: []
+  });
+  const collapsed = await quiet.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '641',
+    handle: 'dee',
+    sources: [{module: 'comments', url: 'https://x.com/p/dee', enabled: false}]
+  });
+  assert.equal(collapsed.id, followed.id);
+  assert.equal(collapsed.state, 'followed');
+  assert.equal(collapsed.followResult.following, true);
+  assert.equal((await quiet.list({accountId: 'acc-1'})).length, 1);
+});
+
+test('resolveJob reopens a verified unfollow and can overwrite a weaker outcome', async () => {
+  const {store, indexedDB} = storeFor();
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '77',
+    handle: 'nia',
+    sources: [{module: 'fans', url: 'https://x.com/nia', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 40});
+  await store.settle({
+    id: claimed.id,
+    owner: 'worker',
+    version: claimed.lease.version,
+    state: 'uncertain',
+    patch: {stage: 'verify', followResult: {unknown: true}}
+  });
+  const blocked = await store.resolveJob({
+    accountId: 'acc-1',
+    id: 'missing',
+    state: 'pending'
+  });
+  assert.deepEqual(blocked, {ok: false, reason: 'missing'});
+  const reopened = await store.resolveJob({
+    accountId: 'acc-1',
+    id: claimed.id,
+    state: 'pending',
+    stage: 'queued',
+    followResult: null,
+    nextEligibleAt: 1,
+    evaluations: [{taskId: 'again', reason: 'unfollowed', channel: 'manual', attempts: 1, status: 'open'}]
+  });
+  assert.equal(reopened.ok, true);
+  assert.equal(reopened.job.state, 'pending');
+  assert.equal(reopened.job.lease.owner, '');
+  assert.equal(reopened.job.evaluations[0].reason, 'unfollowed');
+  assert.equal(reopened.job.evaluations[0].attempts, 1);
+  const outcomes = [...indexedDB.databases.get('test-queue').db.data.outcomes.values()];
+  assert.equal(outcomes.length, 0);
+  const again = await store.claim({accountId: 'acc-1', owner: 'worker-2', leaseMs: 40});
+  assert.equal(again.id, claimed.id);
+
+  const leased = await store.resolveJob({
+    accountId: 'acc-1',
+    id: claimed.id,
+    state: 'skipped'
+  });
+  assert.deepEqual(leased, {ok: false, reason: 'leased'});
+
+  await store.settle({
+    id: again.id,
+    owner: 'worker-2',
+    version: again.lease.version,
+    state: 'uncertain',
+    patch: {followResult: {unknown: true}, stage: 'verify'}
+  });
+  const overwritten = await store.resolveJob({
+    accountId: 'acc-1',
+    id: claimed.id,
+    state: 'skipped',
+    stage: 'skipped',
+    followResult: {reason: 'operator'}
+  });
+  assert.equal(overwritten.ok, true);
+  assert.equal(overwritten.job.state, 'skipped');
+  assert.equal(overwritten.job.followResult.reason, 'operator');
+  const stored = [...indexedDB.databases.get('test-queue').db.data.outcomes.values()];
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].state, 'skipped');
+  assert.equal(await store.claim({accountId: 'acc-1', owner: 'nope', leaseMs: 20}), null);
+  await assert.rejects(
+    () => store.resolveJob({accountId: 'acc-1', id: claimed.id, state: 'running'}),
+    /invalid follow queue state/
+  );
 });

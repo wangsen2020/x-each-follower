@@ -301,8 +301,10 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
   const sameExcerpt = (source, embedded) => {
     const full = normalize(source), shown = normalize(embedded);
     if (!full || !shown) return false;
-    const prefix = full.slice(0, Math.min(60, full.length, shown.length));
-    return prefix.length >= 8 && shown.startsWith(prefix);
+    const len = Math.min(full.length, shown.length);
+    const minLen = Math.min(4, len);
+    const prefix = full.slice(0, Math.min(60, len));
+    return prefix.length >= minLen && (shown.startsWith(prefix) || shown.includes(prefix) || full.includes(shown));
   };
   const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
   const composers = [];
@@ -328,7 +330,10 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
     const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
       sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
     ));
-    const expectedTextMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
+    const expectedPrefix = normalize(expectedPostText).slice(0, Math.min(30, normalize(expectedPostText).length));
+    const expectedTextMatch = !expectedPostText
+      || (expectedPrefix.length >= 4 && normalize(rootText).includes(expectedPrefix))
+      || normalize(rootText).includes(normalize(expectedPostText));
     const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
     // X can render the quote card before the "Quote" label, and article cards omit
     // their status link. In a dialog, verify the embedded author and card content.
@@ -388,7 +393,7 @@ export function dismissQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
             const prefix = normalizedSource.slice(0, Math.min(60, normalizedSource.length, normalizedEmbedded.length));
             return embeddedAuthor === sourceAuthor && (sourceTitle
               ? text.includes(sourceTitle)
-              : prefix.length >= 8 && normalizedEmbedded.startsWith(prefix));
+              : prefix.length >= Math.min(4, normalizedSource.length) && (normalizedEmbedded.startsWith(prefix) || normalizedEmbedded.includes(prefix)));
           }
           return /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text) &&
             (!expectedPostText || normalize(text).includes(normalize(expectedPostText)));
@@ -429,8 +434,10 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
     const sameExcerpt = (source, embedded) => {
       const full = normalize(source), shown = normalize(embedded);
       if (!full || !shown) return false;
-      const prefix = full.slice(0, Math.min(60, full.length, shown.length));
-      return prefix.length >= 8 && shown.startsWith(prefix);
+      const len = Math.min(full.length, shown.length);
+      const minLen = Math.min(4, len);
+      const prefix = full.slice(0, Math.min(60, len));
+      return prefix.length >= minLen && (shown.startsWith(prefix) || shown.includes(prefix) || full.includes(shown));
     };
     const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
     const findComposer = () => {
@@ -456,7 +463,10 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
         const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
           sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
         ));
-        const textMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
+        const expectedPrefix = normalize(expectedPostText).slice(0, Math.min(30, normalize(expectedPostText).length));
+    const textMatch = !expectedPostText
+      || (expectedPrefix.length >= 4 && normalize(rootText).includes(expectedPrefix))
+      || normalize(rootText).includes(normalize(expectedPostText));
         const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
         const quoteVerified = !replyingLabel && handleMatch && (dialog
           ? Boolean(originalLink || articleFallback || textMatch)

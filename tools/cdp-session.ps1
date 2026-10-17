@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$StartIfAbsent,
   [int]$Port = 9222
 )
@@ -21,7 +21,7 @@ function Get-PortOwners {
     Select-Object -ExpandProperty OwningProcess -Unique)
 }
 
-$chrome = Get-ProfileChrome
+$chrome = @(Get-ProfileChrome)
 if ($chrome.Count -gt 1) {
   throw "发现多个使用 $profilePath 的 Chrome 主进程；先核对实例，不继续连接。"
 }
@@ -50,7 +50,7 @@ if ($chrome.Count -eq 0) {
   $started = $true
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     Start-Sleep -Milliseconds 500
-    $chrome = Get-ProfileChrome
+    $chrome = @(Get-ProfileChrome)
     if ($chrome.Count -eq 1 -and (Get-PortOwners).Count -gt 0) { break }
   }
 }

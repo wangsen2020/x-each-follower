@@ -39,3 +39,117 @@ test('candidate synchronization preserves an active successful follow against st
   await createFollowQueueRuntime({api,store}).syncCandidates();
   assert.equal(imports,0);
 });
+
+test('followQueueVerify resolves uncertain job to followed or pending or excluded without blind re-follow',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
+  const resolved=[];
+  const store={
+    list:async()=>[{id:'123:id:42',accountId:'123',targetUserId:'42',handle:'target_user',state:'uncertain'}],
+    resolveJob:async payload=>{resolved.push(payload);return {ok:true,job:{...payload}};}
+  };
+  let remoteFollowing=true;
+  const api={
+    storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},
+    tabs:{query:async()=>[{id:1}]},
+    scripting:{executeScript:async()=>[{result:'viewer'}]}
+  };
+  const runtime=createFollowQueueRuntime({
+    api,
+    store,
+    fetchUser:async()=>({id:'42',handle:'target_user',relationship:{following:remoteFollowing}})
+  });
+  const res1=await runtime.handle({cmd:'followQueueVerify',accountId:'123',jobId:'123:id:42',mode:'check'});
+  assert.equal(res1.ok,true);
+  assert.equal(res1.resolvedState,'followed');
+  assert.equal(resolved[0].state,'followed');
+
+  remoteFollowing=false;
+  const res2=await runtime.handle({cmd:'followQueueVerify',accountId:'123',jobId:'123:id:42',mode:'check'});
+  assert.equal(res2.ok,true);
+  assert.equal(res2.resolvedState,'pending');
+  assert.equal(resolved[1].state,'pending');
+
+  const res3=await runtime.handle({cmd:'followQueueVerify',accountId:'123',jobId:'123:id:42',mode:'exclude'});
+  assert.equal(res3.ok,true);
+  assert.equal(res3.resolvedState,'excluded');
+  assert.equal(resolved[2].state,'excluded');
+});
+
+test('followQueueRetryEvaluation verifies uncertain evaluation on profile before publishing and reuses draft without re-following',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{comments:true}};
+  const resolved=[];
+  const job={
+    id:'123:id:42',
+    accountId:'123',
+    targetUserId:'42',
+    handle:'target_user',
+    state:'followed',
+    evaluations:[{
+      taskId:'comments:https://x.com/target_user/status/999',
+      originalPostUrl:'https://x.com/target_user/status/999',
+      originalPostId:'999',
+      originalAuthorHandle:'target_user',
+      status:'uncertain',
+      text:'这是一条很有启发性的技术见解',
+      attempts:[{at:'2026-10-17T00:00:00.000Z',stage:'publish'}]
+    }]
+  };
+  const store={
+    list:async()=>[job],
+    getSettings:async()=>({grokEnabled:true,autoPublish:false}),
+    resolveJob:async payload=>{resolved.push(payload);return {ok:true,job:{...job,evaluations:payload.evaluations}};}
+  };
+  const api={
+    storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},
+    tabs:{
+      query:async()=>[{id:1}],
+      create:async()=>({id:99,url:'https://x.com/viewer'}),
+      get:async()=>({id:99,status:'complete',url:'https://x.com/viewer'}),
+      remove:async()=>{}
+    },
+    scripting:{
+      executeScript:async({func})=>{
+        if(String(func).includes('findPublishedQueueQuoteOnPage')){
+          return[{result:{id:'888888',url:'https://x.com/viewer/status/888888'}}];
+        }
+        return[{result:'viewer'}];
+      }
+    }
+  };
+  const runtime=createFollowQueueRuntime({api,store});
+  const res=await runtime.handle({cmd:'followQueueRetryEvaluation',accountId:'123',jobId:job.id,taskId:job.evaluations[0].taskId,publish:true});
+  assert.equal(res.ok,true);
+  assert.equal(res.evaluation.status,'posted');
+  assert.equal(res.evaluation.publishedPostId,'888888');
+  assert.equal(resolved.length,1);
+  assert.equal(resolved[0].evaluations[0].status,'posted');
+});
+
+test('followQueueEnqueue enqueues single or batch candidates into queue store',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{comments:true}};
+  const enqueued=[];
+  const store={
+    enqueue:async candidate=>{enqueued.push(candidate);return {id:'job_1',...candidate};},
+    getSettings:async()=>({enabled:true,every:8,jitter:2})
+  };
+  const api={
+    storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},
+    alarms:{clear:async()=>{},getAll:async()=>[],create:async()=>{}}
+  };
+  const runtime=createFollowQueueRuntime({api,store});
+  const res=await runtime.handle({
+    cmd:'followQueueEnqueue',
+    candidates:[
+      {handle:'user_a',url:'https://x.com/post/1'},
+      {handle:'user_b',sources:[{module:'comments',url:'https://x.com/post/2',enabled:true}]}
+    ]
+  });
+  assert.equal(res.ok,true);
+  assert.equal(res.count,2);
+  assert.equal(enqueued.length,2);
+  assert.equal(enqueued[0].handle,'user_a');
+  assert.equal(enqueued[0].sources[0].module,'comments');
+  assert.equal(enqueued[1].handle,'user_b');
+  assert.equal(enqueued[1].sources[0].url,'https://x.com/post/2');
+});
+

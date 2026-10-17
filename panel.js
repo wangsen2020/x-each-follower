@@ -1,13 +1,13 @@
 import {openFollowQueue} from './follow-queue-entry.js';
-import {selectExecutionLogs} from './execution-log.js';
-import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
+import {selectExecutionLogs} from './execution-log.js';
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage, makeNonce } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage, makeNonce, appendFollowBackSuffix } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 const panelVersion = chrome.runtime.getManifest().version;
@@ -42,6 +42,7 @@ const defaultMutualAutoFollow = () => ({
   minFollowers: 50,
   onlyMutualIntent: true,
   grokAutoComment: false,
+  grokFollowBackSuffix: false,
   processedHandles: [],
   followedCount: 0,
   lastRunAt: null,
@@ -59,6 +60,7 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
   res.grokAutoComment = Boolean(res.grokAutoComment);
+  res.grokFollowBackSuffix = Boolean(res.grokFollowBackSuffix);
   return res;
 }
 
@@ -173,6 +175,7 @@ let activeCommentFilter = 'notMutual';
 let commentPage = 1;
 let commentPageSize = 20;
 let commentSearch = '';
+const selectedCommentHandles = new Set();
 const MAX_FOLLOWER_SCAN = 3000;
 let mutualNetworkRunning = false;
 const followBackBusy = new Set();
@@ -285,7 +288,8 @@ async function saveCommentAutoFollowSettings() {
     dwellJitterSeconds: Math.max(1, Math.min(30, Number($('commentAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('commentAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('commentAutoOnlyIntent') ? $('commentAutoOnlyIntent').checked : true,
-    grokAutoComment: Boolean($('commentAutoGrokComment')?.checked)
+    grokAutoComment: Boolean($('commentAutoGrokComment')?.checked),
+    grokFollowBackSuffix: Boolean($('commentAutoGrokFollowBack')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('评论追踪定时周期至少 5 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于定时周期。');
@@ -308,8 +312,9 @@ function renderCommentAutoFollowSettings() {
   if ($('commentAutoMinFollowers')) $('commentAutoMinFollowers').value = cfg.minFollowers;
   if ($('commentAutoOnlyIntent')) $('commentAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
   if ($('commentAutoGrokComment')) $('commentAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
-  if ($('commentAutoSummary')) $('commentAutoSummary').textContent = cfg.lastSummary || '尚未执行评论用户定时关注';
-  if ($('commentAutoLastTime')) $('commentAutoLastTime').textContent = cfg.lastRunAt ? `最近执行：${new Date(cfg.lastRunAt).toLocaleString()}` : '';
+  if ($('commentAutoGrokFollowBack')) $('commentAutoGrokFollowBack').checked = Boolean(cfg.grokFollowBackSuffix);
+  if ($('commentAutoSummary')) $('commentAutoSummary').textContent = cfg.lastSummary || (cfg.followedCount ? `累计已自动关注 ${cfg.followedCount} 人` : '尚未执行评论用户定时关注');
+  if ($('commentAutoLastTime')) $('commentAutoLastTime').textContent = cfg.lastRunAt ? `最近执行：${new Date(cfg.lastRunAt).toLocaleString()} · 已记录处理 ${(cfg.processedHandles || []).length} 人` : '';
 }
 
 async function openCommentAutoFollowSettings() {
@@ -387,6 +392,16 @@ function renderCommentTracking() {
   $('commentsUserCount').textContent = `${users.length} 位用户 · ${(commentTracking.posts || []).length} 个帖子`;
   $('commentAllCount').textContent = String(users.length);
   $('commentNotMutualCount').textContent = String(notMutualCount);
+  const selectedCount = selectedCommentHandles.size;
+  const badge = $('commentSelectedBadge');
+  if (badge) {
+    badge.hidden = selectedCount === 0;
+    if ($('commentSelectedCount')) $('commentSelectedCount').textContent = String(selectedCount);
+    if ($('commentTotalVisibleCount')) $('commentTotalVisibleCount').textContent = String(users.length);
+  }
+  if ($('commentBatchAddToQueue')) {
+    $('commentBatchAddToQueue').disabled = selectedCount === 0;
+  }
   document.querySelectorAll('[data-comment-filter]').forEach(button => {
     const active = button.dataset.commentFilter === activeCommentFilter;
     button.classList.toggle('active', active);
@@ -399,6 +414,12 @@ function renderCommentTracking() {
   commentPage = Math.min(Math.max(1, commentPage), totalPages);
   const from = (commentPage - 1) * commentPageSize;
   const pageUsers = filtered.slice(from, from + commentPageSize);
+  const selectAll = $('commentSelectAll');
+  if (selectAll) {
+    const pageKeys = pageUsers.map(u => String(u.handle || '').toLowerCase()).filter(Boolean);
+    selectAll.checked = pageKeys.length > 0 && pageKeys.every(k => selectedCommentHandles.has(k));
+    selectAll.indeterminate = pageKeys.some(k => selectedCommentHandles.has(k)) && !selectAll.checked;
+  }
   $('commentPageSummary').textContent = filtered.length ? `${commentPage} / ${totalPages} 页 · ${filtered.length} 条` : '0 条';
   $('commentPrevPage').disabled = commentPage <= 1;
   $('commentNextPage').disabled = commentPage >= totalPages;
@@ -418,6 +439,20 @@ function renderCommentTracking() {
     const key = String(user.handle || '').toLowerCase();
     const cached = profileCache[key];
     const row = document.createElement('tr');
+    const checkCell = document.createElement('td');
+    checkCell.className = 'col-check';
+    const checkInput = document.createElement('input');
+    checkInput.type = 'checkbox';
+    checkInput.className = 'comment-user-check';
+    checkInput.dataset.handle = key;
+    checkInput.checked = selectedCommentHandles.has(key);
+    checkInput.addEventListener('change', () => {
+      if (checkInput.checked) selectedCommentHandles.add(key);
+      else selectedCommentHandles.delete(key);
+      renderCommentTracking();
+    });
+    checkCell.append(checkInput);
+    row.append(checkCell);
     const account = document.createElement('td');
     account.className = 'col-account';
     const profile = document.createElement('a');
@@ -481,7 +516,32 @@ function renderCommentTracking() {
     const followButton = monitorIconButton('follow', user.followedAt ? '已关注' : '关注');
     followButton.disabled = !!user.followedAt || user.relationship?.following === true;
     followButton.addEventListener('click', () => followCommentUser(user, followButton));
-    actions.append(postsButton, followButton, profileButton);
+    const isFollowing = !!user.followedAt || user.relationship?.following === true;
+    const queueButton = monitorIconButton('queue', isFollowing ? '已关注' : '加入关注队列');
+    if (isFollowing) {
+      queueButton.disabled = true;
+    } else {
+      queueButton.addEventListener('click', async () => {
+        queueButton.disabled = true;
+        setMonitorIconButtonState(queueButton, true, '入队中…');
+        const res = await chrome.runtime.sendMessage({
+          cmd: 'followQueueEnqueue',
+          candidate: {
+            handle: user.handle,
+            targetUserId: user.targetUserId || user.rest_id || '',
+            sources: (user.sources || []).map(s => ({ module: 'comments', url: s.url || '', enabled: true }))
+          }
+        }).catch(err => ({ ok: false, error: err.message }));
+        if (res?.ok) {
+          setMonitorIconButtonState(queueButton, false, '已在队列');
+          $('commentTrackingStatus').textContent = `@${user.handle} 已加入关注队列。`;
+        } else {
+          setMonitorIconButtonState(queueButton, false, '加入关注队列');
+          $('commentTrackingStatus').textContent = `加入关注队列失败：${res?.error || '未知错误'}`;
+        }
+      });
+    }
+    actions.append(postsButton, queueButton, followButton, profileButton);
     row.append(actions);
     list.append(row);
   }
@@ -498,11 +558,51 @@ $('commentSearch')?.addEventListener('keydown', event => { if (event.key === 'En
 $('commentPageSize')?.addEventListener('change', event => { commentPageSize = Number(event.target.value) || 20; commentPage = 1; renderCommentTracking(); });
 $('commentPrevPage')?.addEventListener('click', () => { commentPage--; renderCommentTracking(); });
 $('commentNextPage')?.addEventListener('click', () => { commentPage++; renderCommentTracking(); });
+$('commentSelectAll')?.addEventListener('change', event => {
+  const filtered = filteredCommentUsers();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / commentPageSize));
+  const page = Math.min(Math.max(1, commentPage), totalPages);
+  const from = (page - 1) * commentPageSize;
+  const pageUsers = filtered.slice(from, from + commentPageSize);
+  for (const u of pageUsers) {
+    const k = String(u.handle || '').toLowerCase();
+    if (!k) continue;
+    if (event.target.checked) selectedCommentHandles.add(k);
+    else selectedCommentHandles.delete(k);
+  }
+  renderCommentTracking();
+});
+
+$('commentBatchAddToQueue')?.addEventListener('click', async () => {
+  if (!selectedCommentHandles.size) return;
+  const users = (commentTracking.users || []).filter(u => selectedCommentHandles.has(String(u.handle || '').toLowerCase()));
+  if (!users.length) return;
+  const candidates = users.map(u => ({
+    handle: u.handle,
+    targetUserId: u.targetUserId || u.rest_id || '',
+    sources: (u.sources || []).map(s => ({ module: 'comments', url: s.url || '', enabled: true }))
+  }));
+  $('commentTrackingStatus').textContent = `正在将 ${candidates.length} 位评论用户加入关注队列…`;
+  if ($('commentBatchAddToQueue')) $('commentBatchAddToQueue').disabled = true;
+  const res = await chrome.runtime.sendMessage({
+    cmd: 'followQueueEnqueue',
+    candidates
+  }).catch(err => ({ ok: false, error: err.message }));
+  if ($('commentBatchAddToQueue')) $('commentBatchAddToQueue').disabled = false;
+  if (res?.ok) {
+    $('commentTrackingStatus').textContent = `已成功将 ${res.count || candidates.length} 位评论用户加入关注队列。`;
+    selectedCommentHandles.clear();
+    renderCommentTracking();
+  } else {
+    $('commentTrackingStatus').textContent = `加入关注队列失败：${res?.error || '未知错误'}`;
+  }
+});
+
 $('openCommentAutoFollowSettings')?.addEventListener('click', openCommentAutoFollowSettings);
 $('closeCommentAutoFollowDrawer')?.addEventListener('click', closeCommentAutoFollowDrawer);
 $('commentAutoEnabled')?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 const debouncedSaveComment = debounce(() => saveCommentAutoFollowSettings().catch(() => {}), 300);
-for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoDwellJitterSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent', 'commentAutoGrokComment']) {
+for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize', 'commentAutoScrollRounds', 'commentAutoDwellSec', 'commentAutoDwellJitterSec', 'commentAutoMinFollowers', 'commentAutoOnlyIntent', 'commentAutoGrokComment', 'commentAutoGrokFollowBack']) {
   $(id)?.addEventListener('change', () => saveCommentAutoFollowSettings().catch(error => { $('commentTrackingStatus').textContent = error.message; }));
   $(id)?.addEventListener('input', debouncedSaveComment);
 }
@@ -510,10 +610,19 @@ $('saveCommentAutoSettings')?.addEventListener('click', () => saveCommentAutoFol
 $('runCommentAutoNow')?.addEventListener('click', runCommentAutoFollowNow);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.commentTracking) commentTracking = changes.commentTracking.newValue || {users:[], posts:[]};
+  if (changes.commentTracking) {
+    const nextTracking = changes.commentTracking.newValue || {users:[], posts:[]};
+    commentTracking = {
+      ...nextTracking,
+      autoFollow: normalizeAutoFollowConfig(mergeAutoFollowProgress(commentTracking.autoFollow, nextTracking.autoFollow))
+    };
+  }
+  if (changes.commentAutoFollowSettings?.newValue) {
+    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(changes.commentAutoFollowSettings.newValue, commentTracking.autoFollow));
+  }
   if (changes.commentTrackingStatus) commentTrackingStatus = changes.commentTrackingStatus.newValue || null;
   if (changes.autoFollowLogs) { autoFollowLogs = changes.autoFollowLogs.newValue || []; renderLogsModal(); }
-  if (changes.commentTracking || changes.commentTrackingStatus || changes.monitor) { renderCommentTracking(); renderCommentAutoFollowSettings(); }
+  if (changes.commentTracking || changes.commentAutoFollowSettings || changes.commentTrackingStatus || changes.monitor) { renderCommentTracking(); renderCommentAutoFollowSettings(); }
 });
 function monitorUserStatus(user) {
   if (user.state === 'following' || user.relationship?.following === true) return 'following';
@@ -869,9 +978,7 @@ function createMutualTagCell(user, cellTag = 'div') {
 function syncDrawerMask() {
   const anyOpen = [
     $('profileDrawer'),
-    $('settingsDrawer'),
-    $('mutualSettingsDrawer'),
-    $('commentAutoFollowDrawer')
+    $('unreciprocatedSettingsDrawer')
   ].some(el => el && !el.hidden);
   if ($('profileDrawerMask')) $('profileDrawerMask').hidden = !anyOpen;
 }
@@ -943,6 +1050,7 @@ function renderMutualSettingsDrawer() {
   if ($('mutualAutoMinFollowers')) $('mutualAutoMinFollowers').value = cfg.minFollowers ?? 50;
   if ($('mutualAutoOnlyIntent')) $('mutualAutoOnlyIntent').checked = cfg.onlyMutualIntent !== false;
   if ($('mutualAutoGrokComment')) $('mutualAutoGrokComment').checked = Boolean(cfg.grokAutoComment);
+  if ($('mutualAutoGrokFollowBack')) $('mutualAutoGrokFollowBack').checked = Boolean(cfg.grokFollowBackSuffix);
   const summaryEl = $('mutualAutoSummaryText');
   const timeEl = $('mutualAutoLastTime');
   if (summaryEl) {
@@ -1878,7 +1986,8 @@ async function saveMutualAutoFollowSettings() {
     dwellJitterSeconds: Math.max(1, Math.min(30, Number($('mutualAutoDwellJitterSec')?.value ?? 5))),
     minFollowers: Math.max(0, Number($('mutualAutoMinFollowers')?.value ?? 50)),
     onlyMutualIntent: $('mutualAutoOnlyIntent') ? $('mutualAutoOnlyIntent').checked : true,
-    grokAutoComment: Boolean($('mutualAutoGrokComment')?.checked)
+    grokAutoComment: Boolean($('mutualAutoGrokComment')?.checked),
+    grokFollowBackSuffix: Boolean($('mutualAutoGrokFollowBack')?.checked)
   };
   if (!Number.isFinite(next.every) || next.every < 5) throw new Error('定时执行周期至少 5 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于定时执行周期。');
@@ -2247,10 +2356,22 @@ async function visitScrollAndFollowCandidate(user, cfg) {
 
     const evalRes = evaluateMutualProfile(profileCache[key]);
     if (evalRes.isNotRecommended) {
-      return {status: 'skipped', reason: evalRes.recommendReason, dwellSeconds};
+      const reason = evalRes.recommendReason || '主页风险评估未通过';
+      if (profileCache[key]) {
+        profileCache[key].autoFollowState = 'skipped';
+        profileCache[key].autoFollowReason = reason;
+        profileCache[key].autoFollowCheckedAt = new Date().toISOString();
+      }
+      return {status: 'skipped', reason, dwellSeconds};
     }
     if (cfg.onlyMutualIntent !== false && evalRes.tag !== '互粉' && evalRes.recommendLabel !== '推荐') {
-      return {status: 'skipped', reason: evalRes.intentTooltip, dwellSeconds};
+      const reason = evalRes.intentTooltip || '未达到互粉意向或推荐条件';
+      if (profileCache[key]) {
+        profileCache[key].autoFollowState = 'skipped';
+        profileCache[key].autoFollowReason = reason;
+        profileCache[key].autoFollowCheckedAt = new Date().toISOString();
+      }
+      return {status: 'skipped', reason, dwellSeconds};
     }
 
     networkStatus(`已完成 @${handle} 首页看帖（读取 ${updatedProfile.posts?.length || 0} 条帖子 · ${evalRes.recommendLabel}），正在点击关注…`);
@@ -2293,9 +2414,10 @@ async function visitScrollAndFollowCandidate(user, cfg) {
           if (!g.ok) {
             Object.assign(comment, {status: 'grok_failed', reason: g.reason});
           } else {
-            Object.assign(comment, {reply: g.reply, post: g.postText, postUrl: g.postUrl, channel: g.channel});
+            const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply) : g.reply;
+            Object.assign(comment, {reply: replyText, post: g.postText, postUrl: g.postUrl, channel: g.channel});
             networkStatus(`Grok（${g.channel}）已写好评价，正在引用 @${handle} 的原帖发布…`);
-            const pub = await postQuoteOnTab(tabId, chosen, g.reply, publishQuotePostOnPage, sleep);
+            const pub = await postQuoteOnTab(tabId, chosen, replyText, publishQuotePostOnPage, sleep);
             Object.assign(comment, pub.ok ? {status: 'posted'} : {status: 'post_failed', reason: pub.reason});
           }
         }
@@ -2372,6 +2494,8 @@ async function runMutualAutoFollowBatch(source = 'manual') {
         const postsScanned = profileCache[key]?.posts || target.posts || [];
         if (res.status === 'followed') {
           followedNow++;
+          target.autoFollowState = 'followed';
+          target.autoFollowCheckedAt = new Date().toISOString();
           await recordAutoFollowLog({
             scope: 'mutual',
             source,
@@ -2392,6 +2516,9 @@ async function runMutualAutoFollowBatch(source = 'manual') {
           });
         } else if (res.status === 'skipped') {
           skippedNow++;
+          target.autoFollowState = 'skipped';
+          target.autoFollowReason = res.reason || '';
+          target.autoFollowCheckedAt = new Date().toISOString();
           await recordAutoFollowLog({
             scope: 'mutual',
             source,
@@ -2402,6 +2529,8 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             posts: postsScanned
           });
         } else if (res.status === 'rate_limited') {
+          target.autoFollowState = 'rate_limited';
+          target.autoFollowCheckedAt = new Date().toISOString();
           await recordAutoFollowLog({
             scope: 'mutual',
             source,
@@ -2417,6 +2546,9 @@ async function runMutualAutoFollowBatch(source = 'manual') {
           networkStatus(`@${target.handle} 触发关注限制，已暂停 1 小时。`);
           break;
         } else {
+          target.autoFollowState = 'failed';
+          target.autoFollowReason = res.reason || '未找到关注按钮或操作失败';
+          target.autoFollowCheckedAt = new Date().toISOString();
           await recordAutoFollowLog({
             scope: 'mutual',
             source,
@@ -2430,6 +2562,9 @@ async function runMutualAutoFollowBatch(source = 'manual') {
       } catch (err) {
         processed.add(key);
         await recordAutoFollowAttempt(key, 'failed', err?.message || String(err));
+        target.autoFollowState = 'failed';
+        target.autoFollowReason = err?.message || String(err);
+        target.autoFollowCheckedAt = new Date().toISOString();
         await recordAutoFollowLog({
           scope: 'mutual',
           source,
@@ -2440,6 +2575,17 @@ async function runMutualAutoFollowBatch(source = 'manual') {
           posts: profileCache[key]?.posts || []
         });
       }
+      const item = (mutualNetwork.users || []).find(u => (u.handle || '').toLowerCase() === key);
+      if (item && target.autoFollowState) {
+        item.autoFollowState = target.autoFollowState;
+        item.autoFollowReason = target.autoFollowReason || '';
+        item.autoFollowCheckedAt = target.autoFollowCheckedAt || new Date().toISOString();
+      }
+      mutualNetwork.autoFollow = {
+        ...getMutualAutoConfig(),
+        processedHandles: [...processed].slice(-2000)
+      };
+      await saveMutualNetwork();
       renderMutualNetwork();
       if (i < candidates.length - 1) {
         await sleep(1800 + Math.floor(Math.random() * 1500));
@@ -3276,6 +3422,10 @@ let followBackRunning = false;
 let followBackStopped = false;
 
 async function processFollowBack() {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) {
+    setTab('followQueue');
+    return;
+  }
   if (followBackRunning) {
     followBackStopped = true;
     monitorStatus('正在停止回关…');
@@ -3360,7 +3510,7 @@ async function startFollowerScan() {
 $('scanFollowers').addEventListener('click', startFollowerScan);
 $('initialFollowers').addEventListener('click', startFollowerScan);
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
-$('monitorEnabled').addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
+$('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','monitorJitter']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
   activeFollowerTab = button.dataset.followerTab;
@@ -3673,7 +3823,9 @@ try {
   const {autoFollowLogs: savedLocalLogs = []} = await chrome.storage.local.get('autoFollowLogs');
   if (Array.isArray(savedLocalLogs) && savedLocalLogs.length) { autoFollowLogs = savedLocalLogs; renderLogsModal(); }
   const savedComments = await chrome.storage.local.get(['commentTracking', 'commentTrackingStatus', 'commentAutoFollowSettings']);
-  let commentCfg = savedComments.commentAutoFollowSettings || savedComments.commentTracking?.autoFollow;
+  let commentCfg = savedComments.commentAutoFollowSettings
+    ? mergeAutoFollowProgress(savedComments.commentAutoFollowSettings, savedComments.commentTracking?.autoFollow)
+    : savedComments.commentTracking?.autoFollow;
   if (!commentCfg) {
     commentCfg = await loadPersistedAutoFollowSettings('comment');
   }
@@ -3687,6 +3839,15 @@ try {
   chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
   renderCommentTracking();
 } catch (error) { $('commentTrackingStatus').textContent = `评论追踪记录加载失败：${error.message}`; }
+
+// 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
+chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
+  const expectedVersion = '1.1.1';
+  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
+    sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
+    chrome.runtime.reload();
+  }
+}).catch(() => {});
 
 try {
   const savedUnrecip = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings', 'unreciprocatedLogs']);
@@ -3757,7 +3918,7 @@ Promise.all([
     renderMutualSettingsDrawer();
   }
   if (durableCommentAuto) {
-    commentTracking.autoFollow = normalizeAutoFollowConfig(await restoreMissingLocalSetting(chrome.storage.local, 'commentAutoFollowSettings', durableCommentAuto));
+    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, 'commentAutoFollowSettings', durableCommentAuto), commentTracking.autoFollow));
     renderCommentAutoFollowSettings();
   }
   if (Array.isArray(savedLogs) && savedLogs.length && !autoFollowLogs.length) { autoFollowLogs = savedLogs; await chrome.storage.local.set({autoFollowLogs}); renderLogsModal(); }
@@ -3772,7 +3933,7 @@ Promise.all([
     mutualNetwork = {
       ...mutualNetwork,
       ...savedNetwork,
-      autoFollow: normalizeAutoFollowConfig(savedNetwork.autoFollow || mutualNetwork.autoFollow || {})
+      autoFollow: normalizeAutoFollowConfig(mergeAutoFollowProgress(savedNetwork.autoFollow, mutualNetwork.autoFollow))
     };
     await chrome.storage.local.set({mutualNetwork});
     renderMutualNetwork();
@@ -3780,7 +3941,7 @@ Promise.all([
     networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`);
   }
   if (!(commentTracking.users || []).length && savedComments?.users?.length) {
-    commentTracking = {...savedComments, autoFollow:normalizeAutoFollowConfig(savedComments.autoFollow || commentTracking.autoFollow || {})};
+    commentTracking = {...savedComments, autoFollow:normalizeAutoFollowConfig(mergeAutoFollowProgress(savedComments.autoFollow, commentTracking.autoFollow))};
     await chrome.storage.local.set({commentTracking});
     renderCommentTracking();
     renderCommentAutoFollowSettings();
@@ -4189,11 +4350,13 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
     if (testRes?.ok) {
       let isPublished = false;
       let publishReason = '';
-      if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${testRes.reply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
+      const followBackEnabled = Boolean(commentTracking.autoFollow?.grokFollowBackSuffix || mutualNetwork.autoFollow?.grokFollowBackSuffix);
+      const finalReply = followBackEnabled ? appendFollowBackSuffix(testRes.reply) : testRes.reply;
+      if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${finalReply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
         if (handleEl) handleEl.textContent = `正在引用 @${testHandle} 的原帖发布评价…`;
         const postTab = await chrome.tabs.create({ url: 'about:blank', active: false });
         try {
-          const pub = await postQuoteOnTab(postTab.id, testPost, testRes.reply, publishQuotePostOnPage, sleep);
+          const pub = await postQuoteOnTab(postTab.id, testPost, finalReply, publishQuotePostOnPage, sleep);
           isPublished = Boolean(pub.ok);
           publishReason = pub.reason || '';
         } finally {
@@ -4206,8 +4369,8 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
 
       if (handleEl) {
         handleEl.textContent = isPublished
-        ? `✔ 引用评价已发表：@${testHandle} →「${testRes.reply.slice(0, 40)}…」`
-        : `Grok 已生成评价（${testRes.channel}）${publishReason ? '，但引用发布失败：' + publishReason : '，尚未发布'}：「${testRes.reply.slice(0, 40)}…」`;
+        ? `✔ 引用评价已发表：@${testHandle} →「${finalReply.slice(0, 40)}…」`
+        : `Grok 已生成评价（${testRes.channel}）${publishReason ? '，但引用发布失败：' + publishReason : '，尚未发布'}：「${finalReply.slice(0, 40)}…」`;
         handleEl.style.color = isPublished ? '#1d5c3a' : '#8a6d00';
       }
 

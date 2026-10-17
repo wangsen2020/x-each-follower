@@ -37,6 +37,10 @@
 2. **X.com 官方接口与 DOM 兼容性**：
    - 蓝V 图标跟随账号名右侧展示，标签列表保持 12px 字体与 24px 高度规范；
    - 处理 X 官方接口请求时，注意区分 Tweet Snowflake ID 与 User Rest ID，并提供 screen_name 与网络降级兜底机制。
+3. **版本号迭代管理规范**：
+   - 每次开发完新版本，必须及时同步更新版本号（涉及 `manifest.json`、`package.json`、`background.js` 的 `BACKGROUND_BUILD_VERSION` 及 `panel.js` 的版本握手标识）；
+   - **小功能优化与 Bug 修复**：递增第 3 位修订号（Patch，如 `1.0.12` -> `1.0.13`）；
+   - **新功能增强与较大特性迭代**：递增第 2 位次版本号（Minor，且第 3 位归零，如 `1.0.12` -> `1.1.0`），保持清晰的版本迭代习惯。
 
 ## 三、CDP 实机验收的已验证入口
 
