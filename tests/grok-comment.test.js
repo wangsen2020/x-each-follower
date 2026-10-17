@@ -28,6 +28,16 @@ test('the prompt echo (which contains the markers) is never mistaken for an answ
   assert.ok(prompt.includes(nonce));
 });
 
+test('quote prompt seeks a specific, debatable angle without fabricating facts', () => {
+  const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', postText: '今天发布了新版本', nonce: 'task-1'});
+  assert.match(prompt, /原帖一个具体细节/);
+  assert.match(prompt, /反常识.*被忽略的代价.*两难或矛盾/);
+  assert.match(prompt, /鲜明判断或意外反差/);
+  assert.match(prompt, /不能编造或夸大事实、数字、事件、因果及他人动机/);
+  assert.match(prompt, /原帖没有争议时，不硬造冲突/);
+  assert.match(prompt, /只输出选中的一条评价/);
+});
+
 test('extractGrokComment rejects comments over the 280-weight X limit', () => {
   assert.equal(extractGrokComment(`${START}${'好'.repeat(150)}${END}`), '');
   assert.ok(extractGrokComment(`${START}${'好'.repeat(100)}${END}`));
