@@ -1,3 +1,4 @@
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
@@ -2320,8 +2321,9 @@ async function runMutualAutoFollowBatch(source = 'manual') {
     return;
   }
   const cfg = getMutualAutoConfig();
+  const attempts = await readAutoFollowAttempts(mutualNetwork.users || []);
   const candidates = selectValuableMutualTargets(
-    mutualNetwork.users || [],
+    (mutualNetwork.users || []).filter(user => !wasAutoFollowAttempted(user.handle, attempts)),
     cfg,
     profileCache,
     ownFollowingHandles()
@@ -2345,9 +2347,11 @@ async function runMutualAutoFollowBatch(source = 'manual') {
     for (let i = 0; i < candidates.length; i++) {
       const target = candidates[i];
       const key = target.handle.toLowerCase();
+      await recordAutoFollowAttempt(key, 'processing');
       networkStatus(`[${source === 'alarm' ? '定时' : '仿真'}关注 ${i + 1}/${candidates.length}] 正在打开 @${target.handle} 首页下拉看帖…`);
       try {
         const res = await visitScrollAndFollowCandidate(target, cfg);
+        await recordAutoFollowAttempt(key, res.status === 'rate_limited' ? 'processing' : ['followed', 'skipped'].includes(res.status) ? res.status : 'failed', res.reason || '');
         processed.add(key);
         const postsScanned = profileCache[key]?.posts || target.posts || [];
         if (res.status === 'followed') {
@@ -2409,6 +2413,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
         }
       } catch (err) {
         processed.add(key);
+        await recordAutoFollowAttempt(key, 'failed', err?.message || String(err));
         await recordAutoFollowLog({
           scope: 'mutual',
           source,
@@ -3632,7 +3637,9 @@ try {
 
 try {
   const savedNetwork = await chrome.storage.local.get(['mutualNetwork', 'mutualAutoFollowSettings']);
-  let mutualCfg = savedNetwork.mutualAutoFollowSettings || savedNetwork.mutualNetwork?.autoFollow;
+  let mutualCfg = savedNetwork.mutualAutoFollowSettings
+    ? mergeAutoFollowProgress(savedNetwork.mutualAutoFollowSettings, savedNetwork.mutualNetwork?.autoFollow)
+    : savedNetwork.mutualNetwork?.autoFollow;
   if (!mutualCfg) {
     mutualCfg = await loadPersistedAutoFollowSettings('mutual');
   }
@@ -3730,7 +3737,7 @@ Promise.all([
     await chrome.storage.local.set({ unreciprocatedLogs });
   }
   if (durableMutualAuto) {
-    mutualNetwork.autoFollow = normalizeAutoFollowConfig(await restoreMissingLocalSetting(chrome.storage.local, 'mutualAutoFollowSettings', durableMutualAuto));
+    mutualNetwork.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, 'mutualAutoFollowSettings', durableMutualAuto), mutualNetwork.autoFollow));
     renderMutualSettingsDrawer();
   }
   if (durableCommentAuto) {

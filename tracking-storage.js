@@ -1,4 +1,5 @@
 import { durableGet } from './persistent-db.js';
+import {mergeAutoFollowProgress} from './auto-follow-history.js';
 
 /**
  * Read comment tracking data. Background startup must stay local-only so loading
@@ -9,5 +10,5 @@ export async function loadCommentTracking({ includeDurable = true, storage = chr
   const {commentAutoFollowSettings} = await storage.get('commentAutoFollowSettings');
   const durable = includeDurable ? await readDurable('commentTracking').catch(() => null) : null;
   const tracking = durable?.updatedAt > stored?.updatedAt ? durable : stored;
-  return commentAutoFollowSettings != null ? {...tracking, autoFollow:{...(tracking.autoFollow || {}), ...commentAutoFollowSettings}} : tracking;
+  return commentAutoFollowSettings != null ? {...tracking, autoFollow:mergeAutoFollowProgress(commentAutoFollowSettings, tracking.autoFollow)} : tracking;
 }

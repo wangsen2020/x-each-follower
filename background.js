@@ -1,3 +1,4 @@
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
@@ -155,8 +156,10 @@ async function runCommentAutoFollow(source = 'alarm') {
     const {monitor = {}} = await chrome.storage.local.get('monitor');
     if (monitor.pausedUntil && Date.now() < Date.parse(monitor.pausedUntil)) return {ok:false, error:`关注操作暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}`};
     const ownFollowing = new Set([...(monitor.followingUsers || []), ...(monitor.users || []).filter(user => user.state === 'following')].map(user => String(user.handle || '').toLowerCase()));
+    const attempts = await readAutoFollowAttempts(tracking.users || []);
     const candidates = (tracking.users || []).filter(user => {
       const handle = String(user.handle || '').toLowerCase();
+      if (wasAutoFollowAttempted(handle, attempts)) return false;
       const mutual = user.relationship?.following === true && user.relationship?.followedBy === true;
       return handle && !user.followedAt && !ownFollowing.has(handle) && user.relationship?.following !== true && !mutual;
     }).sort((a,b) => String(a.lastSeenAt || '').localeCompare(String(b.lastSeenAt || ''))).slice(0, Math.max(1, Math.min(20, Number(cfg.batchLimit) || 10)));
@@ -177,6 +180,7 @@ async function runCommentAutoFollow(source = 'alarm') {
       let didFollow = false;
       let actualDwellSeconds = cfg.dwellSeconds;
       let commentRes = {status:'off'};
+      await recordAutoFollowAttempt(handle, 'processing');
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
@@ -203,6 +207,7 @@ async function runCommentAutoFollow(source = 'alarm') {
         else if (evaluation.isNotRecommended) skipReason = evaluation.recommendReason || '主页风险评估未通过';
         else if (cfg.onlyMutualIntent !== false && evaluation.tag !== '互粉' && evaluation.recommendLabel !== '推荐') skipReason = evaluation.intentTooltip || '未达到互粉意向或推荐条件';
         if (skipReason) {
+          await recordAutoFollowAttempt(handle, 'skipped', skipReason);
           user.autoFollowState = 'skipped'; user.autoFollowReason = skipReason; user.autoFollowCheckedAt = new Date().toISOString();
           await saveCommentTrackingData(tracking);
           processedCount++;
@@ -237,6 +242,7 @@ async function runCommentAutoFollow(source = 'alarm') {
           }
         }
         if (followed) {
+          await recordAutoFollowAttempt(handle, 'followed');
           user.followedAt ||= new Date().toISOString(); user.followSource = 'comment-auto';
           user.relationship = {...(user.relationship || {}), following:true}; delete user.followFailureReason;
           user.autoFollowState = 'followed'; delete user.autoFollowReason;
@@ -260,6 +266,7 @@ async function runCommentAutoFollow(source = 'alarm') {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       await saveCommentTrackingData(tracking);
+      await recordAutoFollowAttempt(handle, didFollow ? 'followed' : 'failed', user.followFailureReason || '');
       const commentNote = {
         posted: `；✔ 已通过 Grok（${commentRes.channel}）引用原帖发布评价`,
         post_failed: `；Grok 已写好评价但引用发布失败：${commentRes.reason}`,

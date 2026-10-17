@@ -72,3 +72,10 @@ test('comment execution uses explicitly saved Grok switches even with newer dura
   assert.equal(result.autoFollow.grokAutoComment,true);
   assert.equal(result.users[0].handle,'alice');
 });
+
+test('comment loading preserves handled users when separate settings contain an old empty list', async () => {
+  const result=await loadCommentTracking({includeDurable:false,storage:{get:async key=>key==='commentTracking'
+    ? {commentTracking:{autoFollow:{processedHandles:['KimmyKimOL']}}}
+    : {commentAutoFollowSettings:{enabled:true,processedHandles:[]}}}});
+  assert.deepEqual(result.autoFollow.processedHandles,['kimmykimol']);
+});
