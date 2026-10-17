@@ -166,6 +166,26 @@ export function extractGrokComment(raw) {
   return body;
 }
 
+/**
+ * 在引用评价结尾追加吸引关注的文案（如“有关必回”）。
+ * 若已有相关文案则不重复追加，并保证字数不超限。
+ */
+export function appendFollowBackSuffix(text, suffix = '有关必回') {
+  let base = String(text || '').trim();
+  if (!base) return '';
+  const cleanSuffix = String(suffix || '有关必回').trim();
+  if (!cleanSuffix || /有关必回|关注必回|互关必回/i.test(base)) return base;
+  const separator = /[。！？!?…]$/.test(base) ? '' : '。';
+  let combined = `${base}${separator}${cleanSuffix}`;
+  if (tweetWeight(combined) > X_QUOTE_LIMIT) {
+    while (base.length > 0 && tweetWeight(combined) > X_QUOTE_LIMIT) {
+      base = base.slice(0, -1).trim();
+      combined = `${base}${separator}${cleanSuffix}`;
+    }
+  }
+  return combined;
+}
+
 // ---------------- in-page：x.com/i/grok ----------------
 
 /** in-page */
@@ -463,13 +483,13 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
  * 把 Grok 评价作为引用帖发布：打开原帖详情页 → Quote/引用 → 发布并校验。
  * 返回 {ok} 或 {ok:false, reason}。
  */
-export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
+async function postQuoteInWindow(tabId, post, text, publishFn, sleep) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
   const expectedPostText = String(post?.text || post?.postText || '').trim();
   const expectedHandle = String(post?.handle || post?.username || new URL(url).pathname.split('/')[1] || '').replace(/^@/, '');
   const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(() => []);
-  await chrome.tabs.update(tabId, { url });
+  await chrome.tabs.update(tabId, {url});
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
     const t = await chrome.tabs.get(tabId).catch(() => null);
@@ -477,7 +497,9 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     if (t.status === 'complete') break;
     await sleep(500);
   }
-  await sleep(1500);
+  // X reports the document as complete before its React post view has hydrated.
+  // Opening Quote during that interval can navigate to an empty /compose/post shell.
+  await sleep(5500 + Math.floor(Math.random() * 2000));
   const opened = (await chrome.scripting.executeScript({ target: { tabId }, func: openQuoteComposerOnPage, args: [url] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
 
@@ -485,12 +507,14 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   // 不把这类导航错误当作发布失败，等新路由上的引用编辑框确实就绪后重新注入发布阶段。
   const composerDeadline = Date.now() + 20000;
   let composerReady = false;
+  let lastComposerState = null;
   while (Date.now() < composerDeadline) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return { ok: false, reason: '引用帖标签页已关闭' };
     if (tab.status !== 'complete') { await sleep(300); continue; }
     const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url, expectedPostText, expectedHandle] })
       .catch(() => []))?.[0]?.result;
+    if (state) lastComposerState = state;
     if (state?.reason?.includes('不是 Quote')) {
       await dismissDraft();
       return { ok:false, reason:state.reason };
@@ -503,11 +527,34 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   }
   if (!composerReady) {
     await dismissDraft();
-    return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿' };
+    return { ok: false, stage:'composer', reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿', diagnostics: {opened, lastComposerState} };
   }
 
   const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text, expectedPostText, expectedHandle] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
   if (!res?.ok) await dismissDraft();
   return res || { ok: false, reason: '引用帖发布脚本无返回' };
+}
+
+export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep) {
+  const url = String(post?.url || '');
+  if (!/\/status\/\d+/.test(url)) return {ok:false, reason:'该帖没有可用的帖子链接'};
+  // X sometimes navigates to an empty /compose/post shell. Retry only before
+  // publishing; a send-stage failure must never risk posting a duplicate.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let quoteWindow;
+    try {
+      quoteWindow = await chrome.windows.create({url, type:'popup', focused:false, width:800, height:600});
+      const quoteTabId = quoteWindow.tabs?.[0]?.id;
+      if (!quoteTabId) return {ok:false, reason:'引用帖小窗口没有可用的标签页'};
+      await sleep(2500);
+      const result = await postQuoteInWindow(quoteTabId, post, text, publishFn, sleep);
+      if (result.ok || result.stage !== 'composer' || attempt === 1) return result;
+    } catch (error) {
+      return {ok:false, reason:String(error?.message || error)};
+    } finally {
+      if (quoteWindow?.id != null) await chrome.windows.remove(quoteWindow.id).catch(() => {});
+    }
+    await sleep(1000 + Math.floor(Math.random() * 1000));
+  }
 }

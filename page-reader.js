@@ -246,6 +246,12 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
   // X can reshape punctuation in a quoted card; keep the textual match strict
   // while ignoring whitespace and punctuation, and still require the author.
   const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+  const sameExcerpt = (source, embedded) => {
+    const full = normalize(source), shown = normalize(embedded);
+    if (!full || !shown) return false;
+    const prefix = full.slice(0, Math.min(60, full.length, shown.length));
+    return prefix.length >= 8 && shown.startsWith(prefix);
+  };
   const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
   const composers = [];
   const sourceArticle = [...document.querySelectorAll('article')].find(article =>
@@ -256,7 +262,8 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
   const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
   const boxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible);
   for (const box of boxes) {
-    const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+    const dialog = box.closest?.('[role="dialog"]');
+    const root = dialog || box.closest?.('main') || document;
     if (root !== document && !visible(root)) continue;
     const rootText = root.innerText || '';
     const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
@@ -266,16 +273,18 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
       .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
     const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
     const articleCardText = root.innerText || '';
-    const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
-      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+    const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
     ));
     const expectedTextMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
     const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
-    // A link in the surrounding main column can be the original timeline post, not
-    // an embedded quote. Require the composer itself to identify as Quote and contain
-    // the expected source text/author; this rejects X's ordinary Reply composer.
-    const quoteVerified = quoteLabel && !replyingLabel && expectedTextMatch && handleMatch &&
-      Boolean(expectedPostText || originalLink || articleFallback);
+    // X can render the quote card before the "Quote" label, and article cards omit
+    // their status link. In a dialog, verify the embedded author and card content.
+    // A main-column composer still needs the explicit Quote label so the original
+    // article behind an inline Reply box cannot masquerade as its quote card.
+    const quoteVerified = !replyingLabel && handleMatch && (dialog
+      ? Boolean(originalLink || articleFallback || expectedTextMatch)
+      : quoteLabel && expectedTextMatch && Boolean(originalLink || articleFallback));
     const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
     if (quoteVerified) composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
   }
@@ -283,10 +292,8 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
   const composer = composers[0];
   if (!composer) {
     const replyMode = boxes.some(box => {
-      const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
-      const text = root.innerText || '';
-      return /replying to\s+@|回复\s*@/i.test(text) ||
-        !/(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text);
+      const dialog = box.closest?.('[role="dialog"]');
+      return dialog && /replying to\s+@|回复\s*@/i.test(dialog.innerText || '');
     });
     return { ok: true, ready: false, reason: replyMode ? 'X 当前显示的是回复编辑器，不是 Quote 引用编辑器' : '等待 X 的引用帖编辑框及原帖卡片' };
   }
@@ -304,18 +311,35 @@ export function dismissQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
     if (!composer) {
       const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
       const wantedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
+      const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+        [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+      );
+      const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+      const sourceTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
+      const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || expectedPostText;
       const visibleBoxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(box => {
         const rect = box.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
       });
-      composer = visibleBoxes.map(box => box.closest?.('[role="dialog"]') || box.closest?.('main') || document)
+      composer = visibleBoxes.map(box => box.closest?.('[role="dialog"]') || box.closest?.('main'))
         .find(root => {
+          if (!root) return false;
           if ([...root.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))) return true;
           const text = root.innerText || '';
+          if (/replying to\s+@|回复\s*@/i.test(text) ||
+              (wantedHandle && !text.toLowerCase().includes(`@${wantedHandle}`))) return false;
+          if (root.getAttribute?.('role') === 'dialog' && sourceAuthor) {
+            const avatars = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')];
+            const embeddedAuthor = avatars.find(node => node !== avatars[0])?.getAttribute('data-testid') || '';
+            const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+            const normalizedSource = normalize(sourceText), normalizedEmbedded = normalize(embeddedText);
+            const prefix = normalizedSource.slice(0, Math.min(60, normalizedSource.length, normalizedEmbedded.length));
+            return embeddedAuthor === sourceAuthor && (sourceTitle
+              ? text.includes(sourceTitle)
+              : prefix.length >= 8 && normalizedEmbedded.startsWith(prefix));
+          }
           return /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text) &&
-            !/replying to\s+@|回复\s*@/i.test(text) &&
-            (!expectedPostText || normalize(text).includes(normalize(expectedPostText))) &&
-            (!wantedHandle || text.toLowerCase().includes(`@${wantedHandle}`));
+            (!expectedPostText || normalize(text).includes(normalize(expectedPostText)));
         }) || null;
     }
     if (!composer) return {ok:true, closed:false};
@@ -350,6 +374,12 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
       return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
     };
     const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+    const sameExcerpt = (source, embedded) => {
+      const full = normalize(source), shown = normalize(embedded);
+      if (!full || !shown) return false;
+      const prefix = full.slice(0, Math.min(60, full.length, shown.length));
+      return prefix.length >= 8 && shown.startsWith(prefix);
+    };
     const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
     const findComposer = () => {
       const composers = [];
@@ -360,7 +390,8 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
       const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
       const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
       for (const box of [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible)) {
-        const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+        const dialog = box.closest?.('[role="dialog"]');
+        const root = dialog || box.closest?.('main') || document;
         if (root !== document && !visible(root)) continue;
         const rootText = root.innerText || '';
         const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
@@ -370,13 +401,14 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
           .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
         const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
         const articleCardText = root.innerText || '';
-        const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
-          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+        const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
         ));
         const textMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
         const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
-        const quoteVerified = quoteLabel && !replyingLabel && textMatch && handleMatch &&
-          Boolean(expectedPostText || originalLink || articleFallback);
+        const quoteVerified = !replyingLabel && handleMatch && (dialog
+          ? Boolean(originalLink || articleFallback || textMatch)
+          : quoteLabel && textMatch && Boolean(originalLink || articleFallback));
         if (!quoteVerified) continue;
         const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
         composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
@@ -387,10 +419,8 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
     const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
       (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
     const hasReplyComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible).some(box => {
-      const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
-      const rootText = root.innerText || '';
-      return /replying to\s+@|回复\s*@/i.test(rootText) ||
-        !/(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+      const dialog = box.closest?.('[role="dialog"]');
+      return dialog && /replying to\s+@|回复\s*@/i.test(dialog.innerText || '');
     });
 
     let composer = null;
@@ -402,20 +432,37 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
     if (!composer) return { ok: false, reason: '没有找到包含目标原帖的 Quote 编辑框，已停止发布' };
 
     composer.box.focus();
-    const inserted = document.execCommand('insertText', false, text);
-    // Draft.js/React receives Chromium's native input from execCommand. Dispatching a
-    // second input event after a successful insertion duplicates the quote text.
     const normalizeText = value => String(value || '').replace(/\s+/g, '');
-    if (!inserted && !normalizeText(composer.box.innerText).includes(normalizeText(text))) {
-      composer.box.textContent = text;
-      const inputEvent = typeof InputEvent === 'function'
-        ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
-        : new Event('input', {bubbles:true});
-      composer.box.dispatchEvent?.(inputEvent);
-    }
+    try {
+      if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        composer.box.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dt
+        }));
+      }
+    } catch {}
     await sleep(500);
-    const typed = normalizeText(composer.box.innerText);
-    if (typed !== normalizeText(text)) return { ok: false, reason: '引用评价没有准确写入输入框，已停止发布' };
+    let typed = normalizeText(composer.box.innerText);
+    if (typed !== normalizeText(text)) {
+      const inserted = document.execCommand('insertText', false, text);
+      await sleep(300);
+      typed = normalizeText(composer.box.innerText);
+      if (!inserted && !typed.includes(normalizeText(text))) {
+        composer.box.textContent = text;
+        const inputEvent = typeof InputEvent === 'function'
+          ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
+          : new Event('input', {bubbles:true});
+        composer.box.dispatchEvent?.(inputEvent);
+        await sleep(300);
+        typed = normalizeText(composer.box.innerText);
+      }
+    }
+    if (typed !== normalizeText(text) && !typed.includes(normalizeText(text))) {
+      return { ok: false, reason: '引用评价没有准确写入输入框，已停止发布' };
+    }
 
     let send = null;
     for (let i = 0; i < 25; i++) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer} from '../grok-comment.js';
+import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../page-reader.js';
 
 test('extractGrokComment takes the body between markers', () => {
@@ -239,7 +239,7 @@ test('dismissQuoteComposerOnPage only closes the draft for the requested source 
   assert.equal(closeClicks, 1);
 });
 
-function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false} = {}) {
+function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false, quoteLabel = true} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
   globalThis.window = {innerHeight: 900};
   const events = [];
@@ -287,7 +287,7 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageCompo
       if (selector.includes('UserAvatar-Container-')) return articleQuote ? [currentAuthor, embeddedAuthor] : [];
       return [];
     },
-    innerText: articleQuote ? 'Quote\n@alice\nAn article to quote' : embeddedOriginal ? 'Quote\n@alice\nA post to quote' : 'Quote',
+    innerText: articleQuote ? `${quoteLabel ? 'Quote\n' : ''}@alice\nAn article to quote` : embeddedOriginal ? `${quoteLabel ? 'Quote\n' : ''}@alice\nA post to quote` : 'Quote',
     querySelector(selector) {
     if (selector.includes('/status/123')) return embeddedOriginal ? originalLink : null;
     if (selector.includes('UserAvatar-Container-')) return currentAuthor;
@@ -462,16 +462,31 @@ test('publishQuotePostOnPage verifies X article quotes by matching the source au
   assert.equal(events.includes('publish'), true);
 });
 
+test('a linkless X article quote is publishable before the Quote label appears', async () => {
+  const {events} = makeQuotePage({embeddedOriginal: false, articleQuote: true, quoteLabel: false});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'The full article text is not displayed in the card', 'alice');
+  assert.equal(inspected.ready, true);
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有观点的引用评价', 'The full article text is not displayed in the card', 'alice');
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.equal(events.includes('publish'), true);
+});
+
 test('postQuoteOnTab recovers when choosing Quote navigates away and destroys the injected page context', async () => {
   const calls = [];
   const targetUrl = 'https://x.com/alice/status/123';
   globalThis.chrome = {
+    windows: {
+      create: async options => { calls.push('window:' + options.url); return {id: 9, tabs:[{id: 88}]}; },
+      remove: async id => { calls.push('close:' + id); }
+    },
     tabs: {
-      update: async (_tabId, update) => { calls.push('navigate:' + update.url); },
+      update: async (id, update) => {assert.equal(id, 88); calls.push('navigate:' + update.url);},
       get: async () => ({status: 'complete', url: 'https://x.com/compose/post'})
     },
     scripting: {
-      executeScript: async ({func}) => {
+      executeScript: async ({target, func}) => {
+        assert.equal(target.tabId, 88, 'quote actions must use the temporary popup tab');
         calls.push(func.name);
         if (func === openQuoteComposerOnPage) throw new Error('Execution context was destroyed by X route change');
         if (func.name === 'inspectQuoteComposerOnPage') return [{result: {ok: true, ready: true, originalUrl: targetUrl}}];
@@ -480,12 +495,91 @@ test('postQuoteOnTab recovers when choosing Quote navigates away and destroys th
       }
     }
   };
-  const result = await postQuoteOnTab(1, {url: targetUrl}, '引用评价文本', publishQuotePostOnPage, async () => {});
+  const waits = [];
+  const result = await postQuoteOnTab(1, {url: targetUrl}, '引用评价文本', publishQuotePostOnPage, async ms => {waits.push(ms);});
   assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.ok(waits.some(ms => ms >= 5500 && ms < 7500), 'wait for X React hydration before choosing Quote');
   assert.deepEqual(calls, [
+    'window:' + targetUrl,
     'navigate:' + targetUrl,
     'openQuoteComposerOnPage',
     'inspectQuoteComposerOnPage',
-    'publishQuotePostOnPage'
+    'publishQuotePostOnPage',
+    'close:9'
   ]);
+});
+
+test('postQuoteOnTab closes its popup after a failed publish without touching the caller tab', async () => {
+  const calls = [];
+  const url = 'https://x.com/alice/status/123';
+  globalThis.chrome = {
+    windows: {
+      create: async () => ({id: 9, tabs:[{id: 88}]}),
+      remove: async id => {calls.push('close:' + id);}
+    },
+    tabs: {update: async id => {assert.equal(id, 88);}, get: async () => ({status:'complete', url})},
+    scripting: {executeScript: async ({target, func}) => {
+      assert.equal(target.tabId, 88);
+      if (func === openQuoteComposerOnPage) return [{result:{ok:true, stage:'quote_selected'}}];
+      if (func.name === 'inspectQuoteComposerOnPage') return [{result:{ok:true, ready:true, originalUrl:url}}];
+      if (func === publishQuotePostOnPage) return [{result:{ok:false, reason:'X 拒绝发布'}}];
+      if (func.name === 'dismissQuoteComposerOnPage') {calls.push('dismiss'); return [{result:{ok:true, closed:true}}];}
+      return [];
+    }}
+  };
+  const result = await postQuoteOnTab(1, {url}, '引用评价文本', publishQuotePostOnPage, async () => {});
+  assert.deepEqual(result, {ok:false, reason:'X 拒绝发布'});
+  assert.deepEqual(calls, ['dismiss', 'close:9']);
+});
+
+test('postQuoteOnTab retries a blank X quote shell once and closes both popups', async () => {
+  const url = 'https://x.com/alice/status/123';
+  const created = [], closed = [];
+  const now = Date.now;
+  let clock = 100000;
+  Date.now = () => clock;
+  globalThis.chrome = {
+    windows: {
+      create: async () => {const id = created.length + 1; created.push(id); return {id, tabs:[{id:80 + id}]};},
+      remove: async id => {closed.push(id);}
+    },
+    tabs: {update: async () => {}, get: async () => ({status:'complete', url})},
+    scripting: {executeScript: async ({target, func}) => {
+      if (func === openQuoteComposerOnPage) return [{result:{ok:true, stage:'quote_selected'}}];
+      if (func.name === 'inspectQuoteComposerOnPage') return [{result:target.tabId === 81
+        ? {ok:true, ready:false, reason:'等待 X 的引用帖编辑框及原帖卡片'}
+        : {ok:true, ready:true, originalUrl:url}}];
+      if (func === publishQuotePostOnPage) return [{result:{ok:true, mode:'quote'}}];
+      return [{result:{ok:true, closed:true}}];
+    }}
+  };
+  try {
+    const result = await postQuoteOnTab(1, {url}, '引用评价文本', publishQuotePostOnPage, async ms => {clock += ms;});
+    assert.deepEqual(result, {ok:true, mode:'quote'});
+    assert.deepEqual(created, [1, 2]);
+    assert.deepEqual(closed, [1, 2]);
+  } finally {
+    Date.now = now;
+  }
+});
+
+test('appendFollowBackSuffix appends "有关必回" with appropriate punctuation', () => {
+  assert.equal(appendFollowBackSuffix('这是一个好观点'), '这是一个好观点。有关必回');
+  assert.equal(appendFollowBackSuffix('这是一个好观点。'), '这是一个好观点。有关必回');
+  assert.equal(appendFollowBackSuffix('难道不是这样吗？'), '难道不是这样吗？有关必回');
+  assert.equal(appendFollowBackSuffix('太棒了！'), '太棒了！有关必回');
+});
+
+test('appendFollowBackSuffix avoids duplicate suffix if already present', () => {
+  assert.equal(appendFollowBackSuffix('真知灼见。有关必回'), '真知灼见。有关必回');
+  assert.equal(appendFollowBackSuffix('欢迎交流，关注必回！'), '欢迎交流，关注必回！');
+  assert.equal(appendFollowBackSuffix('互关必回的朋友看这里'), '互关必回的朋友看这里');
+  assert.equal(appendFollowBackSuffix(''), '');
+});
+
+test('appendFollowBackSuffix trims base to keep result within X character weight limit', () => {
+  const longText = '这是超长内容'.repeat(50);
+  const result = appendFollowBackSuffix(longText);
+  assert.ok(result.endsWith('有关必回'));
+  assert.ok(tweetWeight(result) <= 280);
 });
