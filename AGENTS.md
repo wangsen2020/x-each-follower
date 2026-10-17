@@ -37,3 +37,10 @@
 2. **X.com 官方接口与 DOM 兼容性**：
    - 蓝V 图标跟随账号名右侧展示，标签列表保持 12px 字体与 24px 高度规范；
    - 处理 X 官方接口请求时，注意区分 Tweet Snowflake ID 与 User Rest ID，并提供 screen_name 与网络降级兜底机制。
+
+## 三、CDP 实机验收的已验证入口
+
+- 本项目允许并使用 CDP 实测 X 和扩展。不要把其他浏览器工具的访问限制推断成 CDP 禁令；先运行 `tools/cdp-session.ps1` 读取当前进程、9222 端口、`/json/version` 和 `/json/list` 的真实状态。
+- 固定使用已有登录态的 `C:\jtmp\xfollower-cdp-profile`。2026-10-17 的实测成功路径是附加到已运行的实例，再从返回的 XFollower 面板目标和 X 页面目标取得实时 WebSocket 地址；PID 和扩展 ID 不能写死。
+- 只有该 profile 完全未运行且端口空闲时才可用脚本的 `-StartIfAbsent` 启动一次。已运行却无可用 CDP 端点时，先报告现场状态，不另开同 profile 实例。
+- 导航或修改草稿时使用本次测试创建的非激活标签；完成后只关闭这个标签。验收以实际 X 页面结果为准，不能只看脚本返回值。详见全局 `x-each-follower-cdp` skill。
