@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {loadCommentTracking} from '../tracking-storage.js';
+import {createStorageTab, closeStorageTab} from '../persistent-db.js';
+
+test('X storage fallback creates an inactive tab in the existing browser window', async () => {
+  const calls = [];
+  const chromeApi = {
+    tabs:{
+      query:async () => [],
+      create:async options => { calls.push(['tab.create', options]); return {id:42}; }
+    },
+    windows:{
+      getLastFocused:async () => ({id:7, type:'normal'}),
+      getAll:async () => { throw new Error('fallback should not be needed'); },
+      create:async () => { throw new Error('must not create a browser window'); }
+    }
+  };
+
+  assert.deepEqual(await createStorageTab(chromeApi), {id:42, owned:true});
+  assert.deepEqual(calls, [['tab.create', {windowId:7, url:'https://x.com/home', active:false}]]);
+});
+
+test('X storage reuses an existing X tab and does not claim ownership', async () => {
+  const chromeApi = {
+    tabs:{query:async () => [{id:15, status:'complete', url:'https://x.com/home'}]},
+    windows:{create:async () => { throw new Error('must reuse the existing X tab'); }}
+  };
+
+  assert.deepEqual(await createStorageTab(chromeApi), {id:15, owned:false});
+});
+
+test('only a task-owned temporary X tab is closed after use', async () => {
+  const removed = [];
+  await closeStorageTab({tabs:{remove:async id => removed.push(id)}}, 42);
+  assert.deepEqual(removed, [42]);
+});
+
+test('startup can load comment tracking without opening the X IndexedDB page', async () => {
+  const stored = {users:[{handle:'alice'}], posts:[]};
+  let durableRead = false;
+  const result = await loadCommentTracking({
+    includeDurable:false,
+    storage:{get:async key => ({[key]:stored})},
+    readDurable:async () => { durableRead = true; return {users:[], posts:[]}; }
+  });
+
+  assert.equal(result, stored);
+  assert.equal(durableRead, false);
+});
+
+test('normal comment tracking reads still prefer newer durable data', async () => {
+  const stored = {updatedAt:'2026-10-16T10:00:00.000Z', users:[], posts:[]};
+  const durable = {updatedAt:'2026-10-17T10:00:00.000Z', users:[{handle:'alice'}], posts:[]};
+  const result = await loadCommentTracking({
+    storage:{get:async key => ({[key]:stored})},
+    readDurable:async () => durable
+  });
+
+  assert.equal(result, durable);
+});

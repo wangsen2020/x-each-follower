@@ -12,6 +12,7 @@ let monitor = {enabled:false, every:60, jitter:15, users:[], queue:[], following
 let analysisRows = [];
 let profileCache = {};
 let followerScanRunning = false;
+const temporaryBackgroundXTabs = new Set();
 let activeFollowerTab = 'following';
 let selectedFollowerHandles = new Set();
 let followerPage = 1;
@@ -317,8 +318,9 @@ async function followCommentUser(user, button) {
   if (!key || user.followedAt || followBackBusy.has(key)) return;
   followBackBusy.add(key);
   setMonitorIconButtonState(button, true, '关注中…');
+  let tabId;
   try {
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await followViaNetwork(tabId, user);
     if (result.ok || result.reason === 'already_following') {
       const item = (commentTracking.users || []).find(u => String(u.handle).toLowerCase() === key) || user;
@@ -336,7 +338,7 @@ async function followCommentUser(user, button) {
       $('commentTrackingStatus').textContent = `@${item.handle} 关注失败：${item.followFailureReason}`;
     }
   } catch (error) { $('commentTrackingStatus').textContent = `关注失败：${error.message}`; }
-  finally { followBackBusy.delete(key); renderCommentTracking(); }
+  finally { await closeBackgroundXActionTab(tabId); followBackBusy.delete(key); renderCommentTracking(); }
 }
 
 // 回关核验：已关注且对方出现在自己的粉丝列表时记录回关时间
@@ -1636,9 +1638,10 @@ async function followMutualUser(user, button) {
   }
   followBackBusy.add(key);
   setMonitorIconButtonState(button, true, '关注中…');
+  let tabId;
   try {
     networkStatus(`正在通过 X 接口关注 @${user.handle}…`);
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await followViaNetwork(tabId, user);
     if (result.ok || result.reason === 'already_following') {
       const followedBy = result.target?.relationshipKnown ? result.target.relationship.followedBy : user.relationship?.followedBy;
@@ -1676,6 +1679,7 @@ async function followMutualUser(user, button) {
   } catch (error) {
     networkStatus(`@${user.handle} 接口关注失败：${error.message}`);
   } finally {
+    await closeBackgroundXActionTab(tabId);
     followBackBusy.delete(key);
     if (button.isConnected) setMonitorIconButtonState(button, false, '关注');
     renderMutualNetwork();
@@ -2659,14 +2663,28 @@ async function backgroundXActionTab() {
   const tabs = await chrome.tabs.query({url:['https://x.com/*', 'https://twitter.com/*']});
   const existing = tabs.find(tab => tab.id && tab.status === 'complete' && !/\/i\/grok/i.test(tab.url || ''));
   if (existing?.id) return existing.id;
-  const tab = await chrome.tabs.create({url:'https://x.com/home', active:false});
+  let win = await chrome.windows.getLastFocused({windowTypes:['normal']}).catch(() => null);
+  if (!win?.id || win.type !== 'normal') {
+    const windows = await chrome.windows.getAll({windowTypes:['normal']});
+    win = windows.find(item => item.focused) || windows[0];
+  }
+  if (!win?.id) throw new Error('没有可用的浏览器窗口，无法创建 X 后台标签页');
+  const tab = await chrome.tabs.create({windowId:win.id, url:'https://x.com/home', active:false});
   if (!tab.id) throw new Error('无法创建 X 后台标签页');
+  temporaryBackgroundXTabs.add(tab.id);
   for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(500);
     const current = await chrome.tabs.get(tab.id).catch(() => null);
     if (current?.status === 'complete') return tab.id;
   }
+  await closeBackgroundXActionTab(tab.id);
   throw new Error('X 后台标签页加载超时');
+}
+
+async function closeBackgroundXActionTab(tabId) {
+  if (tabId == null || !temporaryBackgroundXTabs.has(tabId)) return;
+  temporaryBackgroundXTabs.delete(tabId);
+  await chrome.tabs.remove(tabId).catch(() => {});
 }
 
 function isFollowRateLimited(response) {
@@ -2706,9 +2724,10 @@ async function followBackOne(user, button) {
   }
   followBackBusy.add(key);
   setMonitorIconButtonState(button, true, '回关中…');
+  let tabId;
   try {
     monitorStatus(`正在通过 X 接口回关 @${user.handle}，不会打开个人主页…`);
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await followViaNetwork(tabId, user);
     if (result.ok || result.reason === 'already_following') {
       await markQueueFollowed(user);
@@ -2736,6 +2755,7 @@ async function followBackOne(user, button) {
     setMonitorIconButtonState(button, false, '回关');
     monitorStatus(`@${user.handle} 接口回关失败：${error.message}`);
   } finally {
+    await closeBackgroundXActionTab(tabId);
     followBackBusy.delete(key);
     if (button.isConnected) setMonitorIconButtonState(button, false, '回关');
   }
@@ -2761,9 +2781,10 @@ async function unfollowOne(user, button) {
   if (!key || unfollowBusy.has(key)) return;
   unfollowBusy.add(key);
   setMonitorIconButtonState(button, true, '取关中…');
+  let tabId;
   try {
     monitorStatus(`正在通过 X 接口取消关注 @${user.handle}…`);
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await unfollowViaNetwork(tabId, user);
     if (result.ok) {
       removeUnfollowedUser(key);
@@ -2779,6 +2800,7 @@ async function unfollowOne(user, button) {
   } catch (error) {
     monitorStatus(`@${user.handle} 取关失败：${error.message}`);
   } finally {
+    await closeBackgroundXActionTab(tabId);
     unfollowBusy.delete(key);
     if (button.isConnected) setMonitorIconButtonState(button, false, '取消关注');
   }
@@ -2926,6 +2948,7 @@ async function batchUnfollowSelected() {
       }
     }
   } finally {
+    await closeBackgroundXActionTab(tabId);
     unfollowRunning = false;
     if (btn) btn.textContent = '批量取关';
     await chrome.storage.local.set({monitor, mutualNetwork});
@@ -2943,8 +2966,9 @@ async function batchUnfollowSelected() {
 async function followCandidate(row, button) {
   button.disabled = true;
   button.textContent = '正在关注…';
+  let tabId;
   try {
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await followViaNetwork(tabId, row);
     if (result.ok || result.reason === 'already_following') { await markQueueFollowed(row); button.textContent = result.unblocked ? '已解封并关注' : '已关注'; button.className = 'queue-status'; return; }
     button.textContent = result.reason === 'blocked' ? '已屏蔽' : '未执行';
@@ -2952,7 +2976,7 @@ async function followCandidate(row, button) {
   } catch (error) {
     button.textContent = '失败';
     status(`打开 @${row.handle} 失败：${error.message}`);
-  } finally { button.disabled = false; }
+  } finally { await closeBackgroundXActionTab(tabId); button.disabled = false; }
 }
 
 async function invoke(func, args) {
@@ -3291,6 +3315,7 @@ async function processFollowBack() {
       }
     }
   } finally {
+    await closeBackgroundXActionTab(tabId);
     followBackRunning = false;
     $('processFollowBack')?.classList.remove('is-busy');
     persist('monitor', monitor);
@@ -4411,23 +4436,27 @@ async function runUnreciprocatedCheckCycle(source = 'manual') {
       }
 
       if (tabId != null) {
-        for (let i = 0; i < targets.length; i++) {
-          const user = targets[i];
-          try {
-            const res = await unfollowViaNetwork(tabId, user);
-            if (res.ok) {
-              user.status = 'unfollowed';
-              user.unfollowedAt = new Date().toISOString();
-              removeUnfollowedUser(user.handle);
-              unfollowedCount++;
-              unfollowedHandles.push(user.handle);
+        try {
+          for (let i = 0; i < targets.length; i++) {
+            const user = targets[i];
+            try {
+              const res = await unfollowViaNetwork(tabId, user);
+              if (res.ok) {
+                user.status = 'unfollowed';
+                user.unfollowedAt = new Date().toISOString();
+                removeUnfollowedUser(user.handle);
+                unfollowedCount++;
+                unfollowedHandles.push(user.handle);
+              }
+            } catch (e) {
+              console.error('自动取关失败：', user.handle, e);
             }
-          } catch (e) {
-            console.error('自动取关失败：', user.handle, e);
+            if (i < targets.length - 1) {
+              await sleep(randomizedSeconds(cfg.unfollowDelay || 3, cfg.unfollowDelayJitter, 1, 30) * 1000);
+            }
           }
-          if (i < targets.length - 1) {
-            await sleep(randomizedSeconds(cfg.unfollowDelay || 3, cfg.unfollowDelayJitter, 1, 30) * 1000);
-          }
+        } finally {
+          await closeBackgroundXActionTab(tabId);
         }
       }
     }
@@ -4478,8 +4507,9 @@ async function unfollowOneUnreciprocated(user, btn) {
   const statusEl = $('unreciprocatedStatus');
   if (statusEl) statusEl.textContent = `正在取消关注 @${user.handle}…`;
 
+  let tabId;
   try {
-    const tabId = await backgroundXActionTab();
+    tabId = await backgroundXActionTab();
     const result = await unfollowViaNetwork(tabId, user);
     if (result.ok) {
       user.status = 'unfollowed';
@@ -4497,6 +4527,7 @@ async function unfollowOneUnreciprocated(user, btn) {
   } catch (error) {
     if (statusEl) statusEl.textContent = `@${user.handle} 取关失败：${error.message}`;
   } finally {
+    await closeBackgroundXActionTab(tabId);
     unreciprocatedBusy.delete(key);
     if (btn && btn.isConnected) {
       btn.disabled = false;
@@ -4578,6 +4609,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
       }
     }
   } finally {
+    await closeBackgroundXActionTab(tabId);
     unreciprocatedUnfollowRunning = false;
     if (batchBtn) { batchBtn.textContent = '批量取关'; batchBtn.disabled = selectedUnreciprocatedHandles.size === 0; }
     if (allOverdueBtn) allOverdueBtn.disabled = false;

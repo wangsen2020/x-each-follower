@@ -4,6 +4,7 @@ import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } 
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { loadCommentTracking } from './tracking-storage.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
@@ -99,12 +100,6 @@ async function createNotification(id, options) {
   } catch (error) {
     console.warn('Unable to show XFollower notification:', error?.message || error);
   }
-}
-
-async function loadCommentTracking() {
-  const {commentTracking:stored = {users:[], posts:[]}} = await chrome.storage.local.get('commentTracking');
-  const durable = await durableGet('commentTracking').catch(() => null);
-  return durable?.updatedAt > stored?.updatedAt ? durable : stored;
 }
 
 async function saveCommentTrackingData(tracking) {
@@ -552,7 +547,7 @@ async function restoreSettingsFromSync() {
 
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking().catch(() => null);
+  const tracking = await loadCommentTracking({includeDurable:false}).catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
   const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
   if (unreciprocatedSettings || unreciprocatedTracker?.config) {
@@ -561,7 +556,7 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking().catch(() => null);
+  const tracking = await loadCommentTracking({includeDurable:false}).catch(() => null);
   if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
   const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
   if (unreciprocatedSettings || unreciprocatedTracker?.config) {
