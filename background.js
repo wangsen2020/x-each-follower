@@ -1,3 +1,4 @@
+import {appendExecutionLog} from './execution-log.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -139,13 +140,19 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
 
 // 定时关注执行日志：时间、访问的账号、扫描的帖子、关注结果（面板与后台共用 storage 键 autoFollowLogs）
 async function appendAutoFollowLog(entry) {
-  const {autoFollowLogs = []} = await chrome.storage.local.get('autoFollowLogs');
   const posts = (entry.posts || []).slice(0, 10).map(post => ({text:String(post.text || post || '').slice(0, 120), url:post.url || ''}));
-  autoFollowLogs.unshift({at:new Date().toISOString(), ...entry, posts});
-  await chrome.storage.local.set({autoFollowLogs:autoFollowLogs.slice(0, 300)});
+  return appendExecutionLog({...entry, posts});
 }
 
 async function runCommentAutoFollow(source = 'alarm') {
+  if (commentFollowRunning) return {ok:false, error:'评论用户关注任务正在运行。'};
+  await appendAutoFollowLog({scope:'comment', source, result:'started', detail:'评论追踪任务开始，正在读取配置并筛选候选账号。'});
+  const result = await executeCommentAutoFollow(source);
+  await appendAutoFollowLog({scope:'comment', source, result:result.ok ? 'completed' : 'failed', detail:result.summary || result.error || '任务已结束'});
+  return result;
+}
+
+async function executeCommentAutoFollow(source = 'alarm') {
   if (commentFollowRunning) return {ok:false, error:'评论用户关注任务正在运行。'};
   commentFollowRunning = true;
   let tabId = null;
@@ -593,3 +600,10 @@ async function pollGrokDevBridge() {
   }
 }
 pollGrokDevBridge().catch(() => {});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd !== 'appendExecutionLog') return;
+  if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false, error:'仅扩展页面可写入执行日志'}); return; }
+  appendExecutionLog(message.entry).then(logs => sendResponse({ok:true, logs}), error => sendResponse({ok:false, error:error.message}));
+  return true;
+});

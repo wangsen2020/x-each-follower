@@ -1,3 +1,4 @@
+import {selectExecutionLogs} from './execution-log.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
@@ -3825,9 +3826,9 @@ async function recordAutoFollowLog(entry) {
     grokCommentPostUrl: entry.grokCommentPostUrl || '',
     commentPosted: Boolean(entry.commentPosted)
   };
-  autoFollowLogs.unshift(logItem);
-  if (autoFollowLogs.length > 300) autoFollowLogs = autoFollowLogs.slice(0, 300);
-  await chrome.storage.local.set({autoFollowLogs});
+  const saved = await chrome.runtime.sendMessage({cmd:'appendExecutionLog', entry:logItem});
+  if (!saved?.ok) throw new Error(saved?.error || '日志后台未响应，请重新加载扩展');
+  autoFollowLogs = saved.logs;
   persist('autoFollowLogs', autoFollowLogs);
   renderLogsModal();
 }
@@ -3836,7 +3837,7 @@ function renderLogsModal() {
   const modal = $('logsModal');
   if (!modal) return;
   const isUnrecip = currentLogsScope === 'unreciprocated';
-  const logsData = isUnrecip ? unreciprocatedLogs : autoFollowLogs;
+  const logsData = isUnrecip ? unreciprocatedLogs : selectExecutionLogs(autoFollowLogs, currentLogsScope);
   const badge = $('logsTotalBadge');
   if (badge) badge.textContent = `${logsData.length} 条记录`;
   const empty = $('logsEmpty');
@@ -3904,7 +3905,7 @@ function renderLogsModal() {
     return;
   }
 
-  for (const log of autoFollowLogs) {
+  for (const log of logsData) {
     const card = document.createElement('div');
     card.className = 'log-card';
 
@@ -3939,6 +3940,9 @@ function renderLogsModal() {
         resultBadge.classList.add('review');
         resultBadge.textContent = '仅生成草稿';
       }
+    } else if (['started', 'completed', 'already_following'].includes(log.result)) {
+      resultBadge.classList.add('review');
+      resultBadge.textContent = {started:'任务开始', completed:'本轮结束', already_following:'已关注'}[log.result];
     } else if (log.result === 'followed') {
       resultBadge.classList.add('candidate');
       resultBadge.textContent = '关注成功 ✓';
@@ -3973,7 +3977,7 @@ function renderLogsModal() {
     targetName.textContent = log.name ? repairMojibake(log.name) : '';
 
     targetRow.append(targetLink, targetName);
-    card.append(targetRow);
+    if (log.handle) card.append(targetRow);
 
     // 执行描述
     if (log.detail) {
@@ -4095,13 +4099,17 @@ function renderLogsModal() {
 
 let currentLogsScope = 'autoFollow';
 
-function openLogsModal(scope = 'autoFollow') {
+async function openLogsModal(scope = 'autoFollow') {
   currentLogsScope = scope;
+  if (scope !== 'unreciprocated') {
+    const saved = await chrome.storage.local.get('autoFollowLogs');
+    autoFollowLogs = saved.autoFollowLogs || [];
+  }
   const modal = $('logsModal');
   const mask = $('logsModalMask');
   const title = $('logsModalTitle');
   if (title) {
-    title.textContent = scope === 'unreciprocated' ? '回关监测 · 定时检测与取关日志' : '定时看帖关注 · 执行日志';
+    title.textContent = scope === 'unreciprocated' ? '回关监测 · 定时检测与取关日志' : `${scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '定时看帖关注'} · 执行日志`;
   }
   if (modal) modal.hidden = false;
   if (mask) mask.hidden = false;
@@ -4223,10 +4231,10 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
 $('testMutualGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testMutualGrokBtn', 'mutualGrokStatusHandle', 'mutual'));
 $('testCommentGrokBtn')?.addEventListener('click', () => handleTestGrokClick('testCommentGrokBtn', 'commentGrokStatusHandle', 'comment'));
 
-$('openMutualLogs')?.addEventListener('click', openLogsModal);
-$('openCommentLogs')?.addEventListener('click', openLogsModal);
-$('viewMutualLogsLink')?.addEventListener('click', openLogsModal);
-$('viewCommentLogsLink')?.addEventListener('click', openLogsModal);
+$('openMutualLogs')?.addEventListener('click', () => openLogsModal('mutual'));
+$('openCommentLogs')?.addEventListener('click', () => openLogsModal('comment'));
+$('viewMutualLogsLink')?.addEventListener('click', () => openLogsModal('mutual'));
+$('viewCommentLogsLink')?.addEventListener('click', () => openLogsModal('comment'));
 $('closeLogsModal')?.addEventListener('click', closeLogsModal);
 $('logsModalMask')?.addEventListener('click', closeLogsModal);
 $('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
