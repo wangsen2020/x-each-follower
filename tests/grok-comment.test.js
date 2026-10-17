@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../page-reader.js';
 
+test('queue publication fence stops sending after composer is ready and closes owned popup',async()=>{
+  const prior=globalThis.chrome, closed=[];
+  let published=false;
+  const url='https://x.com/alice/status/123';
+  globalThis.chrome={windows:{create:async()=>({id:8,tabs:[{id:80}]}),remove:async id=>closed.push(id)},
+    tabs:{update:async()=>{},get:async()=>({status:'complete'})},
+    scripting:{executeScript:async({func})=>{
+      if(func===inspectQuoteComposerOnPage)return [{result:{ok:true,ready:true,originalUrl:url}}];
+      if(func===publishQuotePostOnPage)published=true;
+      return [];
+    }}};
+  try {
+    const result=await postQuoteOnTab(1,{url},'引用内容',publishQuotePostOnPage,async()=>{},
+      {beforePublish:async()=>{throw new Error('队列已暂停');}});
+    assert.equal(result.ok,false); assert.match(result.reason,/暂停/);
+    assert.equal(published,false); assert.deepEqual(closed,[8]);
+  } finally {globalThis.chrome=prior;}
+});
+
 test('extractGrokComment takes the body between markers', () => {
   assert.equal(extractGrokComment(`好的\n${START}恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？${END}\n希望有帮助`), '恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？');
 });

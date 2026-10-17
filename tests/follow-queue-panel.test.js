@@ -11,6 +11,23 @@ import {
   mountFollowQueuePanel
 } from '../follow-queue-panel.js';
 
+test('resume button enables scheduling instead of sending another pause', async () => {
+  const root=createMockElement('div'), calls=[];
+  const request=async payload=>{
+    calls.push(payload);
+    if(payload.cmd==='followQueueList') return {ok:true,jobs:[],summary:{isPaused:true}};
+    if(payload.cmd==='followQueueSettings') return {ok:true,settings:{...DEFAULT_SETTINGS}};
+    return {ok:true};
+  };
+  const panel=mountFollowQueuePanel(root,{request,accountId:'123'});
+  await new Promise(r=>setTimeout(r,15));
+  root.querySelectorAll('button').find(button=>button.textContent.includes('恢复调度')).click();
+  await new Promise(r=>setTimeout(r,15));
+  assert.ok(calls.some(call=>call.cmd==='followQueueSaveSettings' && call.settings.enabled===true));
+  assert.equal(calls.some(call=>call.cmd==='followQueuePause'),false);
+  panel.destroy();
+});
+
 // --- Minimal Mock DOM Environment ---
 
 function createMockElement(tagName) {

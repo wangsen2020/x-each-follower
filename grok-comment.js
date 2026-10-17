@@ -483,7 +483,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
  * 把 Grok 评价作为引用帖发布：打开原帖详情页 → Quote/引用 → 发布并校验。
  * 返回 {ok} 或 {ok:false, reason}。
  */
-async function postQuoteInWindow(tabId, post, text, publishFn, sleep) {
+async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = {}) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
   const expectedPostText = String(post?.text || post?.postText || '').trim();
@@ -531,13 +531,14 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep) {
     return { ok: false, stage:'composer', reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿', diagnostics: {opened, lastComposerState} };
   }
 
+  if (options.beforePublish) await options.beforePublish();
   const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text, expectedPostText, expectedHandle] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
   if (!res?.ok) await dismissDraft();
   return res || { ok: false, reason: '引用帖发布脚本无返回' };
 }
 
-export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep) {
+export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep, options = {}) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return {ok:false, reason:'该帖没有可用的帖子链接'};
   // X sometimes navigates to an empty /compose/post shell. Retry only before
@@ -549,7 +550,7 @@ export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep) {
       const quoteTabId = quoteWindow.tabs?.[0]?.id;
       if (!quoteTabId) return {ok:false, reason:'引用帖小窗口没有可用的标签页'};
       await sleep(2500);
-      const result = await postQuoteInWindow(quoteTabId, post, text, publishFn, sleep);
+      const result = await postQuoteInWindow(quoteTabId, post, text, publishFn, sleep, options);
       if (result.ok || result.stage !== 'composer' || attempt === 1) return result;
     } catch (error) {
       return {ok:false, reason:String(error?.message || error)};

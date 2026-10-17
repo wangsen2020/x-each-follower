@@ -1,3 +1,4 @@
+import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import {appendExecutionLog} from './execution-log.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
@@ -13,6 +14,7 @@ chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
 });
 
+const followQueueRuntime = createFollowQueueRuntime();
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -82,7 +84,8 @@ export function scheduleUnreciprocatedTracker(rawCfg = {}) {
   }).catch(() => {});
 }
 
-function scheduleCommentAutoFollow(rawCfg = {}) {
+async function scheduleCommentAutoFollow(rawCfg = {}) {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear('x-comment-auto-follow'); return; }
   const cfg = normalizeAutoFollowConfig(rawCfg);
   chrome.alarms.clear('x-comment-auto-follow').then(() => {
     if (!cfg.enabled) return;
@@ -145,6 +148,7 @@ async function appendAutoFollowLog(entry) {
 }
 
 async function runCommentAutoFollow(source = 'alarm') {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) return {ok:false,error:'请在关注队列中执行统一关注任务'};
   if (commentFollowRunning) return {ok:false, error:'评论用户关注任务正在运行。'};
   await appendAutoFollowLog({scope:'comment', source, result:'started', detail:'评论追踪任务开始，正在读取配置并筛选候选账号。'});
   const result = await executeCommentAutoFollow(source);
@@ -425,7 +429,15 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
+export const BACKGROUND_BUILD_VERSION = '1.1.0';
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd === 'getBackgroundBuildVersion') { sendResponse({ok:true,version:BACKGROUND_BUILD_VERSION}); return; }
+  if (message?.cmd?.startsWith('followQueue')) {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return; }
+    followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
+    return true;
+  }
   if (message?.cmd === 'grokStreamAnswer') {
     deliverGrokStream(message.text || '');
     return;
@@ -469,6 +481,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === QUEUE_ALARM) {
+    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
+    await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
+    return;
+  }
+  if (['x-mutual-auto-follow','x-comment-auto-follow'].includes(alarm.name) && (await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear(alarm.name); return; }
   if (alarm.name === 'x-comment-auto-follow') {
     const tracking = await loadCommentTracking();
     const cfg = tracking.autoFollow || {};
@@ -600,6 +618,15 @@ async function pollGrokDevBridge() {
   }
 }
 pollGrokDevBridge().catch(() => {});
+
+followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
+
+let queueSourceSyncTimer;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !['monitor','mutualNetwork','commentTracking'].some(key => changes[key])) return;
+  clearTimeout(queueSourceSyncTimer);
+  queueSourceSyncTimer = setTimeout(() => followQueueRuntime.syncCandidates().catch(error => console.warn('关注队列入队失败:', error)), 800);
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd !== 'appendExecutionLog') return;

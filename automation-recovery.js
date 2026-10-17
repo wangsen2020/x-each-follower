@@ -24,7 +24,7 @@ export async function restoreMissingSyncedSettings(storage = chrome.storage) {
 // A service worker may restart with alarms missing after an extension update.
 // Reconcile without moving existing deadlines on every worker wake-up.
 export async function recoverAutomationAlarms({storage = chrome.storage.local, alarms = chrome.alarms} = {}) {
-  const data = await storage.get([...settingsKeys, 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker', 'monitor']);
+  const data = await storage.get([...settingsKeys, 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker', 'monitor', 'followQueueBinding']);
   const existing = new Set((await alarms.getAll()).map(alarm => alarm.name));
   const schedules = [
     ['x-mutual-auto-follow', data.mutualAutoFollowSettings ?? data.mutualNetwork?.autoFollow, 5, 5],
@@ -34,6 +34,7 @@ export async function recoverAutomationAlarms({storage = chrome.storage.local, a
   ];
   const restored = [];
   for (const [name, config, fallback, minimum] of schedules) {
+    if (data.followQueueBinding?.activated && ['x-mutual-auto-follow','x-comment-auto-follow'].includes(name)) { await alarms.clear(name); continue; }
     if (!config?.enabled || existing.has(name)) continue;
     const delayInMinutes = randomizedInteger(Number(config.every) || fallback, Math.max(1, Number(config.jitter) || 1), minimum, 1440);
     await alarms.create(name, {delayInMinutes});

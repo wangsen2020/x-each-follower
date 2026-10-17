@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"><link rel="stylesheet" href="follow-queue-panel.css"></head>
 <body>
 <main>
   <aside class="sidebar" aria-label="主导航">
@@ -8,10 +8,12 @@
     <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
+    <button class="nav-tab" data-tab="followQueue">关注队列</button>
     <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count">0</span></button>
   <div class="sidebar-foot">v1.0.2<br>本地数据</div>
   </aside>
   <header><span class="eyebrow">XFollower · v1.0.2</span><h1>粉丝管理</h1></header>
+  <section id="followQueueSection" class="tab-panel" data-panel="followQueue" hidden></section>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
       <div class="follower-tabs" role="tablist">

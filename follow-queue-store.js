@@ -38,6 +38,7 @@ const SETTING_BOUNDS = {
 };
 
 const DURABLE_STATES = ['followed', 'skipped', 'excluded', 'uncertain'];
+const IMPORT_RANK = {skipped: 1, uncertain: 2, excluded: 3, followed: 4};
 
 const STATE_RANK = {
   pending: 1,
@@ -202,29 +203,83 @@ function outcomeKey(accountId, targetKey) {
   return `${accountId}\0${targetKey}`;
 }
 
-function rememberOutcome(outcomes, job) {
-  if (!job.targetKey) return;
-  if (!['followed', 'skipped', 'excluded', 'uncertain'].includes(job.state) && !job.followResult) return;
+async function rememberOutcome(outcomes, record) {
+  if (!record?.targetKey || !DURABLE_STATES.includes(record.state)) return;
+  const key = outcomeKey(record.accountId, record.targetKey);
+  const existing = await requestResult(outcomes.get(key));
+  if (existing && (IMPORT_RANK[existing.state] || 0) > (IMPORT_RANK[record.state] || 0)) return;
   outcomes.put({
-    key: outcomeKey(job.accountId, job.targetKey),
+    key,
+    accountId: record.accountId,
+    targetKey: record.targetKey,
+    targetUserId: record.targetUserId || '',
+    handleCanonical: record.handleCanonical || '',
+    state: record.state,
+    followResult: clone(record.followResult),
+    evaluations: clone(record.evaluations || []),
+    updatedAt: record.updatedAt
+  });
+}
+
+function outcomeFromJob(job) {
+  return {
     accountId: job.accountId,
     targetKey: job.targetKey,
     targetUserId: job.targetUserId,
     handleCanonical: job.handleCanonical,
     state: job.state,
-    followResult: clone(job.followResult),
-    evaluations: clone(job.evaluations),
+    followResult: job.followResult,
+    evaluations: job.evaluations,
     updatedAt: job.updatedAt
-  });
+  };
 }
 
 function applyDurableState(job, outcome) {
-  if (!outcome || job.state !== 'pending' || !DURABLE_STATES.includes(outcome.state)) return job;
+  if (!outcome || !DURABLE_STATES.includes(outcome.state)) return false;
+  if (job.state !== 'pending' && job.state !== 'retry') return false;
   job.state = outcome.state;
   job.stage = outcome.state === 'uncertain' ? 'verify' : outcome.state;
   job.followResult = clone(outcome.followResult);
   job.evaluations = mergeEvaluations(job.evaluations, outcome.evaluations, job.id);
-  return job;
+  delete job.importedHold;
+  return true;
+}
+
+function importedHoldActive(job) {
+  return !!(job?.importedHold && DURABLE_STATES.includes(job.importedHold.state));
+}
+
+function succeededFollowResult(result) {
+  return !!(result && typeof result === 'object' && (result.added === true || result.following === true));
+}
+
+function writeImportedHold(job, state, followResult) {
+  const current = IMPORT_RANK[job.importedHold?.state] || 0;
+  const incoming = IMPORT_RANK[state] || 0;
+  if (incoming < current) return false;
+  // A confirmed follow stays ahead of a later skipped or uncertain import.
+  if (incoming < IMPORT_RANK.followed && succeededFollowResult(job.importedHold?.followResult || job.followResult)) {
+    return false;
+  }
+  job.importedHold = {
+    state,
+    followResult: followResult && typeof followResult === 'object' ? clone(followResult) : null
+  };
+  return true;
+}
+
+function releaseLease(job) {
+  job.lease = {owner: '', version: job.lease?.version || 0, expiresAt: 0};
+}
+
+function applyImportedHold(job) {
+  const hold = job.importedHold;
+  if (!hold || !DURABLE_STATES.includes(hold.state)) return false;
+  job.state = hold.state;
+  job.stage = hold.state === 'uncertain' ? 'verify' : hold.state;
+  job.followResult = clone(hold.followResult);
+  delete job.importedHold;
+  return true;
 }
 
 function realUserId(job) {
@@ -348,7 +403,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
   }
 
   return {
-    async enqueue({accountId, targetUserId, handle, sources} = {}) {
+    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult} = {}) {
       const account = requireAccountId(accountId);
       const userId = userIdString(targetUserId);
       const canonical = canonicalHandle(handle);
@@ -446,7 +501,38 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
 
         const durableHit = pickDurable(durable, account, primary, canonical);
-        if (durableHit && primary.state === 'pending') applyDurableState(primary, durableHit);
+        if (durableHit && (primary.state === 'pending' || primary.state === 'retry')) {
+          applyDurableState(primary, durableHit);
+        } else if (durableHit && leaseHeld(primary)) {
+          // The in-flight follow keeps its lease until expiration. The stored outcome
+          // waits on importedHold so renew cannot extend work the outcome already closed.
+          writeImportedHold(primary, durableHit.state, durableHit.followResult);
+          primary.evaluations = mergeEvaluations(primary.evaluations, durableHit.evaluations, primary.id);
+        }
+        if (DURABLE_STATES.includes(initialState) && leaseHeld(primary)) {
+          if (writeImportedHold(primary, initialState, followResult)) {
+            rememberOutcome(outcomes, {
+              accountId: primary.accountId,
+              targetKey: primary.targetKey,
+              targetUserId: primary.targetUserId,
+              handleCanonical: primary.handleCanonical,
+              state: primary.importedHold.state,
+              followResult: primary.importedHold.followResult,
+              evaluations: primary.evaluations,
+              updatedAt: seenAt
+            });
+          }
+        } else if (DURABLE_STATES.includes(initialState) && !leaseHeld(primary)) {
+          const currentRank = IMPORT_RANK[primary.state] || 0;
+          const incoming = IMPORT_RANK[initialState] || 0;
+          const keepSucceeded = succeededFollowResult(primary.followResult) && incoming < IMPORT_RANK.followed;
+          if (incoming >= currentRank && !keepSucceeded) {
+            primary.state = initialState;
+            primary.stage = initialState === 'uncertain' ? 'verify' : initialState;
+            if (followResult && typeof followResult === 'object') primary.followResult = clone(followResult);
+            delete primary.importedHold;
+          }
+        }
         jobs.put(primary);
         if (DURABLE_STATES.includes(primary.state)) rememberOutcome(outcomes, primary);
         return clone(primary);
@@ -473,10 +559,12 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         const all = await readJobs(jobs);
         for (const job of all) {
           if (job.state === 'running' && !(job.lease?.expiresAt > seenAt)) {
-            job.state = 'uncertain';
-            job.stage = 'verify';
+            if (!applyImportedHold(job)) {
+              job.state = 'uncertain';
+              job.stage = 'verify';
+            }
             job.updatedAt = seenAt;
-            job.lease = {owner: '', version: job.lease?.version || 0, expiresAt: 0};
+            releaseLease(job);
             jobs.put(job);
             rememberOutcome(outcomes, job);
           }
@@ -515,6 +603,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         const all = await readJobs(jobs);
         const job = all.find(item => item.id === id);
         if (!job) return {ok: false, reason: 'missing'};
+        if (importedHoldActive(job)) return {ok: false, reason: 'imported-hold'};
         const lease = job.lease || {owner: '', version: 0, expiresAt: 0};
         if (lease.owner !== owner || lease.version !== version) {
           return {ok: false, reason: 'stale'};
@@ -542,6 +631,64 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         jobs.put(job);
         rememberOutcome(outcomes, job);
         return {ok: true, job: clone(job)};
+      });
+    },
+
+    async importOutcome({accountId, targetUserId, handle, sources, state, followResult} = {}) {
+      if (!DURABLE_STATES.includes(state)) {
+        throw new Error('importOutcome state must be followed, skipped, excluded, or uncertain');
+      }
+      return this.enqueue({accountId, targetUserId, handle, sources, initialState: state, followResult});
+    },
+
+    async renew({id, owner, version, leaseMs} = {}) {
+      if (typeof id !== 'string' || id === '') throw new Error('job id is required');
+      if (typeof owner !== 'string' || owner === '') throw new Error('lease owner is required');
+      if (!Number.isFinite(version)) throw new Error('lease version is required');
+      if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('leaseMs must be a positive number');
+      const seenAt = now();
+      return withTransaction('readwrite', async ({jobs}) => {
+        const all = await readJobs(jobs);
+        const job = all.find(item => item.id === id);
+        if (!job) return {ok: false, reason: 'missing'};
+        if (importedHoldActive(job)) return {ok: false, reason: 'imported-hold'};
+        const lease = job.lease || {owner: '', version: 0, expiresAt: 0};
+        if (job.state !== 'running' || lease.owner !== owner || lease.version !== version) {
+          return {ok: false, reason: 'stale'};
+        }
+        if (!(lease.expiresAt > seenAt)) return {ok: false, reason: 'expired'};
+        job.lease = {owner, version: lease.version + 1, expiresAt: seenAt + leaseMs};
+        job.updatedAt = seenAt;
+        jobs.put(job);
+        return {ok: true, job: clone(job)};
+      });
+    },
+
+    async updateSources({accountId, modules} = {}) {
+      const account = requireAccountId(accountId);
+      const flags = {};
+      for (const key of ['fans', 'mutual', 'comments']) {
+        if (modules && typeof modules[key] === 'boolean') flags[key] = modules[key];
+      }
+      return withTransaction('readwrite', async ({jobs}) => {
+        const all = await readJobs(jobs);
+        const touched = [];
+        for (const job of all) {
+          if (job.accountId !== account || !Array.isArray(job.sources)) continue;
+          let changed = false;
+          for (const source of job.sources) {
+            if (!Object.prototype.hasOwnProperty.call(flags, source.module)) continue;
+            if (source.enabled !== flags[source.module]) {
+              source.enabled = flags[source.module];
+              changed = true;
+            }
+          }
+          if (!changed) continue;
+          job.updatedAt = now();
+          jobs.put(job);
+          touched.push(clone(job));
+        }
+        return touched;
       });
     },
 

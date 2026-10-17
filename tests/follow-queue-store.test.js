@@ -560,3 +560,381 @@ test('skipped, excluded, and uncertain outcomes stay closed after the job row is
   }
   assert.equal(await store.claim({accountId: 'acc-1', owner: 'resurrect', leaseMs: 100}), null);
 });
+
+test('importOutcome is idempotent, keeps the stronger hold, and does not touch an active lease', async () => {
+  const {store} = storeFor();
+  const skipped = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '501',
+    handle: '@Ada',
+    state: 'skipped',
+    followResult: {reason: 'legacy-skip'},
+    sources: [{module: 'fans', url: 'https://x.com/ada', enabled: false}]
+  });
+  assert.equal(skipped.state, 'skipped');
+  const again = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '501',
+    handle: 'ada',
+    state: 'skipped',
+    followResult: {reason: 'legacy-skip'},
+    sources: [{module: 'fans', url: 'https://x.com/ada', enabled: true}]
+  });
+  assert.equal(again.id, skipped.id);
+  assert.equal(again.sources.length, 1);
+  assert.equal(again.sources[0].enabled, false);
+  const stronger = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '501',
+    handle: 'ada',
+    state: 'followed',
+    followResult: {following: true},
+    sources: [{module: 'mutual', url: 'https://x.com/mutual/ada'}]
+  });
+  assert.equal(stronger.state, 'followed');
+  assert.equal(stronger.followResult.following, true);
+  const weaker = await store.importOutcome({
+    accountId: 'acc-1',
+    handle: 'ada',
+    state: 'uncertain',
+    followResult: {unknown: true},
+    sources: []
+  });
+  assert.equal(weaker.id, skipped.id);
+  assert.equal(weaker.state, 'followed');
+  assert.equal(weaker.followResult.following, true);
+
+  const open = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '502',
+    handle: 'bea',
+    sources: [{module: 'fans', url: 'https://x.com/bea', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 80});
+  assert.equal(claimed.id, open.id);
+  const held = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '502',
+    handle: 'bea',
+    state: 'skipped',
+    followResult: {reason: 'collision'},
+    sources: [{module: 'comments', url: 'https://x.com/p/bea'}]
+  });
+  assert.equal(held.state, 'running');
+  assert.equal(held.lease.owner, 'worker');
+  assert.equal(held.lease.version, claimed.lease.version);
+  assert.equal(held.followResult, null);
+  assert.deepEqual(held.importedHold, {state: 'skipped', followResult: {reason: 'collision'}});
+  assert.equal(held.sources.length, 2);
+  const strongerHold = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '502',
+    handle: 'bea',
+    state: 'uncertain',
+    followResult: {reason: 'needs-verify'},
+    sources: []
+  });
+  assert.equal(strongerHold.state, 'running');
+  assert.equal(strongerHold.importedHold.state, 'uncertain');
+  assert.equal(strongerHold.importedHold.followResult.reason, 'needs-verify');
+  assert.equal(strongerHold.lease.version, claimed.lease.version);
+  const weakerHold = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '502',
+    handle: 'bea',
+    state: 'skipped',
+    followResult: {reason: 'weaker'},
+    sources: []
+  });
+  assert.equal(weakerHold.importedHold.state, 'uncertain');
+  assert.equal(weakerHold.lease.version, claimed.lease.version);
+  await assert.rejects(() => store.importOutcome({accountId: 'acc-1', handle: 'x', state: 'retry'}), /importOutcome/);
+});
+
+test('importedHold blocks renew and settle, then claim applies it after the lease expires', async () => {
+  const {store, clock} = storeFor();
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '880',
+    handle: 'lea',
+    sources: [{module: 'fans', url: 'https://x.com/lea', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 50});
+  const held = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '880',
+    handle: 'lea',
+    state: 'followed',
+    followResult: {following: true, imported: true},
+    sources: [{module: 'mutual', url: 'https://x.com/lea', enabled: true}]
+  });
+  assert.equal(held.state, 'running');
+  assert.equal(held.lease.owner, 'worker');
+  assert.equal(held.lease.version, claimed.lease.version);
+  assert.equal(held.lease.expiresAt, claimed.lease.expiresAt);
+  assert.equal(held.followResult, null);
+  assert.deepEqual(held.importedHold, {state: 'followed', followResult: {following: true, imported: true}});
+
+  const renewed = await store.renew({
+    id: claimed.id,
+    owner: 'worker',
+    version: claimed.lease.version,
+    leaseMs: 50
+  });
+  assert.deepEqual(renewed, {ok: false, reason: 'imported-hold'});
+  const settled = await store.settle({
+    id: claimed.id,
+    owner: 'worker',
+    version: claimed.lease.version,
+    state: 'followed',
+    patch: {stage: 'followed', followResult: {added: true}}
+  });
+  assert.deepEqual(settled, {ok: false, reason: 'imported-hold'});
+  const still = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
+  assert.equal(still.state, 'running');
+  assert.equal(still.lease.version, claimed.lease.version);
+  assert.equal(still.followResult, null);
+  assert.equal(still.importedHold.state, 'followed');
+
+  clock.t += 50;
+  assert.equal(await store.claim({accountId: 'acc-1', owner: 'next', leaseMs: 50}), null);
+  const closed = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
+  assert.equal(closed.state, 'followed');
+  assert.equal(closed.followResult.following, true);
+  assert.equal(closed.importedHold, undefined);
+  assert.equal(closed.lease.owner, '');
+  assert.equal(closed.lease.expiresAt, 0);
+
+  const again = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '880',
+    handle: 'lea',
+    sources: [{module: 'fans', url: 'https://x.com/lea', enabled: true}]
+  });
+  assert.equal(again.id, claimed.id);
+  assert.equal(again.state, 'followed');
+  assert.equal(await store.claim({accountId: 'acc-1', owner: 'next', leaseMs: 50}), null);
+});
+
+test('promoting a running or retry handle job honors a durable user id outcome with no jobs row', async () => {
+  const {store, indexedDB, clock} = storeFor();
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    sources: [{module: 'fans', url: 'https://x.com/ada', enabled: true}]
+  });
+  const verified = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 100});
+  await store.settle({
+    id: verified.id,
+    owner: 'worker',
+    version: verified.lease.version,
+    state: 'followed',
+    patch: {
+      stage: 'followed',
+      followResult: {added: true, following: true},
+      evaluations: [{
+        taskId: 'eval-ada',
+        originalAuthorId: '7',
+        originalPostId: '900',
+        originalPostUrl: 'https://x.com/i/status/900',
+        text: 'kept',
+        status: 'failed',
+        publishedPostId: '',
+        publishedPostUrl: '',
+        attempts: [{at: 1, result: 'grok-failed'}]
+      }]
+    }
+  });
+  indexedDB.databases.get('test-queue').db.data.jobs.clear();
+
+  const running = await store.enqueue({
+    accountId: 'acc-1',
+    handle: '@Ada',
+    sources: [{module: 'comments', url: 'https://x.com/p/ada', enabled: true}]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'external', leaseMs: 80});
+  assert.equal(claimed.id, running.id);
+  assert.equal(claimed.targetKey, 'handle:ada');
+  const promoted = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    handle: 'ada',
+    sources: [{module: 'mutual', url: 'https://x.com/mutual/ada', enabled: false}]
+  });
+  assert.equal(promoted.id, claimed.id);
+  assert.equal(promoted.state, 'running');
+  assert.equal(promoted.targetUserId, '42');
+  assert.equal(promoted.targetKey, 'id:42');
+  assert.equal(promoted.lease.owner, 'external');
+  assert.equal(promoted.lease.version, claimed.lease.version);
+  assert.equal(promoted.lease.expiresAt, claimed.lease.expiresAt);
+  assert.equal(promoted.followResult, null);
+  assert.deepEqual(promoted.importedHold, {state: 'followed', followResult: {added: true, following: true}});
+  assert.equal(promoted.evaluations[0].taskId, 'eval-ada');
+  assert.equal(promoted.evaluations[0].originalPostId, '900');
+  const renewed = await store.renew({
+    id: claimed.id,
+    owner: 'external',
+    version: claimed.lease.version,
+    leaseMs: 80
+  });
+  assert.deepEqual(renewed, {ok: false, reason: 'imported-hold'});
+  const afterRenew = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
+  assert.equal(afterRenew.lease.version, claimed.lease.version);
+  assert.equal(afterRenew.lease.expiresAt, claimed.lease.expiresAt);
+
+  const skippedHold = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    handle: 'ada',
+    state: 'skipped',
+    followResult: {reason: 'legacy-skip'},
+    sources: []
+  });
+  assert.equal(skippedHold.importedHold.state, 'followed');
+  assert.equal(skippedHold.importedHold.followResult.added, true);
+  assert.equal(skippedHold.importedHold.followResult.following, true);
+  assert.equal(skippedHold.lease.version, claimed.lease.version);
+  const uncertainHold = await store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    handle: 'ada',
+    state: 'uncertain',
+    followResult: {unknown: true},
+    sources: []
+  });
+  assert.equal(uncertainHold.state, 'running');
+  assert.equal(uncertainHold.importedHold.state, 'followed');
+  assert.deepEqual(uncertainHold.importedHold.followResult, {added: true, following: true});
+  assert.equal(uncertainHold.lease.expiresAt, claimed.lease.expiresAt);
+
+  clock.t += 80;
+  assert.equal(await store.claim({accountId: 'acc-1', owner: 'next', leaseMs: 40}), null);
+  const closed = (await store.list({accountId: 'acc-1'})).find(job => job.id === claimed.id);
+  assert.equal(closed.state, 'followed');
+  assert.equal(closed.followResult.added, true);
+  assert.equal(closed.importedHold, undefined);
+  assert.equal(closed.lease.owner, '');
+  assert.equal(closed.evaluations[0].taskId, 'eval-ada');
+
+  const retryStore = storeFor();
+  await retryStore.store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    sources: [{module: 'fans', url: 'https://x.com/ada', enabled: true}]
+  });
+  const verifiedRetry = await retryStore.store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 100});
+  await retryStore.store.settle({
+    id: verifiedRetry.id,
+    owner: 'worker',
+    version: verifiedRetry.lease.version,
+    state: 'followed',
+    patch: {
+      stage: 'followed',
+      followResult: {added: true, following: true},
+      evaluations: [{
+        taskId: 'eval-ada',
+        originalAuthorId: '7',
+        originalPostId: '900',
+        originalPostUrl: 'https://x.com/i/status/900',
+        text: 'kept',
+        status: 'failed',
+        publishedPostId: '',
+        publishedPostUrl: '',
+        attempts: [{at: 1, result: 'grok-failed'}]
+      }]
+    }
+  });
+  retryStore.indexedDB.databases.get('test-queue').db.data.jobs.clear();
+  const retryOnly = await retryStore.store.enqueue({
+    accountId: 'acc-1',
+    handle: 'ada',
+    sources: [{module: 'comments', url: 'https://x.com/p/ada-2', enabled: true}]
+  });
+  assert.equal(retryOnly.state, 'pending');
+  assert.equal(retryOnly.targetKey, 'handle:ada');
+  const retryClaim = await retryStore.store.claim({accountId: 'acc-1', owner: 'retry-worker', leaseMs: 30});
+  assert.equal(retryClaim.id, retryOnly.id);
+  await retryStore.store.settle({
+    id: retryClaim.id,
+    owner: 'retry-worker',
+    version: retryClaim.lease.version,
+    state: 'retry',
+    patch: {stage: 'retry', nextEligibleAt: retryStore.clock.t}
+  });
+  const resolvedRetry = await retryStore.store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    handle: '@Ada',
+    state: 'skipped',
+    followResult: {reason: 'should-not-win'},
+    sources: [{module: 'fans', url: 'https://x.com/ada', enabled: true}]
+  });
+  assert.equal(resolvedRetry.id, retryOnly.id);
+  assert.equal(resolvedRetry.state, 'followed');
+  assert.equal(resolvedRetry.targetUserId, '42');
+  assert.equal(resolvedRetry.targetKey, 'id:42');
+  assert.equal(resolvedRetry.followResult.added, true);
+  assert.equal(resolvedRetry.followResult.following, true);
+  assert.equal(resolvedRetry.importedHold, undefined);
+  assert.equal(resolvedRetry.lease.owner, '');
+  assert.equal(resolvedRetry.evaluations[0].originalPostId, '900');
+  const weaker = await retryStore.store.importOutcome({
+    accountId: 'acc-1',
+    targetUserId: '42',
+    handle: 'ada',
+    state: 'uncertain',
+    followResult: {unknown: true},
+    sources: []
+  });
+  assert.equal(weaker.id, retryOnly.id);
+  assert.equal(weaker.state, 'followed');
+  assert.deepEqual(weaker.followResult, {added: true, following: true});
+  assert.equal(await retryStore.store.claim({accountId: 'acc-1', owner: 'resurrect', leaseMs: 30}), null);
+});
+
+test('renew is fenced and updateSources applies explicit booleans without rediscovery re-enabling', async () => {
+  const {store, clock} = storeFor();
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '9',
+    handle: 'nine',
+    sources: [
+      {module: 'fans', url: 'https://x.com/nine', enabled: true},
+      {module: 'mutual', url: 'https://x.com/m/nine', enabled: true}
+    ]
+  });
+  const claimed = await store.claim({accountId: 'acc-1', owner: 'worker', leaseMs: 30});
+  const renewed = await store.renew({id: claimed.id, owner: 'worker', version: claimed.lease.version, leaseMs: 40});
+  assert.equal(renewed.ok, true);
+  assert.equal(renewed.job.lease.version, claimed.lease.version + 1);
+  assert.equal(renewed.job.lease.expiresAt, clock.t + 40);
+  const stale = await store.renew({id: claimed.id, owner: 'worker', version: claimed.lease.version, leaseMs: 40});
+  assert.deepEqual(stale, {ok: false, reason: 'stale'});
+  const wrong = await store.renew({id: claimed.id, owner: 'other', version: renewed.job.lease.version, leaseMs: 40});
+  assert.equal(wrong.ok, false);
+  clock.t += 40;
+  const expired = await store.renew({id: claimed.id, owner: 'worker', version: renewed.job.lease.version, leaseMs: 40});
+  assert.deepEqual(expired, {ok: false, reason: 'expired'});
+
+  await store.enqueue({
+    accountId: 'acc-2',
+    targetUserId: '8',
+    handle: 'eight',
+    sources: [{module: 'comments', url: 'https://x.com/p/8', enabled: false}]
+  });
+  const updated = await store.updateSources({accountId: 'acc-1', modules: {fans: false, comments: true}});
+  assert.equal(updated.length, 1);
+  assert.equal(updated[0].sources.find(source => source.module === 'fans').enabled, false);
+  assert.equal(updated[0].sources.find(source => source.module === 'mutual').enabled, true);
+  const other = await store.list({accountId: 'acc-2'});
+  assert.equal(other[0].sources[0].enabled, false);
+  await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '9',
+    handle: 'nine',
+    sources: [{module: 'fans', url: 'https://x.com/nine', enabled: true}]
+  });
+  const jobs = await store.list({accountId: 'acc-1'});
+  assert.equal(jobs.find(job => job.targetUserId === '9').sources.find(source => source.module === 'fans').enabled, false);
+});

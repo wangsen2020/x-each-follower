@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {recoverAutomationAlarms, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../automation-recovery.js';
 
+test('unified queue takeover prevents stale local or synced schedules from returning',async()=>{
+  const cleared=[], created=[];
+  const saved={followQueueBinding:{activated:true},mutualAutoFollowSettings:{enabled:true},commentAutoFollowSettings:{enabled:true},monitor:{enabled:true}};
+  await recoverAutomationAlarms({storage:{get:async()=>saved},alarms:{getAll:async()=>[],clear:async n=>cleared.push(n),create:async n=>created.push(n)}});
+  assert.deepEqual(cleared,['x-mutual-auto-follow','x-comment-auto-follow']);
+  assert.deepEqual(created,['x-followers-scan']);
+});
+
 test('durable panel hydration preserves explicit local settings', async () => {
   const local={enabled:true,grokAutoComment:true};
   const selected=await restoreMissingLocalSetting({get:async key=>({[key]:local}),set:async()=>assert.fail('must preserve local')},'mutualAutoFollowSettings',{enabled:false,grokAutoComment:false});

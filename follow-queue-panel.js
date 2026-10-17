@@ -312,7 +312,9 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     try {
-      const res = await request({ cmd: 'followQueuePause', accountId: reqAccount });
+      const res = await request(summary?.isPaused
+        ? {cmd:'followQueueSaveSettings',accountId:reqAccount,settings:{enabled:true}}
+        : {cmd:'followQueuePause',accountId:reqAccount});
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       if (!res || !res.ok) {
         error = res?.error || '切换暂停状态失败';

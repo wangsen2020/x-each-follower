@@ -4,6 +4,11 @@
  * Follows design conventions: 24px tags, 12px font, aligned flex rows, no excessive gaps.
  */
 
+.follow-queue-setup { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 0; }
+.follow-queue-setup label { display:inline-flex; flex-direction:row; align-items:center; gap:4px; font-size:12px; }
+.follow-queue-setup input[type="checkbox"] { margin:0; flex:none; }
+.follow-queue-setup button { height:32px; padding:0 10px; }
+
 .fq-panel-root {
   display: flex;
   flex-direction: column;
@@ -347,6 +352,8 @@
   border-collapse: collapse;
   text-align: left;
 }
+.fq-table th:first-child, .fq-table td:first-child { width:36px; min-width:36px; max-width:36px; }
+.fq-panel-root .fq-filter-label { flex-direction:row; align-items:center; }
 
 .fq-table th {
   background: #f7faf8;

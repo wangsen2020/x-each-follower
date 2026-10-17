@@ -1,3 +1,4 @@
+import {openFollowQueue} from './follow-queue-entry.js';
 import {selectExecutionLogs} from './execution-log.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
@@ -9,6 +10,12 @@ import { randomizedInteger, randomizedSeconds } from './timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage, makeNonce } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
+const panelVersion = chrome.runtime.getManifest().version;
+const versionEyebrow = document.querySelector('.eyebrow');
+if (versionEyebrow) versionEyebrow.textContent = 'XFollower · v' + panelVersion;
+const versionFooter = document.querySelector('.sidebar-foot');
+if (versionFooter) versionFooter.textContent = 'v' + panelVersion + ' · 本地数据';
+
 let rows = [];
 let inspectionTab;
 let monitor = {enabled:false, every:60, jitter:15, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
@@ -228,7 +235,8 @@ function setTab(tab) {
   document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
   const h1 = document.querySelector('main > header > h1');
-  if (h1) h1.textContent = {monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测'}[tab] || '粉丝管理';
+  if (h1) h1.textContent = {followQueue:'关注队列',monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测'}[tab] || '粉丝管理';
+  if (tab === 'followQueue') openFollowQueue($('followQueueSection'));
   if (tab === 'unreciprocated') {
     syncAllActiveFollowedUsers();
     renderUnreciprocatedUI();
@@ -304,7 +312,8 @@ function renderCommentAutoFollowSettings() {
   if ($('commentAutoLastTime')) $('commentAutoLastTime').textContent = cfg.lastRunAt ? `最近执行：${new Date(cfg.lastRunAt).toLocaleString()}` : '';
 }
 
-function openCommentAutoFollowSettings() {
+async function openCommentAutoFollowSettings() {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { setTab('followQueue'); return; }
   closeProfileDrawer(); closeSettingsDrawer(); closeMutualSettingsDrawer();
   renderCommentAutoFollowSettings();
   $('commentAutoFollowDrawer').hidden = false;
@@ -312,6 +321,7 @@ function openCommentAutoFollowSettings() {
 }
 
 async function runCommentAutoFollowNow() {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { setTab('followQueue'); return; }
   const result = await chrome.runtime.sendMessage({cmd:'runCommentAutoFollowNow'}).catch(error => ({ok:false, error:error.message}));
   $('commentTrackingStatus').textContent = result?.ok ? result.summary || '评论用户自动关注任务已完成。' : `任务未启动：${result?.error || '后台不可用'}`;
 }
@@ -948,7 +958,8 @@ function renderMutualSettingsDrawer() {
   }
 }
 
-function openMutualSettingsDrawer() {
+async function openMutualSettingsDrawer() {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { setTab('followQueue'); return; }
   closeProfileDrawer();
   closeSettingsDrawer();
   renderMutualSettingsDrawer();
@@ -2313,6 +2324,10 @@ async function visitScrollAndFollowCandidate(user, cfg) {
 }
 
 async function runMutualAutoFollowBatch(source = 'manual') {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) {
+    if (source === 'manual') setTab('followQueue');
+    return {ok:false,error:'关注操作已由统一队列调度'};
+  }
   if (mutualAutoRunning) {
     networkStatus('定时看帖关注任务正在运行中…');
     return;
@@ -3922,7 +3937,7 @@ function renderLogsModal() {
 
     const scopeSpan = document.createElement('span');
     scopeSpan.className = 'log-scope-badge';
-    scopeSpan.textContent = log.scope === 'comment' ? '评论追踪' : '互关追踪';
+    scopeSpan.textContent = log.scope === 'queue' ? '关注队列' : log.scope === 'comment' ? '评论追踪' : '互关追踪';
 
     const sourceSpan = document.createElement('span');
     sourceSpan.className = 'log-scope-badge';
