@@ -202,7 +202,11 @@ export function openQuoteComposerOnPage(tweetUrl) {
       .filter(visible)
       .some(box => {
         const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
-        return (root === document || visible(root)) && [...root.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
+        const rootText = root.innerText || '';
+        const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+        const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
+        const originalLink = [...root.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
+        return (root === document || visible(root)) && quoteLabel && !replyingLabel && originalLink;
       });
     if (hasQuoteComposer()) return { ok: true, stage: 'already_open' };
 
@@ -230,7 +234,7 @@ export function openQuoteComposerOnPage(tweetUrl) {
   })();
 }
 
-export function inspectQuoteComposerOnPage(tweetUrl) {
+export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expectedHandle = '') {
   // 经 executeScript 序列化注入，必须自包含。
   const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
   if (!tweetId) return { ok: false, ready: false, reason: '帖子链接无效' };
@@ -239,6 +243,10 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
   };
+  // X can reshape punctuation in a quoted card; keep the textual match strict
+  // while ignoring whitespace and punctuation, and still require the author.
+  const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+  const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
   const composers = [];
   const sourceArticle = [...document.querySelectorAll('article')].find(article =>
     [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
@@ -250,6 +258,9 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
   for (const box of boxes) {
     const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
     if (root !== document && !visible(root)) continue;
+    const rootText = root.innerText || '';
+    const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+    const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
     const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
     const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
       .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
@@ -258,17 +269,31 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
     const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
       sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
     ));
+    const expectedTextMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
+    const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
+    // A link in the surrounding main column can be the original timeline post, not
+    // an embedded quote. Require the composer itself to identify as Quote and contain
+    // the expected source text/author; this rejects X's ordinary Reply composer.
+    const quoteVerified = quoteLabel && !replyingLabel && expectedTextMatch && handleMatch &&
+      Boolean(expectedPostText || originalLink || articleFallback);
     const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
-    composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
+    if (quoteVerified) composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
   }
   composers.sort((a, b) => a.area - b.area);
   const composer = composers[0];
-  if (!composer) return { ok: true, ready: false, reason: '等待 X 的引用帖编辑框及原帖卡片' };
-  if (!composer.originalLink && !composer.articleFallback) return { ok: true, ready: false, reason: '引用编辑框尚未嵌入目标原帖' };
-  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || location.href, text: composer.box.innerText || '' };
+  if (!composer) {
+    const replyMode = boxes.some(box => {
+      const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+      const text = root.innerText || '';
+      return /replying to\s+@|回复\s*@/i.test(text) ||
+        !/(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text);
+    });
+    return { ok: true, ready: false, reason: replyMode ? 'X 当前显示的是回复编辑器，不是 Quote 引用编辑器' : '等待 X 的引用帖编辑框及原帖卡片' };
+  }
+  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || tweetUrl, text: composer.box.innerText || '', mode:'quote' };
 }
 
-export function dismissQuoteComposerOnPage(tweetUrl) {
+export function dismissQuoteComposerOnPage(tweetUrl, expectedPostText = '', expectedHandle = '') {
   // 仅关闭本次自动化目标原帖对应的引用草稿；不得碰其他帖子或页面编辑器。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -277,21 +302,30 @@ export function dismissQuoteComposerOnPage(tweetUrl) {
     const dialogs = [...document.querySelectorAll('[role="dialog"]')];
     let composer = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
     if (!composer) {
+      const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+      const wantedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
       const visibleBoxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(box => {
         const rect = box.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
       });
-      composer = visibleBoxes.map(box => box.closest?.('main') || document)
-        .find(root => [...root.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))) || null;
+      composer = visibleBoxes.map(box => box.closest?.('[role="dialog"]') || box.closest?.('main') || document)
+        .find(root => {
+          if ([...root.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))) return true;
+          const text = root.innerText || '';
+          return /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text) &&
+            !/replying to\s+@|回复\s*@/i.test(text) &&
+            (!expectedPostText || normalize(text).includes(normalize(expectedPostText))) &&
+            (!wantedHandle || text.toLowerCase().includes(`@${wantedHandle}`));
+        }) || null;
     }
     if (!composer) return {ok:true, closed:false};
-    const close = composer.querySelector('[data-testid="app-bar-close"]') || [...composer.querySelectorAll('button')].find(button =>
+    const close = composer.querySelector('[data-testid="app-bar-close"]') || composer.querySelector('[data-testid="app-bar-back"]') || [...composer.querySelectorAll('button')].find(button =>
       /^(close|关闭)$/i.test((button.getAttribute('aria-label') || button.innerText || '').trim())
     );
     if (close) close.click();
     else composer.dispatchEvent?.(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
     await sleep(200);
-    const discard = [...document.querySelectorAll('[role="dialog"] button')].find(button =>
+    const discard = [...document.querySelectorAll('[role="dialog"] button, button')].find(button =>
       /^(discard|discard post|丢弃|丢弃帖子)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim())
     );
     if (discard) discard.click();
@@ -299,7 +333,7 @@ export function dismissQuoteComposerOnPage(tweetUrl) {
   })();
 }
 
-export function publishQuotePostOnPage(tweetUrl, quoteText) {
+export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '', expectedHandle = '') {
   // 经 executeScript 序列化注入，必须自包含。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -315,6 +349,8 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
     };
+    const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+    const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
     const findComposer = () => {
       const composers = [];
       const sourceArticle = [...document.querySelectorAll('article')].find(article =>
@@ -326,6 +362,9 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       for (const box of [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible)) {
         const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
         if (root !== document && !visible(root)) continue;
+        const rootText = root.innerText || '';
+        const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+        const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
         const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
         const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
           .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
@@ -334,6 +373,11 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
         const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
           sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
         ));
+        const textMatch = !expectedPostText || normalize(rootText).includes(normalize(expectedPostText));
+        const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
+        const quoteVerified = quoteLabel && !replyingLabel && textMatch && handleMatch &&
+          Boolean(expectedPostText || originalLink || articleFallback);
+        if (!quoteVerified) continue;
         const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
         composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
       }
@@ -342,30 +386,42 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
     };
     const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
       (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
+    const hasReplyComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible).some(box => {
+      const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+      const rootText = root.innerText || '';
+      return /replying to\s+@|回复\s*@/i.test(rootText) ||
+        !/(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+    });
 
     let composer = null;
     for (let i = 0; i < 50 && !composer; i++) {
       composer = findComposer();
+      if (!composer && hasReplyComposer()) return { ok:false, reason:'X 当前显示的是回复编辑器，不是 Quote 引用编辑器，已停止发布' };
       if (!composer) await sleep(300);
     }
-    if (!composer) return { ok: false, reason: '没有弹出嵌入目标原帖的引用编辑框' };
-    if (!composer.originalLink && !composer.articleFallback) return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
+    if (!composer) return { ok: false, reason: '没有找到包含目标原帖的 Quote 编辑框，已停止发布' };
 
     composer.box.focus();
-    document.execCommand('insertText', false, text);
-    // X 的编辑器由 React 管理。Chromium 的 execCommand 通常会发 input，
-    // 但在路由刚切换后的编辑器里偶尔只改了 DOM；补发 input 让 React 同步内部状态。
-    const inputEvent = typeof InputEvent === 'function'
-      ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
-      : new Event('input', {bubbles:true});
-    composer.box.dispatchEvent?.(inputEvent);
+    const inserted = document.execCommand('insertText', false, text);
+    // Draft.js/React receives Chromium's native input from execCommand. Dispatching a
+    // second input event after a successful insertion duplicates the quote text.
+    const normalizeText = value => String(value || '').replace(/\s+/g, '');
+    if (!inserted && !normalizeText(composer.box.innerText).includes(normalizeText(text))) {
+      composer.box.textContent = text;
+      const inputEvent = typeof InputEvent === 'function'
+        ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
+        : new Event('input', {bubbles:true});
+      composer.box.dispatchEvent?.(inputEvent);
+    }
     await sleep(500);
-    const typed = (composer.box.innerText || '').replace(/\s+/g, '');
-    if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '引用评价没有写入输入框' };
+    const typed = normalizeText(composer.box.innerText);
+    if (typed !== normalizeText(text)) return { ok: false, reason: '引用评价没有准确写入输入框，已停止发布' };
 
     let send = null;
     for (let i = 0; i < 25; i++) {
-      send = composer.root.querySelector('[data-testid="tweetButton"]');
+      send = composer.root.querySelector('[data-testid="tweetButton"]') || [...composer.root.querySelectorAll('button')].find(button =>
+        /^post$/i.test((button.innerText || '').trim())
+      );
       if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
       send = null; await sleep(300);
     }

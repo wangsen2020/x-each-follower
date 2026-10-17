@@ -3,7 +3,7 @@ import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulate
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage, makeNonce } from './grok-comment.js';
 
 const $ = id => document.getElementById(id);
 let rows = [];
@@ -3513,7 +3513,7 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
 
 async function submitBatchToGrok(customCandidates = null, reportStatus = analysisStatus) {
   await collectSelectedProfiles(customCandidates, reportStatus);
-  const prompt = grokPrompt();
+  const prompt = `${grokPrompt()}\n\n${makeNonce()}`;
   const created = await createBackgroundGrokWindow('https://x.com/i/grok');
   try {
     let tabId = created.tabs?.[0]?.id;

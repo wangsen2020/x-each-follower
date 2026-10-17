@@ -23,7 +23,7 @@ export function createBackgroundGrokWindow(url) {
 }
 
 /** 在提交互粉分析前安装 DOM 监听；Grok 回答工具栏出现新的复制按钮即认为本轮完成。 */
-export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 75000, handles = []) {
+export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 75000, handles = [], sampleIntervalMs = 1500) {
   return new Promise(resolve => {
     const input = document.querySelector('textarea, [contenteditable="true"]');
     if (!input) return resolve({submitted:false, completed:false, reason:'找不到 Grok 输入框'});
@@ -38,6 +38,10 @@ export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 750
       return new RegExp(`\\[@${escaped}\\s*\\|\\s*互粉意向\\s*[:：]`, 'i').test(text);
     });
     const initialCopyCount = copyButtons().length;
+    const nonce = String(prompt).match(/任务编号[\w-]+/)?.[0] || '';
+    const suggestionButtons = () => [...document.querySelectorAll('button span.min-w-0.overflow-x-clip.text-ellipsis.whitespace-nowrap')]
+      .map(span => span.closest('button')).filter(button => (button?.innerText || '').trim());
+    const initialSuggestions = new Set(suggestionButtons());
     if (input.tagName === 'TEXTAREA') {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
       setter?.call(input, prompt);
@@ -55,19 +59,37 @@ export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 750
     let settled = false;
     let observer;
     let timer;
+    let interval;
+    let previousText = '';
+    let stableSamples = 0;
     const finish = result => {
       if (settled) return;
       settled = true;
       observer?.disconnect();
       clearTimeout(timer);
+      clearInterval(interval);
       resolve(result);
     };
     const inspect = () => {
       const count = copyButtons().length;
       const text = document.body?.innerText || '';
-      if (count > initialCopyCount && hasStructuredResult(text)) {
-        finish({submitted:true, completed:true, copyButtonCount:count, text});
+      const labels = [...document.querySelectorAll('button,[role="button"]')].map(button =>
+        `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.innerText || ''}`.trim());
+      const stillGenerating = labels.some(label => /^stop(?: generating)?$|^停止(?:生成)?$/i.test(label));
+      const nonceNode = nonce && [...document.querySelectorAll('*')].find(el =>
+        el.children.length === 0 && String(el.textContent || '').includes(nonce));
+      const hasNewSuggestion = nonceNode && suggestionButtons().some(button =>
+        !initialSuggestions.has(button) &&
+        (nonceNode.compareDocumentPosition(button) & 4) !== 0
+      );
+      if (count <= initialCopyCount || stillGenerating || !hasNewSuggestion || !hasStructuredResult(text)) {
+        previousText = '';
+        stableSamples = 0;
+        return;
       }
+      if (text === previousText) stableSamples++;
+      else { previousText = text; stableSamples = 1; }
+      if (stableSamples >= 4) finish({submitted:true, completed:true, copyButtonCount:count, text});
     };
     observer = new MutationObserver(inspect);
     observer.observe(document.body || document.documentElement, {
@@ -78,6 +100,7 @@ export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 750
       submitted:true, completed:false, reason:'等待 Grok 回复的复制按钮出现超时',
       text:document.body?.innerText || ''
     }), Math.max(1000, Number(timeoutMs) || 75000));
+    interval = setInterval(inspect, Math.max(1, Number(sampleIntervalMs) || 1500));
     send.click();
     inspect();
   });
@@ -92,6 +115,24 @@ export function tweetWeight(text) {
 
 export function makeNonce() {
   return `任务编号${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** Require an explicit completion signal and repeated identical answer samples. */
+export function createStableAnswerGate(requiredSamples = 4) {
+  let previous = '';
+  let samples = 0;
+  const needed = Math.max(2, Number(requiredSamples) || 4);
+  return (answer, complete) => {
+    const current = String(answer || '').trim();
+    if (!complete || !current) {
+      previous = '';
+      samples = 0;
+      return false;
+    }
+    if (current === previous) samples++;
+    else { previous = current; samples = 1; }
+    return samples >= needed;
+  };
 }
 
 export function buildGrokCommentPrompt({ handle, name, postText, nonce }) {
@@ -131,23 +172,52 @@ export function extractGrokComment(raw) {
 export function driveGrokInput(prompt) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const findTa = () => {
-      const root = document.getElementById('react-root');
+    const findInput = () => {
+      const root = document.getElementById('react-root') || document.body;
       if (!root) return null;
-      return Array.prototype.find.call(document.querySelectorAll('textarea'),
-        t => root.contains(t) && t.offsetParent !== null && t.getBoundingClientRect().width > 100) || null;
+      return Array.prototype.find.call(document.querySelectorAll('textarea,[contenteditable="true"]'), el => {
+        const rect = el.getBoundingClientRect();
+        return root.contains(el) && rect.width > 100 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+      }) || null;
     };
-    const findBtn = () => Array.prototype.find.call(document.querySelectorAll('button'), b =>
-      /Grok something|send|提交|发送/i.test(`${b.getAttribute('aria-label') || ''} ${b.innerText || ''}`));
+    const findBtn = () => Array.prototype.find.call(document.querySelectorAll('button,[role="button"]'), b =>
+      /Grok something|send|submit|提交|发送/i.test(`${b.getAttribute('aria-label') || ''} ${b.getAttribute('data-testid') || ''} ${b.innerText || ''}`));
     const ready = b => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
+    const readInput = el => el.tagName === 'TEXTAREA' ? el.value : (el.innerText || el.textContent || '');
+    // Lexical may drop paragraph boundaries rather than turning them into spaces.
+    // Ignore whitespace completely for the acceptance check, while requiring every
+    // non-whitespace character of the prompt to be present.
+    const normalizeInput = text => String(text || '').replace(/[\s\u00a0]+/g, '');
 
     let el = null;
-    for (let i = 0; i < 40 && !el; i++) { el = findTa(); if (!el) await sleep(500); }
+    for (let i = 0; i < 40 && !el; i++) { el = findInput(); if (!el) await sleep(500); }
     if (!el) return { ok: false, err: 'Grok 输入框未挂载' };
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-    setter ? setter.call(el, prompt) : (el.value = prompt);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    if (el.value !== prompt) return { ok: false, err: '输入框未收下 prompt' };
+    if (el.tagName === 'TEXTAREA') {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter ? setter.call(el, prompt) : (el.value = prompt);
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+      el.dispatchEvent(new Event('change', {bubbles:true}));
+    } else {
+      el.focus();
+      const inserted = document.execCommand('insertText', false, prompt);
+      // Lexical/contenteditable 会由 execCommand 触发真实 input。再合成一次 input 会让
+      // Lexical 把同一段文本插入两遍；只有浏览器未能插入时才用 DOM + 单次事件兜底。
+      if (!inserted && !readInput(el).includes(prompt)) {
+        el.textContent = prompt;
+        el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:prompt}));
+      }
+    }
+    let accepted = false;
+    for (let i = 0; i < 12; i++) {
+      // Lexical may replace the editable node while committing the input event.
+      const currentInput = findInput() || el;
+      // Lexical serializes line breaks as separate paragraphs and innerText may expose
+      // them as spaces. Compare normalized visible text so an accepted prompt is not
+      // mistaken for a failed insertion merely because whitespace was canonicalized.
+      if (normalizeInput(readInput(currentInput)).includes(normalizeInput(prompt))) { el = currentInput; accepted = true; break; }
+      await sleep(100);
+    }
+    if (!accepted) return { ok: false, err: '输入框未收下 prompt' };
 
     let btn = null;
     for (let i = 0; i < 24; i++) { btn = findBtn(); if (ready(btn)) break; await sleep(250); }
@@ -159,8 +229,8 @@ export function driveGrokInput(prompt) {
     }
     for (let i = 0; i < 60; i++) {
       await sleep(250);
-      const ta = findTa();
-      if (!ta || ta.value === '') return { ok: true };
+      const input = findInput();
+      if (!input || !readInput(input).trim()) return { ok: true };
     }
     return { ok: false, err: '提交后输入框仍未清空，Grok 可能没有收到问题' };
   })();
@@ -172,8 +242,21 @@ export function readGrokPageAnswer(nonce) {
   const i = t.lastIndexOf(nonce);
   if (i < 0) return { text: '', done: false };
   const labels = Array.prototype.map.call(document.querySelectorAll('button'), b => b.getAttribute('aria-label') || b.innerText || '');
-  const done = labels.some(l => /Regenerate|Copy text|重新生成|复制文本/i.test(l)) &&
-    !labels.some(l => /^Stop( generating)?$|^停止/i.test(l.trim()));
+  // X may show Copy message before completion. The follow-up prompt chips appear only
+  // after the answer, and they must follow this request's nonce in document order.
+  const nonceNode = Array.prototype.find.call(document.querySelectorAll('*'), el =>
+    el.children.length === 0 && String(el.textContent || '').includes(nonce));
+  const suggestionSelector = 'button span.min-w-0.overflow-x-clip.text-ellipsis.whitespace-nowrap';
+  const hasFollowUpSuggestion = Boolean(nonceNode && Array.prototype.some.call(
+    document.querySelectorAll(suggestionSelector), span => {
+      const button = span.closest('button');
+      return button && String(span.innerText || span.textContent || '').trim() &&
+        (nonceNode.compareDocumentPosition(button) & 4) !== 0;
+    }
+  ));
+  const isX = location.hostname === 'x.com';
+  const completionSignal = isX ? hasFollowUpSuggestion : labels.some(l => /Regenerate|重新生成/i.test(l));
+  const done = completionSignal && !labels.some(l => /^Stop( generating)?$|^停止/i.test(l.trim()));
   const failed = /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复/.test(t.slice(i));
   if (failed) {
     const leaf = Array.prototype.find.call(document.querySelectorAll('span,div,button'),
@@ -231,8 +314,7 @@ async function openMinimized(url) {
 }
 
 async function askOnX(prompt, nonce, sleep) {
-  let streamText = '';
-  streamResolver = t => { streamText = t; };
+  const stable = createStableAnswerGate(4);
   const { winId, tabId } = await openMinimized('https://x.com/i/grok');
   try {
     if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
@@ -246,22 +328,20 @@ async function askOnX(prompt, nonce, sleep) {
     if (!drive?.ok) return { ok: false, reason: `x.com Grok：${drive?.err || '提交失败'}` };
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      const fromStream = extractGrokComment(streamText);
-      if (fromStream) return { ok: true, reply: fromStream, channel: 'x.com' };
       await sleep(2000);
       const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
         .catch(() => []))?.[0]?.result;
       const fromDom = extractGrokComment(dom?.text);
-      if (fromDom) return { ok: true, reply: fromDom, channel: 'x.com' };
+      if (stable(fromDom, Boolean(dom?.done))) return { ok: true, reply: fromDom, channel: 'x.com' };
     }
     return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的引用评价' };
   } finally {
-    streamResolver = null;
     if (winId) await chrome.windows.remove(winId).catch(() => {});
   }
 }
 
 async function askOnGrokCom(prompt, nonce, sleep) {
+  const stable = createStableAnswerGate(4);
   const { winId, tabId } = await openMinimized('https://grok.com/');
   try {
     if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
@@ -275,7 +355,7 @@ async function askOnGrokCom(prompt, nonce, sleep) {
       const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
         .catch(() => []))?.[0]?.result;
       const reply = extractGrokComment(dom?.text);
-      if (reply) return { ok: true, reply, channel: 'grok.com' };
+      if (stable(reply, Boolean(dom?.done))) return { ok: true, reply, channel: 'grok.com' };
     }
     return { ok: false, reason: 'grok.com 60 秒内没有给出符合格式的评论' };
   } finally {
@@ -327,24 +407,14 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       if (!drive?.ok) return { ok: false, reason: `x.com Grok 提交失败: ${drive?.err || ''}` };
 
       const deadline = Date.now() + timeoutMs;
-      let lastText = '';
-      let stableCount = 0;
+      const stable = createStableAnswerGate(4);
       while (Date.now() < deadline) {
         await sleep(2000);
         const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
           .catch(() => []))?.[0]?.result;
         if (dom?.failed) return { ok: false, reason: 'Grok 回复异常或触发风控' };
         const text = String(dom?.text || '').trim();
-        if (text) {
-          if (dom.done) return { ok: true, text, channel: 'x.com' };
-          if (text === lastText && text.length > 20) {
-            stableCount++;
-            if (stableCount >= 3) return { ok: true, text, channel: 'x.com' };
-          } else {
-            stableCount = 0;
-            lastText = text;
-          }
-        }
+        if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'x.com' };
       }
       return { ok: false, reason: 'x.com Grok 生成超时' };
     } finally {
@@ -362,24 +432,14 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       if (!drive?.ok) return { ok: false, reason: `grok.com 提交失败: ${drive?.err || ''}` };
 
       const deadline = Date.now() + timeoutMs;
-      let lastText = '';
-      let stableCount = 0;
+      const stable = createStableAnswerGate(4);
       while (Date.now() < deadline) {
         await sleep(2500);
         const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
           .catch(() => []))?.[0]?.result;
         if (dom?.failed) return { ok: false, reason: 'grok.com 回复异常' };
         const text = String(dom?.text || '').trim();
-        if (text) {
-          if (dom.done) return { ok: true, text, channel: 'grok.com' };
-          if (text === lastText && text.length > 20) {
-            stableCount++;
-            if (stableCount >= 3) return { ok: true, text, channel: 'grok.com' };
-          } else {
-            stableCount = 0;
-            lastText = text;
-          }
-        }
+        if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'grok.com' };
       }
       return { ok: false, reason: 'grok.com 生成超时' };
     } finally {
@@ -406,7 +466,9 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
 export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
-  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url]}).catch(() => []);
+  const expectedPostText = String(post?.text || post?.postText || '').trim();
+  const expectedHandle = String(post?.handle || post?.username || new URL(url).pathname.split('/')[1] || '').replace(/^@/, '');
+  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(() => []);
   await chrome.tabs.update(tabId, { url });
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -427,8 +489,12 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return { ok: false, reason: '引用帖标签页已关闭' };
     if (tab.status !== 'complete') { await sleep(300); continue; }
-    const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url] })
+    const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url, expectedPostText, expectedHandle] })
       .catch(() => []))?.[0]?.result;
+    if (state?.reason?.includes('不是 Quote')) {
+      await dismissDraft();
+      return { ok:false, reason:state.reason };
+    }
     if (state?.ok && state.ready && String(state.originalUrl || '').includes(new URL(url).pathname)) {
       composerReady = true;
       break;
@@ -440,7 +506,7 @@ export async function postQuoteOnTab(tabId, post, text, publishFn, sleep) {
     return { ok: false, reason: opened?.reason || 'X 未显示嵌入目标原帖的引用编辑框；已关闭未完成的引用草稿' };
   }
 
-  const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text] })
+  const res = (await chrome.scripting.executeScript({ target: { tabId }, func: publishFn, args: [url, text, expectedPostText, expectedHandle] })
     .catch(e => [{ result: { ok: false, reason: String(e?.message || e) } }]))?.[0]?.result;
   if (!res?.ok) await dismissDraft();
   return res || { ok: false, reason: '引用帖发布脚本无返回' };
