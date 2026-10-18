@@ -969,3 +969,10 @@
 .fq-tag-option button { height:20px; width:20px; }
 .fq-tag-error:empty { display:none; }
 .fq-quote-tags + .fq-tag-add { margin-top:4px; }
+.fq-col-target { min-width:260px; max-width:420px; }
+.fq-profile-name { display:flex; align-items:center; flex-wrap:wrap; }
+.fq-profile-name a { overflow-wrap:anywhere; }
+.fq-blue-verified { display:inline-flex; align-items:center; justify-content:center; flex:none; width:14px; height:14px; margin-left:4px; background:#1d9bf0; color:white; border-radius:50%; font-size:11px; font-weight:700; }
+.fq-verified-label { margin-left:4px; font-size:11px; color:#60756a; }
+.fq-profile-bio { font-size:12px; font-weight:400; line-height:1.5; white-space:pre-line; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.fq-profile-counts { color:#52685d; font-size:12px; }

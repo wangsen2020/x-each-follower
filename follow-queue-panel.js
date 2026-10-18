@@ -468,7 +468,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
-        const handleMatch = job.handle && job.handle.toLowerCase().includes(q);
+        const handleMatch = [job.handle,job.profile?.name,job.profile?.bio].some(v=>String(v||'').toLowerCase().includes(q));
         const idMatch = job.targetUserId && String(job.targetUserId).includes(q);
         if (!handleMatch && !idMatch) return false;
       }
@@ -780,7 +780,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const searchInput = el('input', {
       type: 'search',
       className: 'fq-search-input',
-      placeholder: '搜索用户名 Handle 或 Rest ID...',
+      placeholder: '搜索昵称、账号、简介或 ID...',
       value: searchQuery,
       onInput: e => {
         searchQuery = e.target.value;
@@ -885,18 +885,20 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         // Target cell
         const handleUrl = safeHandleUrl(job.handle);
         const displayHandle = job.handle ? `@${job.handle.trim().replace(/^@+/, '')}` : '未知用户名';
+        const profile = job.profile || {};
+        const nameRow = el('div', {className:'fq-profile-name'}, [
+          el(handleUrl?'a':'span', handleUrl?{href:handleUrl,target:'_blank',rel:'noopener noreferrer',className:'fq-user-handle'}:{className:'fq-user-handle'}, profile.name || displayHandle)
+        ]);
+        if(profile.blueVerified === true) nameRow.appendChild(el('span',{className:'fq-blue-verified',title:'已采集的蓝 V 认证','aria-label':'蓝 V 认证'},'✓'));
+        else if(profile.verified === true) nameRow.appendChild(el('span',{className:'fq-verified-label',title:'已采集认证状态，未确认蓝 V 类型'},'已认证'));
         const targetCell = el('td', { className: 'fq-col-target' }, [
-          el('div', { className: 'fq-user-info' }, [
-            handleUrl
-              ? el('a', {
-                  href: handleUrl,
-                  target: '_blank',
-                  rel: 'noopener noreferrer',
-                  className: 'fq-user-handle'
-                }, displayHandle)
-              : el('span', { className: 'fq-user-handle' }, displayHandle),
-            el('small', { className: 'fq-user-id' }, `ID: ${job.targetUserId || '-'}`)
-          ])
+          el('div', {className:'fq-user-info'}, [
+            nameRow,
+            profile.name ? el('small',{className:'fq-user-id'},displayHandle) : null,
+            el('div',{className:'fq-profile-bio',title:profile.bio || ''},profile.bio || '暂无简介'),
+            el('small',{className:'fq-profile-counts'},'粉丝 '+(profile.followersText?.replace(/\s*(Followers|粉丝).*$/i,'') ?? '未读取')+' · 关注 '+(profile.followingText?.replace(/\s*(Following|正在关注|关注).*$/i,'') ?? '未读取')),
+            job.targetUserId ? el('small',{className:'fq-user-id'},'ID: '+job.targetUserId) : null
+          ].filter(Boolean))
         ]);
 
         // Sources cell

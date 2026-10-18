@@ -15,6 +15,8 @@ function collectUsers(value, out = new Map()) {
   const relationshipKnown = typeof followsYou === 'boolean' && typeof followsAccount === 'boolean';
   if (restId && handle && /^[A-Za-z0-9_]{1,15}$/.test(handle)) out.set(handle.toLowerCase(), {
     id:String(restId),
+    ...(typeof value.is_blue_verified === 'boolean' ? {is_blue_verified:value.is_blue_verified} : {}),
+    ...(typeof legacy?.verified === 'boolean' ? {verified:legacy.verified} : {}),
     handle,
     name:repairMojibake(legacy?.name || core.name || value.name || handle),
     bio:repairMojibake(legacy?.description || value.profile_bio?.description || value.description || ''),

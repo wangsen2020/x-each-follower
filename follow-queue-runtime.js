@@ -1,3 +1,4 @@
+import {enrichQueueProfiles} from './follow-queue-profiles.js';
 import {appendQuoteTags} from './quote-tags.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
@@ -562,7 +563,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       case 'followQueueList': {
         await syncCandidates();
         const settings = await store.getSettings(binding.accountId);
-        return {ok:true,jobs:await store.list({accountId:binding.accountId}),summary:{...scheduler.status(),isPaused:!settings.enabled}};
+        const jobs = enrichQueueProfiles(await store.list({accountId:binding.accountId}), await api.storage.local.get(['monitor','mutualNetwork','commentTracking','profileCache']));
+        return {ok:true,jobs,summary:{...scheduler.status(),isPaused:!settings.enabled}};
       }
       case 'followQueueSettings': return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueSaveSettings': {
