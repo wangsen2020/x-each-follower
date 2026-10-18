@@ -2414,8 +2414,8 @@ async function visitScrollAndFollowCandidate(user, cfg) {
           if (!g.ok) {
             Object.assign(comment, {status: 'grok_failed', reason: g.reason});
           } else {
-            const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply) : g.reply;
-            Object.assign(comment, {reply: replyText, post: g.postText, postUrl: g.postUrl, channel: g.channel});
+            const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply, undefined, g.language) : g.reply;
+            Object.assign(comment, {reply: replyText, post: g.postText, postUrl: g.postUrl, channel: g.channel, language: g.language});
             networkStatus(`Grok（${g.channel}）已写好评价，正在引用 @${handle} 的原帖发布…`);
             const pub = await postQuoteOnTab(tabId, chosen, replyText, publishQuotePostOnPage, sleep);
             Object.assign(comment, pub.ok ? {status: 'posted'} : {status: 'post_failed', reason: pub.reason});
@@ -3842,7 +3842,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.3.1';
+  const expectedVersion = '1.3.2';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
     chrome.runtime.reload();
@@ -4351,7 +4351,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
       let isPublished = false;
       let publishReason = '';
       const followBackEnabled = Boolean(commentTracking.autoFollow?.grokFollowBackSuffix || mutualNetwork.autoFollow?.grokFollowBackSuffix);
-      const finalReply = followBackEnabled ? appendFollowBackSuffix(testRes.reply) : testRes.reply;
+      const finalReply = followBackEnabled ? appendFollowBackSuffix(testRes.reply, undefined, testRes.language) : testRes.reply;
       if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${finalReply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
         if (handleEl) handleEl.textContent = `正在引用 @${testHandle} 的原帖发布评价…`;
         const postTab = await chrome.tabs.create({ url: 'about:blank', active: false });

@@ -139,10 +139,10 @@ export function buildGrokCommentPrompt({ handle, name, postText, nonce }) {
   return [
     `你是推特（X）上真实、自然的用户。请针对博主 @${handle}（昵称：${name || handle}）的下面这条推文，写一段适合“引用原帖”发布的评价。它会作为一条独立帖子公开发布，并嵌入原帖卡片，不是发给作者的站内回复。`,
     '要求：',
-    '1. 只写一句完整评价，正文 25~50 个汉字；英文原帖用英文，50~100 个字符。',
+    '1. 只写一句完整评价，正文 25~50 个汉字；其他语言原帖使用原帖语言，约 50~100 个字符，不附中文翻译。',
     '2. 抓原帖一个具体细节，从反常识、隐性代价或矛盾切入，开头就亮出鲜明判断，写得尖锐、有情绪张力，让人想赞同或反驳；无争议就别硬造。',
     '3. 可以用夸张比喻放大感受，但不能夸大事实、数字或编造动机；不奉承、不复述、不向作者提问，不加标签或链接。',
-    `4. 只输出这一句，用 ${START} 和 ${END} 包住正文，不要写别的。`,
+    `4. 只输出这一句，用 ${START} 和 ${END} 包住正文；随后单独输出【评价语言:xx】，xx 必须是评价正文的 ISO 639-1 语言代码（如 zh、en、es、pt），不能按作者所在地猜测。`,
     '',
     '推文正文：',
     String(postText || '').slice(0, 500),
@@ -166,16 +166,43 @@ export function extractGrokComment(raw) {
   return body;
 }
 
+/** Prefer explicit model metadata; legacy drafts only infer scripts with high confidence. */
+export function resolveCommentLanguage(text, declared = '') {
+  const code = String(declared).trim().toLowerCase().split('-')[0];
+  const body = String(text || '').replace(/#[\p{L}\p{M}\p{N}_]+/gu, '').replace(/有关必回|关注必回|互关必回/g, '');
+  const han = (body.match(/\p{Script=Han}/gu) || []).length;
+  const latin = (body.match(/[a-z]/gi) || []).length;
+  if (/^[a-z]{2}$/.test(code) && code !== 'un') {
+    // Reject an obviously contradictory Chinese label on an English body.
+    if (code === 'zh' && !han && latin > 3) return 'en';
+    return code;
+  }
+  if (han > 0 && han * 2 >= latin) return 'zh';
+  if (/\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(body)) return 'und';
+  if (latin > 3 && !/[^\x00-\x7f]/.test(body.replace(/[’‘“”—–…]/g, ''))) return 'en';
+  return 'und';
+}
+export function extractGrokCommentLanguage(raw) {
+  const text = String(raw || '');
+  const tail = text.slice(text.lastIndexOf(START));
+  const declared = tail.match(/【评价语言[:：]\s*([a-z]{2}(?:-[a-z]+)?)\s*】/i)?.[1];
+  return resolveCommentLanguage(extractGrokComment(raw), declared);
+}
+
 /**
  * 在引用评价结尾追加吸引关注的文案（如“有关必回”）。
  * 若已有相关文案则不重复追加，并保证字数不超限。
  */
-export function appendFollowBackSuffix(text, suffix = '有关必回') {
+export function appendFollowBackSuffix(text, suffix, language) {
   let base = String(text || '').trim();
   if (!base) return '';
-  const cleanSuffix = String(suffix || '有关必回').trim();
+  const lang = resolveCommentLanguage(base, language);
+  if (lang !== 'zh') base = base.replace(/[。.!?\s]*(有关必回|关注必回|互关必回)\s*$/u, '').trim();
+  const defaults = {zh:'有关必回',en:'I follow back.',es:'Te sigo de vuelta.',pt:'Sigo de volta.'};
+  const cleanSuffix = String(suffix ?? defaults[lang] ?? '').trim();
+  if (cleanSuffix && base.toLowerCase().endsWith(cleanSuffix.toLowerCase())) return base;
   if (!cleanSuffix || /有关必回|关注必回|互关必回/i.test(base)) return base;
-  const separator = /[。！？!?…]$/.test(base) ? '' : '。';
+  const separator = lang === 'zh' ? (/[。！？!?…]$/.test(base) ? '' : '。') : (/[.!?…]$/.test(base) ? ' ' : '. ');
   let combined = `${base}${separator}${cleanSuffix}`;
   if (tweetWeight(combined) > X_QUOTE_LIMIT) {
     while (base.length > 0 && tweetWeight(combined) > X_QUOTE_LIMIT) {
@@ -352,7 +379,7 @@ async function askOnX(prompt, nonce, sleep) {
       const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
         .catch(() => []))?.[0]?.result;
       const fromDom = extractGrokComment(dom?.text);
-      if (stable(fromDom, Boolean(dom?.done))) return { ok: true, reply: fromDom, channel: 'x.com' };
+      if (stable(fromDom, Boolean(dom?.done))) return { ok: true, reply: fromDom, language: extractGrokCommentLanguage(dom?.text), channel: 'x.com' };
     }
     return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的引用评价' };
   } finally {
@@ -375,7 +402,7 @@ async function askOnGrokCom(prompt, nonce, sleep) {
       const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
         .catch(() => []))?.[0]?.result;
       const reply = extractGrokComment(dom?.text);
-      if (stable(reply, Boolean(dom?.done))) return { ok: true, reply, channel: 'grok.com' };
+      if (stable(reply, Boolean(dom?.done))) return { ok: true, reply, language: extractGrokCommentLanguage(dom?.text), channel: 'grok.com' };
     }
     return { ok: false, reason: 'grok.com 60 秒内没有给出符合格式的评论' };
   } finally {

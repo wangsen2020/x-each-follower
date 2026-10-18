@@ -304,9 +304,9 @@ async function executeCommentAutoFollow(source = 'alarm') {
               const g = await requestGrokComment(handle, chosen, user.name, {sleep, fix:repairMojibake});
               if (!g.ok) commentRes = {status:'grok_failed', reason:g.reason};
               else {
-                const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply) : g.reply;
+                const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply, undefined, g.language) : g.reply;
                 const pub = await postQuoteOnTab(tabId, chosen, replyText, publishQuotePostOnPage, sleep);
-                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:replyText, post:g.postText, postUrl:g.postUrl, channel:g.channel};
+                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:replyText, post:g.postText, postUrl:g.postUrl, channel:g.channel, language:g.language};
                 if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = replyText; user.grokCommentPostUrl = g.postUrl; }
               }
             }
@@ -455,7 +455,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.1';
+export const BACKGROUND_BUILD_VERSION = '1.3.2';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd?.startsWith('followQueue')) {

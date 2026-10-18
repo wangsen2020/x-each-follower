@@ -141,6 +141,7 @@ function mergeEvaluations(existing, incoming, followJobId) {
       originalAuthorId: item.originalAuthorId || prev.originalAuthorId || '',
       originalPostId: item.originalPostId || prev.originalPostId || '',
       originalPostUrl: item.originalPostUrl || prev.originalPostUrl || '',
+      language: item.language != null ? String(item.language) : (prev.language || ''),
       baseText: item.baseText != null ? String(item.baseText) : (prev.baseText || ''),
       text: item.text != null ? String(item.text) : (prev.text || ''),
       reason: item.reason != null ? String(item.reason) : (prev.reason || ''),

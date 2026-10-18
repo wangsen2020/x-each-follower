@@ -6,7 +6,7 @@ import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {networkFetch, networkFollow, parseNetworkUsers, mergeRecentPosts} from './network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage} from './page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from './scoring.js';
-import {requestGrokComment, postQuoteOnTab} from './grok-comment.js';
+import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from './grok-comment.js';
 import {randomizedSeconds, randomizedInteger} from './timing.js';
 import {appendExecutionLog} from './execution-log.js';
 
@@ -237,7 +237,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await control.checkpoint({stage:'evaluating',followResult,evaluations});
       const generated = await requestGrokComment(job.handle,post,profile.name,{sleep});
       evaluation.baseText = generated.reply || '';
-      evaluation.text = appendQuoteTags(evaluation.baseText, settings);
+      evaluation.language = generated.language || 'und';
+      evaluation.text = appendQuoteTags(evaluation.baseText, settings, evaluation.language);
       evaluation.channel = generated.channel || '';
       evaluation.status = generated.ok ? 'draft' : 'failed';
       evaluation.reason = generated.reason || '';
@@ -464,6 +465,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         originalPostText: post.text || ev?.originalPostText || '',
         text: ev?.text || '',
         baseText: ev?.baseText || '',
+        language: ev?.language || '',
         channel: ev?.channel || '',
         status: ev?.status || 'generating',
         publishedPostId: ev?.publishedPostId || '',
@@ -475,6 +477,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!ev.text) {
         const generated = await requestGrokComment(job.handle,post,job.handle,{sleep});
         ev.text = generated.reply || '';
+        ev.language = generated.language || 'und';
         ev.channel = generated.channel || ev.channel || '';
         ev.status = generated.ok ? 'draft' : 'failed';
         ev.reason = generated.reason || '';
@@ -487,7 +490,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       const settings = await store.getSettings(binding.accountId);
       ev.baseText ||= ev.text;
-      ev.text = appendQuoteTags(ev.baseText, settings);
+      ev.language = resolveCommentLanguage(ev.baseText, ev.language);
+      ev.text = appendQuoteTags(ev.baseText, settings, ev.language || 'und');
       if (!publish && !settings.autoPublish) {
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
         await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`已为 @${job.handle} 生成评价草稿（未开启自动发布）`});

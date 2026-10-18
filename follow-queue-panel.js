@@ -1436,7 +1436,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const tagSection=el('div',{className:'fq-setting-section'},[
       el('h4',{className:'fq-setting-section-title'},'引用评价标签'),
       el('label',{className:'fq-switch-label'},[enableTags,el('span',{},'在引用评价结尾追加标签')]),
-      el('small',{className:'fq-setting-desc'},'开启后默认选中 10 个中英文推荐标签，可取消或换成自定义标签。标签用空格分隔；正文超长时会缩短正文以保留标签。'),
+      el('small',{className:'fq-setting-desc'},'开启后默认选中 10 个中英文推荐标签，可取消或换成自定义标签。发布时按评价语言筛选：中文使用中文标签，其他已识别语言使用非中文标签；自定义拉丁字母标签不区分英语、西语和葡语，请自行勾选目标语言标签。标签用空格分隔；正文超长时会缩短正文以保留标签。'),
       tags,el('div',{className:'fq-tag-add'},[tagInput,el('button',{type:'button',onClick:()=>{
         const tag=cleanQuoteTag(tagInput.value);tagError.textContent='';
         if(!tag){tagError.textContent='请输入单个标签，支持中文、英文和带重音字母；不要包含空格或标点。';return;}
