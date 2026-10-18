@@ -217,6 +217,10 @@ export function appendFollowBackSuffix(text, suffix, language) {
 
 /** in-page */
 export function driveGrokInput(prompt) {
+  // Lexical can drop isolated paragraphs during a multiline insertText (observed
+  // with a standalone S). A single paragraph preserves every non-whitespace
+  // character; keep the strict input acceptance check below.
+  prompt = String(prompt || '').replace(/\r?\n/g, ' ');
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const findInput = () => {

@@ -184,7 +184,7 @@ test('X Grok Copy message alone is not a completion signal; a later suggestion c
 });
 
 test('X Grok input accepts Lexical-normalized multiline text and sends after React input sync', async () => {
-  const prompt = '测试 Grok 提示词\n\n附带任务凭证';
+  const prompt = '测试 Grok 提示词\n\nS\n\n附带任务凭证';
   const events = [];
   let value = '';
   const input = {
@@ -211,6 +211,8 @@ test('X Grok input accepts Lexical-normalized multiline text and sends after Rea
     },
     execCommand(command, _ui, text) {
       assert.equal(command, 'insertText');
+      assert.ok(!/[\r\n]/.test(text), 'multiline insert must not reach Lexical');
+      assert.ok(text.includes('S'), 'isolated paragraph character must survive');
       value = text; events.push('insertText');
       activeInput = {
         tagName:'DIV', innerText:text.replace(/\s+/g, ' '), textContent:text,
