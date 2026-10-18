@@ -1172,3 +1172,12 @@ test('resolveJob reopens a verified unfollow and can overwrite a weaker outcome'
     /invalid follow queue state/
   );
 });
+
+test('quote tag settings survive partial settings saves and custom tag removal',async()=>{
+ const store=createFollowQueueStore({indexedDB:createFakeIndexedDB()});
+ await store.saveSettings('123',{quoteTagsEnabled:true,quoteCustomTags:['Amigos'],quoteSelectedTags:['互关','Amigos']});
+ await store.saveSettings('123',{enabled:false});
+ assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关','Amigos']);
+ await store.saveSettings('123',{quoteCustomTags:[]});
+ assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关']);
+});

@@ -1,3 +1,4 @@
+import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffix, validateQuoteTags} from './quote-tags.js';
 /**
  * follow-queue-panel.js
  * Unified follow queue panel component (ANTIGRAVITY OWNERSHIP).
@@ -111,6 +112,7 @@ export function normalizeSettings(raw = {}) {
   if (result.jitter > result.every) {
     result.jitter = Math.max(1, result.every);
   }
+  Object.assign(result, normalizeQuoteTags(raw));
   return result;
 }
 
@@ -427,6 +429,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     const validated = normalizeSettings(formValues);
+    try { validateQuoteTags(validated); } catch(error) { settingsError=error.message; render(); return; }
     isSettingsSaving = true;
     settingsError = null;
     render();
@@ -1406,6 +1409,41 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       ]);
     }
 
+    const tags = el('div', {className:'fq-quote-tags'});
+    const tagPreview = el('p', {className:'fq-setting-desc'});
+    const tagError = el('p', {role:'status',className:'fq-tag-error'});
+    const tagInput = el('input', {type:'text',placeholder:'例如 #互关 或 #SíguemeYTeSigo', 'aria-label':'自定义引用标签'});
+    const renderTags = () => {
+      tags.replaceChildren();
+      for(const tag of [...RECOMMENDED_QUOTE_TAGS,...current.quoteCustomTags]) {
+        const check=el('input',{type:'checkbox',checked:current.quoteSelectedTags.includes(tag),onChange:e=>{
+          tagError.textContent='';
+          if(e.target.checked && current.quoteSelectedTags.length>=10){e.target.checked=false;tagError.textContent='最多选择 10 个标签，请先取消其他标签。';return;}
+          current.quoteSelectedTags=e.target.checked?[...current.quoteSelectedTags,tag]:current.quoteSelectedTags.filter(t=>t!==tag);
+          renderTags();
+        }});
+        const chip=el('span',{className:'fq-tag-option'},[el('label',{},[check,el('span',{},'#'+tag)])]);
+        if(current.quoteCustomTags.includes(tag))chip.appendChild(el('button',{type:'button','aria-label':'删除标签 '+tag,onClick:()=>{
+          current.quoteCustomTags=current.quoteCustomTags.filter(t=>t!==tag);current.quoteSelectedTags=current.quoteSelectedTags.filter(t=>t!==tag);renderTags();
+        }},'×'));
+        tags.appendChild(chip);
+      }
+      tagPreview.textContent='结尾预览：'+(quoteTagSuffix(current)||'不追加标签')+'（已选 '+current.quoteSelectedTags.length+'/10）';
+    };
+    const enableTags=el('input',{type:'checkbox',checked:current.quoteTagsEnabled,onChange:e=>{current.quoteTagsEnabled=e.target.checked;renderTags();}});
+    const tagSection=el('div',{className:'fq-setting-section'},[
+      el('h4',{className:'fq-setting-section-title'},'引用评价标签'),
+      el('label',{className:'fq-switch-label'},[enableTags,el('span',{},'在引用评价结尾追加标签')]),
+      el('small',{className:'fq-setting-desc'},'开启后默认选中 10 个中英文推荐标签，可取消或换成自定义标签。标签用空格分隔；正文超长时会缩短正文以保留标签。'),
+      tags,el('div',{className:'fq-tag-add'},[tagInput,el('button',{type:'button',onClick:()=>{
+        const tag=cleanQuoteTag(tagInput.value);tagError.textContent='';
+        if(!tag){tagError.textContent='请输入单个标签，支持中文、英文和带重音字母；不要包含空格或标点。';return;}
+        if([...RECOMMENDED_QUOTE_TAGS,...current.quoteCustomTags].some(t=>t.toLowerCase()===tag.toLowerCase())){tagError.textContent='这个标签已存在。';return;}
+        if(current.quoteCustomTags.length>=50){tagError.textContent='最多保存 50 个自定义标签。';return;}
+        current.quoteCustomTags=[...current.quoteCustomTags,tag];tagInput.value='';renderTags();
+      }},'添加标签')]),tagError,tagPreview
+    ]);
+    renderTags();
     const body = el('div', { className: 'fq-drawer-body' }, [
       settingsFetchError
         ? el('div', { className: 'fq-alert fq-alert-error' }, [
@@ -1444,7 +1482,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),
         createSwitchGroup('fq_grokEnabled', '启用 Grok 生成引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
         createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish')
-      ])
+      ]), tagSection
     ]);
 
     const footer = el('div', { className: 'fq-drawer-footer' }, [

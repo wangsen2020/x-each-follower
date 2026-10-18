@@ -955,3 +955,17 @@
 .queue-onboarding { padding:10px; border:1px solid #dce3d9; border-radius:10px; background:#fff; }
 .queue-onboarding p { margin:10px 0; line-height:1.6; font-size:13px; }
 .queue-onboarding button { height:32px; padding:0 10px; margin-right:10px; }
+.fq-quote-tags { display:flex; flex-wrap:wrap; margin-top:10px; }
+.fq-tag-option { display:inline-flex; align-items:center; border:1px solid #ccd7cc; border-radius:5px; padding:4px 6px; margin:0 6px 6px 0; }
+.fq-tag-option label { display:inline-flex; flex-direction:row; align-items:center; font-size:12px; }
+.fq-tag-option label > * { margin-bottom:0; }
+.fq-tag-option button { height:24px; width:24px; padding:0; margin-left:4px; background:transparent; color:#52685d; }
+.fq-tag-add { display:flex; align-items:center; margin-top:10px; }
+.fq-tag-add input { min-width:0; flex:1; height:32px; padding:0 10px; }
+.fq-tag-add button { height:32px; padding:0 10px; margin-left:10px; }
+.fq-tag-error { color:#b03a2e; font-size:12px; }
+.fq-tag-option { height:24px; padding:0 6px; box-sizing:border-box; }
+.fq-tag-option input[type="checkbox"] { width:14px; height:14px; }
+.fq-tag-option button { height:20px; width:20px; }
+.fq-tag-error:empty { display:none; }
+.fq-quote-tags + .fq-tag-add { margin-top:4px; }

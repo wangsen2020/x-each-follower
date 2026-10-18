@@ -1,3 +1,4 @@
+import {appendQuoteTags} from './quote-tags.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
@@ -234,7 +235,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await guard();
       await control.checkpoint({stage:'evaluating',followResult,evaluations});
       const generated = await requestGrokComment(job.handle,post,profile.name,{sleep});
-      evaluation.text = generated.reply || '';
+      evaluation.baseText = generated.reply || '';
+      evaluation.text = appendQuoteTags(evaluation.baseText, settings);
       evaluation.channel = generated.channel || '';
       evaluation.status = generated.ok ? 'draft' : 'failed';
       evaluation.reason = generated.reason || '';
@@ -245,7 +247,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       evaluation.status = 'publishing';
       const submittedAt = Date.now();
       await control.checkpoint({stage:'publishing',followResult,evaluations});
-      const published = await postQuoteOnTab(tab.id,post,generated.reply,publishQuotePostOnPage,sleep,{beforePublish:guard});
+      const published = await postQuoteOnTab(tab.id,post,evaluation.text,publishQuotePostOnPage,sleep,{beforePublish:guard});
       evaluation.status = 'uncertain';
       evaluation.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
@@ -253,7 +255,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await api.tabs.update(tab.id,{url:`https://x.com/${binding.handle}`});
         for (let i=0;i<20 && !control.signal.aborted;i++) {
           await sleep(700);
-          const proof = await script(tab.id,findPublishedQueueQuoteOnPage,[binding.handle,originalPostId,generated.reply,submittedAt]).catch(() => null);
+          const proof = await script(tab.id,findPublishedQueueQuoteOnPage,[binding.handle,originalPostId,evaluation.text,submittedAt]).catch(() => null);
           if (proof) { Object.assign(evaluation,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''}); break; }
         }
       } else if (published.stage === 'composer') evaluation.status = 'failed';
@@ -460,6 +462,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         originalPostUrl: post.url,
         originalPostText: post.text || ev?.originalPostText || '',
         text: ev?.text || '',
+        baseText: ev?.baseText || '',
         channel: ev?.channel || '',
         status: ev?.status || 'generating',
         publishedPostId: ev?.publishedPostId || '',
@@ -482,6 +485,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         ev.status = 'draft';
       }
       const settings = await store.getSettings(binding.accountId);
+      ev.baseText ||= ev.text;
+      ev.text = appendQuoteTags(ev.baseText, settings);
       if (!publish && !settings.autoPublish) {
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
         await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`已为 @${job.handle} 生成评价草稿（未开启自动发布）`});

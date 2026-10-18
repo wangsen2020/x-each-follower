@@ -1,3 +1,4 @@
+import {QUOTE_TAG_DEFAULTS, normalizeQuoteTags, validateQuoteTags} from './quote-tags.js';
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
@@ -6,6 +7,7 @@ const DEFAULT_DB_NAME = 'x-each-follower-follow-queue';
 const STORES = ['jobs', 'outcomes', 'settings'];
 
 export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
+  ...QUOTE_TAG_DEFAULTS,
   enabled: false,
   every: 8,
   jitter: 2,
@@ -139,6 +141,7 @@ function mergeEvaluations(existing, incoming, followJobId) {
       originalAuthorId: item.originalAuthorId || prev.originalAuthorId || '',
       originalPostId: item.originalPostId || prev.originalPostId || '',
       originalPostUrl: item.originalPostUrl || prev.originalPostUrl || '',
+      baseText: item.baseText != null ? String(item.baseText) : (prev.baseText || ''),
       text: item.text != null ? String(item.text) : (prev.text || ''),
       reason: item.reason != null ? String(item.reason) : (prev.reason || ''),
       channel: item.channel || prev.channel || '',
@@ -170,6 +173,8 @@ function normalizeSettings(input, base) {
   if (next.jitter > next.every) next.jitter = Math.max(1, next.every);
   next.ratioThreshold = Math.max(0, Math.min(1, Number(merged.ratioThreshold)));
   if (!Number.isFinite(next.ratioThreshold)) next.ratioThreshold = FOLLOW_QUEUE_DEFAULT_SETTINGS.ratioThreshold;
+  Object.assign(next, normalizeQuoteTags(merged));
+  validateQuoteTags(next);
   return next;
 }
 
