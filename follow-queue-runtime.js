@@ -62,9 +62,11 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   };
   async function viewer(tabId) { return canonical(await script(tabId, readQueueViewerOnPage)); }
   let identifying;
+  let identityStage = 'idle';
   async function identity() {
     if (identifying) return identifying;
-    identifying = resolveIdentity().finally(() => { identifying = null; });
+    identityStage = 'checking';
+    identifying = resolveIdentity().then(result => { identityStage = 'ready'; return result; }, error => { identityStage = 'failed'; throw error; }).finally(() => { identifying = null; });
     return identifying;
   }
   async function resolveIdentity() {
@@ -84,6 +86,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     }
     let temporary;
     try {
+      identityStage = 'opening';
       temporary = await api.tabs.create({url:'https://x.com/home',active:false});
       let handle = '';
       for (let attempt = 0; attempt < 40; attempt++) {
@@ -92,6 +95,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await wait(500);
       }
       if (!handle) throw new Error('未能读取登录账号，请先在 X 首页完成登录，再点击重试。');
+      identityStage = 'initializing';
       await api.tabs.update(temporary.id,{url:'https://x.com/' + encodeURIComponent(handle)});
       for (let attempt = 0; attempt < 40; attempt++) {
         // Require the freshly loaded page to confirm the same logged-in viewer.
@@ -535,6 +539,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     } finally { if(bootstrap) await api.tabs.remove(bootstrap.id).catch(()=>{}); await schedule(); }
   }
   async function handle(message) {
+    if (message.cmd === 'followQueueIdentityStatus') return {ok:true,stage:identityStage};
     if (message.cmd === 'followQueueIdentity') return {ok:true,...await identity(),binding:await readBinding()};
     if (message.cmd === 'followQueueActivate') {
       if (message.confirmed !== true) throw new Error('请确认本地数据属于当前账号');

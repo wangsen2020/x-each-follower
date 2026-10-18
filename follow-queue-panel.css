@@ -952,3 +952,6 @@
 .fq-switch-label > *, .fq-setting-label > *, .fq-pagesize-label > *, .fq-header-switch-label > * { margin-bottom:0; }
 .fq-switch-label { gap:0; }
 .fq-switch-label input[type="checkbox"] { margin:0 6px 0 0; }
+.queue-onboarding { padding:10px; border:1px solid #dce3d9; border-radius:10px; background:#fff; }
+.queue-onboarding p { margin:10px 0; line-height:1.6; font-size:13px; }
+.queue-onboarding button { height:32px; padding:0 10px; margin-right:10px; }

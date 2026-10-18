@@ -178,3 +178,13 @@ test('identity bootstrap times out cleanly and closes only its own tab when logg
  await assert.rejects(runtime.handle({cmd:'followQueueIdentity'}),/完成登录/);
  assert.deepEqual(removed,[9]);assert.equal(waits,40);
 });
+
+test('identity progress reports preparation and failure without requiring activation',async()=>{
+ let release;const pending=new Promise(resolve=>{release=resolve;});
+ const api={storage:{local:{get:async()=>({})}},tabs:{query:async()=>{await pending;return [];},create:async()=>({id:9}),remove:async()=>{}},scripting:{executeScript:async()=>[{result:''}]}};
+ const runtime=createFollowQueueRuntime({api,wait:async()=>{}});
+ const identity=runtime.handle({cmd:'followQueueIdentity'});
+ assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'checking');
+ release();await assert.rejects(identity,/完成登录/);
+ assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'failed');
+});
