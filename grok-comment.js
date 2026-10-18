@@ -358,10 +358,69 @@ export function deliverGrokStream(text) {
   const r = streamResolver; streamResolver = null; r(String(text || ''));
 }
 
+/** In-page, MAIN world, only in our short-lived Grok window. Occluded windows
+ * can suspend rAF even when document.hidden is false. Race native frames with a
+ * timer, preserving cancellation, timestamps and exactly-once delivery. */
+export function setGrokFrameFallbackOnPage(enabled) {
+  const key = '__xfollowerGrokFrames';
+  if (!enabled) { window[key]?.restore(); return; }
+  if (window[key]) return;
+  const request = window.requestAnimationFrame;
+  const cancel = window.cancelAnimationFrame;
+  const pending = new Map();
+  let expiry;
+  const restore = () => {
+    clearTimeout(expiry);
+    window.requestAnimationFrame = request;
+    window.cancelAnimationFrame = cancel;
+    for (const [id, entry] of pending) {
+      clearTimeout(entry.timer);
+      cancel.call(window, id);
+      // Retain outstanding animation work when restoring before window close.
+      request.call(window, entry.callback);
+    }
+    pending.clear();
+    delete window[key];
+  };
+  window[key] = {restore};
+  window.requestAnimationFrame = callback => {
+    let done = false;
+    const finish = time => {
+      if (done) return;
+      done = true;
+      clearTimeout(pending.get(id)?.timer);
+      pending.delete(id);
+      cancel.call(window, id);
+      callback(time);
+    };
+    const id = request.call(window, finish);
+    pending.set(id, {callback, timer:setTimeout(() => finish(performance.now()), 80)});
+    return id;
+  };
+  window.cancelAnimationFrame = id => {
+    clearTimeout(pending.get(id)?.timer);
+    pending.delete(id);
+    cancel.call(window, id);
+  };
+  expiry = setTimeout(restore, 180000);
+}
+
 async function openMinimized(url) {
   const win = await createBackgroundGrokWindow(url);
-  const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
-  return { winId: win.id, tabId };
+  try {
+    const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
+    if (!tabId) throw new Error('Grok 窗口没有可用标签页');
+    const deadline = Date.now() + 25000;
+    while ((await chrome.tabs.get(tabId)).status !== 'complete') {
+      if (Date.now() > deadline) throw new Error('Grok 页面加载超时');
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:setGrokFrameFallbackOnPage, args:[true]});
+    return { winId: win.id, tabId };
+  } catch (error) {
+    await chrome.windows.remove(win.id).catch(() => {});
+    throw error;
+  }
 }
 
 async function askOnX(prompt, nonce, sleep) {

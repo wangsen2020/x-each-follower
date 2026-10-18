@@ -455,7 +455,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.3';
+export const BACKGROUND_BUILD_VERSION = '1.3.4';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd?.startsWith('followQueue')) {
