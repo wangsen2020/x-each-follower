@@ -1,4 +1,4 @@
-import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows} from './temporary-windows.js';
+import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool} from './temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -456,9 +456,14 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.5';
+export const BACKGROUND_BUILD_VERSION = '1.3.6';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd === 'grokWindowPool') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可管理 Grok 窗口'}); return; }
+    handleGrokWindowPool(message).then(value=>sendResponse({ok:true,value}),error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
   if (message?.cmd?.startsWith('followQueue')) {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return; }
     followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
@@ -638,3 +643,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 ensureTemporaryWindowCleanup().catch(error=>console.warn('临时窗口清理初始化失败:',error));
+
+let lastGrokFocusedWindow;
+chrome.windows.onFocusChanged.addListener(windowId => {
+  const previous=lastGrokFocusedWindow;lastGrokFocusedWindow=windowId;
+  for(const id of new Set([previous,windowId])) if(Number.isInteger(id)&&id>=0)handleGrokWindowPool({action:'touch',windowId:id}).catch(()=>{});
+});

@@ -1,3 +1,4 @@
+import {releaseGrokWindow} from './temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
@@ -917,7 +918,7 @@ function createVerifiedBadgeElement(size = 14) {
   svg.style.cssText = `width:${size}px;height:${size}px;min-width:${size}px;margin:0 3px;vertical-align:-2px;display:inline-block;fill:#1d9bf0;flex-shrink:0;`;
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.5.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
+  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.6.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
   g.append(path);
   svg.append(g);
   return svg;
@@ -2221,7 +2222,7 @@ async function checkGrokAvailability(force = false) {
   } catch (err) {
     xReason = err.message;
   } finally {
-    if (winX?.id) await chrome.windows.remove(winX.id).catch(() => {});
+    if (winX?.id) await releaseGrokWindow(winX.id).catch(() => {});
   }
 
   // 2. 如果 x.com 正常，优先使用 x.com
@@ -2256,7 +2257,7 @@ async function checkGrokAvailability(force = false) {
   } catch (err) {
     grokComReason = err.message;
   } finally {
-    if (winGrok?.id) await chrome.windows.remove(winGrok.id).catch(() => {});
+    if (winGrok?.id) await releaseGrokWindow(winGrok.id).catch(() => {});
   }
 
   // 4. 综合判断：若 grok.com 可用，使用 grok.com；若两者均不可用，则评论不可用
@@ -3641,7 +3642,7 @@ async function applyGrokAnalysisResults(parsedMap) {
 
 async function closeGrokAnalysisWindow(windowId) {
   if (!windowId) return;
-  await chrome.windows.remove(windowId).catch(() => {});
+  await releaseGrokWindow(windowId).catch(() => {});
   const {grokWindowId} = await chrome.storage.local.get('grokWindowId').catch(() => ({}));
   if (grokWindowId === windowId) {
     await chrome.storage.local.remove(['grokWindowId', 'grokSubmittedAt']).catch(() => {});
@@ -3707,7 +3708,7 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
         lastReason = result?.reason || 'Grok 尚未准备好接收消息';
         continue;
       }
-      if (!result.completed) throw new Error(`${result.reason || 'Grok 回复未完成'}。窗口已关闭，请检查 Grok 后重试。`);
+      if (!result.completed) throw new Error(`${result.reason || 'Grok 回复未完成'}。请检查 Grok 后重试。`);
       const markerIdx = String(result.text || '').lastIndexOf('[@用户名 | 互粉意向:');
       const responseText = markerIdx >= 0 ? result.text.slice(markerIdx + 18) : result.text;
       const parsed = parseGrokMutualAnalysis(responseText, handles);
@@ -3719,7 +3720,7 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
       return;
     }
     await navigator.clipboard.writeText(prompt);
-    throw new Error(`${lastReason}。分析包已复制到剪贴板，800×600 Grok 窗口将关闭。`);
+    throw new Error(`${lastReason}。分析包已复制到剪贴板，Grok 窗口将保留供重试，空闲 8 分钟后回收。`);
   } finally {
     await closeGrokAnalysisWindow(created.id);
   }
@@ -3842,7 +3843,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.3.5';
+  const expectedVersion = '1.3.6';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
     chrome.runtime.reload();
