@@ -972,3 +972,31 @@ main > :not(.sidebar){margin-left:20px}
 .monitor-pagination label > select,#monitorPagination label > select,#commentPagination label > select,#unreciprocatedPagination label > select,.monitor-toolbar label > input,.monitor-toolbar label > select{margin-top:0}
 .queue-list{display:flex;flex-direction:column}.queue-list > :not(:last-child){margin-bottom:8px}
 .drawer-section ol{display:flex;flex-direction:column}.drawer-section ol > :not(:last-child){margin-bottom:8px}
+
+/* Shared panel inset and inline control alignment. */
+main > header { padding:0 10px 4px; }
+main > .tab-panel { padding:10px; }
+main > :not(.sidebar) { margin-left:10px; }
+.mutual-network-head > :not(:last-child) { margin-right:10px; }
+.mutual-network-head .mutual-field > input,
+.mutual-network-head .mutual-field > select { margin-left:0; margin-top:0; }
+label:has(> input[type="checkbox"]) { flex-direction:row; align-items:center; justify-content:flex-start; }
+label:has(> input[type="checkbox"]) > * { margin-bottom:0; }
+label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; margin:0 6px 0 0; }
+.info-tip { flex:none; align-self:center; }
+.mutual-field-label, .drawer-setting-label { justify-content:flex-start; }
+main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+main > #unreciprocatedSection, main > #followQueueSection { padding:10px; margin-left:10px; }
+#followQueueSection { overflow:auto; }
+@media(max-width:600px) {
+  main > header, main > .tab-panel { margin-left:0; }
+  main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+  main > #unreciprocatedSection, main > #followQueueSection { margin-left:0; }
+}
+main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+main > #unreciprocatedSection, main > #followQueueSection { width:auto; max-width:calc(100% - 10px); }
+#commentsSection #commentBatchAddToQueue { height:32px; padding:0 10px; display:inline-flex; align-items:center; }
+@media(max-width:600px) {
+  main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+  main > #unreciprocatedSection, main > #followQueueSection { max-width:100%; }
+}

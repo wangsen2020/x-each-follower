@@ -455,7 +455,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.1.1';
+export const BACKGROUND_BUILD_VERSION = '1.1.2';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd?.startsWith('followQueue')) {
@@ -624,36 +624,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   await recoverAutomationAlarms();
 });
 
-// ---------------- 本地 Grok 协同开发桥接 (Dev Bridge) ----------------
 recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
-
-let bridgeActive = false;
-async function pollGrokDevBridge() {
-  if (bridgeActive) return;
-  bridgeActive = true;
-  const BRIDGE_URL = 'http://127.0.0.1:18288';
-  while (true) {
-    try {
-      const res = await fetch(`${BRIDGE_URL}/task`, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.taskId && data.prompt) {
-          console.log('[XFollower DevBridge] 收到协同编码任务:', data.taskId);
-          const ans = await requestGrokText(data.prompt, { timeoutMs: 120000 });
-          await fetch(`${BRIDGE_URL}/result`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ taskId: data.taskId, ...ans })
-          }).catch(() => {});
-        }
-      }
-    } catch (_) {
-      // 本地无任务或服务未启动时静默忽略
-    }
-    await sleep(1500);
-  }
-}
-pollGrokDevBridge().catch(() => {});
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
 

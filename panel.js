@@ -3842,7 +3842,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.1.1';
+  const expectedVersion = '1.1.2';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
     chrome.runtime.reload();
@@ -5201,32 +5201,3 @@ $('unreciprocatedSelectAll')?.addEventListener('change', () => {
   }
   renderUnreciprocatedUI();
 });
-
-// ---------------- 本地 Grok 协同开发桥接 (Dev Bridge on Panel) ----------------
-let panelBridgeActive = false;
-async function pollGrokDevBridge() {
-  if (panelBridgeActive) return;
-  panelBridgeActive = true;
-  const BRIDGE_URL = 'http://127.0.0.1:18288';
-  while (true) {
-    try {
-      const res = await fetch(`${BRIDGE_URL}/task`, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.taskId && data.prompt) {
-          console.log('[XFollower PanelBridge] 收到协同编码任务:', data.taskId);
-          const ans = await requestGrokText(data.prompt, { timeoutMs: 120000 });
-          await fetch(`${BRIDGE_URL}/result`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ taskId: data.taskId, ...ans })
-          }).catch(() => {});
-        }
-      }
-    } catch (_) {
-      // 本地无任务时静默
-    }
-    await sleep(1500);
-  }
-}
-pollGrokDevBridge().catch(() => {});

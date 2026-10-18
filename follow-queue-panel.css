@@ -941,3 +941,14 @@
   font-size: 13px;
   color: #889988;
 }
+
+/* Override the legacy vertical label layout for inline controls. */
+.fq-panel-root { padding:10px; }
+.follow-queue-setup { gap:0; padding:0; }
+.follow-queue-setup > * { margin:0 10px 10px 0; }
+.follow-queue-setup label { min-height:32px; gap:0; }
+.follow-queue-setup label > input[type="checkbox"] { margin:0 6px 0 0; }
+.fq-switch-label,.fq-setting-label,.fq-pagesize-label { flex-direction:row; justify-content:flex-start; }
+.fq-switch-label > *, .fq-setting-label > *, .fq-pagesize-label > *, .fq-header-switch-label > * { margin-bottom:0; }
+.fq-switch-label { gap:0; }
+.fq-switch-label input[type="checkbox"] { margin:0 6px 0 0; }
