@@ -1,3 +1,4 @@
+import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows} from './temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -455,7 +456,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.4';
+export const BACKGROUND_BUILD_VERSION = '1.3.5';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd?.startsWith('followQueue')) {
@@ -517,6 +518,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
   if (alarm.name === QUEUE_ALARM) {
     const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
     await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
@@ -634,3 +636,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
   clearTimeout(queueSourceSyncTimer);
   queueSourceSyncTimer = setTimeout(() => followQueueRuntime.syncCandidates().catch(error => console.warn('关注队列入队失败:', error)), 800);
 });
+
+ensureTemporaryWindowCleanup().catch(error=>console.warn('临时窗口清理初始化失败:',error));

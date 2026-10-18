@@ -1,3 +1,4 @@
+import {createTemporaryWindow, closeTemporaryWindow} from './temporary-windows.js';
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
 import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage, setQuoteFrameFallbackOnPage } from './page-reader.js';
@@ -18,8 +19,8 @@ export function buildBackgroundGrokWindowOptions(url) {
   };
 }
 
-export function createBackgroundGrokWindow(url) {
-  return chrome.windows.create(buildBackgroundGrokWindowOptions(url));
+export function createBackgroundGrokWindow(url, lifetime) {
+  return createTemporaryWindow(buildBackgroundGrokWindowOptions(url), 'grok', lifetime);
 }
 
 /** 在提交互粉分析前安装 DOM 监听；Grok 回答工具栏出现新的复制按钮即认为本轮完成。 */
@@ -405,8 +406,8 @@ export function setGrokFrameFallbackOnPage(enabled) {
   expiry = setTimeout(restore, 180000);
 }
 
-async function openMinimized(url) {
-  const win = await createBackgroundGrokWindow(url);
+async function openMinimized(url, lifetime) {
+  const win = await createBackgroundGrokWindow(url, lifetime);
   try {
     const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
     if (!tabId) throw new Error('Grok 窗口没有可用标签页');
@@ -418,7 +419,7 @@ async function openMinimized(url) {
     await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:setGrokFrameFallbackOnPage, args:[true]});
     return { winId: win.id, tabId };
   } catch (error) {
-    await chrome.windows.remove(win.id).catch(() => {});
+    await closeTemporaryWindow(win.id).catch(() => {});
     throw error;
   }
 }
@@ -446,7 +447,7 @@ async function askOnX(prompt, nonce, sleep) {
     }
     return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的引用评价' };
   } finally {
-    if (winId) await chrome.windows.remove(winId).catch(() => {});
+    if (winId) await closeTemporaryWindow(winId).catch(() => {});
   }
 }
 
@@ -469,7 +470,7 @@ async function askOnGrokCom(prompt, nonce, sleep) {
     }
     return { ok: false, reason: 'grok.com 60 秒内没有给出符合格式的评论' };
   } finally {
-    if (winId) await chrome.windows.remove(winId).catch(() => {});
+    if (winId) await closeTemporaryWindow(winId).catch(() => {});
   }
 }
 
@@ -504,7 +505,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
   const reasons = [];
 
   async function askTextOnX() {
-    const { winId, tabId } = await openMinimized('https://x.com/i/grok');
+    const { winId, tabId } = await openMinimized('https://x.com/i/grok', timeoutMs + 120000);
     try {
       if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
       const probe = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => {
@@ -528,12 +529,12 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       }
       return { ok: false, reason: 'x.com Grok 生成超时' };
     } finally {
-      if (winId) await chrome.windows.remove(winId).catch(() => {});
+      if (winId) await closeTemporaryWindow(winId).catch(() => {});
     }
   }
 
   async function askTextOnGrokCom() {
-    const { winId, tabId } = await openMinimized('https://grok.com/');
+    const { winId, tabId } = await openMinimized('https://grok.com/', timeoutMs + 120000);
     try {
       if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
       await sleep(3000);
@@ -553,7 +554,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       }
       return { ok: false, reason: 'grok.com 生成超时' };
     } finally {
-      if (winId) await chrome.windows.remove(winId).catch(() => {});
+      if (winId) await closeTemporaryWindow(winId).catch(() => {});
     }
   }
 
@@ -636,7 +637,7 @@ export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep, optio
   for (let attempt = 0; attempt < 2; attempt++) {
     let quoteWindow;
     try {
-      quoteWindow = await chrome.windows.create({url, type:'popup', focused:false, width:800, height:600});
+      quoteWindow = await createTemporaryWindow({url, type:'popup', focused:false, width:800, height:600}, 'quote');
       const quoteTabId = quoteWindow.tabs?.[0]?.id;
       if (!quoteTabId) return {ok:false, reason:'引用帖小窗口没有可用的标签页'};
       await sleep(2500);
@@ -647,7 +648,7 @@ export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep, optio
     } finally {
       const quoteTabId = quoteWindow?.tabs?.[0]?.id;
       if (quoteTabId != null) await chrome.scripting.executeScript({target:{tabId:quoteTabId}, world:'MAIN', func:setQuoteFrameFallbackOnPage, args:[false]}).catch(() => {});
-      if (quoteWindow?.id != null) await chrome.windows.remove(quoteWindow.id).catch(() => {});
+      if (quoteWindow?.id != null) await closeTemporaryWindow(quoteWindow.id).catch(() => {});
     }
     await sleep(1000 + Math.floor(Math.random() * 1000));
   }

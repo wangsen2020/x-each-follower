@@ -7,7 +7,7 @@ test('queue publication fence stops sending after composer is ready and closes o
   const prior=globalThis.chrome, closed=[];
   let published=false;
   const url='https://x.com/alice/status/123';
-  globalThis.chrome={windows:{create:async()=>({id:8,tabs:[{id:80}]}),remove:async id=>closed.push(id)},
+  globalThis.chrome={storage:{session:{set:async()=>{},remove:async()=>{}}},windows:{create:async()=>({id:8,tabs:[{id:80}]}),remove:async id=>closed.push(id)},
     tabs:{update:async()=>{},get:async()=>({status:'complete'})},
     scripting:{executeScript:async({func})=>{
       if(func===inspectQuoteComposerOnPage)return [{result:{ok:true,ready:true,originalUrl:url}}];
@@ -505,6 +505,7 @@ test('postQuoteOnTab recovers when choosing Quote navigates away and destroys th
   const calls = [];
   const targetUrl = 'https://x.com/alice/status/123';
   globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
     windows: {
       create: async options => { calls.push('window:' + options.url); return {id: 9, tabs:[{id: 88}]}; },
       remove: async id => { calls.push('close:' + id); }
@@ -544,6 +545,7 @@ test('postQuoteOnTab closes its popup after a failed publish without touching th
   const calls = [];
   const url = 'https://x.com/alice/status/123';
   globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
     windows: {
       create: async () => ({id: 9, tabs:[{id: 88}]}),
       remove: async id => {calls.push('close:' + id);}
@@ -570,6 +572,7 @@ test('postQuoteOnTab retries a blank X quote shell once and closes both popups',
   let clock = 100000;
   Date.now = () => clock;
   globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
     windows: {
       create: async () => {const id = created.length + 1; created.push(id); return {id, tabs:[{id:80 + id}]};},
       remove: async id => {closed.push(id);}
