@@ -8,7 +8,7 @@ export async function openFollowQueue(root) {
   const current = ++generation;
   mounted?.destroy(); mounted = null;
   root.replaceChildren();
-  const note = document.createElement('p'); note.textContent = '正在确认当前 X 账号…'; root.append(note);
+  const note = document.createElement('p'); note.textContent = '正在确认当前 X 账号；首次安装将自动打开临时页面初始化，请稍候…'; root.append(note);
   try {
     const identity = await request({cmd:'followQueueIdentity'});
     if (current !== generation) return;
@@ -34,6 +34,7 @@ export async function openFollowQueue(root) {
     activate.addEventListener('click',async()=>{
       if (!confirm.checked) { status.textContent = '请先确认本地数据的账号归属。'; return; }
       activate.disabled = true;
+      status.textContent = '正在确认账号并接入来源；首次恢复较多候选时需要一些时间，请稍候…';
       try {
         const response = await request({cmd:'followQueueActivate',accountId:identity.accountId,confirmed:true,
           sources:Object.fromEntries(Object.entries(checks).map(([k,v])=>[k,v.checked]))});
@@ -43,5 +44,12 @@ export async function openFollowQueue(root) {
       } catch(error) { status.textContent = error.message; }
       finally { activate.disabled = false; }
     });
-  } catch(error) { if(current === generation) note.textContent = error.message; }
+  } catch(error) {
+    if (current !== generation) return;
+    note.textContent = error.message;
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.textContent = '重新识别账号';
+    retry.addEventListener('click', () => openFollowQueue(root));
+    root.replaceChildren(note, retry);
+  }
 }

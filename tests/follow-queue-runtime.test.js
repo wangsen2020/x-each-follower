@@ -153,3 +153,28 @@ test('followQueueEnqueue enqueues single or batch candidates into queue store',a
   assert.equal(enqueued[1].sources[0].url,'https://x.com/post/2');
 });
 
+
+test('fresh install bootstraps identity with an owned profile tab when old X tabs have no template',async()=>{
+ const events=[];let captured=false;
+ const api={storage:{local:{get:async()=>({})}},tabs:{
+  query:async()=>[{id:1}],create:async opts=>{events.push(['create',opts]);return {id:2};},
+  update:async(id,opts)=>{events.push(['update',id,opts]);captured=true;},remove:async id=>events.push(['remove',id])},
+  scripting:{executeScript:async()=>[{result:'Viewer'}]}};
+ const runtime=createFollowQueueRuntime({api,wait:async()=>{},fetchIdentity:async()=>captured?
+  {status:200,json:{rest_id:'123',legacy:{screen_name:'viewer'}}}:{status:0,error:'未捕获 UserByScreenName 模板'}});
+ const [a,b]=await Promise.all([runtime.handle({cmd:'followQueueIdentity'}),runtime.handle({cmd:'followQueueIdentity'})]);
+ assert.equal(a.accountId,'123');assert.equal(b.accountId,'123');
+ assert.equal(events.filter(e=>e[0]==='create').length,1);
+ assert.equal(events[0][1].active,false);
+ assert.deepEqual(events.at(-1),['remove',2]);
+ assert.equal(events[1][2].url,'https://x.com/viewer');
+});
+
+test('identity bootstrap times out cleanly and closes only its own tab when logged out',async()=>{
+ const removed=[];let waits=0;
+ const api={storage:{local:{get:async()=>({})}},tabs:{query:async()=>[],create:async()=>({id:9}),remove:async id=>removed.push(id)},
+ scripting:{executeScript:async()=>[{result:''}]}};
+ const runtime=createFollowQueueRuntime({api,wait:async()=>{waits++;},fetchIdentity:async()=>assert.fail('no logged in viewer')});
+ await assert.rejects(runtime.handle({cmd:'followQueueIdentity'}),/完成登录/);
+ assert.deepEqual(removed,[9]);assert.equal(waits,40);
+});

@@ -47,7 +47,7 @@ export function findPublishedQueueQuoteOnPage(handle, originalId, text, after) {
   return null;
 }
 
-export function createFollowQueueRuntime({api = chrome, store, fetchUser} = {}) {
+export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, wait = sleep} = {}) {
   if (!store) {
     let opened;
     store = new Proxy({}, {get(_target, key) { opened ||= createFollowQueueStore(); return opened[key]?.bind(opened); }});
@@ -61,24 +61,49 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser} = {}) 
     }
   };
   async function viewer(tabId) { return canonical(await script(tabId, readQueueViewerOnPage)); }
+  let identifying;
   async function identity() {
+    if (identifying) return identifying;
+    identifying = resolveIdentity().finally(() => { identifying = null; });
+    return identifying;
+  }
+  async function resolveIdentity() {
     const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+    const lookup = async (tabId, handle) => {
+      const result = await fetchIdentity(tabId, 'UserByScreenName', {screen_name:handle});
+      const user = result.status === 200 && parseNetworkUsers(result.json).find(u => canonical(u.handle) === handle);
+      return user?.id ? {accountId:user.id, handle} : null;
+    };
+    // Existing pages may still belong to the extension context removed during uninstall.
+    // Try them first, then use one owned page to capture a fresh request template.
+    for (const tab of tabs) {
+      const handle = await viewer(tab.id).catch(() => '');
+      if (!handle) continue;
+      const found = await lookup(tab.id, handle).catch(() => null);
+      if (found) return found;
+    }
     let temporary;
     try {
-      if (!tabs.length) { temporary = await api.tabs.create({url:'https://x.com/home',active:false}); tabs.push(temporary); }
-      for (const tab of tabs) {
-        let handle = '';
-        for (let attempt = 0; attempt < (temporary ? 20 : 1); attempt++) {
-          handle = await viewer(tab.id).catch(() => '');
-          if (handle) break;
-          await sleep(500);
-        }
-        if (!handle) continue;
-        const lookup = await networkFetch(tab.id, 'UserByScreenName', {screen_name:handle});
-        const user = lookup.status === 200 && parseNetworkUsers(lookup.json).find(u => canonical(u.handle) === handle);
-        if (user?.id) return {accountId:user.id, handle};
+      temporary = await api.tabs.create({url:'https://x.com/home',active:false});
+      let handle = '';
+      for (let attempt = 0; attempt < 40; attempt++) {
+        handle = await viewer(temporary.id).catch(() => '');
+        if (handle) break;
+        await wait(500);
       }
-      throw new Error('无法确认当前 X 账号，请先打开已登录的 X 首页后重试。');
+      if (!handle) throw new Error('未能读取登录账号，请先在 X 首页完成登录，再点击重试。');
+      await api.tabs.update(temporary.id,{url:'https://x.com/' + encodeURIComponent(handle)});
+      for (let attempt = 0; attempt < 40; attempt++) {
+        // Require the freshly loaded page to confirm the same logged-in viewer.
+        const current = await viewer(temporary.id).catch(() => '');
+        if (current && current !== handle) throw new Error('X 登录账号发生变化，请重新确认。');
+        if (current === handle) {
+          const found = await lookup(temporary.id, handle).catch(() => null);
+          if (found) return found;
+        }
+        await wait(500);
+      }
+      throw new Error('账号初始化未完成，X 页面可能加载缓慢或请求受限，请稍后点击重试。');
     } finally { if (temporary) await api.tabs.remove(temporary.id).catch(() => {}); }
   }
   async function canRun(accountId) {
