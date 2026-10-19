@@ -33,7 +33,8 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
   const cache = [];
   let generation = 0;
   let searchTimer = null;
-  let resolveSearch = null;
+  let pendingSearch = null;
+  let inflightSearch = null;
   const calls = [];
 
   function remember(key, value) {
@@ -149,16 +150,41 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
     return page;
   }
 
+  function settleSearch(value) {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    const pending = pendingSearch;
+    pendingSearch = null;
+    if (pending) pending.resolve(value);
+    const inflight = inflightSearch;
+    inflightSearch = null;
+    if (inflight) {
+      inflight.cancelled = true;
+      inflight.resolve(value);
+    }
+  }
+
   function search(moduleName, filter) {
     generation += 1;
     const token = generation;
-    if (searchTimer) clearTimeout(searchTimer);
-    if (resolveSearch) resolveSearch(null);
-    return new Promise(resolve => {
-      resolveSearch = resolve;
+    settleSearch(null);
+    return new Promise((resolve, reject) => {
+      pendingSearch = {resolve, reject};
       searchTimer = setTimeout(() => {
-        resolveSearch = null;
-        open(moduleName, filter, token).then(resolve);
+        if (pendingSearch?.resolve !== resolve) return;
+        pendingSearch = null;
+        searchTimer = null;
+        const current = {resolve, reject, cancelled: false};
+        inflightSearch = current;
+        open(moduleName, filter, token).then(page => {
+          if (inflightSearch === current) inflightSearch = null;
+          if (current.cancelled) return;
+          resolve(page);
+        }, error => {
+          if (inflightSearch === current) inflightSearch = null;
+          if (current.cancelled) return;
+          reject(error);
+        });
       }, debounceMs);
     });
   }
@@ -190,6 +216,7 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
 
   async function invalidate() {
     generation += 1;
+    settleSearch(null);
     cache.length = 0;
     windows.clear();
     complete.clear();

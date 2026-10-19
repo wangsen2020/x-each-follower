@@ -768,12 +768,12 @@ document.querySelectorAll('[data-comment-filter]').forEach(button => button.addE
   commentPage = 1;
   reloadRecordModule('comments', renderCommentTracking);
 }));
-$('commentSearch')?.addEventListener('input', event => { commentSearch = event.target.value; commentPage = 1; if (recordPaging && recordPages) recordPages.search('comments', currentRecordFilter('comments')).then(() => renderCommentTracking()); else renderCommentTracking(); });
+$('commentSearch')?.addEventListener('input', event => { commentSearch = event.target.value; commentPage = 1; if (recordPaging && recordPages) runRecordPageAction('comments', () => recordPages.search('comments', currentRecordFilter('comments')), renderCommentTracking); else renderCommentTracking(); });
 $('commentSearchBtn')?.addEventListener('click', () => { commentSearch = $('commentSearch').value.trim(); commentPage = 1; reloadRecordModule('comments', renderCommentTracking); });
 $('commentSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { commentSearch = event.target.value.trim(); commentPage = 1; reloadRecordModule('comments', renderCommentTracking); } });
 $('commentPageSize')?.addEventListener('change', event => { commentPageSize = Number(event.target.value) || 20; commentPage = 1; reloadRecordModule('comments', renderCommentTracking); });
-$('commentPrevPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { recordPages.previous('comments').then(() => renderCommentTracking()); return; } commentPage--; renderCommentTracking(); });
-$('commentNextPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { recordPages.next('comments').then(() => renderCommentTracking()); return; } commentPage++; renderCommentTracking(); });
+$('commentPrevPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('comments', () => recordPages.previous('comments'), renderCommentTracking); return; } commentPage--; renderCommentTracking(); });
+$('commentNextPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('comments', () => recordPages.next('comments'), renderCommentTracking); return; } commentPage++; renderCommentTracking(); });
 $('commentSelectAll')?.addEventListener('change', event => {
   const pageUsers = recordPaging && recordPages?.window('comments')
     ? recordPages.window('comments').records.map(record => record.payload)
@@ -2903,7 +2903,7 @@ $('mutualSelectAll')?.addEventListener('change', event => {
 $('mutualSearch')?.addEventListener('input', event => {
   mutualSearch = event.target.value;
   mutualPage = 1;
-  if (recordPaging && recordPages) recordPages.search('mutual', currentRecordFilter('mutual')).then(() => renderMutualNetwork());
+  if (recordPaging && recordPages) runRecordPageAction('mutual', () => recordPages.search('mutual', currentRecordFilter('mutual')), renderMutualNetwork);
   else renderMutualNetwork();
 });
 $('mutualSearchBtn')?.addEventListener('click', () => {
@@ -2998,14 +2998,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 $('batchRefreshMutual')?.addEventListener('click', batchRefreshMutualNetwork);
 
 $('mutualPrevPage')?.addEventListener('click', () => {
-  if (recordPaging && recordPages) { recordPages.previous('mutual').then(() => renderMutualNetwork()); return; }
+  if (recordPaging && recordPages) { runRecordPageAction('mutual', () => recordPages.previous('mutual'), renderMutualNetwork); return; }
   if (mutualPage > 1) {
     mutualPage--;
     renderMutualNetwork();
   }
 });
 $('mutualNextPage')?.addEventListener('click', () => {
-  if (recordPaging && recordPages) { recordPages.next('mutual').then(() => renderMutualNetwork()); return; }
+  if (recordPaging && recordPages) { runRecordPageAction('mutual', () => recordPages.next('mutual'), renderMutualNetwork); return; }
   mutualPage++;
   renderMutualNetwork();
 });
@@ -3897,9 +3897,38 @@ function installPageCopies(moduleName) {
   else if (moduleName === 'comments') commentTracking = {...commentTracking, users};
   else if (moduleName === 'unreciprocated') unreciprocatedTracker = {...unreciprocatedTracker, users};
 }
+const RECORD_PAGE_PANEL = {fans: 'monitor', mutual: 'mutual', comments: 'comments', unreciprocated: 'unreciprocated'};
+const RECORD_PAGE_FAIL = {
+  fans: '关注与粉丝记录加载失败',
+  mutual: '互关追踪记录加载失败',
+  comments: '评论追踪记录加载失败',
+  unreciprocated: '回关监测记录加载失败'
+};
+function paintRecordModuleState(moduleName) {
+  const panelId = RECORD_PAGE_PANEL[moduleName];
+  if (!panelId) return;
+  applyModuleView(document, panelId, loadRegistry.get(panelId), moduleRowCount(panelId));
+  refreshSidebarBadges();
+}
+async function runRecordPageAction(moduleName, action, render) {
+  const panelId = RECORD_PAGE_PANEL[moduleName];
+  try {
+    const page = await action();
+    if (page == null) return;
+    if (panelId) {
+      loadRegistry.succeed(panelId);
+      paintRecordModuleState(moduleName);
+    }
+    render();
+  } catch (error) {
+    if (!panelId) return;
+    loadRegistry.fail(panelId, `${RECORD_PAGE_FAIL[moduleName]}：${error?.message || error || '加载失败'}`);
+    paintRecordModuleState(moduleName);
+  }
+}
 function reloadRecordModule(moduleName, render) {
   if (!(recordPaging && recordPages)) { render(); return; }
-  recordPages.open(moduleName, currentRecordFilter(moduleName)).then(page => { if (page) render(); }).catch(error => monitorStatus(error.message));
+  return runRecordPageAction(moduleName, () => recordPages.open(moduleName, currentRecordFilter(moduleName)), render);
 }
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
   activeFollowerTab = button.dataset.followerTab;
@@ -3937,12 +3966,12 @@ $('listSelectAll').addEventListener('change', event => {
 });
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
 $('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
-$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; if (recordPaging && recordPages) recordPages.search('fans', currentRecordFilter('fans')).then(() => renderMonitorList()); else renderMonitorList(); });
+$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; if (recordPaging && recordPages) runRecordPageAction('fans', () => recordPages.search('fans', currentRecordFilter('fans')), renderMonitorList); else renderMonitorList(); });
 $('followerSearchBtn')?.addEventListener('click', () => { followerSearch=$('followerSearch').value.trim(); followerPage=1; renderMonitorList(); });
 $('followerSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { followerSearch=event.target.value.trim(); followerPage=1; renderMonitorList(); } });
 $('followerPageSize').addEventListener('change', event => { followerPageSize=capPageSize(event.target.value); followerPage=1; reloadRecordModule('fans', renderMonitorList); });
-$('followerPrevPage').addEventListener('click', () => { if (recordPaging && recordPages) { recordPages.previous('fans').then(() => renderMonitorList()); return; } followerPage--; renderMonitorList(); });
-$('followerNextPage').addEventListener('click', () => { if (recordPaging && recordPages) { recordPages.next('fans').then(() => renderMonitorList()); return; } followerPage++; renderMonitorList(); });
+$('followerPrevPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.previous('fans'), renderMonitorList); return; } followerPage--; renderMonitorList(); });
+$('followerNextPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
 $('collectNetwork').addEventListener('click', () => collectMutualNetwork($('networkAnchor').value, true));
 $('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
@@ -6062,7 +6091,7 @@ document.querySelectorAll('.unreciprocated-tab').forEach(tabBtn => {
 $('unreciprocatedSearch')?.addEventListener('input', debounce(() => {
   unreciprocatedSearch = $('unreciprocatedSearch')?.value || '';
   unreciprocatedPage = 1;
-  if (recordPaging && recordPages) recordPages.search('unreciprocated', currentRecordFilter('unreciprocated')).then(() => renderUnreciprocatedUI());
+  if (recordPaging && recordPages) runRecordPageAction('unreciprocated', () => recordPages.search('unreciprocated', currentRecordFilter('unreciprocated')), renderUnreciprocatedUI);
   else renderUnreciprocatedUI();
 }, 250));
 $('unreciprocatedSearchBtn')?.addEventListener('click', () => {
@@ -6078,14 +6107,14 @@ $('unreciprocatedPageSize')?.addEventListener('change', () => {
   reloadRecordModule('unreciprocated', renderUnreciprocatedUI);
 });
 $('unreciprocatedPrevPage')?.addEventListener('click', () => {
-  if (recordPaging && recordPages) { recordPages.previous('unreciprocated').then(() => renderUnreciprocatedUI()); return; }
+  if (recordPaging && recordPages) { runRecordPageAction('unreciprocated', () => recordPages.previous('unreciprocated'), renderUnreciprocatedUI); return; }
   if (unreciprocatedPage > 1) {
     unreciprocatedPage--;
     renderUnreciprocatedUI();
   }
 });
 $('unreciprocatedNextPage')?.addEventListener('click', () => {
-  if (recordPaging && recordPages) { recordPages.next('unreciprocated').then(() => renderUnreciprocatedUI()); return; }
+  if (recordPaging && recordPages) { runRecordPageAction('unreciprocated', () => recordPages.next('unreciprocated'), renderUnreciprocatedUI); return; }
   unreciprocatedPage++;
   renderUnreciprocatedUI();
 });

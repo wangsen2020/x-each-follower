@@ -57,16 +57,45 @@ function finish(transaction, work) {
   });
 }
 
+function isClosingError(error) {
+  const name = String(error?.name || '');
+  const message = String(error?.message || error || '');
+  return name === 'InvalidStateError' || /closing/i.test(message);
+}
+
 export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: keyRangeImpl, dbName, now = () => Date.now()} = {}) {
   if (!indexedDBImpl || !keyRangeImpl) throw new Error('IndexedDB is required');
   if (!dbName) throw new Error('dbName is required');
   let opening = null;
   let database = null;
+  let connectionEpoch = 0;
 
-  function open() {
-    if (database) return Promise.resolve(database);
-    opening ??= new Promise((resolve, reject) => {
-      const request = indexedDBImpl.open(dbName, DB_VERSION);
+  function dropConnection(db) {
+    if (database && db && database !== db) return;
+    database = null;
+    opening = null;
+    connectionEpoch += 1;
+  }
+
+  function bind(db) {
+    db.onversionchange = () => {
+      try { db.close(); } catch { /* already closing */ }
+      dropConnection(db);
+    };
+    db.onclose = () => {
+      dropConnection(db);
+    };
+  }
+
+  function openOnce() {
+    return new Promise((resolve, reject) => {
+      let request;
+      try {
+        request = indexedDBImpl.open(dbName, DB_VERSION);
+      } catch (error) {
+        reject(error);
+        return;
+      }
       request.onupgradeneeded = () => {
         install(request.result);
         const rows = request.transaction.objectStore('rows');
@@ -79,7 +108,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
           rows.createIndex('byExternalId', ['sourceKey', 'externalId'], {unique: false});
         }
         const backfill = rows.openCursor();
-        backfill.onerror = () => { opening = null; reject(backfill.error || new Error('externalId backfill failed')); };
+        backfill.onerror = () => reject(backfill.error || new Error('externalId backfill failed'));
         backfill.onsuccess = () => {
           const cursor = backfill.result;
           if (!cursor) return;
@@ -91,27 +120,61 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
         };
       };
       request.onsuccess = () => {
-        database = request.result;
-        database.onversionchange = () => database.close();
-        resolve(database);
+        const db = request.result;
+        bind(db);
+        resolve(db);
       };
       request.onerror = () => {
-        opening = null;
         reject(request.error || new Error('projection open failed'));
       };
     });
+  }
+
+  function open() {
+    if (database) return Promise.resolve(database);
+    if (!opening) {
+      const ticket = connectionEpoch;
+      opening = openOnce().then(db => {
+        if (ticket !== connectionEpoch) {
+          try { db.close(); } catch { /* superseded connection */ }
+          throw new Error('projection connection closed');
+        }
+        database = db;
+        opening = null;
+        return db;
+      }).catch(error => {
+        if (ticket === connectionEpoch) opening = null;
+        throw error;
+      });
+    }
     return opening;
   }
 
+  async function begin(storeNames, mode) {
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const db = await open();
+      try {
+        return db.transaction(storeNames, mode);
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0 && isClosingError(error)) {
+          dropConnection(db);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError || new Error('projection connection closed');
+  }
+
   async function readState() {
-    const db = await open();
-    const state = await requestResult(db.transaction('state', 'readonly').objectStore('state').get('runtime'));
+    const state = await requestResult((await begin('state', 'readonly')).objectStore('state').get('runtime'));
     return state || blankState();
   }
 
   async function writeState(patch) {
-    const db = await open();
-    const transaction = db.transaction('state', 'readwrite');
+    const transaction = await begin('state', 'readwrite');
     const store = transaction.objectStore('state');
     const next = await new Promise((resolve, reject) => {
       const getRequest = store.get('runtime');
@@ -131,8 +194,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function replaceModuleRows(accountId, moduleName, sourceKey, built) {
-    const db = await open();
-    const transaction = db.transaction(['rows', 'membership', 'summaries'], 'readwrite');
+    const transaction = await begin(['rows', 'membership', 'summaries'], 'readwrite');
     const rows = transaction.objectStore('rows');
     const membership = transaction.objectStore('membership');
     const summaries = transaction.objectStore('summaries');
@@ -175,8 +237,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function putRelations(records, summary) {
-    const db = await open();
-    const transaction = db.transaction(['relations', 'summaries'], 'readwrite');
+    const transaction = await begin(['relations', 'summaries'], 'readwrite');
     const store = transaction.objectStore('relations');
     await new Promise((resolve, reject) => {
       const request = store.openCursor();
@@ -201,13 +262,11 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function getSummary(accountId, moduleName) {
-    const db = await open();
-    return await requestResult(db.transaction('summaries', 'readonly').objectStore('summaries').get([accountId, moduleName])) || null;
+    return await requestResult((await begin('summaries', 'readonly')).objectStore('summaries').get([accountId, moduleName])) || null;
   }
 
   async function getRelations(handles) {
-    const db = await open();
-    const store = db.transaction('relations', 'readonly').objectStore('relations');
+    const store = (await begin('relations', 'readonly')).objectStore('relations');
     const records = [];
     for (const handle of handles) {
       const found = await requestResult(store.get(String(handle || '').toLowerCase()));
@@ -217,8 +276,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function queryPage({accountId, module, tab, limit, cursor, onStep} = {}) {
-    const db = await open();
-    const transaction = db.transaction(['membership', 'rows'], 'readonly');
+    const transaction = await begin(['membership', 'rows'], 'readonly');
     const index = transaction.objectStore('membership').index('tabSort');
     const lower = cursor
       ? [accountId, module, tab, cursor.sortKey, cursor.userKey]
@@ -259,8 +317,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function clearSource(sourceKey) {
-    const db = await open();
-    const transaction = db.transaction(['rows', 'membership'], 'readwrite');
+    const transaction = await begin(['rows', 'membership'], 'readwrite');
     const rows = transaction.objectStore('rows');
     const membership = transaction.objectStore('membership');
     await new Promise((resolve, reject) => {
@@ -284,8 +341,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function scanBatches({accountId, module, tab, limit, cursor, match, shouldStop, onStep, maxScan = 200} = {}) {
-    const db = await open();
-    const transaction = db.transaction(['membership', 'rows'], 'readonly');
+    const transaction = await begin(['membership', 'rows'], 'readonly');
     const index = transaction.objectStore('membership').index('tabSort');
     const lower = cursor
       ? [accountId, module, tab, cursor.sortKey, cursor.userKey]
@@ -327,8 +383,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function getRow(accountId, module, userKey) {
-    const db = await open();
-    return await requestResult(db.transaction('rows', 'readonly').objectStore('rows').get([accountId, module, userKey])) || null;
+    return await requestResult((await begin('rows', 'readonly')).objectStore('rows').get([accountId, module, userKey])) || null;
   }
 
   async function rowsByHandle(accountId, module, handles) {
@@ -337,8 +392,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function rowsByHandleAll(accountId, module, handles) {
-    const db = await open();
-    const index = db.transaction('rows', 'readonly').objectStore('rows').index('byHandle');
+    const index = (await begin('rows', 'readonly')).objectStore('rows').index('byHandle');
     const groups = [];
     for (const handle of handles) {
       const found = await requestResult(index.getAll([accountId, module, String(handle || '').toLowerCase()]));
@@ -348,8 +402,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function upsertRelation(record) {
-    const db = await open();
-    const transaction = db.transaction(['relations', 'summaries'], 'readwrite');
+    const transaction = await begin(['relations', 'summaries'], 'readwrite');
     const store = transaction.objectStore('relations');
     const previous = await requestResult(store.get(record.handle));
     store.put(record);
@@ -374,16 +427,14 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function rowsByHandleKey(handle) {
-    const db = await open();
-    const index = db.transaction('rows', 'readonly').objectStore('rows').index('byHandleKey');
+    const index = (await begin('rows', 'readonly')).objectStore('rows').index('byHandleKey');
     const key = String(handle || '').toLowerCase();
     const range = keyRangeImpl.bound([key], [key, []]);
     return await requestResult(index.getAll(range)) || [];
   }
 
   async function deleteRelation(handle) {
-    const db = await open();
-    const transaction = db.transaction(['relations', 'summaries'], 'readwrite');
+    const transaction = await begin(['relations', 'summaries'], 'readwrite');
     const store = transaction.objectStore('relations');
     const previous = await requestResult(store.get(handle));
     if (previous) store.delete(handle);
@@ -408,8 +459,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function scanBySource({sourceKey, limit, cursor} = {}) {
-    const db = await open();
-    const index = db.transaction('rows', 'readonly').objectStore('rows').index('sourceOrder');
+    const index = (await begin('rows', 'readonly')).objectStore('rows').index('sourceOrder');
     const lower = cursor
       ? [sourceKey, cursor.accountId, cursor.module, cursor.userKey]
       : [sourceKey];
@@ -436,13 +486,11 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function getBackup(operationId) {
-    const db = await open();
-    return await requestResult(db.transaction('backups', 'readonly').objectStore('backups').get(operationId)) || null;
+    return await requestResult((await begin('backups', 'readonly')).objectStore('backups').get(operationId)) || null;
   }
 
   async function putBackup(entry) {
-    const db = await open();
-    const transaction = db.transaction('backups', 'readwrite');
+    const transaction = await begin('backups', 'readwrite');
     transaction.objectStore('backups').put(entry);
     await new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -454,8 +502,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
 
   async function pendingBackups(limit = 20) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('pending backup limit must be an integer from 1 to 100');
-    const db = await open();
-    const index = db.transaction('backups', 'readonly').objectStore('backups').index('byStatus');
+    const index = (await begin('backups', 'readonly')).objectStore('backups').index('byStatus');
     const records = [];
     await new Promise((resolve, reject) => {
       const request = index.openCursor(keyRangeImpl.only('pending'));
@@ -471,14 +518,12 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function rowsByExternalId(sourceKey, externalId) {
-    const db = await open();
-    const index = db.transaction('rows', 'readonly').objectStore('rows').index('byExternalId');
+    const index = (await begin('rows', 'readonly')).objectStore('rows').index('byExternalId');
     return await requestResult(index.getAll([sourceKey, String(externalId)])) || [];
   }
 
   async function commitWithBackup(previousKey, next, backup) {
-    const db = await open();
-    const transaction = db.transaction(['rows', 'membership', 'summaries', 'backups'], 'readwrite');
+    const transaction = await begin(['rows', 'membership', 'summaries', 'backups'], 'readwrite');
     const rowStore = transaction.objectStore('rows');
     const membership = transaction.objectStore('membership');
     const summaries = transaction.objectStore('summaries');
@@ -528,8 +573,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function mutateRow(next, previousKey) {
-    const db = await open();
-    const transaction = db.transaction(['rows', 'membership', 'summaries'], 'readwrite');
+    const transaction = await begin(['rows', 'membership', 'summaries'], 'readwrite');
     const rowStore = transaction.objectStore('rows');
     const membership = transaction.objectStore('membership');
     const summaries = transaction.objectStore('summaries');

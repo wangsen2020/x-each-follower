@@ -123,3 +123,38 @@ test('startup queries only the visible module and reports real progress', async 
   memory.forget('fans', 'bob');
   assert.deepEqual(memory.selected('fans', ['ada', 'bob']).map(user => user.handle), ['ada']);
 });
+
+test('search rejects a failed query and a later search succeeds', async () => {
+  const rejections = [];
+  const onUnhandled = reason => rejections.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    let fail = true;
+    const pages = createPanelPages({
+      request: async message => {
+        if (message.op === 'query') {
+          if (fail) throw new Error('query failed');
+          return {ok: true, page: {records: [{userKey: 'a', handle: 'ada', payload: {handle: 'ada'}}], nextCursor: null, scanned: 1}};
+        }
+        if (message.op === 'summary') return {ok: true, summary: {tabs: {all: 1}, total: 1}};
+        if (message.op === 'cancel') return {ok: true};
+        return {ok: true, status: {stage: 'ready', cutover: true, completed: 1, total: 1}, value: {}};
+      },
+      delay: () => Promise.resolve(),
+      debounceMs: 15
+    });
+    await assert.rejects(pages.search('fans', {search: 'bad'}), /query failed/);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(rejections.length, 0);
+    fail = false;
+    const page = await pages.search('fans', {search: 'ok'});
+    assert.equal(page.filter.search, 'ok');
+    assert.equal(page.records[0].handle, 'ada');
+    const pending = pages.search('fans', {search: 'gone'});
+    await pages.invalidate();
+    assert.equal(await pending, null);
+    assert.equal(rejections.length, 0);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
