@@ -40,7 +40,7 @@ test('language-independent iframe and external Turnstile field are detected',()=
   const previous={document:globalThis.document,location:globalThis.location};
   try {
     globalThis.location={hostname:'grok.com',href:'https://grok.com/'};
-    for(const marker of ['iframe','input[name="cf-turnstile-response"]']) {
+    for(const marker of ['input[name="cf-turnstile-response"]']) {
       globalThis.document={title:'',body:{innerText:'Andere Sprache'},querySelector:s=>s.split(',').includes(marker)?{}:null};
       assert.equal(detectGrokVerificationOnPage().host,'grok.com');
     }
@@ -82,4 +82,27 @@ test('a pending script result is held during verification without re-executing i
     await new Promise(r=>setTimeout(r,1200));assert.equal(finished,false);assert.equal(runs,1);
     challenge=false;ready=true;assert.equal((await task)[0].result,'once');assert.equal(runs,1);
   } finally {globalThis.chrome=prior;}
+});
+
+test('visible frames pause but hidden payment frames do not block a healthy chat',()=>{
+ const previous={document:globalThis.document,location:globalThis.location,getComputedStyle:globalThis.getComputedStyle};
+ try {
+  globalThis.location={hostname:'grok.com',href:'https://grok.com/'};
+  globalThis.getComputedStyle=()=>({display:'block',visibility:'visible'});
+  let size={width:884,height:1};
+  globalThis.document={title:'Grok',body:{innerText:'Hello'},querySelector:()=>null,querySelectorAll:()=>[{getBoundingClientRect:()=>size}]};
+  assert.equal(detectGrokVerificationOnPage(),null);
+  size={width:300,height:65};assert.equal(detectGrokVerificationOnPage().host,'grok.com');
+  globalThis.getComputedStyle=()=>({display:'none',visibility:'visible'});assert.equal(detectGrokVerificationOnPage(),null);
+ } finally {Object.assign(globalThis,previous);}
+});
+
+test('resume restores the owned window to its pool and refreshes its execution lease',async()=>{
+ const {resumeTemporaryWindowAfterVerification}=await import('../temporary-windows.js');
+ const prior=globalThis.chrome;const key='xfTemporaryWindow:7';const data={[key]:{windowId:7,tabId:8,kind:'verification',previousKind:'grok-pool',busyUntil:0}};
+ globalThis.chrome={storage:{session:{get:async()=>data,set:async d=>Object.assign(data,d)},local:{set:async()=>{}}}};
+ try {
+  await resumeTemporaryWindowAfterVerification(7,9);assert.equal(data[key].kind,'verification');
+  await resumeTemporaryWindowAfterVerification(7,8);assert.equal(data[key].kind,'grok-pool');assert.ok(data[key].busyUntil>Date.now());assert.equal(data[key].previousKind,undefined);
+ }finally{globalThis.chrome=prior;}
 });

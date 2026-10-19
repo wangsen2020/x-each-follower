@@ -22,8 +22,16 @@ export async function markTemporaryWindowReady(windowId,tabId) {
 export async function holdTemporaryWindowForVerification(windowId,tabId) {
   const key=PREFIX+windowId;
   const record=(await chrome.storage.session.get?.(key) || {})[key];
-  if(record?.tabId===tabId)await saveRecord({...record,kind:'verification',busyUntil:0,expiresAt:Date.now()+TEMP_WINDOW_TTL});
+  if(record?.tabId===tabId)await saveRecord({...record,kind:'verification',previousKind:record.previousKind || record.kind,busyUntil:0,expiresAt:Date.now()+TEMP_WINDOW_TTL});
   else await chrome.storage.session.remove(key);
+}
+
+export async function resumeTemporaryWindowAfterVerification(windowId,tabId) {
+  const key=PREFIX+windowId;
+  const record=(await chrome.storage.session.get?.(key) || {})[key];
+  if(record?.tabId!==tabId || record.kind!=='verification')return;
+  const {previousKind,...rest}=record;
+  await saveRecord({...rest,kind:previousKind || 'grok-pool',busyUntil:Date.now()+TEMP_WINDOW_TTL,expiresAt:Date.now()+TEMP_WINDOW_TTL});
 }
 
 async function restoreRecords(windows) {

@@ -1,11 +1,19 @@
-import {holdTemporaryWindowForVerification} from './temporary-windows.js';
+import {showVerificationAlert, closeVerificationAlert} from './verification-alert-window.js';
+import {holdTemporaryWindowForVerification, resumeTemporaryWindowAfterVerification} from './temporary-windows.js';
 // Runs in the page's main world; keep detection self-contained.
 export function detectGrokVerificationOnPage() {
   const host = location.hostname;
   if (!['x.com','twitter.com','grok.com'].includes(host)) return null;
   const text = (document.body?.innerText || '').slice(0, 12000);
   const title = document.title || '';
-  const challenge = document.querySelector('iframe,input[name="cf-turnstile-response"],input[id^="cf-chl-widget-"][id$="_response"],#challenge-running,#challenge-stage,#arkoseFrame,[data-testid="arkoseFrame"]');
+  const marker = document.querySelector('input[name="cf-turnstile-response"],input[id^="cf-chl-widget-"][id$="_response"],#challenge-running,#challenge-stage,#arkoseFrame,[data-testid="arkoseFrame"]');
+  // Payment/telemetry frames exist in healthy Grok pages; only visible frames are gates.
+  const frame = [...(document.querySelectorAll?.('iframe') || [])].some(node => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 1 && rect.height > 1 && style.display !== 'none' && style.visibility !== 'hidden';
+  });
+  const challenge = marker || frame;
   const gate = /verify (?:that )?you are human|verifying you are human|checking your browser|performing security verification|确认您是真人|验证您是人类|请完成.*验证|安全验证|人机验证/i.test(text);
   // A mention of Cloudflare or CAPTCHA in a normal Grok answer is not a challenge.
   if (!challenge && !(gate && /just a moment|security verification|验证|安全检查/i.test(title)) && !(gate && !document.querySelector('textarea,[contenteditable="true"]'))) return null;
@@ -43,7 +51,9 @@ export async function assertGrokVerificationClear(tabId, preserveNotice = false)
     await chrome.notifications.create('xf-grok-verification', {type:'basic',iconUrl:chrome.runtime.getURL('icon128.png'),title:'Grok 需要手动验证',message:'任务已暂停。请完成安全校验，聊天输入框恢复后将自动继续。',priority:2,requireInteraction:true}).catch(()=>{});
     await chrome.windows.update(tab.windowId,{focused:true,state:'normal'}).catch(()=>{});
     await chrome.tabs.update(tabId,{active:true}).catch(()=>{});
-    chrome.runtime.sendMessage?.({cmd:'showGrokVerificationAlert'})?.catch(()=>{});
+    // Direct module call also works in a service worker, where sendMessage cannot target itself.
+    try { await showVerificationAlert(); }
+    catch (error) { await chrome.storage.local.set({grokVerificationAlertError:{at:notice.at,message:String(error.message || error)}}); }
   }
   const error = new Error('Grok 需要手动完成安全验证；任务暂停等待验证。');
   error.userActionRequired = true;
@@ -63,7 +73,8 @@ export function waitForGrokVerification(tabId, {timeoutMs = 10 * 60 * 1000, inte
   if (waiters.has(tabId)) return waiters.get(tabId);
   const promise = (async () => {
     const started = Date.now();
-    let waiting = false;
+    const saved = (await chrome.storage.local.get('grokVerification')).grokVerification;
+    let waiting = saved?.tabId === tabId;
     try {
       while (true) {
         try {
@@ -71,8 +82,13 @@ export function waitForGrokVerification(tabId, {timeoutMs = 10 * 60 * 1000, inte
           if (!waiting) return;
           const result = await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:isGrokInputReadyOnPage});
           if (result?.[0]?.result) {
-            await chrome.storage.local.remove('grokVerification');
-            await chrome.notifications.clear?.('xf-grok-verification');
+            const current = (await chrome.storage.local.get('grokVerification')).grokVerification;
+            if (current?.tabId === tabId) {
+              await resumeTemporaryWindowAfterVerification(current.windowId,tabId);
+              await chrome.storage.local.remove('grokVerification');
+              await chrome.notifications.clear?.('xf-grok-verification');
+              await closeVerificationAlert(current.at);
+            }
             return;
           }
         } catch (error) {
