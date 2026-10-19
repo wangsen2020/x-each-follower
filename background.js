@@ -1,14 +1,32 @@
+import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from './temporary-windows.js';
+import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
-import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream } from './grok-comment.js';
+import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, appendFollowBackSuffix } from './grok-comment.js';
+import { loadCommentTracking } from './tracking-storage.js';
+import {appendExecutionLog} from './execution-log.js';
+import {sendVerificationSelfMessage} from './verification-self-message.js';
+import {showVerificationAlert,markVerificationAlertClosed,focusVerificationPage} from './verification-alert-window.js';
+import { recoverAutomationAlarms, restoreMissingSyncedSettings } from './automation-recovery.js';
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
 });
 
+chrome.notifications.onClicked.addListener(async id => {
+  if (id !== 'xf-grok-verification') return;
+  await showVerificationAlert({force:true}).catch(()=>{});
+});
+chrome.windows.onRemoved.addListener(windowId=>{markVerificationAlertClosed(windowId).catch(()=>{});});
+chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{
+  if(change.status==='complete')markTemporaryWindowReady(tab.windowId,tabId).catch(()=>{});
+});
+
+const followQueueRuntime = createFollowQueueRuntime();
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -26,7 +44,8 @@ function normalizeAutoFollowConfig(cfg = {}) {
     dwellJitterSeconds: 5,
     minFollowers: 50,
     onlyMutualIntent: true,
-    grokAutoComment: false
+    grokAutoComment: false,
+    grokFollowBackSuffix: false
   };
   const res = { ...defaults, ...(cfg || {}) };
   res.jitter = Math.max(1, Math.min(120, Number(res.jitter) || defaults.jitter));
@@ -38,6 +57,7 @@ function normalizeAutoFollowConfig(cfg = {}) {
   if (res.scrollRounds === 3) res.scrollRounds = defaults.scrollRounds;
   if (res.dwellSeconds === 6) res.dwellSeconds = defaults.dwellSeconds;
   res.grokAutoComment = Boolean(res.grokAutoComment);
+  res.grokFollowBackSuffix = Boolean(res.grokFollowBackSuffix);
   return res;
 }
 
@@ -78,7 +98,8 @@ export function scheduleUnreciprocatedTracker(rawCfg = {}) {
   }).catch(() => {});
 }
 
-function scheduleCommentAutoFollow(rawCfg = {}) {
+async function scheduleCommentAutoFollow(rawCfg = {}) {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear('x-comment-auto-follow'); return; }
   const cfg = normalizeAutoFollowConfig(rawCfg);
   chrome.alarms.clear('x-comment-auto-follow').then(() => {
     if (!cfg.enabled) return;
@@ -101,16 +122,13 @@ async function createNotification(id, options) {
   }
 }
 
-async function loadCommentTracking() {
-  const {commentTracking:stored = {users:[], posts:[]}} = await chrome.storage.local.get('commentTracking');
-  const durable = await durableGet('commentTracking').catch(() => null);
-  return durable?.updatedAt > stored?.updatedAt ? durable : stored;
-}
-
 async function saveCommentTrackingData(tracking) {
   tracking.updatedAt = new Date().toISOString();
-  await chrome.storage.local.set({commentTracking:tracking});
+  const payload = {commentTracking:tracking};
+  if (tracking.autoFollow) payload.commentAutoFollowSettings = tracking.autoFollow;
+  await chrome.storage.local.set(payload);
   await durableSet('commentTracking', tracking).catch(() => {});
+  if (tracking.autoFollow) await durableSet('commentAutoFollowSettings', tracking.autoFollow).catch(() => {});
 }
 
 async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
@@ -123,6 +141,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
+  if (data.relationship?.following === true) return {...data, dwellSeconds:0};
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
   const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
   const totalDwellMs = dwellSeconds * 1000;
@@ -141,13 +160,20 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
 
 // 定时关注执行日志：时间、访问的账号、扫描的帖子、关注结果（面板与后台共用 storage 键 autoFollowLogs）
 async function appendAutoFollowLog(entry) {
-  const {autoFollowLogs = []} = await chrome.storage.local.get('autoFollowLogs');
   const posts = (entry.posts || []).slice(0, 10).map(post => ({text:String(post.text || post || '').slice(0, 120), url:post.url || ''}));
-  autoFollowLogs.unshift({at:new Date().toISOString(), ...entry, posts});
-  await chrome.storage.local.set({autoFollowLogs:autoFollowLogs.slice(0, 300)});
+  return appendExecutionLog({...entry, posts});
 }
 
 async function runCommentAutoFollow(source = 'alarm') {
+  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) return {ok:false,error:'请在关注队列中执行统一关注任务'};
+  if (commentFollowRunning) return {ok:false, error:'评论用户关注任务正在运行。'};
+  await appendAutoFollowLog({scope:'comment', source, result:'started', detail:'评论追踪任务开始，正在读取配置并筛选候选账号。'});
+  const result = await executeCommentAutoFollow(source);
+  await appendAutoFollowLog({scope:'comment', source, result:result.ok ? 'completed' : 'failed', detail:result.summary || result.error || '任务已结束'});
+  return result;
+}
+
+async function executeCommentAutoFollow(source = 'alarm') {
   if (commentFollowRunning) return {ok:false, error:'评论用户关注任务正在运行。'};
   commentFollowRunning = true;
   let tabId = null;
@@ -159,13 +185,27 @@ async function runCommentAutoFollow(source = 'alarm') {
     const {monitor = {}} = await chrome.storage.local.get('monitor');
     if (monitor.pausedUntil && Date.now() < Date.parse(monitor.pausedUntil)) return {ok:false, error:`关注操作暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}`};
     const ownFollowing = new Set([...(monitor.followingUsers || []), ...(monitor.users || []).filter(user => user.state === 'following')].map(user => String(user.handle || '').toLowerCase()));
+    const processedSet = new Set((cfg.processedHandles || []).map(h => String(h || '').toLowerCase()));
+    const attempts = await readAutoFollowAttempts(tracking.users || []);
+    const minFollowersCfg = Math.max(0, Number(cfg.minFollowers) || 0);
     const candidates = (tracking.users || []).filter(user => {
       const handle = String(user.handle || '').toLowerCase();
+      if (!handle) return false;
+      if (wasAutoFollowAttempted(handle, attempts)) return false;
+      if (processedSet.has(handle)) return false;
+      if (['skipped', 'followed', 'failed'].includes(user.autoFollowState)) return false;
       const mutual = user.relationship?.following === true && user.relationship?.followedBy === true;
-      return handle && !user.followedAt && !ownFollowing.has(handle) && user.relationship?.following !== true && !mutual;
+      if (user.followedAt || ownFollowing.has(handle) || user.relationship?.following === true || mutual) return false;
+      const knownFollowers = parseCount(String(user.followersText || ''));
+      if (knownFollowers !== null && knownFollowers < minFollowersCfg) return false;
+      const preEval = evaluateMutualProfile(user);
+      if (preEval.countsKnown && preEval.isNotRecommended) return false;
+      return true;
     }).sort((a,b) => String(a.lastSeenAt || '').localeCompare(String(b.lastSeenAt || ''))).slice(0, Math.max(1, Math.min(20, Number(cfg.batchLimit) || 10)));
     if (!candidates.length) {
-      cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = '没有待关注的评论用户。';
+      cfg.lastRunAt = new Date().toISOString();
+      const totalFollowed = Number(cfg.followedCount) || 0;
+      cfg.lastSummary = `没有待关注的评论用户${totalFollowed ? `（累计已关注 ${totalFollowed} 人）` : ''}。`;
       tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
       return {ok:true, summary:cfg.lastSummary};
     }
@@ -176,38 +216,60 @@ async function runCommentAutoFollow(source = 'alarm') {
     let processedCount = 0;
     let followedCount = 0;
     let skippedCount = 0;
+    let alreadyFollowingCount = 0;
+    const skipReasons = {};
     for (const user of candidates) {
       const handle = String(user.handle || '').replace(/^@/, '');
       let didFollow = false;
       let actualDwellSeconds = cfg.dwellSeconds;
       let commentRes = {status:'off'};
+      await recordAutoFollowAttempt(handle, 'processing');
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
         actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
         delete profile.dwellSeconds;
+        if (profile.relationship?.following === true) {
+          user.relationship = {...(user.relationship || {}), following:true};
+          if (profile.id) user.id = profile.id;
+          user.autoFollowState = 'followed';
+          user.autoFollowCheckedAt = new Date().toISOString();
+          delete user.autoFollowReason;
+          await recordAutoFollowAttempt(handle, 'followed', '主页确认已关注');
+          await saveCommentTrackingData(tracking);
+          await appendAutoFollowLog({scope:'comment', source, handle, result:'already_following', detail:'主页确认已关注，已纠正本地关系；无需再次看帖或关注。'});
+          processedCount++;
+          alreadyFollowingCount++;
+          continue;
+        }
         user.recentPosts = mergeRecentPosts(user.recentPosts || [], profile.posts || [], 100);
         user.recentPostsFetchedAt = new Date().toISOString();
         user.recentPostsCount = user.recentPosts.length;
         user.name = profile.name || user.name; user.bio = profile.bio || user.bio;
         user.followersText = profile.followersText || user.followersText; user.followingText = profile.followingText || user.followingText;
+        user.relationship = {...(user.relationship || {}), ...(profile.relationship || {})};
         if (profile.id) user.id = profile.id;
         const {profileCache = {}} = await chrome.storage.local.get('profileCache');
         const profileKey = handle.toLowerCase();
-        profileCache[profileKey] = {...(profileCache[profileKey] || {}), ...profile, handle, posts:user.recentPosts.slice(0, 10), profileCachedAt:user.recentPostsFetchedAt};
+        profileCache[profileKey] = {...(profileCache[profileKey] || {}), ...profile, relationship:user.relationship, handle, posts:user.recentPosts.slice(0, 10), profileCachedAt:user.recentPostsFetchedAt};
         await chrome.storage.local.set({profileCache});
         await durableSet('profileCache', profileCache).catch(() => {});
         await saveCommentTrackingData(tracking);
         const followers = parseCount(String(user.followersText || ''));
         const minFollowers = Math.max(0, Number(cfg.minFollowers) || 0);
-        const evaluation = evaluateMutualProfile({...user, ...profile, posts:user.recentPosts.slice(0, 10)});
+        const evaluation = evaluateMutualProfile({...user, ...profile, relationship:user.relationship, posts:user.recentPosts.slice(0, 10)});
         let skipReason = '';
         if (followers === null && minFollowers > 0) skipReason = '未能读取粉丝数，无法确认最低粉丝数门槛';
         else if (followers !== null && followers < minFollowers) skipReason = `粉丝数 ${followers} 低于最低门槛 ${minFollowers}`;
         else if (evaluation.isNotRecommended) skipReason = evaluation.recommendReason || '主页风险评估未通过';
         else if (cfg.onlyMutualIntent !== false && evaluation.tag !== '互粉' && evaluation.recommendLabel !== '推荐') skipReason = evaluation.intentTooltip || '未达到互粉意向或推荐条件';
         if (skipReason) {
+          const category = followers === null ? '资料未读全' : followers < minFollowers ? '粉丝数低于门槛' : evaluation.hasBaitRisk ? '关注/粉丝比例不足80%' : evaluation.isNotRecommended ? '内容风险规则' : '未命中互粉或推荐条件';
+          skipReasons[category] = (skipReasons[category] || 0) + 1;
+          await recordAutoFollowAttempt(handle, 'skipped', skipReason);
           user.autoFollowState = 'skipped'; user.autoFollowReason = skipReason; user.autoFollowCheckedAt = new Date().toISOString();
+          cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
+          tracking.autoFollow = cfg;
           await saveCommentTrackingData(tracking);
           processedCount++;
           skippedCount++;
@@ -241,6 +303,7 @@ async function runCommentAutoFollow(source = 'alarm') {
           }
         }
         if (followed) {
+          await recordAutoFollowAttempt(handle, 'followed');
           user.followedAt ||= new Date().toISOString(); user.followSource = 'comment-auto';
           user.relationship = {...(user.relationship || {}), following:true}; delete user.followFailureReason;
           user.autoFollowState = 'followed'; delete user.autoFollowReason;
@@ -253,9 +316,10 @@ async function runCommentAutoFollow(source = 'alarm') {
               const g = await requestGrokComment(handle, chosen, user.name, {sleep, fix:repairMojibake});
               if (!g.ok) commentRes = {status:'grok_failed', reason:g.reason};
               else {
-                const pub = await postQuoteOnTab(tabId, chosen, g.reply, publishQuotePostOnPage, sleep);
-                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:g.reply, post:g.postText, postUrl:g.postUrl, channel:g.channel};
-                if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = g.reply; user.grokCommentPostUrl = g.postUrl; }
+                const replyText = cfg.grokFollowBackSuffix ? appendFollowBackSuffix(g.reply, undefined, g.language) : g.reply;
+                const pub = await postQuoteOnTab(tabId, chosen, replyText, publishQuotePostOnPage, sleep);
+                commentRes = {status:pub.ok ? 'posted' : 'post_failed', reason:pub.reason || '', reply:replyText, post:g.postText, postUrl:g.postUrl, channel:g.channel, language:g.language};
+                if (pub.ok) { user.grokCommentAt = new Date().toISOString(); user.grokComment = replyText; user.grokCommentPostUrl = g.postUrl; }
               }
             }
           }
@@ -263,6 +327,9 @@ async function runCommentAutoFollow(source = 'alarm') {
       } catch (error) {
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
+      cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
+      await recordAutoFollowAttempt(handle, didFollow ? 'followed' : 'failed', user.followFailureReason || '');
+      tracking.autoFollow = cfg;
       await saveCommentTrackingData(tracking);
       const commentNote = {
         posted: `；✔ 已通过 Grok（${commentRes.channel}）引用原帖发布评价`,
@@ -280,7 +347,10 @@ async function runCommentAutoFollow(source = 'alarm') {
       }
       await sleep(1200 + Math.floor(Math.random() * 1000));
     }
-    cfg.lastRunAt = new Date().toISOString(); cfg.lastSummary = `本轮处理 ${processedCount} 人，成功关注 ${followedCount} 人${skippedCount ? `，条件不符跳过 ${skippedCount} 人` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
+    const totalFollowed = (Number(cfg.followedCount) || 0) + followedCount;
+    cfg.followedCount = totalFollowed;
+    cfg.lastRunAt = new Date().toISOString();
+    cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${totalFollowed ? ` · 累计已关注 ${totalFollowed} 人` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
     tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
     return {ok:true, summary:cfg.lastSummary};
   } catch (error) {
@@ -397,7 +467,43 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
+export const BACKGROUND_BUILD_VERSION = '1.4.0';
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (['showGrokVerificationAlert','focusGrokVerificationPage'].includes(message?.cmd)) {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可操作验证提醒'});return;}
+    const operation=message.cmd==='showGrokVerificationAlert'?showVerificationAlert():focusVerificationPage();
+    operation.then(value=>sendResponse({ok:true,...value}),error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
+  if (message?.cmd === 'notifyGrokVerificationSelf') {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可发送本人验证提醒'});return;}
+    (async()=>{
+      const {grokVerification:notice}=await chrome.storage.local.get('grokVerification');
+      if(!notice || notice.at!==message.at)return {ok:false,stale:true};
+      const identity=await followQueueRuntime.handle({cmd:'followQueueIdentity'});
+      return sendVerificationSelfMessage({identity,notice}).finally(()=>showVerificationAlert().catch(()=>{}));
+    })().then(sendResponse,async error=>{
+      const reason=String(error?.message || error);
+      await chrome.storage.local.set({grokVerificationSelfMessage:{status:'failed',reason,at:Date.now()}});
+      sendResponse({ok:false,error:reason});
+    });
+    return true;
+  }
+  if (message?.cmd === 'grokWindowPool') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可管理 Grok 窗口'}); return; }
+    handleGrokWindowPool(message).then(value=>sendResponse({ok:true,value}),error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
+  if (message?.cmd?.startsWith('followQueue')) {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return; }
+    followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
+    return true;
+  }
+  if (message?.cmd === 'getBackgroundBuildVersion') {
+    sendResponse({ok:true, version:BACKGROUND_BUILD_VERSION});
+    return;
+  }
   if (message?.cmd === 'grokStreamAnswer') {
     deliverGrokStream(message.text || '');
     return;
@@ -440,7 +546,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd !== 'appendExecutionLog') return;
+  if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false, error:'仅扩展页面可写入执行日志'}); return; }
+  appendExecutionLog(message.entry).then(logs => sendResponse({ok:true, logs}), error => sendResponse({ok:false, error:error.message}));
+  return true;
+});
+
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
+  if (alarm.name === QUEUE_ALARM) {
+    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
+    await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
+    return;
+  }
+  if (['x-mutual-auto-follow','x-comment-auto-follow'].includes(alarm.name) && (await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear(alarm.name); return; }
   if (alarm.name === 'x-comment-auto-follow') {
     const tracking = await loadCommentTracking();
     const cfg = tracking.autoFollow || {};
@@ -460,11 +580,18 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Math.max(1, Number(monitor.jitter) || 1);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    await createNotification(`x-followers-${Date.now()}`, {
-      type: 'basic',
-      title: 'X 关注与粉丝检索提醒',
-      message: `增量检索周期已到（下次检索约 ${nextDelay} 分钟后），点击同步增量数据。`
-    });
+    let handledByPanel = false;
+    try {
+      const res = await chrome.runtime.sendMessage({ cmd: 'runFollowersScanTick' });
+      if (res?.ok) handledByPanel = true;
+    } catch {}
+    if (!handledByPanel) {
+      await createNotification(`x-followers-${Date.now()}`, {
+        type: 'basic',
+        title: 'X 粉丝管理 · 定时检测提醒',
+        message: `增量检测周期已到（下次约 ${nextDelay} 分钟后），请打开管理面板以自动同步粉丝数据并拉取待回关用户。`
+      });
+    }
     return;
   }
 
@@ -530,70 +657,33 @@ chrome.alarms.onAlarm.addListener(async alarm => {
 });
 
 async function restoreSettingsFromSync() {
-  try {
-    if (chrome.storage?.sync) {
-      const syncData = await chrome.storage.sync.get(['mutualAutoFollowSettings', 'commentAutoFollowSettings', 'unreciprocatedSettings']);
-      const toSet = {};
-      if (syncData.mutualAutoFollowSettings) {
-        toSet.mutualAutoFollowSettings = normalizeAutoFollowConfig(syncData.mutualAutoFollowSettings);
-      }
-      if (syncData.commentAutoFollowSettings) {
-        toSet.commentAutoFollowSettings = normalizeAutoFollowConfig(syncData.commentAutoFollowSettings);
-      }
-      if (syncData.unreciprocatedSettings) {
-        toSet.unreciprocatedSettings = normalizeUnreciprocatedConfig(syncData.unreciprocatedSettings);
-      }
-      if (Object.keys(toSet).length) {
-        await chrome.storage.local.set(toSet);
-      }
-    }
-  } catch {}
+  await restoreMissingSyncedSettings().catch(() => {});
 }
 
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking().catch(() => null);
-  if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
-  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
-  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
-    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
-  }
+  await recoverAutomationAlarms();
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
-  const tracking = await loadCommentTracking().catch(() => null);
-  if (tracking?.autoFollow) scheduleCommentAutoFollow(tracking.autoFollow);
-  const { unreciprocatedSettings, unreciprocatedTracker } = await chrome.storage.local.get(['unreciprocatedSettings', 'unreciprocatedTracker']).catch(() => ({}));
-  if (unreciprocatedSettings || unreciprocatedTracker?.config) {
-    scheduleUnreciprocatedTracker(unreciprocatedSettings || unreciprocatedTracker.config);
-  }
+  await recoverAutomationAlarms();
 });
 
-// ---------------- 本地 Grok 协同开发桥接 (Dev Bridge) ----------------
-let bridgeActive = false;
-async function pollGrokDevBridge() {
-  if (bridgeActive) return;
-  bridgeActive = true;
-  const BRIDGE_URL = 'http://127.0.0.1:18288';
-  while (true) {
-    try {
-      const res = await fetch(`${BRIDGE_URL}/task`, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.taskId && data.prompt) {
-          console.log('[XFollower DevBridge] 收到协同编码任务:', data.taskId);
-          const ans = await requestGrokText(data.prompt, { timeoutMs: 120000 });
-          await fetch(`${BRIDGE_URL}/result`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ taskId: data.taskId, ...ans })
-          }).catch(() => {});
-        }
-      }
-    } catch (_) {
-      // 本地无任务或服务未启动时静默忽略
-    }
-    await sleep(1500);
-  }
-}
-pollGrokDevBridge().catch(() => {});
+recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
+
+followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
+
+let queueSourceSyncTimer;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !['monitor','mutualNetwork','commentTracking'].some(key => changes[key])) return;
+  clearTimeout(queueSourceSyncTimer);
+  queueSourceSyncTimer = setTimeout(() => followQueueRuntime.syncCandidates().catch(error => console.warn('关注队列入队失败:', error)), 800);
+});
+
+ensureTemporaryWindowCleanup().catch(error=>console.warn('临时窗口清理初始化失败:',error));
+
+let lastGrokFocusedWindow;
+chrome.windows.onFocusChanged.addListener(windowId => {
+  const previous=lastGrokFocusedWindow;lastGrokFocusedWindow=windowId;
+  for(const id of new Set([previous,windowId])) if(Number.isInteger(id)&&id>=0)handleGrokWindowPool({action:'touch',windowId:id}).catch(()=>{});
+});

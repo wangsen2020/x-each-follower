@@ -26,11 +26,11 @@ const MUTUAL_KEYWORD_PATTERNS = [
   { pattern: /互关|互關/i, label: '互关' },
   { pattern: /互粉/i, label: '互粉' },
   { pattern: /回关|回關/i, label: '回关' },
-  { pattern: /必回|关必回|關必回|有粉必回|有赞必回|秒回/i, label: '必回' },
+  { pattern: /必回|关必回|關必回|有粉必回|有赞必回|有关必回|秒回/i, label: '必回' },
   { pattern: /多评|多评论/i, label: '多评' },
   { pattern: /多互动|常互动|互动起来/i, label: '多互动' },
   { pattern: /蓝\s*v|蓝标|蓝勾/i, label: '蓝V' },
-  { pattern: /加好友|交朋友|认识新朋友|扩关|扩列/i, label: '加好友' },
+  { pattern: /加好友|交朋友|浇朋友|认识新朋友|扩关|扩列/i, label: '加好友' },
   { pattern: /多发|日更/i, label: '多发' },
   { pattern: /互赞|互讚|互浇|互暖|互推|互助|抱团|一起涨粉/i, label: '互助互动' },
   // 英文互粉/互动高频词
@@ -46,7 +46,13 @@ const MUTUAL_KEYWORD_PATTERNS = [
 export function matchMutualKeywords(profile = {}) {
   const bioText = `${profile.name || ''} ${profile.bio || ''}`;
   const posts = Array.isArray(profile.posts) ? profile.posts.slice(0, 10) : [];
-  const postsText = posts.map(post => (typeof post === 'string' ? post : (post?.text || ''))).join(' ');
+  const sourceReplies = Array.isArray(profile.sources)
+    ? profile.sources.flatMap(source => (source?.replies || []).map(reply => reply?.text || '')).filter(Boolean)
+    : [];
+  const postsText = [
+    ...posts.map(post => (typeof post === 'string' ? post : (post?.text || ''))),
+    ...sourceReplies
+  ].join(' ');
   const bioHits = [];
   const postHits = [];
   const allHits = [];
@@ -391,9 +397,9 @@ export function riskAssess(profile) {
   const text = `${profile.name || ''} ${profile.bio || ''} ${(profile.posts || []).map(post => post.text || '').join(' ')}`.toLowerCase();
   const hits = [];
   const rules = [
-    [/onlyfans|fansly|pornhub|xvideos|xnxx|成人直播|成人视频|裸聊|约炮|援交|情色|色情|成人视频|私密视频|福利视频|写真|同城约|上门服务/i, '成人或擦边平台/服务'],
-    [/18\s*\+|nsfw|n\s*s\s*f\s*w|sexy|性感|爆乳|巨乳|白丝|黑丝|内衣|裸|露点|私房照|尺度/i, '成人或擦边内容词'],
-    [/t\.me\/|telegram|加微|微信|私聊看|付费解锁|订阅解锁|机场|低价代充|博彩|赌场|下注|返利/i, '导流、付费或高风险外链'],
+    [/onlyfans|fansly|pornhub|xvideos|xnxx|成人直播|成人视频|裸聊|约炮|援交|情色|色情|私密视频|福利视频|(?:私房|福利|性感|大尺度)写真|同城约|上门服务/i, '成人或擦边平台/服务'],
+    [/18\s*\+|nsfw|n\s*s\s*f\s*w|sexy|性感|爆乳|巨乳|白丝|黑丝|情趣内衣|(?:裸体|全裸|半裸|裸照|裸露)|露点|私房照|(?:大尺度|无尺度|超大尺度)/i, '成人或擦边内容词'],
+    [/t\.me\/|加微|加v信|私聊看|付费解锁|订阅解锁|低价代充|博彩|赌场|赌球|返利群/i, '导流、付费或高风险外链'],
   ];
   for (const [pattern, label] of rules) if (pattern.test(text)) hits.push(label);
   return {level:hits.length ? 'danger' : 'normal', hits:[...new Set(hits)]};
@@ -499,7 +505,7 @@ export function selectValuableMutualTargets(users = [], config = {}, profileCach
     : (config.onlyMutualIntent !== false);
   const minFollowers = Number.isFinite(Number(config.minFollowers)) ? Number(config.minFollowers) : 50;
   const batchLimit = Math.max(1, Math.min(20, Number(config.batchSize || config.batchLimit) || 10));
-  const visitedList = config.visitedHandles || config.processedHandles || [];
+  const visitedList = [...(config.visitedHandles || []), ...(config.processedHandles || [])];
   const processedSet = new Set(visitedList.map(h => String(h || '').toLowerCase()));
   const scored = [];
 
@@ -509,6 +515,8 @@ export function selectValuableMutualTargets(users = [], config = {}, profileCach
     const key = handle.toLowerCase();
     if (processedSet.has(key) || ownFollowingSet.has(key)) continue;
     if (user.relationship?.following === true || user.state === 'following') continue;
+    if (user.autoFollowState === 'skipped' || user.state === 'skipped') continue;
+    if (profileCache[key]?.autoFollowState === 'skipped') continue;
 
     const cached = profileCache[key] || {};
     const merged = {

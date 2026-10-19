@@ -10,36 +10,100 @@ const dbPage = async (operation, key, value) => {
 };
 
 let dbTabId;
+let dbTabOwned = false;
 let dbTabPromise;
+let dbTabCloseTimer;
+let dbOperationQueue = Promise.resolve();
+
+export async function createStorageTab(chromeApi) {
+  const tabs = await chromeApi.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+  const existing = tabs.find(tab => tab.id != null);
+  if (existing) return {id:existing.id, owned:false};
+
+  let win = await chromeApi.windows.getLastFocused({windowTypes:['normal']}).catch(() => null);
+  if (!win?.id || win.type !== 'normal') {
+    const windows = await chromeApi.windows.getAll({windowTypes:['normal']});
+    win = windows.find(item => item.focused) || windows[0];
+  }
+  if (!win?.id) throw new Error('没有可用的浏览器窗口，无法创建 X 本地数据库标签页');
+
+  const tab = await chromeApi.tabs.create({
+    windowId:win.id,
+    url:'https://x.com/home',
+    active:false
+  });
+  if (!tab?.id) throw new Error('无法创建 X 本地数据库标签页');
+  return {id:tab.id, owned:true};
+}
+
+export async function closeStorageTab(chromeApi, tabId) {
+  if (tabId != null) await chromeApi.tabs.remove(tabId).catch(() => {});
+}
+
 async function storageTab() {
   if (dbTabPromise) return dbTabPromise;
   dbTabPromise = (async () => {
-  if (dbTabId) { try { await chrome.tabs.get(dbTabId); return dbTabId; } catch { dbTabId = undefined; } }
-  const tabs = await chrome.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
-  const usable = tabs.find(tab => tab.status === 'complete');
-  if (usable) { dbTabId = usable.id; return dbTabId; }
-  const win = await chrome.windows.create({url:'https://x.com/home', type:'popup', state:'minimized', focused:false});
-  let tabId = win.tabs?.[0]?.id;
-  if (!tabId && win.id) {
-    const tabs = await chrome.tabs.query({windowId: win.id});
-    tabId = tabs?.[0]?.id;
-  }
-  dbTabId = tabId;
-  if (!dbTabId) throw new Error('无法打开 X 本地数据库页面');
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) { const tab = await chrome.tabs.get(dbTabId); if (tab.status === 'complete') break; await new Promise(resolve => setTimeout(resolve, 500)); }
-  return dbTabId;
+    if (dbTabId != null) {
+      try { await chrome.tabs.get(dbTabId); return dbTabId; }
+      catch { dbTabId = undefined; dbTabOwned = false; }
+    }
+    const tab = await createStorageTab(chrome);
+    dbTabId = tab.id;
+    dbTabOwned = tab.owned;
+    try {
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        const current = await chrome.tabs.get(dbTabId).catch(() => null);
+        if (!current) throw new Error('X 本地数据库标签页已关闭');
+        if (current.status === 'complete') return dbTabId;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      throw new Error('等待 X 本地数据库标签页加载超时');
+    } catch (error) {
+      const failedTabId = dbTabId;
+      const shouldClose = dbTabOwned;
+      dbTabId = undefined;
+      dbTabOwned = false;
+      if (shouldClose) await closeStorageTab(chrome, failedTabId);
+      throw error;
+    }
   })();
   try { return await dbTabPromise; } finally { dbTabPromise = undefined; }
 }
 
+function scheduleOwnedTabClose(tabId) {
+  if (!dbTabOwned || dbTabId !== tabId) return;
+  clearTimeout(dbTabCloseTimer);
+  dbTabCloseTimer = setTimeout(async () => {
+    if (!dbTabOwned || dbTabId !== tabId) return;
+    dbTabId = undefined;
+    dbTabOwned = false;
+    dbTabCloseTimer = undefined;
+    await closeStorageTab(chrome, tabId);
+  }, 500);
+}
+
+async function withStorageTab(operation) {
+  const next = dbOperationQueue.then(async () => {
+    clearTimeout(dbTabCloseTimer);
+    dbTabCloseTimer = undefined;
+    const tabId = await storageTab();
+    try { return await operation(tabId); }
+    finally { scheduleOwnedTabClose(tabId); }
+  });
+  dbOperationQueue = next.catch(() => {});
+  return next;
+}
+
 export async function durableGet(key) {
-  const tabId = await storageTab();
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
-  return result?.[0]?.result;
+  return withStorageTab(async tabId => {
+    const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
+    return result?.[0]?.result;
+  });
 }
 
 export async function durableSet(key, value) {
-  const tabId = await storageTab();
-  await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,value]});
+  return withStorageTab(async tabId => {
+    await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,value]});
+  });
 }
