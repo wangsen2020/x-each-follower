@@ -28,6 +28,25 @@ test('queue does not open tabs, create a database or migrate before explicit act
   await assert.rejects(runtime.handle({cmd:'followQueueRun',accountId:'123'}),/确认队列账号/);
 });
 
+test('candidate synchronization stores a profile from one snapshot without enqueueing an unchanged source',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
+  const source={module:'mutual',url:'',enabled:true};
+  const gets=[];
+  const enqueued=[];
+  const api={storage:{local:{get:async keys=>{gets.push(keys);return {followQueueBinding:binding,mutualNetwork:{users:[{handle:'target',name:'Ada',bio:'简介'}]}};}}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const store={
+    lookup:async()=>({handle:'target',state:'pending',sources:[source],profile:null}),
+    enqueue:async item=>{enqueued.push(item);return item;},
+    importOutcome:async()=>{throw new Error('no import');}
+  };
+  await createFollowQueueRuntime({api,store}).syncCandidates();
+  assert.equal(gets.filter(key => key == null).length,1);
+  assert.equal(enqueued.length,1);
+  assert.equal(enqueued[0].profile.name,'Ada');
+  assert.equal(enqueued[0].profile.bio,'简介');
+});
+
 test('candidate synchronization preserves an active successful follow against stale skipped data',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
   const source={module:'mutual',url:'',enabled:true};
@@ -104,6 +123,7 @@ test('followQueueRetryEvaluation verifies uncertain evaluation on profile before
     tabs:{
       query:async()=>[{id:1}],
       create:async()=>({id:99,url:'https://x.com/viewer'}),
+      update:async()=>{},
       get:async()=>({id:99,status:'complete',url:'https://x.com/viewer'}),
       remove:async()=>{}
     },
@@ -187,4 +207,20 @@ test('identity progress reports preparation and failure without requiring activa
  assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'checking');
  release();await assert.rejects(identity,/完成登录/);
  assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'failed');
+});
+
+test('queue quote confirmation waits for profile load and refreshes a stale timeline without publishing twice',async()=>{
+ const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0,checks=0,prepared=0;
+ const api={tabs:{update:async()=>{},get:async()=>({status:clock<2100?'loading':'complete'}),reload:async()=>{reloads++;}},
+  scripting:{executeScript:async({func})=>{if(func.name==='setQuoteFrameFallbackOnPage'){prepared++;return [];}checks++;return [{result:reloads?{id:'posted',url:'https://x.com/viewer/status/posted'}:null}];}}};
+ const proof=await confirmPublishedQueueQuote({api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock});
+ assert.equal(proof.id,'posted');assert.equal(reloads,1);assert.equal(prepared,2);assert.ok(checks>1);assert.ok(clock>=15000);
+});
+
+test('queue quote confirmation keeps an unverified result uncertain and honours cancellation',async()=>{
+ const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0;
+ const api={tabs:{update:async()=>{},get:async()=>({status:'complete'}),reload:async()=>{reloads++;}},scripting:{executeScript:async()=>[]}};
+ const args={api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock};
+ assert.equal(await confirmPublishedQueueQuote({...args,timeoutMs:20000}),null);assert.equal(reloads,1);
+ assert.equal(await confirmPublishedQueueQuote({...args,canContinue:()=>false}),null);
 });

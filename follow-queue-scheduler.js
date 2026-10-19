@@ -155,6 +155,11 @@ export function createFollowQueueScheduler({
   }
 
   async function readLiveJob(accountId, jobId) {
+    if (typeof store.get === 'function') {
+      const job = await store.get(jobId);
+      if (!job || job.accountId !== accountId) return null;
+      return job;
+    }
     const jobs = await store.list({accountId});
     return jobs.find(item => item.id === jobId) || null;
   }

@@ -26,3 +26,12 @@ test('Grok channels and focused windows do not get reused; focused idle lease re
  const now=Date.now()+GROK_IDLE_TTL+100;await scanTemporaryWindows(now);
  assert.equal(f.records['xfTemporaryWindow:'+a.id].expiresAt,now+GROK_IDLE_TTL);
 });
+
+test('new Grok popup navigates once; only a reused window gets a fresh navigation',async()=>{
+ const f=fixture();let updates=0;chrome.tabs.update=async()=>{updates++;};
+ const first=await handleGrokWindowPool({action:'acquire',url:'https://x.com/i/grok'});
+ assert.equal(updates,0);
+ await handleGrokWindowPool({action:'release',windowId:first.id});
+ const second=await handleGrokWindowPool({action:'acquire',url:'https://x.com/i/grok'});
+ assert.equal(second.id,first.id);assert.equal(updates,1);
+});

@@ -1,5 +1,6 @@
 import {waitForGrokVerification, grokTaskNow, assertPendingGrokVerificationClear, executeGrokScript} from './grok-verification.js';
 import {createTemporaryWindow, closeTemporaryWindow, acquireGrokWindow, releaseGrokWindow} from './temporary-windows.js';
+import {requestGrokComPersistentSession} from './grok-session-manager.js';
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
 import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage, setQuoteFrameFallbackOnPage } from './page-reader.js';
@@ -21,6 +22,9 @@ export function buildBackgroundGrokWindowOptions(url) {
 }
 
 export async function createBackgroundGrokWindow(url, lifetime) {
+  if (url && url.includes('grok.com')) {
+    throw new Error('grok.com 窗口禁止通过临时窗口池创建，必须统一由 Grok 会话协调器管理');
+  }
   await assertPendingGrokVerificationClear();
   return acquireGrokWindow(url, lifetime);
 }
@@ -73,19 +77,52 @@ export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 750
       clearInterval(interval);
       resolve(result);
     };
+    const locateNonce = targetNonce => {
+      if (!targetNonce) return null;
+      if (typeof document !== 'undefined' && typeof document.createTreeWalker === 'function' && document.body) {
+        try {
+          const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+          let tn;
+          let found = null;
+          while ((tn = walker.nextNode())) {
+            if (tn.nodeValue && tn.nodeValue.includes(targetNonce)) {
+              found = tn.parentElement || tn;
+            }
+          }
+          if (found) return found;
+        } catch (_) {}
+      }
+      if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        const all = Array.prototype.filter.call(document.querySelectorAll('*'), el =>
+          String(el?.textContent || '').includes(targetNonce));
+        if (!all.length) return null;
+        const leaves = all.filter(el => el.children?.length === 0);
+        if (leaves.length) return leaves[leaves.length - 1];
+        all.sort((a, b) => (String(a?.textContent || '').length) - (String(b?.textContent || '').length));
+        return all[0];
+      }
+      return null;
+    };
     const inspect = () => {
       const count = copyButtons().length;
       const text = document.body?.innerText || '';
       const labels = [...document.querySelectorAll('button,[role="button"]')].map(button =>
         `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.innerText || ''}`.trim());
       const stillGenerating = labels.some(label => /^stop(?: generating)?$|^停止(?:生成)?$/i.test(label));
-      const nonceNode = nonce && [...document.querySelectorAll('*')].find(el =>
-        el.children.length === 0 && String(el.textContent || '').includes(nonce));
+      const nonceNode = nonce && locateNonce(nonce);
+      const isAfterNonce = el => Boolean(nonceNode && (nonceNode.compareDocumentPosition(el) & 4) !== 0);
       const hasNewSuggestion = nonceNode && suggestionButtons().some(button =>
-        !initialSuggestions.has(button) &&
-        (nonceNode.compareDocumentPosition(button) & 4) !== 0
+        !initialSuggestions.has(button) && isAfterNonce(button)
       );
-      if (count <= initialCopyCount || stillGenerating || !hasNewSuggestion || !hasStructuredResult(text)) {
+      const hasNewAction = nonceNode && [...document.querySelectorAll('button,[role="button"]')].some(button => {
+        if (!isAfterNonce(button)) return false;
+        const aria = String(button.getAttribute('aria-label') || '').trim();
+        const text = String(button.innerText || button.textContent || '').trim();
+        return /^Regenerate$|^重新生成$/i.test(aria || text) ||
+               /^Good response$|^Bad response$/i.test(aria) ||
+               /^Copy$|^复制$/i.test(aria || text);
+      });
+      if (count <= initialCopyCount || stillGenerating || (!hasNewSuggestion && !hasNewAction) || !hasStructuredResult(text)) {
         previousText = '';
         stableSamples = 0;
         return;
@@ -135,6 +172,21 @@ export function createStableAnswerGate(requiredSamples = 4) {
     if (current === previous) samples++;
     else { previous = current; samples = 1; }
     return samples >= needed;
+  };
+}
+
+export function createGrokAnswerGate(signalSamples = 4, contentSamples = 5) {
+  const signaled = createStableAnswerGate(signalSamples);
+  const unchanged = createStableAnswerGate(contentSamples);
+  return (state, answer) => {
+    const streamComplete = state?.network?.status === 'complete';
+    const usable = Boolean(answer && !state?.failed && (!state?.stillGenerating || streamComplete));
+    const content = state?.contentSignature || String(state?.text || '').trim();
+    const stableContent = unchanged(content, usable);
+    const endMarker = Boolean(extractGrokComment(state?.text || ''));
+    const stableSignal = signaled(answer, usable && Boolean(endMarker || state?.done || streamComplete));
+    if (stableSignal && endMarker) return 'end-marker';
+    return stableSignal ? streamComplete ? state.network.transport === 'websocket' ? 'network-response.done' : 'network-eof' : 'completion-signal' : stableContent ? 'stable-content' : '';
   };
 }
 
@@ -253,12 +305,51 @@ export function driveGrokInput(prompt) {
       el.dispatchEvent(new Event('change', {bubbles:true}));
     } else {
       el.focus();
-      const inserted = document.execCommand('insertText', false, prompt);
-      // Lexical/contenteditable 会由 execCommand 触发真实 input。再合成一次 input 会让
-      // Lexical 把同一段文本插入两遍；只有浏览器未能插入时才用 DOM + 单次事件兜底。
-      if (!inserted && !readInput(el).includes(prompt)) {
-        el.textContent = prompt;
-        el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:prompt}));
+      document.execCommand('insertText', false, prompt);
+      // Lexical commits asynchronously; wait and check before falling back
+      let inserted = false;
+      for (let i = 0; i < 4; i++) {
+        await sleep(100);
+        const cur = findInput() || el;
+        if (normalizeInput(readInput(cur)).includes(normalizeInput(prompt))) {
+          inserted = true;
+          break;
+        }
+      }
+      // 若 execCommand 未能成功填入（如后台未激活窗口），使用标准的 ClipboardEvent paste 事件注入（现代 Lexical 最稳定标准机制）
+      if (!inserted) {
+        const cur = findInput() || el;
+        cur.focus();
+        try {
+          if (typeof DataTransfer !== 'undefined' && typeof ClipboardEvent !== 'undefined') {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', prompt);
+            const pasteEvent = new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: dt
+            });
+            cur.dispatchEvent(pasteEvent);
+          }
+        } catch (_) {}
+        for (let i = 0; i < 4; i++) {
+          await sleep(100);
+          const cur2 = findInput() || el;
+          if (normalizeInput(readInput(cur2)).includes(normalizeInput(prompt))) {
+            inserted = true;
+            break;
+          }
+        }
+      }
+      // DOM + inputEvent 终极兜底
+      if (!inserted) {
+        const fallback = findInput() || el;
+        fallback.textContent = prompt;
+        if (typeof InputEvent !== 'undefined') {
+          fallback.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:prompt}));
+        } else if (typeof Event !== 'undefined') {
+          fallback.dispatchEvent(new Event('input', {bubbles:true}));
+        }
       }
     }
     let accepted = false;
@@ -290,35 +381,172 @@ export function driveGrokInput(prompt) {
   })();
 }
 
+/** 在页面 DOM 中可靠定位包含 nonce 的最深叶子元素/容器 */
+export function findNonceNode(nonce) {
+  if (!nonce) return null;
+  // 1. 优先通过 TreeWalker 搜索包含 nonce 的纯文本叶子节点并返回其宿主元素（兼容带标签、艾特、链接或换行的 prompt）
+  if (typeof document !== 'undefined' && typeof document.createTreeWalker === 'function' && document.body) {
+    try {
+      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+      let tn;
+      let found = null;
+      while ((tn = walker.nextNode())) {
+        if (tn.nodeValue && tn.nodeValue.includes(nonce)) {
+          found = tn.parentElement || tn;
+        }
+      }
+      if (found) return found;
+    } catch (_) {}
+  }
+  // 2. 备用与测试桩兼容：在所有匹配节点中选取文本最短的最深节点，同时保留原先 children.length === 0 的优先兼容
+  if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+    const all = Array.prototype.filter.call(document.querySelectorAll('*'), el =>
+      String(el?.textContent || '').includes(nonce));
+    if (!all.length) return null;
+    const leaves = all.filter(el => el.children?.length === 0);
+    if (leaves.length) return leaves[leaves.length - 1];
+    all.sort((a, b) => (String(a?.textContent || '').length) - (String(b?.textContent || '').length));
+    return all[0];
+  }
+  return null;
+}
+
 /** in-page：通用读取（x.com 与 grok.com 共用），返回 nonce 之后的页面文字。 */
 export function readGrokPageAnswer(nonce) {
+  const stream = typeof window !== 'undefined' ? window.__xefGrokStream : null;
+  const network = stream?.nonce === nonce ? {
+    requestId:stream.requestId, status:stream.status, chunks:stream.chunks,
+    transport:stream.transport || 'http', responseId:stream.responseId || '', terminalEvent:stream.terminalEvent || '',
+    quietForMs:Date.now() - (stream.lastChunkAt || stream.startedAt),
+    endedAt:stream.endedAt, httpStatus:stream.httpStatus
+  } : null;
+  // Current X transcript exposes a turn ID and a separate quotable assistant
+  // message. Never cut a whole page at the last nonce: the model can echo that
+  // nonce, and rendered line breaks can split it even in the user bubble.
+  const turns = Array.from(document.querySelectorAll('[data-turn-id]'));
+  if (turns.length) {
+    const normalize = value => String(value || '').replace(/\s+/g, '');
+    const credential = normalize(nonce);
+    const turn = credential && turns.find(candidate => Array.from(
+      candidate.querySelectorAll('[class~="group/user"], [data-testid="user-message"]')
+    ).some(message => normalize(message.textContent).includes(credential)));
+    if (!turn) return {text:'', done:false, stage:'nonce_missing', source:'x-turn'};
+    const turnId = turn.getAttribute('data-turn-id');
+    const message = turn.querySelector('[data-quotable-message]');
+    if (!message) return {text:'', done:false, stage:'waiting_answer', source:'x-turn', turnId};
+    const blocks = Array.from(message.querySelectorAll('.grok-trace-soft-enter'));
+    const text = blocks.map(block => String(block.innerText || block.textContent || '').trim()).filter(Boolean).join('\n\n');
+    const contentDOM = blocks.map(block => block.innerHTML || block.textContent || '').join('\n');
+    let contentHash = 2166136261;
+    for (let i=0; i<contentDOM.length; i++) contentHash = Math.imul(contentHash ^ contentDOM.charCodeAt(i), 16777619);
+    const label = button => String(button.getAttribute('aria-label') || button.getAttribute('title') || button.innerText || '').trim();
+    const visible = button => {
+      if (button.disabled || button.getAttribute('aria-disabled') === 'true') return false;
+      if (button.getClientRects && !button.getClientRects().length) return false;
+      for (let node = button; node; node = node.parentElement) {
+        if (node.hidden || node.getAttribute?.('aria-hidden') === 'true') return false;
+        const style = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+        if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+      }
+      return true;
+    };
+    const stops = Array.from(document.querySelectorAll('button, [role="button"]')).filter(button =>
+      /^Stop(?: generating| response)?$|^停止(?:生成|响应|回答)?$/i.test(label(button)));
+    const stillGenerating = stops.some(visible);
+    const answerActions = Array.from((turn || message).querySelectorAll('button, [role="button"]')).some(button =>
+      /^(?:Copy|复制|Regenerate|重新生成|Good response|Bad response|回答不错|回答不好)$/i.test(label(button)) ||
+      Boolean(button.querySelector?.('svg[data-icon="icon-copy"], svg[data-icon="icon-regenerate"]')));
+    const hasDelimiters = text.includes('【引用评价结束】') && !stillGenerating;
+    const failed = !stillGenerating && /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复/.test(text);
+    const done = Boolean(text && (answerActions || hasDelimiters) && !stillGenerating && !failed);
+    return {text, done, failed, stillGenerating, source:'x-turn', turnId, network, contentSignature:String(contentHash >>> 0),
+      answerActions, stopCount:stops.length, visibleStopCount:stops.filter(visible).length,
+      stage:failed ? 'failed' : stillGenerating ? 'generating' : !text ? 'empty_answer' : done ? 'complete' : 'awaiting_completion'};
+  }
+  const locateNonce = targetNonce => {
+    if (!targetNonce) return null;
+    if (typeof document !== 'undefined' && typeof document.createTreeWalker === 'function' && document.body) {
+      try {
+        const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+        let tn;
+        let found = null;
+        while ((tn = walker.nextNode())) {
+          if (tn.nodeValue && tn.nodeValue.includes(targetNonce)) {
+            found = tn.parentElement || tn;
+          }
+        }
+        if (found) return found;
+      } catch (_) {}
+    }
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+      const all = Array.prototype.filter.call(document.querySelectorAll('*'), el =>
+        String(el?.textContent || '').includes(targetNonce));
+      if (!all.length) return null;
+      const leaves = all.filter(el => el.children?.length === 0);
+      if (leaves.length) return leaves[leaves.length - 1];
+      all.sort((a, b) => (String(a?.textContent || '').length) - (String(b?.textContent || '').length));
+      return all[0];
+    }
+    return null;
+  };
+
   const t = (document.getElementById('react-root') ? (document.querySelector('[data-testid=primaryColumn]') || document.body) : document.body).innerText || '';
   const i = t.lastIndexOf(nonce);
   if (i < 0) return { text: '', done: false };
   const labels = Array.prototype.map.call(document.querySelectorAll('button'), b => b.getAttribute('aria-label') || b.innerText || '');
-  // X may show Copy message before completion. The follow-up prompt chips appear only
-  // after the answer, and they must follow this request's nonce in document order.
-  const nonceNode = Array.prototype.find.call(document.querySelectorAll('*'), el =>
-    el.children.length === 0 && String(el.textContent || '').includes(nonce));
+  const stopGenerating = Array.prototype.some.call(document.querySelectorAll('button'), button => {
+    const value = String(button.getAttribute('aria-label') || button.innerText || '').trim();
+    if (!/^Stop(?: generating| response)?$|^停止/i.test(value)) return false;
+    if (button.disabled || button.hidden || button.getAttribute('aria-hidden') === 'true' || button.getAttribute('aria-disabled') === 'true') return false;
+    if (button.getClientRects && !button.getClientRects().length) return false;
+    for (let node = button; node; node = node.parentElement) {
+      if (node.hidden || node.getAttribute?.('aria-hidden') === 'true') return false;
+      const style = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    }
+    return true;
+  });
+
+  const nonceNode = locateNonce(nonce);
+  const isAfterNonce = el => Boolean(nonceNode && (nonceNode.compareDocumentPosition(el) & 4) !== 0);
+
+  // 1. 建议气泡按钮（后续追问建议）
   const suggestionSelector = 'button span.min-w-0.overflow-x-clip.text-ellipsis.whitespace-nowrap';
-  const hasFollowUpSuggestion = Boolean(nonceNode && Array.prototype.some.call(
-    document.querySelectorAll(suggestionSelector), span => {
-      const button = span.closest('button');
-      return button && String(span.innerText || span.textContent || '').trim() &&
-        (nonceNode.compareDocumentPosition(button) & 4) !== 0;
+  const suggestionNodes = [...(document.querySelectorAll(suggestionSelector) || [])];
+  if (!suggestionNodes.length) {
+    suggestionNodes.push(...(document.querySelectorAll('button span.min-w-0, button[data-slot="xds-button"]') || []));
+  }
+  const hasFollowUpSuggestion = Boolean(nonceNode && suggestionNodes.some(span => {
+    const button = span.closest ? span.closest('button') : span;
+    if (!button || !isAfterNonce(button)) return false;
+    const text = String(span.innerText || span.textContent || button.innerText || '').trim();
+    return text && !/^Think Harder$|^Auto$|^历史$|^私密$/i.test(text);
+  }));
+
+  // 2. 回复卡片的操作按钮（Regenerate / Good response / Bad response / Copy 等）
+  // 注意：在 Prompt 气泡上只有 "Copy message" 与 "Edit message"；在 Grok 回复卡片上是独立的 "Copy"、"Regenerate"、"Good response"、"Bad response"、"Share"
+  const hasAnswerActions = Boolean(nonceNode && Array.prototype.some.call(
+    document.querySelectorAll('button'), button => {
+      if (!isAfterNonce(button)) return false;
+      const aria = String(button.getAttribute('aria-label') || '').trim();
+      const text = String(button.innerText || button.textContent || '').trim();
+      return /^Regenerate$|^重新生成$/i.test(aria || text) ||
+             /^Good response$|^Bad response$/i.test(aria) ||
+             /^Copy$|^复制$/i.test(aria || text);
     }
   ));
-  const isX = location.hostname === 'x.com';
-  const completionSignal = isX ? hasFollowUpSuggestion : labels.some(l => /Regenerate|重新生成/i.test(l));
-  const done = completionSignal && !labels.some(l => /^Stop( generating)?$|^停止/i.test(l.trim()));
+
+  const isX = typeof location !== 'undefined' && (location.hostname === 'x.com' || location.hostname.endsWith('.x.com'));
+  const hasCompletedDelimiters = t.slice(i).includes('【引用评价结束】') && !stopGenerating;
+  const completionSignal = hasFollowUpSuggestion || hasAnswerActions || hasCompletedDelimiters || (!isX && labels.some(l => /Regenerate|重新生成/i.test(l)));
+  const done = Boolean(completionSignal) && !stopGenerating;
+
   const failed = /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复/.test(t.slice(i));
   if (failed) {
-    const leaf = Array.prototype.find.call(document.querySelectorAll('span,div,button'),
-      e => e.children.length === 0 && /^(Retry|重试)$/i.test((e.innerText || '').trim()));
-    if (leaf) (leaf.closest('button,[role=button]') || leaf).click();
+    // 移除页面内部隐式点击 Retry：任何重试均交由上层协调器显式判定与管理，防止计数失真与死循环
     return { text: '', done: false, failed: true };
   }
-  return { text: t.slice(i + nonce.length), done };
+  return { text: t.slice(i + nonce.length), done, stillGenerating: stopGenerating, network };
 }
 
 /** in-page：grok.com 探测 + 提交。 */
@@ -408,7 +636,7 @@ export function setGrokFrameFallbackOnPage(enabled) {
   expiry = setTimeout(restore, 180000);
 }
 
-async function openMinimized(url, lifetime) {
+export async function openMinimized(url, lifetime) {
   const win = await createBackgroundGrokWindow(url, lifetime);
   try {
     const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
@@ -422,59 +650,91 @@ async function openMinimized(url, lifetime) {
     await executeGrokScript({target:{tabId}, world:'MAIN', func:setGrokFrameFallbackOnPage, args:[true]});
     return { winId: win.id, tabId };
   } catch (error) {
-    if (!error.userActionRequired) await closeTemporaryWindow(win.id).catch(() => {});
+    if (!error.userActionRequired) {
+      // Preserve the failed page for inspection. A transient navigation/injection
+      // error must not make a newly opened popup immediately disappear.
+      await chrome.storage.local.set({xfGrokWindowPreparationError:{
+        windowId:win.id, url, at:Date.now(), reason:String(error?.message || error)
+      }}).catch(() => {});
+      await releaseGrokWindow(win.id).catch(() => {});
+    }
     throw error;
   }
 }
 
 async function askOnX(prompt, nonce, sleep) {
-  const stable = createStableAnswerGate(4);
-  const { winId, tabId } = await openMinimized('https://x.com/i/grok');
+  const complete = createGrokAnswerGate(2, 3);
+  const { winId, tabId } = await openMinimized('https://x.com/i/grok', 300000);
   try {
     if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
     const probe = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: () => {
       const t = (document.body?.innerText || '').slice(0, 3000);
       return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
-    } }).catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
+    } }).catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];}))?.[0]?.result;
     if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
     const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [prompt] })
-      .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
+      .catch(e => {if (e?.userActionRequired || e?.grokVerificationTimeout) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
     if (!drive?.ok) return { ok: false, reason: `x.com Grok：${drive?.err || '提交失败'}` };
-    const deadline = grokTaskNow() + 60000;
+    const deadline = grokTaskNow() + 180000;
+    let lastState;
+    let lastReadError = '';
+    let samples = 0;
+    const recordRead = async (state, parsed, outcome) => {
+      await chrome.storage.local.set({xfGrokLastRead:{
+        at:Date.now(), version:chrome.runtime.getManifest().version, tabId, winId,
+        nonce, outcome, samples, stage:state?.stage || (state?.done ? 'complete' : 'legacy_pending'),
+        source:state?.source || 'legacy', turnId:state?.turnId || '',
+        done:Boolean(state?.done), stillGenerating:Boolean(state?.stillGenerating),
+        answerActions:Boolean(state?.answerActions), stopCount:state?.stopCount,
+        visibleStopCount:state?.visibleStopCount,
+        completionMethod:state?.completionMethod || '',
+        network:state?.network || null,
+        textLength:String(state?.text || '').length, parsedLength:parsed.length,
+        lastReadError
+      }}).catch(() => {});
+    };
     while (grokTaskNow() < deadline) {
       await sleep(2000);
       const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
-        .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
+        .catch(error => {
+          if (error?.userActionRequired || error?.grokVerificationTimeout) throw error;
+          lastReadError = String(error?.message || error);
+          console.warn('[askOnX] readGrokPageAnswer error:', error);
+          return [];
+        }))?.[0]?.result;
+      lastState = dom;
+      samples++;
+      if (dom?.failed) { await recordRead(dom, '', 'failed'); return { ok: false, reason: 'x.com Grok 页面报告生成失败' }; }
       const fromDom = extractGrokComment(dom?.text);
-      if (stable(fromDom, Boolean(dom?.done))) return { ok: true, reply: fromDom, language: extractGrokCommentLanguage(dom?.text), channel: 'x.com' };
+      const completionMethod = complete(dom, fromDom);
+      if (completionMethod) {
+        await recordRead({...dom, completionMethod}, fromDom, 'success');
+        return { ok: true, reply: fromDom, language: extractGrokCommentLanguage(dom?.text), channel: 'x.com' };
+      }
     }
-    return { ok: false, reason: 'x.com Grok 60 秒内没有给出符合格式的引用评价' };
+    await recordRead(lastState, extractGrokComment(lastState?.text), 'timeout');
+    return { ok: false, reason: `x.com Grok 等待 180 秒后${lastState?.stillGenerating ? '仍在生成' : lastState?.text ? '未得到已完成且格式有效的引用评价' : '未读取到本轮回答'}；读取状态：${lastState?.stage || 'legacy_pending'}${lastReadError ? `；读取异常：${lastReadError}` : ''}` };
   } finally {
     if (winId) await releaseGrokWindow(winId).catch(() => {});
   }
 }
 
 async function askOnGrokCom(prompt, nonce, sleep) {
-  const stable = createStableAnswerGate(4);
-  const { winId, tabId } = await openMinimized('https://grok.com/');
-  try {
-    if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
-    await sleep(3000);
-    const drive = (await executeGrokScript({ target: { tabId }, func: driveGrokComInput, args: [prompt] })
-      .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
-    if (!drive?.ok) return { ok: false, reason: drive?.err || 'grok.com 提交失败' };
-    const deadline = grokTaskNow() + 60000;
-    while (grokTaskNow() < deadline) {
-      await sleep(2500);
-      const dom = (await executeGrokScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
-        .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
-      const reply = extractGrokComment(dom?.text);
-      if (stable(reply, Boolean(dom?.done))) return { ok: true, reply, language: extractGrokCommentLanguage(dom?.text), channel: 'grok.com' };
+  const res = await requestGrokComPersistentSession({
+    prompt,
+    nonce,
+    taskType: 'comment',
+    timeoutMs: 90000,
+    sleep,
+    extractFn: rawText => {
+      const reply = extractGrokComment(rawText);
+      const language = extractGrokCommentLanguage(rawText);
+      return { reply, language };
     }
-    return { ok: false, reason: 'grok.com 60 秒内没有给出符合格式的评论' };
-  } finally {
-    if (winId) await releaseGrokWindow(winId).catch(() => {});
-  }
+  });
+  if (!res.ok) return { ok: false, reason: res.reason || 'grok.com 会话调用未成功' };
+  if (!res.reply) return { ok: false, reason: 'grok.com 未能在有效时间内给出符合格式的引用评价' };
+  return { ok: true, reply: res.reply, language: res.language, channel: 'grok.com' };
 }
 
 /**
@@ -514,21 +774,25 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       const probe = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: () => {
         const t = (document.body?.innerText || '').slice(0, 3000);
         return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
-      } }).catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
+      } }).catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];}))?.[0]?.result;
       if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
       const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [fullPrompt] })
-        .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
+        .catch(e => {if (e?.userActionRequired || e?.grokVerificationTimeout) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
       if (!drive?.ok) return { ok: false, reason: `x.com Grok 提交失败: ${drive?.err || ''}` };
 
       const deadline = grokTaskNow() + timeoutMs;
-      const stable = createStableAnswerGate(4);
+      const complete = createGrokAnswerGate();
       while (grokTaskNow() < deadline) {
         await sleep(2000);
         const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
-          .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
+          .catch(error => {
+            if (error?.userActionRequired || error?.grokVerificationTimeout) throw error;
+            console.warn('[askTextOnX] readGrokPageAnswer error:', error);
+            return [];
+          }))?.[0]?.result;
         if (dom?.failed) return { ok: false, reason: 'Grok 回复异常或触发风控' };
         const text = String(dom?.text || '').trim();
-        if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'x.com' };
+        if (complete(dom, text)) return { ok: true, text, channel: 'x.com' };
       }
       return { ok: false, reason: 'x.com Grok 生成超时' };
     } finally {
@@ -537,28 +801,15 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
   }
 
   async function askTextOnGrokCom() {
-    const { winId, tabId } = await openMinimized('https://grok.com/', timeoutMs + 120000);
-    try {
-      if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
-      await sleep(3000);
-      const drive = (await executeGrokScript({ target: { tabId }, func: driveGrokComInput, args: [fullPrompt] })
-        .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
-      if (!drive?.ok) return { ok: false, reason: `grok.com 提交失败: ${drive?.err || ''}` };
-
-      const deadline = grokTaskNow() + timeoutMs;
-      const stable = createStableAnswerGate(4);
-      while (grokTaskNow() < deadline) {
-        await sleep(2500);
-        const dom = (await executeGrokScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
-          .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
-        if (dom?.failed) return { ok: false, reason: 'grok.com 回复异常' };
-        const text = String(dom?.text || '').trim();
-        if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'grok.com' };
-      }
-      return { ok: false, reason: 'grok.com 生成超时' };
-    } finally {
-      if (winId) await releaseGrokWindow(winId).catch(() => {});
-    }
+    const res = await requestGrokComPersistentSession({
+      prompt: fullPrompt,
+      nonce,
+      taskType: 'text',
+      timeoutMs,
+      sleep
+    });
+    if (!res.ok) return { ok: false, reason: res.reason || 'grok.com 协调会话生成失败' };
+    return { ok: true, text: res.text, channel: 'grok.com' };
   }
 
   for (const ask of [askTextOnX, askTextOnGrokCom]) {
@@ -583,7 +834,7 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
   const expectedPostText = String(post?.text || post?.postText || '').trim();
   const expectedHandle = String(post?.handle || post?.username || new URL(url).pathname.split('/')[1] || '').replace(/^@/, '');
-  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(error => {if(error.userActionRequired) throw error; return [];});
+  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];});
   await chrome.tabs.update(tabId, {url});
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -609,7 +860,7 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
     if (!tab) return { ok: false, reason: '引用帖标签页已关闭' };
     if (tab.status !== 'complete') { await sleep(300); continue; }
     const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url, expectedPostText, expectedHandle] })
-      .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
+      .catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];}))?.[0]?.result;
     if (state) lastComposerState = state;
     if (state?.reason?.includes('不是 Quote')) {
       await dismissDraft();

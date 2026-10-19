@@ -52,3 +52,16 @@ export async function focusVerificationPage(api=chrome) {
   await api.tabs.update(tab.id,{active:true});
   return {ok:true};
 }
+
+export function closeVerificationAlert(at,api=chrome) {
+  const next=work.then(async()=>{
+    const record=(await api.storage.session.get?.(KEY) || {})[KEY];
+    if(!record || record.at!==at)return;
+    if(record.windowId) {
+      const win=await api.windows.get(record.windowId,{populate:true}).catch(()=>null);
+      if(win?.tabs?.length===1 && win.tabs[0].url?.startsWith(api.runtime.getURL('verification-alert.html')))await api.windows.remove(win.id);
+    }
+    await api.storage.session.remove(KEY);
+  });
+  work=next.catch(()=>{});return next;
+}

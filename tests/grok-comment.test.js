@@ -151,7 +151,7 @@ test('Grok analysis waits for a new copy control and a structured target result'
   }
 });
 
-test('X Grok Copy message alone is not a completion signal; a later suggestion chip is', () => {
+test('X Grok complete delimiters do not require suggestions, but an active Stop still blocks completion', () => {
   const previous = {document:globalThis.document, location:globalThis.location};
   const nonce = '任务编号abc';
   const nonceLeaf = {children:[],textContent:nonce,compareDocumentPosition:() => 4};
@@ -172,11 +172,14 @@ test('X Grok Copy message alone is not a completion signal; a later suggestion c
     }
   };
   try {
-    assert.equal(readGrokPageAnswer(nonce).done, false);
+    assert.equal(readGrokPageAnswer(nonce).done, true);
     suggestion = {innerText:'新建议',getAttribute:() => '',span:{innerText:'新建议',textContent:'新建议',closest:() => suggestion}};
     assert.equal(readGrokPageAnswer(nonce).done, true);
     stop = {getAttribute:name => name === 'aria-label' ? 'Stop generating' : '',innerText:''};
     assert.equal(readGrokPageAnswer(nonce).done, false);
+    stop = {getAttribute:name => name === 'aria-label' ? 'Stop response' : '',innerText:''};
+    assert.equal(readGrokPageAnswer(nonce).done, false);
+    assert.equal(readGrokPageAnswer(nonce).stillGenerating, true);
   } finally {
     globalThis.document = previous.document;
     globalThis.location = previous.location;
@@ -616,4 +619,146 @@ test('appendFollowBackSuffix trims base to keep result within X character weight
   const result = appendFollowBackSuffix(longText);
   assert.ok(result.endsWith('有关必回'));
   assert.ok(tweetWeight(result) <= 280);
+});
+
+test('readGrokPageAnswer reliably detects completion when prompt has nested elements/tags and response has Regenerate/Copy action buttons', () => {
+  const previous = {document:globalThis.document, location:globalThis.location};
+  const nonce = '任务编号mvf1hkgql8vp';
+  // Nested prompt structure: div containing hashtag link and text node
+  const promptContainer = {
+    children: [{textContent:'#蓝V', children:[]}],
+    textContent: `#蓝V #真诚互动 #交朋友 62 33 1,525 ${nonce}`,
+    compareDocumentPosition: () => 4
+  };
+  const copyMessage = {getAttribute: name => name === 'aria-label' ? 'Copy message' : '', innerText:''};
+  const regenerateBtn = {getAttribute: name => name === 'aria-label' ? 'Regenerate' : '', innerText:''};
+  const body = {innerText:`${nonce}\n${START}一边嫌弃粉丝列表里的死数字，一边置顶公开征集蓝V留脚印，真心成了另一种可被审核的流量入口。${END}\n【评价语言:zh】`};
+
+  globalThis.location = {hostname:'x.com'};
+  globalThis.document = {
+    body,
+    getElementById: () => ({}),
+    querySelector: () => body,
+    querySelectorAll(selector) {
+      if (selector === 'button') return [copyMessage, regenerateBtn];
+      if (selector === '*') return [promptContainer];
+      return [];
+    }
+  };
+
+  try {
+    const res = readGrokPageAnswer(nonce);
+    assert.equal(res.done, true);
+    assert.match(res.text, /一边嫌弃粉丝列表里的死数字/);
+    assert.equal(extractGrokComment(res.text), '一边嫌弃粉丝列表里的死数字，一边置顶公开征集蓝V留脚印，真心成了另一种可被审核的流量入口。');
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.location = previous.location;
+  }
+});
+
+
+test('Grok preparation error retains popup with idle lease and records the actual cause', async () => {
+ const {openMinimized} = await import('../grok-comment.js');
+ const previous = {chrome:globalThis.chrome,document:globalThis.document};
+ const data={};let removed=0;
+ delete globalThis.document;
+ globalThis.chrome={
+  storage:{local:{get:async()=>({}),set:async value=>Object.assign(data,value)},session:{
+   get:async key=>key?{[key]:data[key]}:{...data},set:async value=>Object.assign(data,value),remove:async key=>delete data[key]}},
+  windows:{getAll:async()=>[],create:async()=>({id:501,type:'popup',tabs:[{id:502,url:'https://x.com/i/grok'}]}),remove:async()=>{removed++;}},
+  tabs:{get:async()=>{throw Error('No frame with id 0 in tab 502');}},
+  scripting:{executeScript:async()=>[]}
+ };
+ try {
+  await assert.rejects(openMinimized('https://x.com/i/grok'),/No frame with id 0/);
+  assert.equal(removed,0);
+  assert.equal(data.xfGrokWindowPreparationError.windowId,501);
+  assert.match(data.xfGrokWindowPreparationError.reason,/No frame with id 0/);
+  assert.equal(data['xfTemporaryWindow:501'].busyUntil,0);
+  assert.ok(data['xfTemporaryWindow:501'].expiresAt>Date.now());
+ } finally {globalThis.chrome=previous.chrome;if(previous.document===undefined)delete globalThis.document;else globalThis.document=previous.document;}
+});
+
+function xTurnFixture({splitNonce=false, echoNonce=false, stop='hidden', actions=true, nonce='任务编号turn123'}={}) {
+ const old={document:globalThis.document,getComputedStyle:globalThis.getComputedStyle};
+ const action={getAttribute:name=>name==='aria-label'?'Copy':null};
+ const stopButton={disabled:stop==='disabled',hidden:false,parentElement:null,
+  getAttribute:name=>name==='aria-label'?'Stop':null,getClientRects:()=>stop==='hidden'?[]:[{}]};
+ const answer=`${START}已生成并完成的真实评价正文${END}\n【评价语言:zh】${echoNonce?'\n'+nonce:''}`;
+ const message={querySelectorAll:selector=>selector==='.grok-trace-soft-enter'?[{textContent:answer}]:actions?[action]:[]};
+ const turn={getAttribute:()=> 'turn-123',querySelector:()=>message,
+  querySelectorAll:selector=>selector==='button, [role="button"]'?actions?[action]:[]:[{textContent:splitNonce?nonce.replace('turn','tu\nrn'):nonce}]};
+ globalThis.document={querySelectorAll:selector=>selector==='[data-turn-id]'?[turn]:[stopButton]};
+ globalThis.getComputedStyle=()=>({display:'block',visibility:'visible'});
+ return {answer,read:()=>readGrokPageAnswer(nonce),restore:()=>{
+  globalThis.document=old.document;if(old.getComputedStyle===undefined)delete globalThis.getComputedStyle;else globalThis.getComputedStyle=old.getComputedStyle;
+ }};
+}
+
+test('X turn reader reads only assistant body when the task nonce is split or echoed after the answer',()=>{
+ const f=xTurnFixture({splitNonce:true,echoNonce:true});
+ try {const result=f.read();assert.equal(result.done,true);assert.equal(result.source,'x-turn');assert.equal(result.text,f.answer);
+  assert.equal(extractGrokComment(result.text),'已生成并完成的真实评价正文');assert.equal(result.visibleStopCount,0);
+ } finally {f.restore();}
+});
+
+test('hidden or disabled Stop cannot keep a completed X answer generating forever',()=>{
+ for(const stop of ['hidden','disabled']){const f=xTurnFixture({stop});try{assert.equal(f.read().done,true);assert.equal(f.read().stillGenerating,false);}finally{f.restore();}}
+});
+
+test('visible Stop blocks X completion while a fully delimited answer does not require actions',()=>{
+ let f=xTurnFixture({stop:'visible'});try{assert.equal(f.read().done,false);assert.equal(f.read().stage,'generating');}finally{f.restore();}
+ f=xTurnFixture({actions:false});try{assert.equal(f.read().done,true);assert.equal(f.read().stage,'complete');}finally{f.restore();}
+});
+
+test('X transcript refuses another turn when the requested nonce is absent',()=>{
+ const old=globalThis.document;
+ globalThis.document={querySelectorAll:()=>[{querySelectorAll:()=>[{textContent:'任务编号other'}]}]};
+ try{assert.deepEqual(readGrokPageAnswer('任务编号missing'),{text:'',done:false,stage:'nonce_missing',source:'x-turn'});}finally{globalThis.document=old;}
+});
+
+test('X polling completes a stable answer without recommendations or toolbar actions',async()=>{
+ const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(6,5);
+ const state={text:`${START}没有推荐问题也能正确读取完整回答${END}`,done:false,stillGenerating:false,contentSignature:'same-dom'};
+ for(let i=0;i<4;i++)assert.equal(gate(state,extractGrokComment(state.text)),'');
+ assert.equal(gate(state,extractGrokComment(state.text)),'stable-content');
+});
+
+test('X stable-content polling resets on DOM updates and never completes an active stream or malformed quote',async()=>{
+ const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(6,5);
+ const state={text:`${START}仍然需要等待的完整评价正文${END}`,done:false,stillGenerating:false,contentSignature:'a'};
+ const reply=extractGrokComment(state.text);
+ for(let i=0;i<4;i++)assert.equal(gate(state,reply),'');
+ assert.equal(gate({...state,contentSignature:'b'},reply),'');
+ for(let i=0;i<6;i++)assert.equal(gate({...state,stillGenerating:true},reply),'');
+ for(let i=0;i<6;i++)assert.equal(gate(state,''),'');
+ for(let i=0;i<4;i++)assert.equal(gate(state,reply),'');
+ assert.equal(gate(state,reply),'stable-content');
+});
+
+test('correlated successful network EOF can finish despite a stale Stop, while network silence cannot',async()=>{
+ const {createGrokAnswerGate}=await import('../grok-comment.js');
+ let gate=createGrokAnswerGate();const state={text:'完整回答正文',done:false,stillGenerating:true,network:{status:'streaming',quietForMs:60000}};
+ for(let i=0;i<10;i++)assert.equal(gate(state,state.text),'');
+ gate=createGrokAnswerGate();
+ for(let i=0;i<3;i++)assert.equal(gate({...state,network:{status:'complete'}},state.text),'');
+ assert.equal(gate({...state,network:{status:'complete'}},state.text),'network-eof');
+ gate=createGrokAnswerGate();
+ for(let i=0;i<8;i++)assert.equal(gate({...state,network:{status:'error'}},state.text),'');
+});
+
+test('X uses the correlated WebSocket response.done as its completion method',async()=>{
+ const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate();
+ const state={text:'完整回答正文',done:false,stillGenerating:true,network:{status:'complete',transport:'websocket'}};
+ for(let i=0;i<3;i++)assert.equal(gate(state,state.text),'');
+ assert.equal(gate(state,state.text),'network-response.done');
+});
+
+test('valid quote end marker completes without recommendations or action buttons',async()=>{
+ const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(2,3);
+ const state={text:`${START}明确的结束标记足以确认这段完整评价已经生成完毕${END}`,done:false,stillGenerating:false};
+ const answer=extractGrokComment(state.text);
+ assert.equal(gate(state,answer),'');
+ assert.equal(gate(state,answer),'end-marker');
 });

@@ -22,8 +22,24 @@ export async function markTemporaryWindowReady(windowId,tabId) {
 export async function holdTemporaryWindowForVerification(windowId,tabId) {
   const key=PREFIX+windowId;
   const record=(await chrome.storage.session.get?.(key) || {})[key];
-  if(record?.tabId===tabId)await saveRecord({...record,kind:'verification',busyUntil:0,expiresAt:Date.now()+TEMP_WINDOW_TTL});
-  else await chrome.storage.session.remove(key);
+  if(record?.tabId===tabId) {
+    const isPersistent = record.kind === 'grok-persistent';
+    await saveRecord({
+      ...record,
+      kind: isPersistent ? 'grok-persistent' : 'verification',
+      previousKind: record.previousKind || record.kind,
+      busyUntil: 0,
+      expiresAt: isPersistent ? 0 : Date.now() + TEMP_WINDOW_TTL
+    });
+  } else await chrome.storage.session.remove(key);
+}
+
+export async function resumeTemporaryWindowAfterVerification(windowId,tabId) {
+  const key=PREFIX+windowId;
+  const record=(await chrome.storage.session.get?.(key) || {})[key];
+  if(record?.tabId!==tabId || record.kind!=='verification')return;
+  const {previousKind,...rest}=record;
+  await saveRecord({...rest,kind:previousKind || 'grok-pool',busyUntil:Date.now()+TEMP_WINDOW_TTL,expiresAt:Date.now()+TEMP_WINDOW_TTL});
 }
 
 async function restoreRecords(windows) {
@@ -51,7 +67,8 @@ export async function createTemporaryWindow(options, kind = 'grok', lifetime = T
   try {
     const tabs = win.tabs || await chrome.tabs.query({windowId:win.id});
     if (tabs.length !== 1 || !tabs[0]?.id) throw new Error('临时窗口标签页异常');
-    await saveRecord({windowId:win.id,tabId:tabs[0].id,kind,ownershipToken:crypto.randomUUID(),createdAt:Date.now(),expiresAt:Date.now()+Math.max(TEMP_WINDOW_TTL,lifetime)});
+    const expiresAt = kind === 'grok-persistent' ? 0 : Date.now() + Math.max(TEMP_WINDOW_TTL, lifetime);
+    await saveRecord({windowId:win.id,tabId:tabs[0].id,kind,ownershipToken:crypto.randomUUID(),createdAt:Date.now(),expiresAt});
     await markTemporaryWindowReady(win.id,tabs[0].id).catch(()=>{});
     return win;
   } catch(error) {
@@ -78,6 +95,10 @@ async function scanWindows(now = Date.now()) {
     }
     if(verification?.windowId===w.id && verification?.tabId===record.tabId){result.retained.push(w.id);continue;}
     if(record.busyUntil && record.busyUntil<=now)record.busyUntil=0;
+    if(record.kind==='grok-persistent') {
+      result.retained.push(w.id);
+      continue;
+    }
     if(record.kind==='grok-pool' && w.focused && !record.busyUntil) {
       await saveRecord({...record,lastUsedAt:now,expiresAt:now+GROK_IDLE_TTL});
     }
@@ -113,11 +134,12 @@ export function handleGrokWindowPool(message) {
       const records=await chrome.storage.session.get(null);
       const windows=await chrome.windows.getAll({populate:true});
       let win,record;
+      let reused=false;
       for(const r of Object.values(records)) {
         if(r?.kind!=='grok-pool'||r.origin!==origin||r.busyUntil>now)continue;
         const w=windows.find(w=>w.id===r.windowId);
         if(!owns(w,r)||w.focused)continue;
-        win=w;record=r;break;
+        win=w;record=r;reused=true;break;
       }
       if(!win) {
         win=await createTemporaryWindow({url,type:'popup',focused:false,width:800,height:600},'grok-pool',lifetime);
@@ -126,7 +148,9 @@ export function handleGrokWindowPool(message) {
       await saveRecord({...record,origin,lastUsedAt:now,busyUntil:now+lifetime,expiresAt:now+lifetime});
       try {
         // Fresh conversation in the same window prevents old answers/context leaking.
-        await chrome.tabs.update(record.tabId,{url});
+        // windows.create already starts navigation. Re-navigating a new tab can
+        // destroy the document while the caller is injecting preparation code.
+        if(reused)await chrome.tabs.update(record.tabId,{url});
         return win;
       } catch(error) {await closeTemporaryWindow(win.id).catch(()=>{});throw error;}
     }

@@ -2,9 +2,14 @@ import {QUOTE_TAG_DEFAULTS, normalizeQuoteTags, validateQuoteTags} from './quote
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const DEFAULT_DB_NAME = 'x-each-follower-follow-queue';
-const STORES = ['jobs', 'outcomes', 'settings'];
+const STORES = ['jobs', 'outcomes', 'settings', 'meta'];
+const PAGE_MAX = 100;
+const SEARCH_BATCH = 200;
+const SOURCE_FIELDS = {fans: 'sourceFansAt', mutual: 'sourceMutualAt', comments: 'sourceCommentsAt'};
+const SOURCE_INDEXES = {fans: 'sourceFans', mutual: 'sourceMutual', comments: 'sourceComments'};
+const JOB_STATES = ['pending', 'running', 'followed', 'skipped', 'retry', 'uncertain', 'excluded'];
 
 export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   ...QUOTE_TAG_DEFAULTS,
@@ -186,7 +191,26 @@ function requestResult(request) {
   });
 }
 
-function blankJob({id, accountId, targetUserId, targetKey, handle, canonical, sources, now}) {
+function profileProjection(input) {
+  if (!input || typeof input !== 'object') return null;
+  const source = input.profile && typeof input.profile === 'object' ? input.profile : input;
+  const profile = {};
+  for (const field of ['name', 'bio', 'avatarUrl', 'followersText', 'followingText']) {
+    if (source[field] != null && String(source[field]).trim() !== '') profile[field] = String(source[field]);
+  }
+  const blue = source.blueVerified ?? source.is_blue_verified ?? source.isBlueVerified;
+  if (typeof blue === 'boolean') profile.blueVerified = blue;
+  if (typeof source.verified === 'boolean') profile.verified = source.verified;
+  return Object.keys(profile).length ? profile : null;
+}
+
+function mergeStoredProfile(job, input) {
+  const incoming = profileProjection(input);
+  if (!job || !incoming) return;
+  job.profile = {...(job.profile && typeof job.profile === 'object' ? job.profile : {}), ...incoming};
+}
+
+function blankJob({id, accountId, targetUserId, targetKey, handle, canonical, sources, now, profile}) {
   return {
     id,
     accountId,
@@ -204,7 +228,8 @@ function blankJob({id, accountId, targetUserId, targetKey, handle, canonical, so
     nextEligibleAt: now,
     lease: {owner: '', version: 0, expiresAt: 0},
     followResult: null,
-    evaluations: []
+    evaluations: [],
+    profile: profileProjection(profile)
   };
 }
 
@@ -241,6 +266,135 @@ function outcomeFromJob(job) {
     evaluations: job.evaluations,
     updatedAt: job.updatedAt
   };
+}
+
+function aliasIndexKey(accountId, canonical) {
+  return `${accountId}\0${canonical}`;
+}
+
+function postIndexKey(accountId, postId) {
+  return `${accountId}\0${postId}`;
+}
+
+function projectJob(job) {
+  if (!job || typeof job !== 'object' || !job.accountId) return job;
+  if (!Number.isFinite(job.createdAt)) job.createdAt = 0;
+  if (!Number.isFinite(job.nextEligibleAt)) job.nextEligibleAt = 0;
+  if (typeof job.state !== 'string' || job.state === '') job.state = 'pending';
+  const aliases = new Set();
+  const addAlias = canonical => {
+    if (canonical) aliases.add(aliasIndexKey(job.accountId, canonical));
+  };
+  addAlias(job.handleCanonical || '');
+  if (typeof job.targetKey === 'string' && job.targetKey.startsWith('handle:')) addAlias(job.targetKey.slice('handle:'.length));
+  for (const alias of Array.isArray(job.aliases) ? job.aliases : []) addAlias(alias?.canonical || '');
+  job.aliasKeys = [...aliases];
+  const posts = new Set();
+  for (const evaluation of Array.isArray(job.evaluations) ? job.evaluations : []) {
+    if (evaluation?.originalPostId) posts.add(postIndexKey(job.accountId, String(evaluation.originalPostId)));
+  }
+  job.evaluationPostKeys = [...posts];
+  const modules = new Set((Array.isArray(job.sources) ? job.sources : []).map(source => source?.module).filter(Boolean));
+  for (const [module, field] of Object.entries(SOURCE_FIELDS)) {
+    if (modules.has(module)) job[field] = job.createdAt;
+    else delete job[field];
+  }
+  return job;
+}
+
+function keyRange() {
+  const range = globalThis.IDBKeyRange;
+  if (!range) throw new Error('IDBKeyRange is required');
+  return range;
+}
+
+function ensureIndex(store, name, keyPath, options) {
+  const names = store.indexNames;
+  if (names && typeof names.contains === 'function') {
+    if (!names.contains(name)) store.createIndex(name, keyPath, options);
+    return;
+  }
+  if (typeof store.createIndex === 'function') store.createIndex(name, keyPath, options);
+}
+
+function cursorWalk(source, range, visit) {
+  return new Promise((resolve, reject) => {
+    const request = source.openCursor(range);
+    request.onerror = () => reject(request.error || new Error('follow queue cursor failed'));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      Promise.resolve(visit(cursor)).then(action => {
+        if (action === 'stop') resolve();
+        else cursor.continue();
+      }).catch(reject);
+    };
+  });
+}
+
+async function collectKeyed(source, range) {
+  const rows = [];
+  await cursorWalk(source, range, cursor => {
+    rows.push(cursor.value);
+  });
+  return rows;
+}
+
+function accountCreatedRange(account) {
+  const range = keyRange();
+  return range.bound([account], [account, []], false, true);
+}
+
+function stateCreatedRange(account, state) {
+  const range = keyRange();
+  return range.bound([account, state], [account, state, []], false, true);
+}
+
+function dueRange(account, state, seenAt) {
+  const range = keyRange();
+  return range.bound(
+    [account, state, Number.NEGATIVE_INFINITY],
+    [account, state, seenAt, Number.POSITIVE_INFINITY, '\uffff'],
+    false,
+    false
+  );
+}
+
+function matchesSource(job, source) {
+  if (!source || source === 'all') return true;
+  return Array.isArray(job?.sources) && job.sources.some(item => item && item.module === source);
+}
+
+function matchesSearch(job, query) {
+  const needle = String(query || '').trim().toLowerCase();
+  if (!needle) return true;
+  const profile = job?.profile && typeof job.profile === 'object' ? job.profile : {};
+  const handleMatch = [job?.handle, profile.name, profile.bio].some(value => String(value || '').toLowerCase().includes(needle));
+  const idMatch = job?.targetUserId && String(job.targetUserId).includes(needle);
+  return handleMatch || idMatch;
+}
+
+function sortJobs(rows) {
+  return rows.sort((a, b) => (a.createdAt - b.createdAt) || String(a.id).localeCompare(String(b.id)));
+}
+
+function encodeCursor(payload) {
+  return JSON.stringify(payload);
+}
+
+function decodeCursor(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { throw new Error('invalid follow queue cursor'); }
+  }
+  if (!parsed || parsed.v !== 1 || typeof parsed.id !== 'string' || !Number.isFinite(parsed.createdAt)) {
+    throw new Error('invalid follow queue cursor');
+  }
+  return parsed;
 }
 
 function applyDurableState(job, outcome) {
@@ -358,13 +512,58 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       const request = factory.open(dbName, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        const jobs = db.createObjectStore('jobs', {keyPath: 'id'});
-        jobs.createIndex('accountId', 'accountId', {unique: false});
-        jobs.createIndex('accountTarget', ['accountId', 'targetKey'], {unique: true});
-        db.createObjectStore('outcomes', {keyPath: 'key'});
-        db.createObjectStore('settings', {keyPath: 'accountId'});
+        const names = db.objectStoreNames;
+        const has = name => !!(names && typeof names.contains === 'function' && names.contains(name));
+        const jobs = has('jobs') ? request.transaction.objectStore('jobs') : db.createObjectStore('jobs', {keyPath: 'id'});
+        const outcomes = has('outcomes') ? request.transaction.objectStore('outcomes') : db.createObjectStore('outcomes', {keyPath: 'key'});
+        if (!has('settings')) db.createObjectStore('settings', {keyPath: 'accountId'});
+        if (!has('meta')) db.createObjectStore('meta', {keyPath: 'key'});
+        ensureIndex(jobs, 'accountId', 'accountId', {unique: false});
+        ensureIndex(jobs, 'accountTarget', ['accountId', 'targetKey'], {unique: true});
+        ensureIndex(jobs, 'byState', 'state', {unique: false});
+        ensureIndex(jobs, 'accountCreated', ['accountId', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountStateCreated', ['accountId', 'state', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountStateDue', ['accountId', 'state', 'nextEligibleAt', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountUser', ['accountId', 'targetUserId'], {unique: false});
+        ensureIndex(jobs, 'accountHandle', ['accountId', 'handleCanonical'], {unique: false});
+        ensureIndex(jobs, 'aliasKey', 'aliasKeys', {unique: false, multiEntry: true});
+        ensureIndex(jobs, 'evaluationPostKey', 'evaluationPostKeys', {unique: false, multiEntry: true});
+        ensureIndex(jobs, 'sourceFans', ['accountId', 'sourceFansAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'sourceMutual', ['accountId', 'sourceMutualAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'sourceComments', ['accountId', 'sourceCommentsAt', 'id'], {unique: true});
+        ensureIndex(outcomes, 'accountTarget', ['accountId', 'targetKey'], {unique: false});
+        ensureIndex(outcomes, 'accountUser', ['accountId', 'targetUserId'], {unique: false});
+        ensureIndex(outcomes, 'accountHandle', ['accountId', 'handleCanonical'], {unique: false});
+        if (typeof jobs.openCursor === 'function') {
+          const backfill = jobs.openCursor();
+          backfill.onsuccess = () => {
+            const cursor = backfill.result;
+            if (!cursor) return;
+            projectJob(cursor.value);
+            cursor.update(cursor.value);
+            cursor.continue();
+          };
+        }
       };
-      request.onsuccess = () => resolve(request.result);
+      let abandoned = false;
+      request.onblocked = () => {
+        if (abandoned) return;
+        abandoned = true;
+        databasePromise = undefined;
+        reject(new Error('follow queue database upgrade is blocked by another connection'));
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        if (abandoned) {
+          try { db.close(); } catch { /* late success after the blocked open was abandoned */ }
+          return;
+        }
+        db.onversionchange = () => {
+          try { db.close(); } catch { /* already closing */ }
+          databasePromise = undefined;
+        };
+        resolve(db);
+      };
       request.onerror = () => reject(request.error || new Error('failed to open follow queue'));
     }).catch(error => {
       databasePromise = undefined;
@@ -379,7 +578,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
     const stores = {
       jobs: tx.objectStore('jobs'),
       outcomes: tx.objectStore('outcomes'),
-      settings: tx.objectStore('settings')
+      settings: tx.objectStore('settings'),
+      meta: tx.objectStore('meta')
     };
     let settled = false;
     const done = new Promise((resolve, reject) => {
@@ -387,6 +587,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       tx.onabort = () => { settled = true; reject(tx.error || new Error('follow queue transaction aborted')); };
       tx.onerror = () => { settled = true; reject(tx.error || new Error('follow queue transaction failed')); };
     });
+    const rawJobPut = stores.jobs.put.bind(stores.jobs);
+    stores.jobs.put = value => rawJobPut(projectJob(value));
     try {
       const value = await work(stores);
       await done;
@@ -400,12 +602,66 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
     }
   }
 
-  async function readJobs(jobs) {
-    return requestResult(jobs.getAll());
+  async function bumpRevision(meta) {
+    const current = (await requestResult(meta.get('revision'))) || {key: 'revision', value: 0};
+    const value = (Number(current.value) || 0) + 1;
+    meta.put({key: 'revision', value});
+    return value;
   }
 
-  async function readOutcomes(outcomes) {
-    return requestResult(outcomes.getAll());
+  async function revisionOf(meta) {
+    const current = await requestResult(meta.get('revision'));
+    return Number(current?.value) || 0;
+  }
+
+  async function jobsForIdentity(jobs, account, userId, canonical) {
+    const map = new Map();
+    const add = async (indexName, range) => {
+      const rows = await collectKeyed(jobs.index(indexName), range);
+      for (const job of rows) {
+        if (job && job.accountId === account && !job.redirectTo) map.set(job.id, job);
+      }
+    };
+    const only = value => keyRange().only(value);
+    if (userId) {
+      await add('accountUser', only([account, userId]));
+      await add('accountTarget', only([account, `id:${userId}`]));
+    }
+    if (canonical) {
+      await add('accountHandle', only([account, canonical]));
+      await add('accountTarget', only([account, `handle:${canonical}`]));
+      await add('aliasKey', only(aliasIndexKey(account, canonical)));
+    }
+    return sortJobs([...map.values()]);
+  }
+
+  async function durableForJob(outcomes, account, job, canonical) {
+    const only = value => keyRange().only(value);
+    const byKey = await requestResult(outcomes.index('accountTarget').get([account, job.targetKey]));
+    if (byKey && byKey.accountId === account && DURABLE_STATES.includes(byKey.state)) return byKey;
+    if (job.targetUserId) {
+      const rows = await collectKeyed(outcomes.index('accountUser'), only([account, job.targetUserId]));
+      return rows.find(item => item.accountId === account && DURABLE_STATES.includes(item.state)) || null;
+    }
+    if (!canonical) return null;
+    const byHandle = (await collectKeyed(outcomes.index('accountHandle'), only([account, canonical])))
+      .filter(item => item.accountId === account && DURABLE_STATES.includes(item.state));
+    const ids = [...new Set(byHandle.map(item => item.targetUserId).filter(Boolean))];
+    if (ids.length !== 1 && byHandle.some(item => item.targetUserId)) return null;
+    return byHandle.length === 1 ? byHandle[0] : null;
+  }
+
+  async function deleteDurableMatches(outcomes, account, job) {
+    const keys = new Set();
+    const take = async (indexName, query) => {
+      await cursorWalk(outcomes.index(indexName), keyRange().only(query), cursor => {
+        if (cursor.value?.key) keys.add(cursor.value.key);
+      });
+    };
+    if (job.targetKey) await take('accountTarget', [account, job.targetKey]);
+    if (job.targetUserId) await take('accountUser', [account, job.targetUserId]);
+    if (job.handleCanonical) await take('accountHandle', [account, job.handleCanonical]);
+    for (const key of keys) outcomes.delete(key);
   }
 
   function newId() {
@@ -414,7 +670,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
   }
 
   return {
-    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult} = {}) {
+    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult, profile} = {}) {
       const account = requireAccountId(accountId);
       const userId = userIdString(targetUserId);
       const canonical = canonicalHandle(handle);
@@ -423,11 +679,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       const normalizedSources = (Array.isArray(sources) ? sources : []).map(source => normalizeSource(source, seenAt));
       const shown = displayHandle(handle, canonical);
 
-      return withTransaction('readwrite', async ({jobs, outcomes}) => {
-        const all = await readJobs(jobs);
-        const durable = await readOutcomes(outcomes);
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
         const targetKey = userId ? `id:${userId}` : `handle:${canonical}`;
-        const accountJobs = all.filter(job => job.accountId === account && !job.redirectTo);
+        const accountJobs = await jobsForIdentity(jobs, account, userId, canonical);
         let primary = null;
         let provisional = null;
 
@@ -460,6 +714,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           provisional.lease = provisionalLease;
           primary.state = primaryState;
           provisional.state = provisionalState;
+          mergeStoredProfile(primary, {profile});
+          mergeStoredProfile(provisional, {profile});
           jobs.put(primary);
           jobs.put(provisional);
           return clone(leaseHeld(provisional) ? provisional : primary);
@@ -504,7 +760,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             handle: shown,
             canonical,
             sources: normalizedSources,
-            now: seenAt
+            now: seenAt,
+            profile
           });
         } else {
           const lease = clone(primary.lease);
@@ -517,9 +774,10 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           primary.updatedAt = seenAt;
           if (leaseHeld(primary)) primary.lease = lease;
           if (state === 'running') primary.state = 'running';
+          mergeStoredProfile(primary, {profile});
         }
 
-        const durableHit = pickDurable(durable, account, primary, canonical);
+        const durableHit = await durableForJob(outcomes, account, primary, canonical);
         if (durableHit && (primary.state === 'pending' || primary.state === 'retry')) {
           applyDurableState(primary, durableHit);
         } else if (durableHit && leaseHeld(primary)) {
@@ -554,18 +812,221 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
         jobs.put(primary);
         if (DURABLE_STATES.includes(primary.state)) rememberOutcome(outcomes, primary);
+        await bumpRevision(meta);
         return clone(primary);
+      });
+    },
+
+    async get(id) {
+      if (typeof id !== 'string' || id === '') throw new Error('job id is required');
+      return withTransaction('readonly', async ({jobs}) => clone(await requestResult(jobs.get(id))) || null);
+    },
+
+    async lookup({accountId, handle, targetUserId, id} = {}) {
+      if (id) return this.get(id);
+      const account = requireAccountId(accountId);
+      const userId = targetUserId ? userIdString(targetUserId) : '';
+      const canonical = handle == null || handle === '' ? '' : canonicalHandle(handle);
+      if (!userId && !canonical) return null;
+      return withTransaction('readonly', async ({jobs}) => {
+        const rows = userId
+          ? await collectKeyed(jobs.index('accountUser'), keyRange().only([account, userId]))
+          : await collectKeyed(jobs.index('accountHandle'), keyRange().only([account, canonical]));
+        const visible = rows.filter(job => job.accountId === account && !job.redirectTo);
+        return clone(sortJobs(visible).at(-1) || null);
+      });
+    },
+
+    async listByTarget({accountId, targetUserId} = {}) {
+      const account = requireAccountId(accountId);
+      const userId = userIdString(targetUserId);
+      return withTransaction('readonly', async ({jobs}) => {
+        const rows = await collectKeyed(jobs.index('accountUser'), keyRange().only([account, userId]));
+        return sortJobs(rows.filter(job => job.accountId === account)).map(job => clone(job));
+      });
+    },
+
+    async listByState({accountId, state} = {}) {
+      const account = requireAccountId(accountId);
+      if (!JOB_STATES.includes(state)) throw new Error('invalid follow queue state');
+      return withTransaction('readonly', async ({jobs}) => {
+        const rows = await collectKeyed(jobs.index('accountStateCreated'), stateCreatedRange(account, state));
+        return rows.filter(job => job.accountId === account && job.state === state).map(job => clone(job));
+      });
+    },
+
+    async hasPostEvaluation({accountId, postId} = {}) {
+      const account = requireAccountId(accountId);
+      if (postId == null || postId === '') return false;
+      return withTransaction('readonly', async ({jobs}) => {
+        const rows = await collectKeyed(jobs.index('evaluationPostKey'), keyRange().only(postIndexKey(account, String(postId))));
+        return rows.some(job => job.accountId === account);
+      });
+    },
+
+    async countStates({accountId} = {}) {
+      const account = requireAccountId(accountId);
+      return withTransaction('readonly', async ({jobs}) => {
+        const stats = {total: 0, pending: 0, running: 0, followed: 0, skipped: 0, retry: 0, uncertain: 0, excluded: 0};
+        for (const state of JOB_STATES) {
+          const count = await requestResult(jobs.index('accountStateCreated').count(stateCreatedRange(account, state)));
+          stats[state] = count;
+          stats.total += count;
+        }
+        return stats;
+      });
+    },
+
+    async queryPage({accountId, state = 'all', source = 'all', q = '', cursor = null, page = 1, limit = 20, signal = null} = {}) {
+      const account = requireAccountId(accountId);
+      const status = state == null || state === '' ? 'all' : String(state);
+      const moduleName = source == null || source === '' ? 'all' : String(source);
+      const query = String(q || '');
+      const searching = query.trim() !== '';
+      if (status !== 'all' && !JOB_STATES.includes(status)) throw new Error('invalid follow queue state');
+      if (!['all', 'fans', 'mutual', 'comments'].includes(moduleName)) throw new Error('invalid follow queue source');
+      if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_MAX) throw new Error(`limit must be an integer from 1 to ${PAGE_MAX}`);
+      if (page != null && page !== 1) throw new Error('follow queue pages use a cursor');
+      const parsed = decodeCursor(cursor);
+      return withTransaction('readonly', async ({jobs, meta}) => {
+        const revision = await revisionOf(meta);
+        if (parsed) {
+          if (parsed.accountId !== account || parsed.state !== status || parsed.source !== moduleName || parsed.q !== query || parsed.revision !== revision) {
+            throw new Error('invalid follow queue cursor');
+          }
+        }
+        const sourceOnly = moduleName !== 'all';
+        const indexName = sourceOnly
+          ? SOURCE_INDEXES[moduleName]
+          : (status === 'all' ? 'accountCreated' : 'accountStateCreated');
+        const indexed = jobs.index(indexName);
+        const baseRange = sourceOnly
+          ? accountCreatedRange(account)
+          : (status === 'all' ? accountCreatedRange(account) : stateCreatedRange(account, status));
+        let range = baseRange;
+        if (parsed) {
+          const lower = sourceOnly || status === 'all'
+            ? [account, parsed.createdAt, parsed.id]
+            : [account, status, parsed.createdAt, parsed.id];
+          const upper = sourceOnly || status === 'all' ? [account, []] : [account, status, []];
+          range = keyRange().bound(lower, upper, true, true);
+        }
+        const bounded = searching || (sourceOnly && status !== 'all');
+        const countable = !bounded;
+        const total = countable ? await requestResult(indexed.count(baseRange)) : null;
+        const rows = [];
+        let examined = 0;
+        let lastSeen = null;
+        let hitBatch = false;
+        if (signal?.aborted) throw new Error('follow queue query cancelled');
+        await cursorWalk(indexed, range, cursorRow => {
+          if (signal?.aborted) throw new Error('follow queue query cancelled');
+          const job = cursorRow.value;
+          if (job.accountId !== account || job.redirectTo) return;
+          lastSeen = job;
+          examined += 1;
+          const stateOk = status === 'all' || job.state === status;
+          const sourceOk = !sourceOnly || matchesSource(job, moduleName);
+          if (stateOk && sourceOk && matchesSearch(job, query) && rows.length <= limit) rows.push(job);
+          if (rows.length > limit) return 'stop';
+          if (bounded && examined >= SEARCH_BATCH) {
+            hitBatch = true;
+            return 'stop';
+          }
+        });
+        const pageRows = rows.slice(0, limit).map(job => clone(job));
+        const hasMore = rows.length > limit || (hitBatch && lastSeen != null);
+        const anchor = hitBatch && rows.length <= limit ? lastSeen : pageRows[pageRows.length - 1];
+        const nextCursor = hasMore && anchor ? encodeCursor({
+          v: 1,
+          accountId: account,
+          state: status,
+          source: moduleName,
+          q: query,
+          revision,
+          createdAt: anchor.createdAt,
+          id: anchor.id
+        }) : null;
+        const stats = {total: 0, pending: 0, running: 0, followed: 0, skipped: 0, retry: 0, uncertain: 0, excluded: 0};
+        for (const name of JOB_STATES) {
+          stats[name] = await requestResult(jobs.index('accountStateCreated').count(stateCreatedRange(account, name)));
+          stats.total += stats[name];
+        }
+        return {
+          jobs: pageRows,
+          nextCursor,
+          hasMore: Boolean(nextCursor),
+          total,
+          totalKnown: total != null,
+          scanned: examined,
+          scanBatch: SEARCH_BATCH,
+          scanLimited: hitBatch,
+          scanExhausted: !hitBatch && rows.length <= limit,
+          stats,
+          revision
+        };
+      });
+    },
+
+    async backfillProfiles({accountId, profiles, cursor = null, limit = 50} = {}) {
+      const account = requireAccountId(accountId);
+      if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_MAX) throw new Error(`limit must be an integer from 1 to ${PAGE_MAX}`);
+      const parsed = cursor == null || cursor === '' ? null : decodeCursor(cursor);
+      const byHandle = new Map();
+      const incoming = profiles instanceof Map ? [...profiles.values()] : (Array.isArray(profiles) ? profiles : []);
+      for (const profile of incoming) {
+        const canonical = canonicalHandle(profile?.handle || profile?.handleCanonical || '');
+        if (canonical) byHandle.set(canonical, profile);
+      }
+      return withTransaction('readwrite', async ({jobs, meta}) => {
+        const revision = await revisionOf(meta);
+        if (parsed && (parsed.accountId !== account || parsed.revision !== revision || parsed.kind !== 'profile-backfill')) {
+          throw new Error('invalid follow queue cursor');
+        }
+        const range = parsed
+          ? keyRange().bound([account, parsed.createdAt, parsed.id], [account, []], true, true)
+          : accountCreatedRange(account);
+        const rows = [];
+        let updated = 0;
+        await cursorWalk(jobs.index('accountCreated'), range, cursorRow => {
+          const job = cursorRow.value;
+          if (job.accountId !== account) return;
+          rows.push(job);
+          if (rows.length > limit) return 'stop';
+        });
+        const page = rows.slice(0, limit);
+        for (const job of page) {
+          const canonical = job.handleCanonical || canonicalHandle(job.handle);
+          const profile = byHandle.get(canonical);
+          if (!profile) continue;
+          const before = JSON.stringify(job.profile || null);
+          mergeStoredProfile(job, {profile});
+          if (JSON.stringify(job.profile || null) === before) continue;
+          job.updatedAt = now();
+          jobs.put(job);
+          updated += 1;
+        }
+        if (updated) await bumpRevision(meta);
+        const nextRevision = updated ? revision + 1 : revision;
+        const more = rows.length > limit;
+        const last = page[page.length - 1];
+        const nextCursor = more && last ? encodeCursor({
+          v: 1,
+          kind: 'profile-backfill',
+          accountId: account,
+          revision: nextRevision,
+          createdAt: last.createdAt,
+          id: last.id
+        }) : null;
+        return {updated, scanned: page.length, nextCursor, done: !more};
       });
     },
 
     async list({accountId} = {}) {
       const account = requireAccountId(accountId);
       return withTransaction('readonly', async ({jobs}) => {
-        const all = await readJobs(jobs);
-        return all
-          .filter(job => job.accountId === account)
-          .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-          .map(job => clone(job));
+        const rows = await collectKeyed(jobs.index('accountCreated'), accountCreatedRange(account));
+        return sortJobs(rows.filter(job => job.accountId === account)).map(job => clone(job));
       });
     },
 
@@ -574,33 +1035,48 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       if (typeof owner !== 'string' || owner === '') throw new Error('lease owner is required');
       if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('leaseMs must be a positive number');
       const seenAt = now();
-      return withTransaction('readwrite', async ({jobs, outcomes}) => {
-        const all = await readJobs(jobs);
-        for (const job of all) {
-          if (job.state === 'running' && !(job.lease?.expiresAt > seenAt)) {
-            if (!applyImportedHold(job)) {
-              job.state = 'uncertain';
-              job.stage = 'verify';
-            }
-            job.updatedAt = seenAt;
-            releaseLease(job);
-            jobs.put(job);
-            rememberOutcome(outcomes, job);
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
+        let active = false;
+        let changed = false;
+        await cursorWalk(jobs.index('byState'), keyRange().only('running'), cursor => {
+          const job = cursor.value;
+          if (job.state !== 'running') return;
+          if (job.lease?.expiresAt > seenAt) {
+            active = true;
+            return;
           }
+          if (!applyImportedHold(job)) {
+            job.state = 'uncertain';
+            job.stage = 'verify';
+          }
+          job.updatedAt = seenAt;
+          releaseLease(job);
+          jobs.put(job);
+          rememberOutcome(outcomes, job);
+          changed = true;
+        });
+        if (active) {
+          if (changed) await bumpRevision(meta);
+          return null;
         }
-        const active = all.some(job => job.state === 'running' && job.lease?.expiresAt > seenAt);
-        if (active) return null;
-        // enabled/migration confirmation is not a store concern. Codex gates production claims in the scheduler.
-        const eligible = all
-          .filter(job => job.accountId === account && !job.redirectTo && (job.state === 'pending' || job.state === 'retry'))
-          .filter(job => sourceAuthorized(job))
-          .filter(job => !(job.nextEligibleAt > seenAt))
-          .sort((a, b) => {
-            if (a.state !== b.state) return a.state === 'pending' ? -1 : 1;
-            return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
+        // Enablement and migration pause are not enforced in this store.
+        // follow-queue-runtime does not yet reject claims while a migration is in progress.
+        let job = null;
+        for (const state of ['pending', 'retry']) {
+          await cursorWalk(jobs.index('accountStateCreated'), stateCreatedRange(account, state), cursor => {
+            const candidate = cursor.value;
+            if (candidate.accountId !== account || candidate.redirectTo) return;
+            if (candidate.state !== state || !sourceAuthorized(candidate)) return;
+            if (candidate.nextEligibleAt > seenAt) return;
+            job = candidate;
+            return 'stop';
           });
-        const job = eligible[0];
-        if (!job) return null;
+          if (job) break;
+        }
+        if (!job) {
+          if (changed) await bumpRevision(meta);
+          return null;
+        }
         job.state = 'running';
         job.stage = job.stage === 'queued' ? 'claimed' : job.stage;
         job.updatedAt = seenAt;
@@ -610,6 +1086,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           expiresAt: seenAt + leaseMs
         };
         jobs.put(job);
+        await bumpRevision(meta);
         return clone(job);
       });
     },
@@ -618,9 +1095,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       if (typeof id !== 'string' || id === '') throw new Error('job id is required');
       if (!Object.prototype.hasOwnProperty.call(STATE_RANK, state)) throw new Error('invalid follow queue state');
       const seenAt = now();
-      return withTransaction('readwrite', async ({jobs, outcomes}) => {
-        const all = await readJobs(jobs);
-        const job = all.find(item => item.id === id);
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
+        const job = await requestResult(jobs.get(id));
         if (!job) return {ok: false, reason: 'missing'};
         const lease = job.lease || {owner: '', version: 0, expiresAt: 0};
         if (lease.owner !== owner || lease.version !== version) {
@@ -650,6 +1126,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             releaseLease(job);
             jobs.put(job);
             rememberOutcome(outcomes, job);
+            await bumpRevision(meta);
             return {ok: true, job: clone(job)};
           }
           applyImportedHold(job);
@@ -660,6 +1137,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           job.updatedAt = seenAt;
           jobs.put(job);
           rememberOutcome(outcomes, job);
+          await bumpRevision(meta);
           return {ok: false, reason: 'imported-hold', job: clone(job)};
         }
         if (typeof changes.stage === 'string') job.stage = changes.stage;
@@ -675,8 +1153,10 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         if (state !== 'running') {
           job.lease = {owner: '', version: lease.version, expiresAt: 0};
         }
+        if (changes.profile && typeof changes.profile === 'object') job.profile = clone(changes.profile);
         jobs.put(job);
         rememberOutcome(outcomes, job);
+        await bumpRevision(meta);
         return {ok: true, job: clone(job)};
       });
     },
@@ -688,10 +1168,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         throw new Error('invalid follow queue state');
       }
       const seenAt = now();
-      return withTransaction('readwrite', async ({jobs, outcomes}) => {
-        const all = await readJobs(jobs);
-        const job = all.find(item => item.id === id && item.accountId === account);
-        if (!job) return {ok: false, reason: 'missing'};
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
+        const job = await requestResult(jobs.get(id));
+        if (!job || job.accountId !== account) return {ok: false, reason: 'missing'};
         if (leaseHeld(job) && job.lease.expiresAt > seenAt) return {ok: false, reason: 'leased'};
         if (state != null) job.state = state;
         if (typeof stage === 'string') job.stage = stage;
@@ -704,14 +1183,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         releaseLease(job);
         job.updatedAt = seenAt;
         if (job.state === 'pending' || job.state === 'retry') {
-          const durable = await readOutcomes(outcomes);
-          for (const outcome of durable) {
-            if (outcome.accountId !== account) continue;
-            const keyMatch = outcome.key === outcomeKey(account, job.targetKey);
-            const idMatch = !!job.targetUserId && outcome.targetUserId === job.targetUserId;
-            const handleMatch = !!job.handleCanonical && outcome.handleCanonical === job.handleCanonical;
-            if (keyMatch || idMatch || handleMatch) outcomes.delete(outcome.key);
-          }
+          await deleteDurableMatches(outcomes, account, job);
         } else if (DURABLE_STATES.includes(job.state)) {
           await rememberOutcome(outcomes, job);
           outcomes.put({
@@ -727,15 +1199,16 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           });
         }
         jobs.put(job);
+        await bumpRevision(meta);
         return {ok: true, job: clone(job)};
       });
     },
 
-    async importOutcome({accountId, targetUserId, handle, sources, state, followResult} = {}) {
+    async importOutcome({accountId, targetUserId, handle, sources, state, followResult, profile} = {}) {
       if (!DURABLE_STATES.includes(state)) {
         throw new Error('importOutcome state must be followed, skipped, excluded, or uncertain');
       }
-      return this.enqueue({accountId, targetUserId, handle, sources, initialState: state, followResult});
+      return this.enqueue({accountId, targetUserId, handle, sources, initialState: state, followResult, profile});
     },
 
     async renew({id, owner, version, leaseMs} = {}) {
@@ -744,9 +1217,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       if (!Number.isFinite(version)) throw new Error('lease version is required');
       if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('leaseMs must be a positive number');
       const seenAt = now();
-      return withTransaction('readwrite', async ({jobs}) => {
-        const all = await readJobs(jobs);
-        const job = all.find(item => item.id === id);
+      return withTransaction('readwrite', async ({jobs, meta}) => {
+        const job = await requestResult(jobs.get(id));
         if (!job) return {ok: false, reason: 'missing'};
         if (importedHoldActive(job)) return {ok: false, reason: 'imported-hold'};
         const lease = job.lease || {owner: '', version: 0, expiresAt: 0};
@@ -757,6 +1229,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         job.lease = {owner, version: lease.version + 1, expiresAt: seenAt + leaseMs};
         job.updatedAt = seenAt;
         jobs.put(job);
+        await bumpRevision(meta);
         return {ok: true, job: clone(job)};
       });
     },
@@ -767,11 +1240,11 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       for (const key of ['fans', 'mutual', 'comments']) {
         if (modules && typeof modules[key] === 'boolean') flags[key] = modules[key];
       }
-      return withTransaction('readwrite', async ({jobs}) => {
-        const all = await readJobs(jobs);
+      return withTransaction('readwrite', async ({jobs, meta}) => {
         const touched = [];
-        for (const job of all) {
-          if (job.accountId !== account || !Array.isArray(job.sources)) continue;
+        await cursorWalk(jobs.index('accountCreated'), accountCreatedRange(account), cursor => {
+          const job = cursor.value;
+          if (job.accountId !== account || !Array.isArray(job.sources)) return;
           let changed = false;
           for (const source of job.sources) {
             if (!Object.prototype.hasOwnProperty.call(flags, source.module)) continue;
@@ -780,11 +1253,12 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
               changed = true;
             }
           }
-          if (!changed) continue;
+          if (!changed) return;
           job.updatedAt = now();
           jobs.put(job);
           touched.push(clone(job));
-        }
+        });
+        if (touched.length) await bumpRevision(meta);
         return touched;
       });
     },
@@ -799,10 +1273,11 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
 
     async saveSettings(accountId, settings) {
       const account = requireAccountId(accountId);
-      return withTransaction('readwrite', async ({settings: store}) => {
+      return withTransaction('readwrite', async ({settings: store, meta}) => {
         const stored = await requestResult(store.get(account));
         const next = normalizeSettings(settings, normalizeSettings(stored, FOLLOW_QUEUE_DEFAULT_SETTINGS));
         store.put({...next, accountId: account});
+        await bumpRevision(meta);
         return next;
       });
     }

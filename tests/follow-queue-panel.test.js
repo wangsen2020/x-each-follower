@@ -1169,3 +1169,291 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   handle.destroy();
 });
 
+test('paged next stays available when the total is unknown and a bad cursor reloads the first page', async () => {
+  const root = createMockElement('div');
+  const lists = [];
+  let phase = 'first';
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') {
+      lists.push(payload);
+      if (payload.cursor && phase === 'bad-cursor') {
+        phase = 'reset';
+        return {ok: false, error: 'invalid follow queue cursor'};
+      }
+      if (payload.cursor) {
+        return {ok: true, paged: true, jobs: [{id: 'job-2', handle: 'Second', state: 'pending', sources: []}], hasMore: false, nextCursor: null, total: null, totalKnown: false};
+      }
+      const pageJobs = Array.from({length: payload.limit}, (_, index) => ({
+        id: index === 0 ? 'job-1' : `job-pad-${index}`,
+        handle: index === 0 ? 'First' : `Pad${index}`,
+        state: 'pending',
+        sources: []
+      }));
+      return {ok: true, paged: true, jobs: pageJobs, hasMore: true, nextCursor: 'cursor-2', total: null, totalKnown: false};
+    }
+    return {ok: true, settings: {}};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(root.textContent.includes('总数未知'));
+  const next = [...root.querySelectorAll('.fq-page-nav-btn')].find(button => button.getAttribute('aria-label') === '下一页');
+  assert.equal(next.disabled, false);
+  next.click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(root.textContent.includes('@Second'));
+  const nextAfter = [...root.querySelectorAll('.fq-page-nav-btn')].find(button => button.getAttribute('aria-label') === '下一页');
+  assert.equal(nextAfter.disabled, true);
+  const prev = [...root.querySelectorAll('.fq-page-nav-btn')].find(button => button.getAttribute('aria-label') === '上一页');
+  prev.click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  phase = 'bad-cursor';
+  const again = [...root.querySelectorAll('.fq-page-btn')].find(button => button.textContent === '2');
+  again.click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.ok(root.textContent.includes('@First'));
+  assert.equal(lists.at(-1).cursor, null);
+  handle.destroy();
+});
+
+test('search keeps scanning past an empty batch and does not treat it as the final page', async () => {
+  const root = createMockElement('div');
+  const cursors = [];
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    if (payload.q !== 'late') return {ok: true, paged: true, jobs: [], hasMore: false, totalKnown: false};
+    cursors.push(payload.cursor || null);
+    if (!payload.cursor) return {ok: true, paged: true, jobs: [], hasMore: true, nextCursor: 'cursor-late', totalKnown: false};
+    return {ok: true, paged: true, jobs: [{id: 'late', handle: 'LateMatch', state: 'pending', sources: []}], hasMore: false, totalKnown: false};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const input = root.querySelector('.fq-search-input');
+  input.value = 'late';
+  input.dispatchEvent({type: 'input', target: {value: 'late'}});
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(cursors, [null, 'cursor-late']);
+  assert.ok(root.textContent.includes('@LateMatch'));
+  assert.equal(root.textContent.includes('关注队列暂无匹配任务'), false);
+  handle.destroy();
+});
+
+test('an account change cancels a search batch that resolves later', async () => {
+  const root = createMockElement('div');
+  let release = null;
+  let searches = 0;
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    if (payload.accountId === 'other') {
+      return {ok: true, paged: true, jobs: [{id: 'other', handle: 'OtherUser', state: 'pending', sources: []}], hasMore: false, totalKnown: true, total: 1};
+    }
+    if (payload.q !== 'slow') return {ok: true, paged: true, jobs: [], hasMore: false, totalKnown: false};
+    searches += 1;
+    if (searches === 1) return {ok: true, paged: true, jobs: [], hasMore: true, nextCursor: 'cursor-slow', totalKnown: false};
+    return new Promise(resolve => {
+      release = () => resolve({ok: true, paged: true, jobs: [{id: 'late', handle: 'LateUser', state: 'pending', sources: []}], hasMore: false});
+    });
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const input = root.querySelector('.fq-search-input');
+  input.value = 'slow';
+  input.dispatchEvent({type: 'input', target: {value: 'slow'}});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(typeof release, 'function');
+  await handle.refresh({accountId: 'other'});
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(root.textContent.includes('@OtherUser'));
+  assert.equal(root.textContent.includes('@LateUser'), false);
+  handle.destroy();
+});
+
+test('partial search chunks fill one page without duplicating or skipping rows', async () => {
+  const root = createMockElement('div');
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    if (payload.q !== 'part') return {ok: true, paged: true, jobs: [], hasMore: false, totalKnown: false};
+    if (!payload.cursor) {
+      return {ok: true, paged: true, jobs: [{id: 'a', handle: 'Alpha', state: 'pending', sources: []}], hasMore: true, nextCursor: 'cursor-b', totalKnown: false, scanned: 200};
+    }
+    return {
+      ok: true,
+      paged: true,
+      jobs: [
+        {id: 'a', handle: 'Alpha', state: 'pending', sources: []},
+        {id: 'b', handle: 'Beta', state: 'pending', sources: []}
+      ],
+      hasMore: false,
+      totalKnown: false,
+      scanned: 3
+    };
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const input = root.querySelector('.fq-search-input');
+  input.value = 'part';
+  input.dispatchEvent({type: 'input', target: {value: 'part'}});
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const rows = [...root.querySelectorAll('tbody tr')].map(row => row.textContent);
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].includes('@Alpha'));
+  assert.ok(rows[1].includes('@Beta'));
+  assert.ok(root.textContent.includes('已扫描 203 条'));
+  handle.destroy();
+});
+
+test('exhausted search with no matches is a finished empty page', async () => {
+  const root = createMockElement('div');
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    if (payload.q !== 'none') return {ok: true, paged: true, jobs: [], hasMore: false, totalKnown: true, total: 0};
+    return {ok: true, paged: true, jobs: [], hasMore: false, nextCursor: null, totalKnown: false};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const input = root.querySelector('.fq-search-input');
+  input.value = 'none';
+  input.dispatchEvent({type: 'input', target: {value: 'none'}});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(root.textContent.includes('关注队列暂无匹配任务'));
+  assert.ok(root.textContent.includes('已检索完'));
+  for (const summary of root.querySelectorAll('.fq-page-summary')) {
+    assert.equal((summary.textContent.match(/总数未知/g) || []).length, 1);
+    assert.equal(summary.textContent, '第 1 页 · 总数未知 · 已检索完');
+  }
+  const next = [...root.querySelectorAll('.fq-page-nav-btn')].find(button => button.getAttribute('aria-label') === '下一页');
+  assert.equal(next.disabled, true);
+  handle.destroy();
+});
+
+test('metadata exhausted search says the scan finished once and does not repeat the unknown total', async () => {
+  const root = createMockElement('div');
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    if (payload.q !== 'missing') return {ok: true, paged: true, jobs: [], hasMore: false, totalKnown: true, total: 0};
+    return {
+      ok: true,
+      paged: true,
+      jobs: [],
+      hasMore: false,
+      nextCursor: null,
+      total: null,
+      totalKnown: false,
+      scanned: 225,
+      scanBatch: 200,
+      scanLimited: false,
+      scanExhausted: true
+    };
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const input = root.querySelector('.fq-search-input');
+  input.value = 'missing';
+  input.dispatchEvent({type: 'input', target: {value: 'missing'}});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const summaries = [...root.querySelectorAll('.fq-page-summary')].map(node => node.textContent);
+  assert.ok(summaries.length >= 1);
+  for (const summary of summaries) {
+    assert.equal(summary, '第 1 页 · 总数未知 · 已检索完 · 已扫描 225 条');
+    assert.equal((summary.match(/总数未知/g) || []).length, 1);
+  }
+  assert.ok(root.textContent.includes('已检索完'));
+  const next = [...root.querySelectorAll('.fq-page-nav-btn')].find(button => button.getAttribute('aria-label') === '下一页');
+  assert.equal(next.disabled, true);
+  handle.destroy();
+});
+
+test('a settings rejection is handled before the list scan finishes', async () => {
+  const root = createMockElement('div');
+  let releaseList;
+  const listGate = new Promise(resolve => { releaseList = resolve; });
+  const rejections = [];
+  const onRejection = reason => { rejections.push(reason); };
+  process.on('unhandledRejection', onRejection);
+  const request = async payload => {
+    if (payload.cmd === 'followQueueSettings') throw new Error('settings down');
+    if (payload.cmd === 'followQueueList') {
+      await listGate;
+      return {ok: true, paged: true, jobs: [{id: 'kept', handle: 'Kept', state: 'pending', sources: []}], hasMore: false, totalKnown: true, total: 1};
+    }
+    return {ok: true};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  releaseList();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  process.off('unhandledRejection', onRejection);
+  assert.equal(rejections.length, 0);
+  assert.ok(root.textContent.includes('@Kept'));
+  assert.ok(root.textContent.includes('settings down'));
+  handle.destroy();
+});
+
+test('queue loading bool stays visible and does not claim the list is empty', async () => {
+  const root = createMockElement('div');
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') {
+      await gate;
+      return {ok: true, jobs: [], summary: {isPaused: true}};
+    }
+    if (payload.cmd === 'followQueueSettings') return {ok: true, settings: {...DEFAULT_SETTINGS}};
+    return {ok: true};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: '123'});
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.match(root.textContent, /正在加载关注队列/);
+  assert.equal(root.textContent.includes('关注队列暂无匹配任务'), false);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(root.textContent.includes('正在加载关注队列'), false);
+  assert.match(root.textContent, /关注队列暂无匹配任务/);
+  handle.destroy();
+});
+
+test('queue read failure keeps the empty state hidden and offers retry', async () => {
+  const root = createMockElement('div');
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') return {ok: false, error: '读取中断'};
+    if (payload.cmd === 'followQueueSettings') return {ok: true, settings: {...DEFAULT_SETTINGS}};
+    return {ok: true};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: '123'});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(root.textContent, /读取中断/);
+  assert.match(root.textContent, /重试/);
+  assert.match(root.textContent, /尚未确认列表为空/);
+  assert.equal(root.textContent.includes('关注队列暂无匹配任务'), false);
+  handle.destroy();
+});
+
+test('queue refresh keeps the current row while the loading bool is on', async () => {
+  const root = createMockElement('div');
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let lists = 0;
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') {
+      lists += 1;
+      const job = {id: 'kept', handle: 'Kept', state: 'pending', sources: []};
+      if (lists > 1) await gate;
+      return {ok: true, jobs: [job], summary: {}};
+    }
+    if (payload.cmd === 'followQueueSettings') return {ok: true, settings: {...DEFAULT_SETTINGS}};
+    return {ok: true};
+  };
+  const handle = mountFollowQueuePanel(root, {request, accountId: '123'});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(root.textContent, /@Kept/);
+  const refreshing = handle.refresh();
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.match(root.textContent, /正在刷新关注队列/);
+  assert.match(root.textContent, /@Kept/);
+  release();
+  await refreshing;
+  assert.equal(root.textContent.includes('正在刷新关注队列'), false);
+  assert.match(root.textContent, /@Kept/);
+  handle.destroy();
+});
+

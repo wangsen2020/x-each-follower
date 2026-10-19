@@ -1,23 +1,40 @@
+import {getDefaultExecutionLogStore} from './execution-log-store.js';
+import {selectExecutionLogs} from './execution-log-select.js';
+
+export {selectExecutionLogs};
+
 let writeQueue = Promise.resolve();
-export function selectExecutionLogs(logs = [], scope = 'autoFollow') {
-  if (scope === 'fans' || scope === 'monitor') {
-    return logs.filter(log => log.scope === 'fans' || log.scope === 'monitor' || (log.scope === 'queue' && log.sources?.some(source => source.module === 'fans')))
-      .slice().sort((a,b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
-  }
-  return logs.filter(log => !['comment','mutual'].includes(scope) || log.scope === scope || (log.scope === 'queue' && log.sources?.some(source => source.module === (scope === 'comment' ? 'comments' : scope))))
-    .slice().sort((a,b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+// Extension pages send entries through the background appendExecutionLog command.
+// This queue is the only storage writer, so panel and alarm writes cannot replace each other.
+function verificationEpisodeKey(entry) {
+  if (entry?.scope !== 'verification') return '';
+  return entry.episodeKey || (entry.tabId != null && entry.at ? `${entry.tabId}:${entry.at}` : '');
 }
-// All writers call this in the service worker, so simultaneous panel and alarm
-// writes are serialized instead of replacing storage with stale panel memory.
+function usesLegacyArrayStorage(storage) {
+  // Injected test doubles keep the 300-row array writer. Production chrome.storage.local is indexed.
+  if (storage && storage !== globalThis.chrome?.storage?.local) return true;
+  return typeof indexedDB === 'undefined';
+}
 export function appendExecutionLog(entry, storage = chrome.storage.local) {
+  if (!usesLegacyArrayStorage(storage)) return getDefaultExecutionLogStore().append(entry);
   const run = writeQueue.then(async () => {
     const {autoFollowLogs = []} = await storage.get('autoFollowLogs');
     const item = {...entry, id:entry.id || `log_${crypto.randomUUID()}`, at:entry.at || new Date().toISOString()};
-    const logs = selectExecutionLogs([item, ...autoFollowLogs]).slice(0,300);
+    const episodeKey = verificationEpisodeKey(item);
+    let next = autoFollowLogs;
+    if (episodeKey) {
+      const index = autoFollowLogs.findIndex(log => verificationEpisodeKey(log) === episodeKey);
+      if (index >= 0) {
+        const prior = autoFollowLogs[index];
+        const updated = {...prior, ...item, id:prior.id, at:prior.at, episodeKey};
+        next = autoFollowLogs.map((log, i) => i === index ? updated : log);
+      } else next = [{...item, episodeKey}, ...autoFollowLogs];
+    } else next = [item, ...autoFollowLogs];
+    const logs = selectExecutionLogs(next).slice(0,300);
     await storage.set({autoFollowLogs:logs});
     return logs;
   });
-  writeQueue = run.catch(() => {});
+  writeQueue = run.then(() => {}, () => {});
   return run;
 }
 

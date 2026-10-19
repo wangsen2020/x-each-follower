@@ -4,10 +4,22 @@ const dbPage = async (operation, key, value) => {
   const request = indexedDB.open('x-each-follower', 1);
   request.onupgradeneeded = () => request.result.createObjectStore('records');
   const db = await new Promise((resolve, reject) => { request.onsuccess=() => resolve(request.result); request.onerror=() => reject(request.error); });
-  if (operation === 'get') return await new Promise((resolve, reject) => { const tx=db.transaction('records','readonly'); const r=tx.objectStore('records').get(key); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
-  await new Promise((resolve, reject) => { const tx=db.transaction('records','readwrite'); const r=tx.objectStore('records').put(value,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
-  return true;
+  if (operation === 'get') {
+    const stored = await new Promise((resolve, reject) => { const tx=db.transaction('records','readonly'); const r=tx.objectStore('records').get(key); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
+    if (stored === undefined) return JSON.stringify({found: false});
+    return JSON.stringify({found: true, v: stored});
+  }
+  const parsed = JSON.parse(value);
+  await new Promise((resolve, reject) => { const tx=db.transaction('records','readwrite'); const r=tx.objectStore('records').put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
+  return JSON.stringify({ok: true});
 };
+
+function decodeDurableResult(raw) {
+  if (typeof raw !== 'string') return raw;
+  const envelope = JSON.parse(raw);
+  if (!envelope || envelope.found !== true) return undefined;
+  return envelope.v;
+}
 
 let dbTabId;
 let dbTabOwned = false;
@@ -16,6 +28,7 @@ let dbTabCloseTimer;
 let dbOperationQueue = Promise.resolve();
 
 export async function createStorageTab(chromeApi) {
+  if (!chromeApi?.tabs?.query) throw new Error('没有可用的标签页接口，无法创建 X 本地数据库标签页');
   const tabs = await chromeApi.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
   const existing = tabs.find(tab => tab.id != null);
   if (existing) return {id:existing.id, owned:false};
@@ -37,7 +50,7 @@ export async function createStorageTab(chromeApi) {
 }
 
 export async function closeStorageTab(chromeApi, tabId) {
-  if (tabId != null) await chromeApi.tabs.remove(tabId).catch(() => {});
+  if (tabId != null && chromeApi?.tabs?.remove) await chromeApi.tabs.remove(tabId).catch(() => {});
 }
 
 async function storageTab() {
@@ -96,14 +109,18 @@ async function withStorageTab(operation) {
 }
 
 export async function durableGet(key) {
-  return withStorageTab(async tabId => {
-    const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
-    return result?.[0]?.result;
-  });
+  try {
+    return await withStorageTab(async tabId => {
+      const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
+      return decodeDurableResult(result?.[0]?.result);
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 export async function durableSet(key, value) {
   return withStorageTab(async tabId => {
-    await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,value]});
+    await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,JSON.stringify({v: value})]});
   });
 }
