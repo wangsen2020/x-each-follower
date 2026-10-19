@@ -211,6 +211,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let inspectingJob = null;
   let isSettingsOpen = false;
   let isExecuting = false;
+  let grokSession = null;
   const busyJobIds = new Set();
 
   const cleanups = [];
@@ -220,6 +221,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     selectedJobIds.clear();
     busyJobIds.clear();
     settings = { ...DEFAULT_SETTINGS };
+    grokSession = null;
     inspectingJob = null;
     isSettingsOpen = false;
     summary = null;
@@ -275,10 +277,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           error: err?.message || '获取关注队列配置失败'
         }))
         : Promise.resolve({ ok: false, error: '缺少 request 处理函数' });
+      const grokPromise = typeof request === 'function'
+        ? request({ cmd: 'grokSessionGetState' }).catch(() => ({ ok: false }))
+        : Promise.resolve({ ok: false });
       const listRes = typeof request === 'function'
         ? await fillCurrentPage(reqId, reqAccount)
         : { ok: false, error: '缺少 request 处理函数' };
-      const settingsRes = await settingsPromise;
+      const [settingsRes, grokSessionRes] = await Promise.all([settingsPromise, grokPromise]);
 
       if (!stillCurrent()) return;
 
@@ -317,6 +322,9 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         settingsFetchError = null;
       }
 
+      if (grokSessionRes?.ok && grokSessionRes.state) {
+        grokSession = grokSessionRes.state;
+      }
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       loading = false;
@@ -447,6 +455,19 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         isExecuting = false;
         render();
       }
+    }
+  }
+
+  async function handleGrokSessionAction(action) {
+    if (typeof request !== 'function') return;
+    try {
+      const res = await request({ cmd: 'grokSessionAction', action });
+      if (res?.ok && res.state) {
+        grokSession = res.state;
+      }
+      render();
+    } catch (err) {
+      console.warn('Grok 会话动作执行异常:', err);
     }
   }
 
@@ -1571,6 +1592,77 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
 
   // --- Grok Session Status Card ---
 
+  function renderGrokSessionCard() {
+    const s = grokSession || {};
+    const stateLabels = {
+      absent: '尚未创建',
+      ready: '空闲就绪',
+      submitting: '提交中',
+      generating: '生成中',
+      rotation_pending: '第 50 轮完成 · 待轮换',
+      rotating: '轮换删除中',
+      verification_required: '待安全验证',
+      uncertain: '提交待核实',
+      user_intervened: '用户干预暂停',
+      paused: '已暂停复用'
+    };
+    const stateBadgeClass = s.state || 'absent';
+    const stateLabel = stateLabels[s.state] || s.state || '空闲就绪';
+
+    const header = el('div', { className: 'fq-grok-session-header' }, [
+      el('span', { className: 'fq-grok-session-title' }, 'Grok 常驻会话复用状态'),
+      el('span', { className: `fq-grok-session-badge ${stateBadgeClass}` }, stateLabel)
+    ]);
+
+    const meta = el('div', { className: 'fq-grok-session-meta' }, [
+      el('div', {}, [
+        el('strong', {}, '调度渠道: '),
+        '优先 x.com 内置，备用 grok.com 常驻会话'
+      ]),
+      el('div', {}, [
+        el('strong', {}, '当前轮数: '),
+        `${s.acceptedCount || 0} / ${s.limit || 50} 轮 (第 ${s.generation || 1} 代)`
+      ]),
+      el('div', {}, [
+        el('strong', {}, '当前会话: '),
+        s.conversationId ? `grok.com/c/${s.conversationId}` : (s.conversationUrl || '尚未建立专属会话')
+      ])
+    ]);
+
+    const actions = el('div', { className: 'fq-grok-session-actions' }, [
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: '打开并聚焦 Grok 专用常驻窗口',
+        onClick: () => handleGrokSessionAction('open_window')
+      }, '打开会话'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: s.pausedReuse ? '恢复 Grok 会话复用' : '暂停复用（不向 grok.com 派发新任务）',
+        onClick: () => handleGrokSessionAction(s.pausedReuse ? 'resume' : 'pause')
+      }, s.pausedReuse ? '恢复复用' : '暂停复用'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: '关闭常驻窗口（关闭不会删除聊天记录）',
+        onClick: () => handleGrokSessionAction('close_window')
+      }, '关闭窗口'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-danger',
+        title: '重置当前会话（轮数归零并准备新会话，重置将影响当前轮数与新任务上下文）',
+        onClick: () => {
+          if (confirm('确认重置当前 Grok 会话？\n重置后轮数将归零，下一个任务将在同一窗口开启新会话。')) {
+            handleGrokSessionAction('reset_rotation');
+          }
+        }
+      }, '重置轮换')
+    ]);
+
+    return el('div', { className: 'fq-grok-session-card' }, [header, meta, actions]);
+  }
+
   // --- Settings Drawer ---
 
   function renderSettingsDrawer() {
@@ -1710,7 +1802,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),
         createSwitchGroup('fq_grokEnabled', '启用 Grok 生成引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
-        createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish')
+        createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish'),
+        renderGrokSessionCard()
       ]), tagSection
     ]);
 

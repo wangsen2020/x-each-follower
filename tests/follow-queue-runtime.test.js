@@ -123,6 +123,7 @@ test('followQueueRetryEvaluation verifies uncertain evaluation on profile before
     tabs:{
       query:async()=>[{id:1}],
       create:async()=>({id:99,url:'https://x.com/viewer'}),
+      update:async()=>{},
       get:async()=>({id:99,status:'complete',url:'https://x.com/viewer'}),
       remove:async()=>{}
     },
@@ -206,4 +207,20 @@ test('identity progress reports preparation and failure without requiring activa
  assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'checking');
  release();await assert.rejects(identity,/完成登录/);
  assert.equal((await runtime.handle({cmd:'followQueueIdentityStatus'})).stage,'failed');
+});
+
+test('queue quote confirmation waits for profile load and refreshes a stale timeline without publishing twice',async()=>{
+ const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0,checks=0,prepared=0;
+ const api={tabs:{update:async()=>{},get:async()=>({status:clock<2100?'loading':'complete'}),reload:async()=>{reloads++;}},
+  scripting:{executeScript:async({func})=>{if(func.name==='setQuoteFrameFallbackOnPage'){prepared++;return [];}checks++;return [{result:reloads?{id:'posted',url:'https://x.com/viewer/status/posted'}:null}];}}};
+ const proof=await confirmPublishedQueueQuote({api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock});
+ assert.equal(proof.id,'posted');assert.equal(reloads,1);assert.equal(prepared,2);assert.ok(checks>1);assert.ok(clock>=15000);
+});
+
+test('queue quote confirmation keeps an unverified result uncertain and honours cancellation',async()=>{
+ const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0;
+ const api={tabs:{update:async()=>{},get:async()=>({status:'complete'}),reload:async()=>{reloads++;}},scripting:{executeScript:async()=>[]}};
+ const args={api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock};
+ assert.equal(await confirmPublishedQueueQuote({...args,timeoutMs:20000}),null);assert.equal(reloads,1);
+ assert.equal(await confirmPublishedQueueQuote({...args,canContinue:()=>false}),null);
 });

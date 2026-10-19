@@ -3,7 +3,7 @@ import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {networkFetch, networkFollow, parseNetworkUsers, mergeRecentPosts} from './network-api.js';
-import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage} from './page-reader.js';
+import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from './page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from './scoring.js';
 import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from './grok-comment.js';
 import {randomizedSeconds, randomizedInteger} from './timing.js';
@@ -44,6 +44,36 @@ export function findPublishedQueueQuoteOnPage(handle, originalId, text, after) {
       if (!match || match[1].toLowerCase() !== handle.toLowerCase() || match[2] === originalId) continue;
       const created = Number((BigInt(match[2]) >> 22n) + 1288834974657n);
       if (created >= after - 5000) return {id:match[2], url:`https://x.com/${match[1]}/status/${match[2]}`};
+    }
+  }
+  return null;
+}
+
+export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, originalId, text, after,
+  wait = sleep, now = Date.now, canContinue = () => true, timeoutMs = 45000}) {
+  const started = now();
+  const url = `https://x.com/${encodeURIComponent(handle)}`;
+  await api.tabs.update(tabId, {url});
+  let prepared = false;
+  let refreshed = false;
+  while (now() - started < timeoutMs && await canContinue()) {
+    await wait(700);
+    const tab = await api.tabs.get(tabId).catch(() => null);
+    if (!tab) return null;
+    if (tab.status !== 'complete') continue;
+    if (!prepared) {
+      await api.scripting.executeScript({target:{tabId},world:'MAIN',func:setQuoteFrameFallbackOnPage,args:[true]}).catch(() => {});
+      prepared = true;
+    }
+    const proof = (await api.scripting.executeScript({target:{tabId},func:findPublishedQueueQuoteOnPage,
+      args:[handle,originalId,text,after]}).catch(() => []))?.[0]?.result;
+    if (proof?.id && proof?.url) return proof;
+    // X can initially return the pre-publication profile timeline. Refresh only
+    // this verification tab, never click Post again to compensate for stale data.
+    if (!refreshed && now() - started >= 15000) {
+      await api.tabs.reload(tabId);
+      refreshed = true;
+      prepared = false;
     }
   }
   return null;
@@ -454,12 +484,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       evaluation.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
         const binding = await readBinding();
-        await api.tabs.update(tab.id,{url:`https://x.com/${binding.handle}`});
-        for (let i=0;i<20 && !control.signal.aborted;i++) {
-          await sleep(700);
-          const proof = await script(tab.id,findPublishedQueueQuoteOnPage,[binding.handle,originalPostId,evaluation.text,submittedAt]).catch(() => null);
-          if (proof) { Object.assign(evaluation,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''}); break; }
-        }
+        const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
+          originalId:originalPostId,text:evaluation.text,after:submittedAt,canContinue:()=>!control.signal.aborted});
+        if (proof) Object.assign(evaluation,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
       } else if (published.stage === 'composer') evaluation.status = 'failed';
       return {state:'followed',followResult,evaluations};
     } catch (error) {
@@ -634,12 +661,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       let ev = targetEval ? {...targetEval} : null;
       // Step 1: If uncertain or draft, verify on viewer's profile page first before any re-publish
       if (ev && ev.originalPostId && ev.text) {
-        let proof = null;
-        for (let i = 0; i < 20; i++) {
-          await sleep(500);
-          proof = await script(tab.id, findPublishedQueueQuoteOnPage, [binding.handle, ev.originalPostId, ev.text, 0]).catch(() => null);
-          if (proof) break;
-        }
+        const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
+          originalId:ev.originalPostId,text:ev.text,after:0});
         if (proof) {
           ev = {...ev, status:'posted', publishedPostId:proof.id, publishedPostUrl:proof.url, reason:''};
           const saved = await store.resolveJob({accountId:binding.accountId, id:job.id, evaluations:[ev]});
@@ -733,15 +756,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       ev.status = 'uncertain';
       ev.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
-        await api.tabs.update(tab.id,{url:`https://x.com/${binding.handle}`});
-        for (let i=0;i<20;i++) {
-          await sleep(700);
-          const proof = await script(tab.id,findPublishedQueueQuoteOnPage,[binding.handle,originalPostId,ev.text,submittedAt]).catch(() => null);
-          if (proof) {
-            Object.assign(ev,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
-            break;
-          }
-        }
+        const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
+          originalId:originalPostId,text:ev.text,after:submittedAt});
+        if (proof) Object.assign(ev,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
       } else if (published.stage === 'composer') {
         ev.status = 'failed';
       }

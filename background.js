@@ -15,6 +15,7 @@ import {sendVerificationSelfMessage} from './verification-self-message.js';
 import {showVerificationAlert,markVerificationAlertClosed,focusVerificationPage} from './verification-alert-window.js';
 import { recoverAutomationAlarms, restoreMissingSyncedSettings } from './automation-recovery.js';
 import {recordAutoFollowAttempt} from './auto-follow-history.js';
+import { executeGrokComTask, getGrokSessionState, handleGrokSessionAction, recoverGrokSessionOnStartup, probeGrokSessionAvailability } from './grok-session-manager.js';
 import {createStorageWriteQueue} from './storage-write-queue.js';
 import {createStorageWriteAdapter} from './storage-write-adapter.js';
 import {createRecordRuntime} from './record-runtime.js';
@@ -471,7 +472,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.6.0';
+export const BACKGROUND_BUILD_VERSION = '1.6.6';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd === 'recordData') {
@@ -493,6 +494,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     storageWrites.perform(message).then(
       result => sendResponse(result),
       error => sendResponse({ok:false, error:String(error?.message || error)})
+    );
+    return true;
+  }
+  if (message?.cmd === 'grokSessionExecuteTask') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可调用 Grok 会话'}); return; }
+    executeGrokComTask({
+      prompt: message.prompt,
+      nonce: message.nonce,
+      taskType: message.taskType,
+      timeoutMs: message.timeoutMs
+    }).then(
+      result => sendResponse(result.ok ? { ok: true, text: result.text, acceptedCount: result.acceptedCount } : { ok: false, error: result.reason, userActionRequired: result.userActionRequired }),
+      error => sendResponse({ ok: false, error: String(error?.message || error), userActionRequired: Boolean(error?.userActionRequired) })
+    );
+    return true;
+  }
+  if (message?.cmd === 'getGrokSessionState' || message?.cmd === 'grokSessionGetState') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可查询 Grok 会话'}); return; }
+    getGrokSessionState().then(state => sendResponse({ok:true, state}), error => sendResponse({ok:false, error:error.message}));
+    return true;
+  }
+  if (message?.cmd === 'grokSessionAction') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可操作 Grok 会话'}); return; }
+    handleGrokSessionAction(message.action, message.payload).then(
+      res => sendResponse({ ok: true, ...res }),
+      error => sendResponse({ ok: false, error: error.message })
+    );
+    return true;
+  }
+  if (message?.cmd === 'grokSessionProbe') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可探测 Grok 会话'}); return; }
+    probeGrokSessionAvailability().then(
+      result => sendResponse({ ok: true, result }),
+      error => sendResponse({ ok: false, error: String(error?.message || error), userActionRequired: Boolean(error?.userActionRequired) })
     );
     return true;
   }
@@ -669,13 +704,16 @@ async function restoreSettingsFromSync() {
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
   await recoverAutomationAlarms();
+  await recoverGrokSessionOnStartup().catch(() => {});
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
   await recoverAutomationAlarms();
+  await recoverGrokSessionOnStartup().catch(() => {});
 });
 
 recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
+recoverGrokSessionOnStartup().catch(error => console.warn('恢复 Grok 会话失败:', error));
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
 

@@ -2399,58 +2399,7 @@ function probeXGrokInPage() {
   return { ok: true, reason: 'x.com Grok 正常可用（输入框就绪）' };
 }
 
-function probeGrokComInPage() {
-  const url = window.location.href;
-  if (/login|signin/i.test(url)) {
-    return { ok: false, reason: 'grok.com 用户未登录' };
-  }
-  const bodyText = (document.body ? document.body.innerText : '') || '';
-  if (/(Sign in|Log in to continue|Sign in with X)/i.test(bodyText) && !document.querySelector('textarea, [contenteditable="true"]')) {
-    return { ok: false, reason: 'grok.com 用户未登录' };
-  }
-  if (/Subscription required|Upgrade to continue|Limit reached/i.test(bodyText)) {
-    return { ok: false, reason: 'grok.com 未开通使用权限或额度耗尽' };
-  }
 
-  const inputEl = document.querySelector('textarea, [contenteditable="true"], [data-placeholder], input[type="text"]');
-  if (inputEl) {
-    return { ok: true, reason: 'grok.com 输入框就绪（可进行对话互动）' };
-  }
-  return { ok: false, reason: '未在 grok.com 找到对话输入框' };
-}
-
-function driveGrokComInput(prompt) {
-  const inputEl = document.querySelector('textarea, [contenteditable="true"]');
-  if (!inputEl) return { ok: false, err: '未找到 grok.com 输入框' };
-  if (inputEl.tagName === 'TEXTAREA') {
-    const proto = Object.getPrototypeOf(inputEl);
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) setter.call(inputEl, prompt);
-    else inputEl.value = prompt;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-  } else {
-    inputEl.focus();
-    inputEl.textContent = prompt;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  const submitBtn = document.querySelector('button[type="submit"], button[aria-label*="Send"], button[aria-label*="提交"], button svg[data-icon="arrow-up"]')?.closest('button');
-  if (submitBtn && !submitBtn.disabled) {
-    submitBtn.click();
-    return { ok: true };
-  }
-  inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-  return { ok: true };
-}
-
-function readGrokComDomAnswer(anchor) {
-  const text = (document.body ? document.body.innerText : '') || '';
-  const i = text.lastIndexOf(anchor);
-  if (i < 0) return { text: '', done: false };
-  const slice = text.slice(i + anchor.length).trim();
-  const done = !document.querySelector('button[aria-label*="Stop"], .animate-spin') && slice.length > 10;
-  return { text: slice, done };
-}
 
 async function checkGrokAvailability(force = false) {
   const now = Date.now();
@@ -2499,27 +2448,18 @@ async function checkGrokAvailability(force = false) {
     return cachedGrokAvailability;
   }
 
-  // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常
-  let winGrok = null;
+  // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常（统一由协调器管理，绝不创建独立的 8 分钟临时窗口池）
   try {
-    winGrok = await createBackgroundGrokWindow('https://grok.com/');
-    const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
-    if (tabId) {
-      await sleep(3500);
-      const res = (await executeGrokScript({
-        target: { tabId },
-        func: probeGrokComInPage
-      }).catch(error=>{if(error.userActionRequired)throw error;return [];}))?.[0]?.result;
-      if (res) {
-        grokComOk = Boolean(res.ok);
-        grokComReason = res.reason;
-      }
+    const probeRes = await chrome.runtime.sendMessage({ cmd: 'grokSessionProbe' });
+    if (probeRes?.ok) {
+      grokComOk = Boolean(probeRes.result?.ok);
+      grokComReason = probeRes.result?.reason || '';
+    } else {
+      grokComReason = probeRes?.error || 'grok.com 协调器探测失败';
     }
   } catch (err) {
-    if(err.userActionRequired)throw err;
+    if (err.userActionRequired) throw err;
     grokComReason = err.message;
-  } finally {
-    if (winGrok?.id) await releaseGrokWindow(winGrok.id).catch(() => {});
   }
 
   // 4. 综合判断：若 grok.com 可用，使用 grok.com；若两者均不可用，则评论不可用
@@ -4442,9 +4382,9 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.6.0';
-  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_6_0') !== '1') {
-    sessionStorage.setItem('x_bg_reloaded_1_6_0', '1');
+  const expectedVersion = '1.6.6';
+  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_6_6') !== '1') {
+    sessionStorage.setItem('x_bg_reloaded_1_6_6', '1');
     chrome.runtime.reload();
   }
 }).catch(() => {});
