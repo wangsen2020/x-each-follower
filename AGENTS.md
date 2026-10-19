@@ -48,3 +48,8 @@
 - 固定使用已有登录态的 `C:\jtmp\xfollower-cdp-profile`。2026-10-17 的实测成功路径是附加到已运行的实例，再从返回的 XFollower 面板目标和 X 页面目标取得实时 WebSocket 地址；PID 和扩展 ID 不能写死。
 - 只有该 profile 完全未运行且端口空闲时才可用脚本的 `-StartIfAbsent` 启动一次。已运行却无可用 CDP 端点时，先报告现场状态，不另开同 profile 实例。
 - 导航或修改草稿时使用本次测试创建的非激活标签；完成后只关闭这个标签。验收以实际 X 页面结果为准，不能只看脚本返回值。详见全局 `x-each-follower-cdp` skill。
+
+## Git Flow 分支纪律
+
+- 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；当前统一整合分支为 `feature/next-iteration`。此约定替代旧的默认 `codex/` 前缀规则。
+- 本次 1.4.0 为发行准备：完成测试和实机验收后，按用户指令执行 feature finish、release start/finish 和推送；准备版本号不等于已发布。

@@ -1,10 +1,12 @@
-# XFollower · 粉丝管理 · v1.0.11
+# XFollower · 粉丝管理 · v1.4.0
 
 ## AI 协作与开发规范（开始前必读）
 
 本节是 Codex、Claude、Antigravity、Grok 等 AI 协作者的项目级约定。开始分析或修改前先读本节及相关功能代码；任务提示与本节冲突时，遵循用户最新的明确要求，并及时更新文档。
 
 ### Git 与协作
+
+- 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；当前统一整合分支为 `feature/next-iteration`。此约定替代旧的默认 `codex/` 前缀规则。
 
 - 动手前检查当前分支、工作区状态、远程分支和已确认的生产基线；不要假设当前分支就是生产版本。
 - 不在 `master`、`main` 或 release 分支上开发。功能和修复在基于已确认基线的隔离 feature 分支中进行；当前用户明确允许直接在 `develop` 持续开发时，按该授权执行。
