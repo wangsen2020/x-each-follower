@@ -200,10 +200,18 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let searchQuery = '';
   let currentPage = 1;
   let pageSize = 20;
+  let serverPaging = false;
+  let serverTotal = null;
+  let totalKnown = false;
+  let serverHasMore = false;
+  let startCursors = [null];
+  let scanStatus = '';
+  let scanActive = false;
   const selectedJobIds = new Set();
   let inspectingJob = null;
   let isSettingsOpen = false;
   let isExecuting = false;
+  let grokSession = null;
   const busyJobIds = new Set();
 
   const cleanups = [];
@@ -213,6 +221,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     selectedJobIds.clear();
     busyJobIds.clear();
     settings = { ...DEFAULT_SETTINGS };
+    grokSession = null;
     inspectingJob = null;
     isSettingsOpen = false;
     summary = null;
@@ -220,6 +229,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     settingsFetchError = null;
     settingsError = null;
     currentPage = 1;
+    serverPaging = false;
+    serverTotal = null;
+    totalKnown = false;
+    serverHasMore = false;
+    startCursors = [null];
+    scanStatus = '';
+    scanActive = false;
     searchQuery = '';
     stateFilter = 'all';
     moduleFilter = 'all';
@@ -248,23 +264,52 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     loading = true;
     error = null;
     settingsFetchError = null;
+    scanStatus = '';
+    scanActive = false;
     render();
 
-    try {
-      const [listRes, settingsRes] = await Promise.all([
-        typeof request === 'function' ? request({ cmd: 'followQueueList', accountId: reqAccount }) : { ok: false, error: '缺少 request 处理函数' },
-        typeof request === 'function' ? request({ cmd: 'followQueueSettings', accountId: reqAccount }) : { ok: false, error: '缺少 request 处理函数' }
-      ]);
+    const stillCurrent = () => !isDestroyed && currentAccountId === reqAccount && reqId === activeReqId;
 
-      if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
+    try {
+      const settingsPromise = typeof request === 'function'
+        ? request({ cmd: 'followQueueSettings', accountId: reqAccount }).catch(err => ({
+          ok: false,
+          error: err?.message || '获取关注队列配置失败'
+        }))
+        : Promise.resolve({ ok: false, error: '缺少 request 处理函数' });
+      const grokPromise = typeof request === 'function'
+        ? request({ cmd: 'grokSessionGetState' }).catch(() => ({ ok: false }))
+        : Promise.resolve({ ok: false });
+      const listRes = typeof request === 'function'
+        ? await fillCurrentPage(reqId, reqAccount)
+        : { ok: false, error: '缺少 request 处理函数' };
+      const [settingsRes, grokSessionRes] = await Promise.all([settingsPromise, grokPromise]);
+
+      if (!stillCurrent()) return;
 
       loading = false;
+      scanActive = false;
 
-      if (!listRes || !listRes.ok) {
-        error = listRes?.error || '获取关注队列数据失败';
+      if (!listRes || listRes.stale) return;
+      if (!listRes.ok) {
+        const listError = listRes.error || '获取关注队列数据失败';
+        if (currentPage !== 1 && /cursor/.test(listError)) {
+          currentPage = 1;
+          startCursors = [null];
+          loading = false;
+          return fetchAll();
+        }
+        error = listError;
       } else {
         jobs = Array.isArray(listRes.jobs) ? listRes.jobs : [];
+        serverPaging = listRes.paged === true;
+        totalKnown = listRes.totalKnown === true && Number.isFinite(listRes.total);
+        serverTotal = totalKnown ? listRes.total : null;
+        serverHasMore = listRes.hasMore === true && Boolean(listRes.nextCursor);
+        if (serverPaging && listRes.nextCursor) startCursors[currentPage] = listRes.nextCursor;
         summary = listRes.summary || null;
+        if (serverPaging && listRes.stats) summary = {...(summary || {}), stats: listRes.stats};
+        scanStatus = serverPaging && !totalKnown ? formatScanStatus(listRes.scanned, !serverHasMore) : '';
         if (inspectingJob) {
           inspectingJob = jobs.find(j => j.id === inspectingJob.id) || inspectingJob;
         }
@@ -276,13 +321,110 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         settings = normalizeSettings(settingsRes.settings);
         settingsFetchError = null;
       }
+
+      if (grokSessionRes?.ok && grokSessionRes.state) {
+        grokSession = grokSessionRes.state;
+      }
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       loading = false;
-      error = err?.message || '网络连接或执行异常';
+      const message = err?.message || '网络连接或执行异常';
+      if (serverPaging && currentPage !== 1 && /cursor/.test(message)) {
+        currentPage = 1;
+        startCursors = [null];
+        loading = false;
+        return fetchAll();
+      }
+      error = message;
     }
 
     render();
+  }
+
+  function formatScanStatus(scanned, done) {
+    const count = Number.isFinite(scanned) ? `已扫描 ${scanned} 条` : '';
+    if (done) return count ? `已检索完 · ${count}` : '已检索完';
+    return count ? `正在检索，${count}…` : '正在继续检索…';
+  }
+
+  function scannedCount(payload) {
+    if (Number.isFinite(payload?.scanned)) return payload.scanned;
+    if (Number.isFinite(payload?.scan?.scanned)) return payload.scan.scanned;
+    return null;
+  }
+
+  async function fillCurrentPage(reqId, reqAccount) {
+    const want = Math.min(100, pageSize);
+    let cursor = startCursors[currentPage - 1] || null;
+    const collected = [];
+    const seen = new Set();
+    let hasMore = false;
+    let nextCursor = null;
+    let total = null;
+    let pageTotalKnown = false;
+    let stats = null;
+    let pageSummary = null;
+    let scanned = 0;
+    let sawScanned = false;
+    let paged = false;
+    while (collected.length < want) {
+      if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return {stale: true};
+      const asked = want - collected.length;
+      const payload = await request({
+        cmd: 'followQueueList',
+        accountId: reqAccount,
+        state: stateFilter,
+        source: moduleFilter,
+        q: searchQuery,
+        cursor,
+        limit: asked
+      });
+      if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return {stale: true};
+      if (!payload || payload.ok === false) return {ok: false, error: payload?.error || '获取关注队列数据失败'};
+      if (payload.paged !== true) {
+        return {ok: true, paged: false, jobs: Array.isArray(payload.jobs) ? payload.jobs : [], summary: payload.summary || null};
+      }
+      paged = true;
+      const chunk = Array.isArray(payload.jobs) ? payload.jobs : [];
+      for (const job of chunk) {
+        if (!job || seen.has(job.id) || collected.length >= want) continue;
+        seen.add(job.id);
+        collected.push(job);
+      }
+      const batchScanned = scannedCount(payload);
+      if (batchScanned != null) {
+        sawScanned = true;
+        scanned += batchScanned;
+      }
+      hasMore = payload.hasMore === true || Boolean(payload.nextCursor);
+      nextCursor = payload.nextCursor || null;
+      if (payload.totalKnown === true && Number.isFinite(payload.total)) {
+        pageTotalKnown = true;
+        total = payload.total;
+      }
+      stats = payload.stats || stats;
+      pageSummary = payload.summary || pageSummary;
+      const shortBatch = chunk.length < asked;
+      if (!shortBatch || !hasMore || !nextCursor || nextCursor === cursor) break;
+      cursor = nextCursor;
+      scanActive = true;
+      scanStatus = formatScanStatus(sawScanned ? scanned : null, false);
+      render();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return {stale: true};
+    return {
+      ok: true,
+      paged,
+      jobs: collected,
+      hasMore: hasMore && Boolean(nextCursor) && collected.length >= want,
+      nextCursor: hasMore ? nextCursor : null,
+      total,
+      totalKnown: pageTotalKnown,
+      stats,
+      summary: pageSummary,
+      scanned: sawScanned ? scanned : null
+    };
   }
 
   async function handleRunNow() {
@@ -313,6 +455,19 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         isExecuting = false;
         render();
       }
+    }
+  }
+
+  async function handleGrokSessionAction(action) {
+    if (typeof request !== 'function') return;
+    try {
+      const res = await request({ cmd: 'grokSessionAction', action });
+      if (res?.ok && res.state) {
+        grokSession = res.state;
+      }
+      render();
+    } catch (err) {
+      console.warn('Grok 会话动作执行异常:', err);
     }
   }
 
@@ -459,7 +614,27 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }
   }
 
+  function resetPageQuery() {
+    currentPage = 1;
+    startCursors = [null];
+  }
+
+  function applyListChange() {
+    resetPageQuery();
+    if (serverPaging) fetchAll();
+    else render();
+  }
+
+  function turnPage(page) {
+    if (page < 1 || page === currentPage) return;
+    if (serverPaging && page > 1 && !Object.prototype.hasOwnProperty.call(startCursors, page - 1)) return;
+    currentPage = page;
+    if (serverPaging) fetchAll();
+    else render();
+  }
+
   function getFilteredJobs() {
+    if (serverPaging) return jobs;
     return jobs.filter(job => {
       if (stateFilter !== 'all' && job.state !== stateFilter) return false;
       if (moduleFilter !== 'all') {
@@ -637,7 +812,59 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     return el('div', { className: 'fq-summary-bar' }, items);
   }
 
+  function renderCursorPagination() {
+    const visited = [];
+    for (let page = 1; page <= startCursors.length; page += 1) {
+      if (page > 1 && startCursors[page - 1] == null) break;
+      visited.push(page);
+    }
+    const summaryText = totalKnown
+      ? `第 ${currentPage} 页 · 共 ${serverTotal} 条`
+      : `第 ${currentPage} 页 · 总数未知${scanStatus ? ` · ${scanStatus}` : ''}`;
+    return el('div', { className: 'monitor-pagination fq-pagination' }, [
+      el('label', { className: 'fq-pagesize-label' }, [
+        el('span', {}, '每页'),
+        el('select', {
+          className: 'fq-select fq-pagesize-select',
+          value: String(pageSize),
+          title: '选择每页展示条数',
+          onChange: e => {
+            pageSize = Math.min(100, parseInt(e.target.value, 10) || 20);
+            applyListChange();
+          }
+        }, [10, 20, 50, 100].map(size => el('option', { value: String(size), selected: pageSize === size }, String(size))))
+      ]),
+      el('span', { className: 'page-summary fq-page-summary' }, summaryText),
+      el('div', { className: 'page-actions fq-page-actions' }, [
+        el('button', {
+          type: 'button',
+          className: 'icon-button secondary fq-page-nav-btn',
+          disabled: currentPage <= 1,
+          title: '上一页',
+          'aria-label': '上一页',
+          onClick: () => { if (currentPage > 1) turnPage(currentPage - 1); }
+        }, '‹'),
+        ...visited.map(page => el('button', {
+          type: 'button',
+          className: `fq-page-btn ${page === currentPage ? 'active' : ''}`,
+          title: `第 ${page} 页`,
+          disabled: page === currentPage,
+          onClick: () => turnPage(page)
+        }, String(page))),
+        el('button', {
+          type: 'button',
+          className: 'icon-button secondary fq-page-nav-btn',
+          disabled: !serverHasMore,
+          title: '下一页',
+          'aria-label': '下一页',
+          onClick: () => { if (serverHasMore) turnPage(currentPage + 1); }
+        }, '›')
+      ])
+    ]);
+  }
+
   function renderPaginationControls(totalCount) {
+    if (serverPaging) return renderCursorPagination();
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
     if (currentPage > totalPages) currentPage = totalPages;
 
@@ -646,16 +873,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       value: String(pageSize),
       title: '选择每页展示条数',
       onChange: e => {
-        pageSize = parseInt(e.target.value, 10) || 20;
-        currentPage = 1;
-        render();
+        pageSize = Math.min(100, parseInt(e.target.value, 10) || 20);
+        applyListChange();
       }
     }, [
       el('option', { value: '10', selected: pageSize === 10 }, '10'),
       el('option', { value: '20', selected: pageSize === 20 }, '20'),
       el('option', { value: '50', selected: pageSize === 50 }, '50'),
-      el('option', { value: '100', selected: pageSize === 100 }, '100'),
-      el('option', { value: '200', selected: pageSize === 200 }, '200')
+      el('option', { value: '100', selected: pageSize === 100 }, '100')
     ]);
 
     const prevBtn = el('button', {
@@ -665,10 +890,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       title: '上一页',
       'aria-label': '上一页',
       onClick: () => {
-        if (currentPage > 1) {
-          currentPage--;
-          render();
-        }
+        if (currentPage > 1) turnPage(currentPage - 1);
       }
     }, '‹');
 
@@ -679,10 +901,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       title: '下一页',
       'aria-label': '下一页',
       onClick: () => {
-        if (currentPage < totalPages) {
-          currentPage++;
-          render();
-        }
+        if (currentPage < totalPages) turnPage(currentPage + 1);
       }
     }, '›');
 
@@ -695,7 +914,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           className: `fq-page-btn ${p === currentPage ? 'active' : ''}`,
           title: `第 ${p} 页`,
           disabled: p === currentPage,
-          onClick: () => { currentPage = p; render(); }
+          onClick: () => turnPage(p)
         }, String(p)));
       }
     } else {
@@ -706,7 +925,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         className: `fq-page-btn ${1 === currentPage ? 'active' : ''}`,
         title: '第 1 页',
         disabled: 1 === currentPage,
-        onClick: () => { currentPage = 1; render(); }
+        onClick: () => turnPage(1)
       }, '1'));
       if (left > 2) pageButtons.push(el('span', { className: 'fq-page-ellipsis' }, '…'));
       for (let p = left; p <= right; p++) {
@@ -715,7 +934,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           className: `fq-page-btn ${p === currentPage ? 'active' : ''}`,
           title: `第 ${p} 页`,
           disabled: p === currentPage,
-          onClick: () => { currentPage = p; render(); }
+          onClick: () => turnPage(p)
         }, String(p)));
       }
       if (right < totalPages - 1) pageButtons.push(el('span', { className: 'fq-page-ellipsis' }, '…'));
@@ -724,7 +943,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         className: `fq-page-btn ${totalPages === currentPage ? 'active' : ''}`,
         title: `第 ${totalPages} 页`,
         disabled: totalPages === currentPage,
-        onClick: () => { currentPage = totalPages; render(); }
+        onClick: () => turnPage(totalPages)
       }, String(totalPages)));
     }
 
@@ -766,8 +985,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       className: `fq-filter-tab ${stateFilter === s.id ? 'active' : ''}`,
       onClick: () => {
         stateFilter = s.id;
-        currentPage = 1;
-        render();
+        applyListChange();
       }
     }, s.label));
 
@@ -776,8 +994,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       value: moduleFilter,
       onChange: e => {
         moduleFilter = e.target.value || 'all';
-        currentPage = 1;
-        render();
+        applyListChange();
       }
     }, modules.map(m => el('option', { value: m.id, selected: moduleFilter === m.id }, m.label)));
 
@@ -788,8 +1005,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       value: searchQuery,
       onInput: e => {
         searchQuery = e.target.value;
-        currentPage = 1;
-        render();
+        applyListChange();
       }
     });
 
@@ -827,12 +1043,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   }
 
   function renderTable(filteredJobs) {
-    const totalCount = filteredJobs.length;
+    const totalCount = serverPaging ? serverTotal : filteredJobs.length;
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-    if (currentPage > totalPages) currentPage = totalPages;
+    if (!serverPaging && currentPage > totalPages) currentPage = totalPages;
 
     const startIndex = (currentPage - 1) * pageSize;
-    const visibleJobs = filteredJobs.slice(startIndex, startIndex + pageSize);
+    const visibleJobs = serverPaging ? filteredJobs : filteredJobs.slice(startIndex, startIndex + pageSize);
 
     const isAllVisibleSelected = visibleJobs.length > 0 && visibleJobs.every(j => selectedJobIds.has(j.id));
     const isSomeVisibleSelected = visibleJobs.length > 0 && visibleJobs.some(j => selectedJobIds.has(j.id));
@@ -864,12 +1080,33 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     ]);
 
     let tbodyContent;
-    if (visibleJobs.length === 0) {
+    if (visibleJobs.length === 0 && loading) {
+      tbodyContent = el('tr', {}, [
+        el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
+          el('div', { className: 'dash-load fq-load', role: 'status', 'aria-live': 'polite', 'aria-busy': 'true' }, [
+            el('span', { className: 'dash-spinner', 'aria-hidden': 'true' }),
+            el('span', { className: 'dash-load-text' }, '正在加载关注队列…')
+          ])
+        ])
+      ]);
+    } else if (visibleJobs.length === 0 && (error || settingsFetchError)) {
+      tbodyContent = el('tr', {}, [
+        el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
+          el('div', { className: 'dash-load dash-load-error', role: 'alert' }, [
+            el('span', { className: 'dash-load-text' }, '关注队列读取失败，尚未确认列表为空')
+          ])
+        ])
+      ]);
+    } else if (visibleJobs.length === 0) {
+      const emptyTitle = scanActive ? '正在检索匹配任务' : '关注队列暂无匹配任务';
+      const emptyDesc = scanActive || scanStatus
+        ? (scanStatus || '正在继续检索…')
+        : '粉丝管理、互关追踪或评论追踪发现候选后，将自动或手动投递至此处执行。';
       tbodyContent = el('tr', {}, [
         el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
           el('div', { className: 'fq-empty-wrap' }, [
-            el('p', { className: 'fq-empty-title' }, '关注队列暂无匹配任务'),
-            el('p', { className: 'fq-empty-desc' }, '粉丝管理、互关追踪或评论追踪发现候选后，将自动或手动投递至此处执行。')
+            el('p', { className: 'fq-empty-title' }, emptyTitle),
+            el('p', { className: 'fq-empty-desc fq-scan-status' }, emptyDesc)
           ])
         ])
       ]);
@@ -889,7 +1126,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         // Target cell
         const handleUrl = safeHandleUrl(job.handle);
         const displayHandle = job.handle ? `@${job.handle.trim().replace(/^@+/, '')}` : '未知用户名';
-        const profile = job.profile || {};
+        const profileKnown = job.profileStatus === 'stored' && job.profile && typeof job.profile === 'object';
+        const profile = profileKnown ? job.profile : (job.profileStatus === 'unavailable' ? {} : (job.profile || {}));
+        const bioText = job.profileStatus === 'unavailable' ? '资料暂不可用' : (profile.bio || '暂无简介');
+        const countText = job.profileStatus === 'unavailable'
+          ? '粉丝 未读取 · 关注 未读取'
+          : '粉丝 '+(profile.followersText?.replace(/\s*(Followers|粉丝).*$/i,'') ?? '未读取')+' · 关注 '+(profile.followingText?.replace(/\s*(Following|正在关注|关注).*$/i,'') ?? '未读取');
         const nameRow = el('div', {className:'fq-profile-name'}, [
           el(handleUrl?'a':'span', handleUrl?{href:handleUrl,target:'_blank',rel:'noopener noreferrer',className:'fq-user-handle'}:{className:'fq-user-handle'}, profile.name || displayHandle)
         ]);
@@ -899,8 +1141,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           el('div', {className:'fq-user-info'}, [
             nameRow,
             profile.name ? el('small',{className:'fq-user-id'},displayHandle) : null,
-            el('div',{className:'fq-profile-bio',title:profile.bio || ''},profile.bio || '暂无简介'),
-            el('small',{className:'fq-profile-counts'},'粉丝 '+(profile.followersText?.replace(/\s*(Followers|粉丝).*$/i,'') ?? '未读取')+' · 关注 '+(profile.followingText?.replace(/\s*(Following|正在关注|关注).*$/i,'') ?? '未读取')),
+            el('div',{className:'fq-profile-bio',title:bioText},bioText),
+            el('small',{className:'fq-profile-counts'},countText),
             job.targetUserId ? el('small',{className:'fq-user-id'},'ID: '+job.targetUserId) : null
           ].filter(Boolean))
         ]);
@@ -1348,6 +1590,79 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }, [drawer]);
   }
 
+  // --- Grok Session Status Card ---
+
+  function renderGrokSessionCard() {
+    const s = grokSession || {};
+    const stateLabels = {
+      absent: '尚未创建',
+      ready: '空闲就绪',
+      submitting: '提交中',
+      generating: '生成中',
+      rotation_pending: '第 50 轮完成 · 待轮换',
+      rotating: '轮换删除中',
+      verification_required: '待安全验证',
+      uncertain: '提交待核实',
+      user_intervened: '用户干预暂停',
+      paused: '已暂停复用'
+    };
+    const stateBadgeClass = s.state || 'absent';
+    const stateLabel = stateLabels[s.state] || s.state || '空闲就绪';
+
+    const header = el('div', { className: 'fq-grok-session-header' }, [
+      el('span', { className: 'fq-grok-session-title' }, 'Grok 常驻会话复用状态'),
+      el('span', { className: `fq-grok-session-badge ${stateBadgeClass}` }, stateLabel)
+    ]);
+
+    const meta = el('div', { className: 'fq-grok-session-meta' }, [
+      el('div', {}, [
+        el('strong', {}, '调度渠道: '),
+        '优先 x.com 内置，备用 grok.com 常驻会话'
+      ]),
+      el('div', {}, [
+        el('strong', {}, '当前轮数: '),
+        `${s.acceptedCount || 0} / ${s.limit || 50} 轮 (第 ${s.generation || 1} 代)`
+      ]),
+      el('div', {}, [
+        el('strong', {}, '当前会话: '),
+        s.conversationId ? `grok.com/c/${s.conversationId}` : (s.conversationUrl || '尚未建立专属会话')
+      ])
+    ]);
+
+    const actions = el('div', { className: 'fq-grok-session-actions' }, [
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: '打开并聚焦 Grok 专用常驻窗口',
+        onClick: () => handleGrokSessionAction('open_window')
+      }, '打开会话'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: s.pausedReuse ? '恢复 Grok 会话复用' : '暂停复用（不向 grok.com 派发新任务）',
+        onClick: () => handleGrokSessionAction(s.pausedReuse ? 'resume' : 'pause')
+      }, s.pausedReuse ? '恢复复用' : '暂停复用'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        title: '关闭常驻窗口（关闭不会删除聊天记录）',
+        onClick: () => handleGrokSessionAction('close_window')
+      }, '关闭窗口'),
+      el('button', {
+        type: 'button',
+        className: 'fq-btn fq-btn-sm fq-btn-danger',
+        title: '重置当前会话（轮数归零并准备新会话，重置将影响当前轮数与新任务上下文）',
+        onClick: () => {
+          if (confirm('确认重置当前 Grok 会话？\n重置后轮数将归零，下一个任务将在同一窗口开启新会话。')) {
+            handleGrokSessionAction('reset_rotation');
+          }
+        }
+      }, '重置轮换')
+    ]);
+
+    return el('div', { className: 'fq-grok-session-card' }, [header, meta, actions]);
+  }
+
   // --- Settings Drawer ---
 
   function renderSettingsDrawer() {
@@ -1487,7 +1802,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),
         createSwitchGroup('fq_grokEnabled', '启用 Grok 生成引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
-        createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish')
+        createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish'),
+        renderGrokSessionCard()
       ]), tagSection
     ]);
 
@@ -1524,6 +1840,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }, [drawer]);
   }
 
+  function renderQueueLoading() {
+    if (!loading) return null;
+    return el('div', { className: 'dash-load fq-load', role: 'status', 'aria-live': 'polite', 'aria-busy': 'true' }, [
+      el('span', { className: 'dash-spinner', 'aria-hidden': 'true' }),
+      el('span', { className: 'dash-load-text' }, jobs.length ? '正在刷新关注队列…' : '正在加载关注队列…')
+    ]);
+  }
+
   // --- Main Render Function ---
 
   function render() {
@@ -1533,6 +1857,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
 
     const children = [
       renderHeader(),
+      renderQueueLoading(),
       renderNotice(),
       renderSummaryBar(),
       renderFilterBar(filteredJobs.length),

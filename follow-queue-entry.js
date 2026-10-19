@@ -76,5 +76,7 @@ export async function openFollowQueue(root) {
     retry.type = 'button'; retry.textContent = '重新识别账号';
     retry.addEventListener('click', () => openFollowQueue(root));
     card.append(login,retry); root.replaceChildren(card);
+    return {ok:false, error:error.message || '无法读取 X 账号'};
   } finally { clearInterval(poll); }
+  return {ok:true};
 }

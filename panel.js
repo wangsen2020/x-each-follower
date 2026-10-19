@@ -3,13 +3,28 @@ import {releaseGrokWindow} from './temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
-import {selectExecutionLogs, normalizeQueueExecutionLog} from './execution-log.js';
+import {normalizeQueueExecutionLog} from './execution-log.js';
+import {createLogPager, LOG_PAGE_SIZE} from './execution-log-store.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
+import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, createBackgroundGrokWindow, submitGrokPromptAndWaitForCopyIconOnPage, makeNonce, appendFollowBackSuffix } from './grok-comment.js';
+import {requestStorageWrite} from './storage-write-client.js';
+import {createLoadRegistry, applyModuleView, badgePresentation, modulesAwaitingRecovery, recoveryModuleForKey, preserveReadError, settleRecoveredModule, paintMigrationProgress} from './dashboard-load-ui.js';
+import {createPanelPages, panelModuleForTab, migrationStageLabel, assertRecordWritesOpen, createSelectionMemory} from './panel-pages.js';
+
+let recordPaging = false;
+let recordPages = null;
+let recordBootAttempted = false;
+const recordScalarBaseline = {};
+const installedPageSignature = new Map();
+const selectedRowCopies = createSelectionMemory();
+const bridgedThisTurn = new Set();
+const writeLocal = payload => bridgeLocalWrite(payload);
+const writeSync = payload => requestStorageWrite('syncSet', payload);
 
 const $ = id => document.getElementById(id);
 const panelVersion = chrome.runtime.getManifest().version;
@@ -80,7 +95,7 @@ async function persistAutoFollowSettings(type, cfg) {
   const normalized = normalizeAutoFollowConfig(cfg);
 
   // 1. chrome.storage.local
-  await chrome.storage.local.set({ [localKey]: normalized }).catch(() => {});
+  await writeLocal({ [localKey]: normalized }).catch(() => {});
 
   // 2. localStorage 兜底
   try {
@@ -90,7 +105,7 @@ async function persistAutoFollowSettings(type, cfg) {
   // 3. chrome.storage.sync 跨卸载/重装持久化
   try {
     if (chrome.storage?.sync) {
-      await chrome.storage.sync.set({ [localKey]: normalized }).catch(() => {});
+      await writeSync({ [localKey]: normalized }).catch(() => {});
     }
   } catch {}
 
@@ -145,6 +160,15 @@ const defaultCommentAutoFollow = () => {
 };
 let commentTrackingStatus = null;
 let autoFollowLogs = [];
+let currentLogsScope = 'autoFollow';
+let logPageEntries = [];
+let logPageTotal = 0;
+let logModalStatus = 'idle';
+let logModalError = '';
+const logPager = createLogPager();
+let activeDashboardTab = 'monitor';
+const loadRegistry = createLoadRegistry();
+const logBufferTasks = {};
 let unreciprocatedTracker = {
   users: [],
   config: {
@@ -237,30 +261,234 @@ function cleanFollowerBio(user) {
   return result || '暂无简介';
 }
 
+function dashboardPanelVisible(tab) {
+  const panel = document.querySelector(`.tab-panel[data-panel="${tab}"]`);
+  return !!panel && !panel.hidden;
+}
+function paintSidebarBadge(id, state, count) {
+  const badge = $(id);
+  if (!badge) return;
+  const presentation = badgePresentation(state, count);
+  if (presentation.mode === 'loading') {
+    badge.textContent = '';
+    badge.classList.add('nav-count-loading');
+    badge.setAttribute('role', 'status');
+    badge.setAttribute('aria-label', '加载中');
+    badge.setAttribute('aria-busy', 'true');
+    const spinner = document.createElement('span');
+    spinner.className = 'dash-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    badge.append(spinner);
+    return;
+  }
+  badge.classList.remove('nav-count-loading');
+  badge.removeAttribute('aria-busy');
+  if (presentation.mode === 'error') {
+    badge.textContent = '!';
+    badge.setAttribute('aria-label', '加载失败');
+    return;
+  }
+  badge.textContent = String(presentation.count);
+  badge.removeAttribute('aria-label');
+}
+function paintSummaryCount(id, count) {
+  const badge = $(id);
+  if (!badge) return;
+  badge.classList.remove('nav-count-loading');
+  badge.removeAttribute('aria-busy');
+  badge.removeAttribute('aria-label');
+  badge.textContent = count == null ? '…' : String(count);
+}
+function refreshSidebarBadges() {
+  const summaries = recordPaging && recordPages ? recordPages.summaries() : null;
+  if (summaries && (summaries.fans || summaries.mutual || summaries.comments || summaries.unreciprocated)) {
+    paintSummaryCount('queueCount', summaries.fans?.tabs?.pendingQueue || 0);
+    paintSummaryCount('mutualNetworkCount', summaries.mutual?.tabs?.all || 0);
+    paintSummaryCount('commentTrackingCount', summaries.comments?.tabs?.all || 0);
+    paintSummaryCount('unreciprocatedCount', summaries.unreciprocated?.tabs?.overdue || 0);
+    return;
+  }
+  const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.state !== 'following' && user.relationship?.following !== true);
+  paintSidebarBadge('queueCount', loadRegistry.get('monitor'), pending.length);
+  paintSidebarBadge('mutualNetworkCount', loadRegistry.get('mutual'), (mutualNetwork.users || []).length);
+  paintSidebarBadge('commentTrackingCount', loadRegistry.get('comments'), (commentTracking.users || []).length);
+  const overdue = (unreciprocatedTracker.users || []).filter(user => user.status !== 'unfollowed' && user.status === 'overdue').length;
+  paintSidebarBadge('unreciprocatedCount', loadRegistry.get('unreciprocated'), overdue);
+}
+function guardModuleRender(moduleId, rowCount, empty) {
+  const view = applyModuleView(document, moduleId, loadRegistry.get(moduleId), rowCount);
+  refreshSidebarBadges();
+  if (!view.allowList && empty) empty.hidden = true;
+  return view;
+}
+function moduleRowCount(moduleId) {
+  if (moduleId === 'monitor') return (monitor.users || []).length + (monitor.queue || []).length + (monitor.followingUsers || []).length;
+  if (moduleId === 'mutual') return (mutualNetwork.users || []).length;
+  if (moduleId === 'comments') return (commentTracking.users || []).length;
+  if (moduleId === 'unreciprocated') return (unreciprocatedTracker.users || []).length;
+  return 0;
+}
+function holdForRecovery(moduleId) {
+  if (!modulesAwaitingRecovery(startupKeyPresence).includes(moduleId)) return false;
+  if (preserveReadError(loadRegistry.get(moduleId))) return true;
+  loadRegistry.begin(moduleId, 'recover');
+  applyModuleView(document, moduleId, loadRegistry.get(moduleId), moduleRowCount(moduleId));
+  refreshSidebarBadges();
+  return true;
+}
+function renderSettledModule(moduleId) {
+  if (moduleId === 'monitor') renderMonitorList();
+  else if (moduleId === 'mutual') renderMutualNetwork();
+  else if (moduleId === 'comments') renderCommentTracking();
+  else if (moduleId === 'unreciprocated') renderUnreciprocatedUI();
+}
+function paintFollowerCount(id, value) {
+  const node = $(id);
+  if (!node) return;
+  node.textContent = String(value);
+  node.removeAttribute('aria-busy');
+}
 function setTab(tab) {
+  const targets = tabRenderTargets(activeDashboardTab, tab);
+  activeDashboardTab = tab;
   document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
   const h1 = document.querySelector('main > header > h1');
   if (h1) h1.textContent = {followQueue:'关注队列',monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测'}[tab] || '粉丝管理';
-  if (tab === 'followQueue') openFollowQueue($('followQueueSection'));
-  if (tab === 'unreciprocated') {
+  if (recordBootAttempted && !recordPaging) return;
+  if (!targets.length) return;
+  if (targets.includes('followQueue')) {
+    loadRegistry.begin('followQueue');
+    applyModuleView(document, 'followQueue', loadRegistry.get('followQueue'), 0);
+    openFollowQueue($('followQueueSection')).then(result => {
+      if (result?.ok) loadRegistry.succeed('followQueue');
+      else loadRegistry.fail('followQueue', result?.error || '关注队列加载失败');
+    }).catch(error => loadRegistry.fail('followQueue', error.message));
+  }
+  if (recordPaging && recordPages) {
+    const moduleName = panelModuleForTab(tab);
+    if (moduleName) {
+      const panelId = moduleName === 'fans' ? 'monitor' : moduleName === 'mutual' ? 'mutual' : moduleName;
+      loadRegistry.begin(panelId);
+      applyModuleView(document, panelId, loadRegistry.get(panelId), 0);
+      recordPages.open(moduleName, currentRecordFilter(moduleName)).then(page => {
+        if (!page) return;
+        loadRegistry.succeed(panelId);
+        renderSettledModule(panelId);
+        if (panelId === 'comments') renderCommentAutoFollowSettings();
+      }).catch(error => loadRegistry.fail(panelId, error.message));
+      return;
+    }
+  }
+  if (targets.includes('monitor')) renderMonitorList();
+  if (targets.includes('mutual')) renderMutualNetwork();
+  if (targets.includes('comments')) { renderCommentTracking(); renderCommentAutoFollowSettings(); }
+  if (targets.includes('unreciprocated')) {
     syncAllActiveFollowedUsers();
     renderUnreciprocatedUI();
   }
 }
 document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 document.addEventListener('click', event => { if (event.target.closest('.info-tip')) event.preventDefault(); });
-const persist = (key, value) => durableSet(key, value).catch(() => {});
+const persist = (key, value) => bridgePersist(key, value);
+const RECORD_SNAPSHOT_KEYS = ['monitor', 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker'];
 
-function commentRelationship(user) {
-  const key = String(user.handle || '').toLowerCase();
-  const following = ownFollowingHandles().has(key) || user.relationship?.following === true;
-  const followedBy = ownFollowerHandles().has(key) || user.relationship?.followedBy === true;
-  return following && followedBy ? '互相关注' : '未互关';
+const RECORD_GUARD_KEYS = [...RECORD_SNAPSHOT_KEYS, 'profileCache', 'analysisRows'];
+function recordWritesBlocked() {
+  return recordBootAttempted && !recordPaging;
+}
+async function bridgeLocalWrite(payload) {
+  if (!payload || typeof payload !== 'object') return requestStorageWrite('localSet', payload);
+  if (recordWritesBlocked()) {
+    const rest = {};
+    let blocked = false;
+    for (const [key, value] of Object.entries(payload)) {
+      if (RECORD_GUARD_KEYS.includes(key)) blocked = true;
+      else rest[key] = value;
+    }
+    if (blocked) {
+      monitorStatus('记录仍在迁移或迁移失败，档案未写入。请等待完成或点击重试。');
+      if (Object.keys(rest).length) await requestStorageWrite('localSet', rest);
+      assertRecordWritesOpen(true);
+    }
+    if (Object.keys(rest).length) return requestStorageWrite('localSet', rest);
+    return;
+  }
+  if (!recordPaging || !recordPages) return requestStorageWrite('localSet', payload);
+  const rest = {};
+  const jobs = [];
+  for (const [key, value] of Object.entries(payload)) {
+    if (RECORD_GUARD_KEYS.includes(key)) {
+      bridgedThisTurn.add(key);
+      const moduleName = key === 'monitor' ? 'fans' : key === 'mutualNetwork' ? 'mutual' : key === 'commentTracking' ? 'comments' : key === 'unreciprocatedTracker' ? 'unreciprocated' : '';
+      const deleteHandles = recordDeletes.filter(item => item.module === moduleName).map(item => item.handle);
+      for (let index = recordDeletes.length - 1; index >= 0; index -= 1) if (recordDeletes[index].module === moduleName) recordDeletes.splice(index, 1);
+      jobs.push(() => recordPages.bridgeWrite(key, value, {baseline: recordScalarBaseline[key] || null, deleteHandles}));
+    } else rest[key] = value;
+  }
+  for (const job of jobs) await job();
+  if (jobs.length) {
+    installedPageSignature.clear();
+    const visible = panelModuleForTab(activeDashboardTab);
+    if (visible) await recordPages.open(visible, currentRecordFilter(visible));
+  }
+  if (Object.keys(rest).length) return requestStorageWrite('localSet', rest);
+}
+
+function bridgePersist(key, value) {
+  if (RECORD_GUARD_KEYS.includes(key) && recordWritesBlocked()) return Promise.reject(new Error('记录仍在迁移或迁移失败，档案未写入。请等待完成或点击重试。'));
+  if (recordPaging && recordPages && RECORD_GUARD_KEYS.includes(key)) {
+    if (bridgedThisTurn.has(key)) { bridgedThisTurn.delete(key); return Promise.resolve(); }
+    return recordPages.bridgeWrite(key, value, {baseline: recordScalarBaseline[key] || null}).catch(() => {});
+  }
+  return durableSet(key, value).catch(() => {});
+}
+
+function currentRecordFilter(moduleName) {
+  if (moduleName === 'fans') return {tab: activeFollowerTab, search: followerSearch, pageSize: capPageSize(followerPageSize)};
+  if (moduleName === 'mutual') return {tab: activeMutualTab, search: mutualSearch, tags: [...(activeMutualTags || [])], pageSize: capPageSize(mutualPageSize)};
+  if (moduleName === 'comments') return {tab: activeCommentFilter, search: commentSearch, pageSize: capPageSize(commentPageSize)};
+  return {tab: activeUnreciprocatedTab, search: unreciprocatedSearch, pageSize: capPageSize(unreciprocatedPageSize)};
+}
+function capPageSize(value) {
+  return Math.max(1, Math.min(100, Number(value) || 20));
+}
+function countText(total, scanned) {
+  return total == null ? `已扫描 ${Number(scanned) || 0} 条` : String(total);
+}
+
+function servedRecordWindow(moduleName, fallbackUsers, page, pageSize) {
+  const served = recordPaging && recordPages ? recordPages.window(moduleName) : null;
+  if (!served) {
+    const total = fallbackUsers.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+    const current = Math.min(Math.max(1, page), totalPages);
+    const start = (current - 1) * pageSize;
+    return {users: fallbackUsers.slice(start, start + pageSize), total, totalPages, page: current, served: false, summary: null};
+  }
+  const total = served.total === undefined ? served.records.length : served.total;
+  const totalPages = total == null ? 1 : Math.max(1, Math.ceil(total / (served.filter?.pageSize || pageSize)) || 1);
+  return {
+    users: served.records.map(record => {
+      const payload = structuredClone(record.payload || {});
+      if (record.view) payload.relationship = structuredClone(record.view);
+      if (moduleName === 'fans') payload.status = monitorUserStatus(payload);
+      return payload;
+    }),
+    total,
+    totalPages,
+    page: served.cursors?.length || 1,
+    served: true,
+    summary: served.summary
+  };
+}
+
+function commentRelationship(user, index = buildRelationshipIndex(monitor)) {
+  return commentRelationshipLabel(user, index);
 }
 
 async function saveCommentTracking() {
-  await chrome.storage.local.set({commentTracking});
+  await writeLocal({commentTracking});
   persist('commentTracking', commentTracking);
 }
 
@@ -363,20 +591,20 @@ async function followCommentUser(user, button) {
 }
 
 // 回关核验：已关注且对方出现在自己的粉丝列表时记录回关时间
-function verifyCommentFollowBacks() {
+function verifyCommentFollowBacks(index = buildRelationshipIndex(monitor)) {
   let changed = false;
   for (const user of commentTracking.users || []) {
-    if (user.followedAt && !user.followBackAt && ownFollowerHandles().has(String(user.handle || '').toLowerCase())) {
+    if (user.followedAt && !user.followBackAt && index.followers.has(String(user.handle || '').toLowerCase())) {
       user.followBackAt = new Date().toISOString(); changed = true;
     }
   }
   if (changed) saveCommentTracking().catch(() => {});
 }
 
-function filteredCommentUsers() {
+function filteredCommentUsers(index = buildRelationshipIndex(monitor)) {
   const keyword = commentSearch.trim().toLowerCase();
   return (commentTracking.users || []).filter(user => {
-    if (activeCommentFilter === 'notMutual' && commentRelationship(user) === '互相关注') return false;
+    if (activeCommentFilter === 'notMutual' && commentRelationship(user, index) === '互相关注') return false;
     if (!keyword) return true;
     const replies = (user.sources || []).flatMap(source => (source.replies || []).map(reply => reply.text || '')).join(' ');
     const sources = (user.sources || []).map(source => `${source.url || ''} ${source.postAuthor || ''}`).join(' ');
@@ -385,22 +613,32 @@ function filteredCommentUsers() {
 }
 
 function renderCommentTracking() {
+  installPageCopies('comments');
+  const servedComments = recordPaging && recordPages ? recordPages.window('comments') : null;
+  const commentRows = servedComments ? (servedComments.summary?.total || servedComments.records.length || 1) : (commentTracking.users || []).length;
+  const commentView = guardModuleRender('comments', commentRows, $('commentUsersEmpty'));
+  if (!commentView.allowList) return;
+  const index = buildRelationshipIndex(monitor);
+  verifyCommentFollowBacks(index);
+  refreshSidebarBadges();
+  if (!dashboardPanelVisible('comments')) return;
   const list = $('commentUsersList');
   if (!list) return;
   const table = $('commentUsersTable');
   const users = commentTracking.users || [];
-  verifyCommentFollowBacks();
-  const notMutualCount = users.filter(user => commentRelationship(user) !== '互相关注').length;
-  $('commentTrackingCount').textContent = String(users.length);
-  $('commentsUserCount').textContent = `${users.length} 位用户 · ${(commentTracking.posts || []).length} 个帖子`;
-  $('commentAllCount').textContent = String(users.length);
+  const commentTabs = servedComments?.summary?.tabs;
+  const notMutualCount = commentTabs ? (commentTabs.notMutual || 0) : users.filter(user => commentRelationship(user, index) !== '互相关注').length;
+  $('commentTrackingCount').textContent = String(commentTabs?.all ?? users.length);
+  const postCount = recordPaging && recordPages ? (recordPages.summaries().posts?.total || 0) : (commentTracking.posts || []).length;
+  $('commentsUserCount').textContent = `${commentTabs?.all ?? users.length} 位用户 · ${postCount} 个帖子`;
+  $('commentAllCount').textContent = String(commentTabs?.all ?? users.length);
   $('commentNotMutualCount').textContent = String(notMutualCount);
   const selectedCount = selectedCommentHandles.size;
   const badge = $('commentSelectedBadge');
   if (badge) {
     badge.hidden = selectedCount === 0;
     if ($('commentSelectedCount')) $('commentSelectedCount').textContent = String(selectedCount);
-    if ($('commentTotalVisibleCount')) $('commentTotalVisibleCount').textContent = String(users.length);
+    if ($('commentTotalVisibleCount')) $('commentTotalVisibleCount').textContent = countText(servedComments ? servedComments.total : users.length, servedComments?.scanned);
   }
   document.querySelectorAll('[data-comment-filter]').forEach(button => {
     const active = button.dataset.commentFilter === activeCommentFilter;
@@ -409,20 +647,23 @@ function renderCommentTracking() {
   });
   const statusText = commentTrackingStatus?.message || (commentTracking.posts?.length ? `已保存 ${users.length} 位评论用户，来源于 ${(commentTracking.posts || []).length} 个帖子。` : '在 X 帖子旁点击评论图标，静默收集评论用户。');
   $('commentTrackingStatus').textContent = statusText;
-  const filtered = filteredCommentUsers();
-  const totalPages = Math.max(1, Math.ceil(filtered.length / commentPageSize));
-  commentPage = Math.min(Math.max(1, commentPage), totalPages);
-  const from = (commentPage - 1) * commentPageSize;
-  const pageUsers = filtered.slice(from, from + commentPageSize);
+  const filtered = filteredCommentUsers(index);
+  const commentWindow = servedRecordWindow('comments', filtered, commentPage, commentPageSize);
+  if (!commentWindow.served) commentPage = commentWindow.page;
+  const totalPages = commentWindow.totalPages;
+  const pageUsers = commentWindow.users;
+  const commentVisible = commentWindow.served ? commentWindow.total : filtered.length;
   const selectAll = $('commentSelectAll');
   if (selectAll) {
     const pageKeys = pageUsers.map(u => String(u.handle || '').toLowerCase()).filter(Boolean);
     selectAll.checked = pageKeys.length > 0 && pageKeys.every(k => selectedCommentHandles.has(k));
     selectAll.indeterminate = pageKeys.some(k => selectedCommentHandles.has(k)) && !selectAll.checked;
   }
-  $('commentPageSummary').textContent = filtered.length ? `${commentPage} / ${totalPages} 页 · ${filtered.length} 条` : '0 条';
-  $('commentPrevPage').disabled = commentPage <= 1;
-  $('commentNextPage').disabled = commentPage >= totalPages;
+  $('commentPageSummary').textContent = commentWindow.served && commentWindow.total == null
+    ? countText(null, servedComments?.scanned)
+    : (commentVisible ? `${commentWindow.page} / ${totalPages} 页 · ${countText(commentVisible, servedComments?.scanned)} 条` : '0 条');
+  $('commentPrevPage').disabled = commentWindow.served ? !((servedComments?.cursors || []).length > 1) : commentPage <= 1;
+  $('commentNextPage').disabled = commentWindow.served ? !servedComments?.nextCursor : commentPage >= totalPages;
   $('commentPageSize').value = String(commentPageSize);
   const empty = $('commentUsersEmpty');
   empty.hidden = users.length > 0 && pageUsers.length > 0;
@@ -447,8 +688,8 @@ function renderCommentTracking() {
     checkInput.dataset.handle = key;
     checkInput.checked = selectedCommentHandles.has(key);
     checkInput.addEventListener('change', () => {
-      if (checkInput.checked) selectedCommentHandles.add(key);
-      else selectedCommentHandles.delete(key);
+      if (checkInput.checked) { selectedCommentHandles.add(key); selectedRowCopies.retain('comments', key, user); }
+      else { selectedCommentHandles.delete(key); selectedRowCopies.forget('comments', key); }
       renderCommentTracking();
     });
     checkCell.append(checkInput);
@@ -501,7 +742,7 @@ function renderCommentTracking() {
     const followCell = document.createElement('td');
     followCell.className = 'col-count col-record';
     if (user.followedAt) {
-      const back = commentRelationship(user) === '互相关注' || user.followBackAt;
+      const back = commentRelationship(user, index) === '互相关注' || user.followBackAt;
       followCell.textContent = `${new Date(user.followedAt).toLocaleString()} · ${back ? '已回关' : '待回关'}`;
     } else if (user.autoFollowState === 'skipped') followCell.textContent = `已跳过：${user.autoFollowReason || '未达到条件'}`;
     else followCell.textContent = user.followFailureReason ? `关注失败：${user.followFailureReason}` : '未关注';
@@ -525,20 +766,18 @@ function renderCommentTracking() {
 document.querySelectorAll('[data-comment-filter]').forEach(button => button.addEventListener('click', () => {
   activeCommentFilter = button.dataset.commentFilter;
   commentPage = 1;
-  renderCommentTracking();
+  reloadRecordModule('comments', renderCommentTracking);
 }));
-$('commentSearch')?.addEventListener('input', event => { commentSearch = event.target.value; commentPage = 1; renderCommentTracking(); });
-$('commentSearchBtn')?.addEventListener('click', () => { commentSearch = $('commentSearch').value.trim(); commentPage = 1; renderCommentTracking(); });
-$('commentSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { commentSearch = event.target.value.trim(); commentPage = 1; renderCommentTracking(); } });
-$('commentPageSize')?.addEventListener('change', event => { commentPageSize = Number(event.target.value) || 20; commentPage = 1; renderCommentTracking(); });
-$('commentPrevPage')?.addEventListener('click', () => { commentPage--; renderCommentTracking(); });
-$('commentNextPage')?.addEventListener('click', () => { commentPage++; renderCommentTracking(); });
+$('commentSearch')?.addEventListener('input', event => { commentSearch = event.target.value; commentPage = 1; if (recordPaging && recordPages) runRecordPageAction('comments', () => recordPages.search('comments', currentRecordFilter('comments')), renderCommentTracking); else renderCommentTracking(); });
+$('commentSearchBtn')?.addEventListener('click', () => { commentSearch = $('commentSearch').value.trim(); commentPage = 1; reloadRecordModule('comments', renderCommentTracking); });
+$('commentSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { commentSearch = event.target.value.trim(); commentPage = 1; reloadRecordModule('comments', renderCommentTracking); } });
+$('commentPageSize')?.addEventListener('change', event => { commentPageSize = Number(event.target.value) || 20; commentPage = 1; reloadRecordModule('comments', renderCommentTracking); });
+$('commentPrevPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('comments', () => recordPages.previous('comments'), renderCommentTracking); return; } commentPage--; renderCommentTracking(); });
+$('commentNextPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('comments', () => recordPages.next('comments'), renderCommentTracking); return; } commentPage++; renderCommentTracking(); });
 $('commentSelectAll')?.addEventListener('change', event => {
-  const filtered = filteredCommentUsers();
-  const totalPages = Math.max(1, Math.ceil(filtered.length / commentPageSize));
-  const page = Math.min(Math.max(1, commentPage), totalPages);
-  const from = (page - 1) * commentPageSize;
-  const pageUsers = filtered.slice(from, from + commentPageSize);
+  const pageUsers = recordPaging && recordPages?.window('comments')
+    ? recordPages.window('comments').records.map(record => record.payload)
+    : filteredCommentUsers().slice((commentPage - 1) * commentPageSize, commentPage * commentPageSize);
   for (const u of pageUsers) {
     const k = String(u.handle || '').toLowerCase();
     if (!k) continue;
@@ -559,27 +798,33 @@ for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize
 $('saveCommentAutoSettings')?.addEventListener('click', () => saveCommentAutoFollowSettings().then(() => { $('commentTrackingStatus').textContent = '评论追踪自动关注配置已保存。'; }).catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 $('runCommentAutoNow')?.addEventListener('click', runCommentAutoFollowNow);
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  if (changes.commentTracking) {
-    const nextTracking = changes.commentTracking.newValue || {users:[], posts:[]};
+  const plan = localStorageChangePlan(changes, area);
+  if (recordPaging && recordPages) {
+    if (plan.commentAuto) commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(plan.commentAuto, commentTracking.autoFollow));
+    if (plan.commentStatus !== undefined) commentTrackingStatus = plan.commentStatus;
+    recordPages.invalidate();
+    const moduleName = panelModuleForTab(activeDashboardTab);
+    if (moduleName) recordPages.open(moduleName, currentRecordFilter(moduleName)).then(() => renderSettledModule(moduleName === 'fans' ? 'monitor' : moduleName === 'mutual' ? 'mutual' : moduleName)).catch(() => {});
+    return;
+  }
+  if (plan.commentTracking) {
+    const nextTracking = plan.commentTracking;
     commentTracking = {
       ...nextTracking,
       autoFollow: normalizeAutoFollowConfig(mergeAutoFollowProgress(commentTracking.autoFollow, nextTracking.autoFollow))
     };
   }
-  if (changes.commentAutoFollowSettings?.newValue) {
-    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(changes.commentAutoFollowSettings.newValue, commentTracking.autoFollow));
+  if (plan.commentAuto) {
+    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(plan.commentAuto, commentTracking.autoFollow));
   }
-  if (changes.commentTrackingStatus) commentTrackingStatus = changes.commentTrackingStatus.newValue || null;
-  if (changes.autoFollowLogs) { autoFollowLogs = changes.autoFollowLogs.newValue || []; renderLogsModal(); }
-  if (changes.commentTracking || changes.commentAutoFollowSettings || changes.commentTrackingStatus || changes.monitor) { renderCommentTracking(); renderCommentAutoFollowSettings(); }
+  if (plan.commentStatus !== undefined) commentTrackingStatus = plan.commentStatus;
+  if (plan.logs) { autoFollowLogs = plan.logs; logBufferTasks.autoFollowLogs = Promise.resolve(); renderLogsModal(); }
+  if (plan.commentRender) { renderCommentTracking(); renderCommentAutoFollowSettings(); }
 });
-function monitorUserStatus(user) {
-  if (user.state === 'following' || user.relationship?.following === true) return 'following';
-  return (monitor.queue || []).find(item => item.handle?.toLowerCase() === user.handle?.toLowerCase())?.status || 'saved';
+function monitorUserStatus(user, index = buildRelationshipIndex(monitor)) {
+  return monitorUserStatusFromIndex(user, index);
 }
-function getNotMutualUsers() {
-  const followerHandles = new Set((monitor.users || []).map(u => u.handle.toLowerCase()));
+function getNotMutualUsers(followerHandles = buildRelationshipIndex(monitor).followers) {
   const candidates = new Map();
 
   const formatCandidate = (u) => {
@@ -629,9 +874,11 @@ function getNotMutualUsers() {
   return [...candidates.values()];
 }
 
+const recordDeletes = [];
 function removeUnfollowedUser(key) {
   const k = String(key || '').toLowerCase();
   if (!k) return;
+  if (recordPaging) recordDeletes.push({module: 'fans', handle: k}, {module: 'mutual', handle: k});
   if (monitor.followingUsers) {
     monitor.followingUsers = monitor.followingUsers.filter(u => u.handle.toLowerCase() !== k);
   }
@@ -654,36 +901,44 @@ function removeUnfollowedUser(key) {
   selectedFollowerHandles.delete(k);
 }
 
-function currentFollowerUsers() {
+function currentFollowerUsers(index = buildRelationshipIndex(monitor)) {
   let source;
   if (activeFollowerTab === 'notMutual') {
-    source = getNotMutualUsers();
+    source = getNotMutualUsers(index.followers);
   } else if (activeFollowerTab === 'followBack') {
     source = (monitor.queue || []).filter(user => user.status !== 'followed' && user.state !== 'following' && user.relationship?.following !== true);
   } else {
-    source = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user) === 'followed').map(user => ({...user, status:monitorUserStatus(user)}));
+    source = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user, index) === 'followed').map(user => ({...user, status:monitorUserStatus(user, index)}));
   }
   return [...source].sort((a,b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
 }
 
 function renderMonitorList() {
-  const allTabUsers = currentFollowerUsers();
+  installPageCopies('fans');
+  const servedFans = recordPaging && recordPages ? recordPages.window('fans') : null;
+  const monitorRows = servedFans ? (servedFans.summary?.total || servedFans.records.length || 1) : (monitor.users || []).length + (monitor.queue || []).length + (monitor.followingUsers || []).length;
+  const monitorView = guardModuleRender('monitor', monitorRows, $('monitorEmpty'));
+  if (!monitorView.allowList) return;
+  if (!dashboardPanelVisible('monitor')) return;
+  const index = buildRelationshipIndex(monitor);
+  const allTabUsers = currentFollowerUsers(index);
   const allUsers = monitor.users || [];
   const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.state !== 'following' && user.relationship?.following !== true);
-  const notMutualUsers = getNotMutualUsers();
+  const notMutualUsers = getNotMutualUsers(index.followers);
   const keyword = followerSearch.trim().toLowerCase();
   const matchedUsers = keyword ? allTabUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allTabUsers;
-  const totalPages = Math.max(1, Math.ceil(matchedUsers.length / followerPageSize));
-  followerPage = Math.min(Math.max(1, followerPage), totalPages);
-  const start = (followerPage - 1) * followerPageSize;
-  const users = matchedUsers.slice(start, start + followerPageSize);
+  const fanWindow = servedRecordWindow('fans', matchedUsers, followerPage, followerPageSize);
+  if (!fanWindow.served) followerPage = fanWindow.page;
+  const totalPages = fanWindow.totalPages;
+  const users = fanWindow.users;
+  const visibleTotal = fanWindow.served ? fanWindow.total : matchedUsers.length;
   const empty = $('monitorEmpty'); const list = $('monitorList'); const selection = $('selectionBar'); const pagination = $('monitorPagination');
   const listHeader = $('monitorListHeader');
-  const following = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user) === 'followed').length;
-  $('followingCount').textContent = String(following);
-  $('followBackCount').textContent = String(pending.length);
-  if ($('notMutualCount')) $('notMutualCount').textContent = String(notMutualUsers.length);
-  if ($('queueCount')) $('queueCount').textContent = String(pending.length);
+  const following = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user, index) === 'followed').length;
+  const fanTabs = fanWindow.summary?.tabs;
+  paintFollowerCount('followingCount', fanTabs ? (fanTabs.following || 0) : following);
+  paintFollowerCount('followBackCount', fanTabs ? (fanTabs.pendingQueue || 0) : pending.length);
+  paintFollowerCount('notMutualCount', fanTabs ? (fanTabs.notMutual || 0) : notMutualUsers.length);
   document.querySelectorAll('[data-follower-tab]').forEach(button => {
     const isActive = button.dataset.followerTab === activeFollowerTab;
     button.classList.toggle('active', isActive);
@@ -697,11 +952,15 @@ function renderMonitorList() {
   $('monitorEmptyTitle').textContent = activeFollowerTab === 'notMutual' ? '没有未互关（单向关注）账号' : (activeFollowerTab === 'followBack' ? '没有待回关账号' : (allUsers.length ? '没有已关注的粉丝' : '还没有粉丝列表'));
   $('initialFollowers').hidden = activeFollowerTab === 'followBack';
   $('initialFollowers').textContent = activeFollowerTab === 'notMutual' ? '扫描关注与粉丝' : (allUsers.length ? '扫描新粉丝' : '获取初始列表');
-  $('monitorStatus').textContent = allUsers.length ? `本地档案 ${allUsers.length.toLocaleString()} 个 · 待回关 ${pending.length} 个 · 未互关 ${notMutualUsers.length} 个${keyword ? ` · 搜索到 ${matchedUsers.length} 个` : ''}` : '点击“获取初始列表”开始建立本地粉丝档案。';
-  const visibleKeys = new Set(allTabUsers.map(user => user.handle.toLowerCase()));
-  for (const key of [...selectedFollowerHandles]) if (!visibleKeys.has(key) && !allUsers.some(user => user.handle.toLowerCase() === key)) selectedFollowerHandles.delete(key);
+  const archiveCount = fanTabs?.archive ?? allUsers.length;
+  const pendingBadge = fanTabs ? (fanTabs.pendingQueue || 0) : pending.length;
+  $('monitorStatus').textContent = (fanTabs || allUsers.length) ? `本地档案 ${Number(archiveCount).toLocaleString()} 个 · 待回关 ${pendingBadge} 个 · 未互关 ${fanTabs ? (fanTabs.notMutual || 0) : notMutualUsers.length} 个${keyword ? ` · 搜索到 ${countText(visibleTotal, servedFans?.scanned)}` : ''}` : '点击“获取初始列表”开始建立本地粉丝档案。';
+  if (!recordPaging) {
+    const visibleKeys = new Set(allTabUsers.map(user => user.handle.toLowerCase()));
+    for (const key of [...selectedFollowerHandles]) if (!visibleKeys.has(key) && !allUsers.some(user => user.handle.toLowerCase() === key)) selectedFollowerHandles.delete(key);
+  }
   $('selectedCount').textContent = String(selectedFollowerHandles.size);
-  if ($('totalVisibleCount')) $('totalVisibleCount').textContent = String(matchedUsers.length);
+  if ($('totalVisibleCount')) $('totalVisibleCount').textContent = countText(visibleTotal, servedFans?.scanned);
   if ($('analyzeSelected')) {
     $('analyzeSelected').hidden = activeFollowerTab === 'notMutual';
     $('analyzeSelected').disabled = selectedFollowerHandles.size === 0 || selectedFollowerHandles.size > 20;
@@ -717,9 +976,11 @@ function renderMonitorList() {
   $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())) && !$('listSelectAll').checked;
   $('followerSearch').value = followerSearch;
   $('followerPageSize').value = String(followerPageSize);
-  $('followerPageSummary').textContent = formatPageSummary(followerPage, totalPages, matchedUsers.length);
-  $('followerPrevPage').disabled = followerPage <= 1;
-  $('followerNextPage').disabled = followerPage >= totalPages;
+  $('followerPageSummary').textContent = fanWindow.served && fanWindow.total == null
+    ? countText(null, servedFans?.scanned)
+    : formatPageSummary(fanWindow.page, totalPages, visibleTotal);
+  $('followerPrevPage').disabled = fanWindow.served ? !((servedFans?.cursors || []).length > 1) : followerPage <= 1;
+  $('followerNextPage').disabled = fanWindow.served ? !servedFans?.nextCursor : followerPage >= totalPages;
   if (!allTabUsers.length) return;
   if (!users.length) {
     const noMatch = document.createElement('p'); noMatch.className = 'monitor-no-match'; noMatch.textContent = '没有匹配的账号。'; list.append(noMatch); return;
@@ -739,8 +1000,8 @@ function renderMonitorList() {
         monitorStatus('Grok 一次最多选择 20 个账号。');
         return;
       }
-      if (select.checked) selectedFollowerHandles.add(key);
-      else selectedFollowerHandles.delete(key);
+      if (select.checked) { selectedFollowerHandles.add(key); selectedRowCopies.retain('fans', key, user); }
+      else { selectedFollowerHandles.delete(key); selectedRowCopies.forget('fans', key); }
       renderMonitorList();
     });
 
@@ -959,6 +1220,19 @@ function closeCommentAutoFollowDrawer() {
   if ($('commentAutoFollowDrawer')) $('commentAutoFollowDrawer').hidden = true;
   syncDrawerMask();
 }
+
+function closeUnreciprocatedDrawer() {
+  saveUnreciprocatedTracker().catch(() => {});
+  if ($('unreciprocatedSettingsDrawer')) $('unreciprocatedSettingsDrawer').hidden = true;
+  syncDrawerMask();
+}
+
+function closeUnreciprocatedSettingsDrawer() {
+  closeUnreciprocatedDrawer();
+}
+
+window.closeUnreciprocatedSettingsDrawer = closeUnreciprocatedSettingsDrawer;
+window.closeUnreciprocatedDrawer = closeUnreciprocatedDrawer;
 
 function renderSettingsDrawer() {
   if (!$('settingsDrawer')) return;
@@ -1193,7 +1467,18 @@ function openProfileDrawer(user) {
   drawerMode = 'profile';
   drawerUser = {...user};
   renderProfileDrawer();
-  if (!profileCache[user.handle.toLowerCase()]) refreshDrawerProfile();
+  const key = String(user.handle || '').toLowerCase();
+  if (recordPaging) {
+    chrome.runtime.sendMessage({cmd: 'recordData', op: 'profiles', handles: [user.handle]}).then(result => {
+      const row = result?.profiles?.[0];
+      if (!row?.payload || drawerUser?.handle?.toLowerCase() !== key) return;
+      profileCache[key] = structuredClone(row.payload);
+      drawerUser = {...drawerUser, ...row.payload};
+      renderProfileDrawer();
+    }).catch(() => {});
+    return;
+  }
+  if (!profileCache[key]) refreshDrawerProfile();
 }
 
 function openCommentRecentPostsDrawer(user) {
@@ -1245,7 +1530,7 @@ async function refreshDrawerProfile() {
         drawerUser = {...profile, ...commentUser};
         profileCache[key] = {...(profileCache[key] || {}), ...profile, posts:commentUser.recentPosts.slice(0, 10)};
         await saveCommentTracking();
-        await chrome.storage.local.set({profileCache}); persist('profileCache', profileCache);
+        await writeLocal({profileCache}); persist('profileCache', profileCache);
       }
       return;
     }
@@ -1286,11 +1571,12 @@ async function refreshFollowerProfile(user) {
   monitorStatus(`正在后台读取 @${user.handle} 的公开资料与首页前 5–10 条帖子…`);
   try {
     const profile = await readProfileBundleInBackground(user, 10);
+    profile.handle = profile.handle || user.handle;
     profileCache[key] = profile;
     if (archiveCommentRecentPosts(profile)) await saveCommentTracking();
     applyProfileToMonitor(profile);
     if (String(drawerUser?.handle || '').toLowerCase() === key) drawerUser = profile;
-    await chrome.storage.local.set({monitor, profileCache, mutualNetwork});
+    await writeLocal({monitor, profileCache, mutualNetwork});
     persist('monitor', monitor);
     persist('profileCache', profileCache);
     persist('mutualNetwork', mutualNetwork);
@@ -1399,7 +1685,7 @@ async function invalidateNetworkTemplate(operation) {
   const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
   if (!networkTemplates[operation]) return;
   delete networkTemplates[operation];
-  await chrome.storage.local.set({networkTemplates});
+  await writeLocal({networkTemplates});
 }
 
 async function networkFetchWithRecovery(tabId, handle, operation, variables) {
@@ -1454,7 +1740,7 @@ async function collectRelations(handle, perSideLimit = 500) {
   } finally { await chrome.tabs.remove(tabId).catch(() => {}); }
 }
 
-async function saveMutualNetwork() { await chrome.storage.local.set({mutualNetwork}); persist('mutualNetwork', mutualNetwork); }
+async function saveMutualNetwork() { await writeLocal({mutualNetwork}); persist('mutualNetwork', mutualNetwork); }
 function networkStatus(text) {
   const root = $('networkStatus');
   if (root) root.textContent = text;
@@ -1465,26 +1751,14 @@ function mergeNetworkAccount(existing = {}, user = {}) {
   const relationshipKnown = existing.relationshipKnown === true || user.relationshipKnown === true;
   return {...existing, ...user, relationship, relationshipKnown};
 }
-function ownFollowerHandles() {
-  return new Set((monitor.users || []).map(item => item.handle?.toLowerCase()).filter(Boolean));
+function ownFollowerHandles(index = buildRelationshipIndex(monitor)) {
+  return index.followers;
 }
-function applyOwnFollowingSnapshot(user) {
-  if (!user?.handle) return user;
-  const key = user.handle.toLowerCase();
-  const followingHandles = ownFollowingHandles();
-  const followerHandles = ownFollowerHandles();
-  const relationship = {...(user.relationship || {})};
-  if (followingHandles.has(key)) relationship.following = true;
-  else if (typeof relationship.following !== 'boolean') relationship.following = false;
-  if (followerHandles.has(key) && typeof relationship.followedBy !== 'boolean') relationship.followedBy = true;
-  return {...user, relationship, relationshipKnown:typeof relationship.followedBy === 'boolean'};
+function applyOwnFollowingSnapshot(user, index = buildRelationshipIndex(monitor)) {
+  return applyRelationshipSnapshot(user, index);
 }
-function ownFollowingHandles() {
-  const handles = new Set((monitor.followingUsers || []).map(item => item.handle?.toLowerCase()).filter(Boolean));
-  for (const user of (monitor.users || [])) {
-    if (user?.handle && (user.state === 'following' || monitorUserStatus(user) === 'followed')) handles.add(user.handle.toLowerCase());
-  }
-  return handles;
+function ownFollowingHandles(index = buildRelationshipIndex(monitor)) {
+  return index.following;
 }
 function personalRelationRank(user) {
   return {'互相关注':0, '对方关注你':1, '你关注对方':2, '未互关':3, '你未关注对方':4, '关系未知':5}[personalRelationshipLabel(user)];
@@ -1494,8 +1768,9 @@ let mutualPage = 1;
 let mutualPageSize = 50;
 
 function getAllMutualUsersWithSnapshot() {
+  const index = buildRelationshipIndex(monitor);
   return [...(mutualNetwork.users || [])]
-    .map(applyOwnFollowingSnapshot)
+    .map(user => applyOwnFollowingSnapshot(user, index))
     .sort((a,b) => personalRelationRank(a) - personalRelationRank(b) || String(a.name || a.handle).localeCompare(String(b.name || b.handle)));
 }
 
@@ -1506,17 +1781,26 @@ function getFilteredMutualUsers(tab = activeMutualTab, keyword = mutualSearch, t
 
 function selectedMutualUsersList() {
   if (!selectedMutualHandles.size) return [];
+  if (recordPaging && recordPages) return selectedFromPage('mutual', selectedMutualHandles);
   const allByKey = new Map(getAllMutualUsersWithSnapshot().map(u => [u.handle.toLowerCase(), u]));
   return [...selectedMutualHandles].map(k => allByKey.get(k)).filter(Boolean);
 }
 
 function renderMutualNetwork() {
+  installPageCopies('mutual');
+  const servedMutual = recordPaging && recordPages ? recordPages.window('mutual') : null;
+  const mutualRows = servedMutual ? (servedMutual.summary?.total || servedMutual.records.length || 1) : (mutualNetwork.users || []).length;
+  const mutualView = guardModuleRender('mutual', mutualRows, $('mutualEmpty'));
+  if (!mutualView.allowList) return;
+  if (!dashboardPanelVisible('candidates')) return;
   const body = $('mutualResults'); if (!body) return;
   body.replaceChildren();
   const allUsers = getAllMutualUsersWithSnapshot();
   const allKeySet = new Set(allUsers.map(u => u.handle.toLowerCase()));
-  for (const k of [...selectedMutualHandles]) {
-    if (!allKeySet.has(k)) selectedMutualHandles.delete(k);
+  if (!recordPaging) {
+    for (const k of [...selectedMutualHandles]) {
+      if (!allKeySet.has(k)) selectedMutualHandles.delete(k);
+    }
   }
   $('mutualNetworkCount').textContent = String(allUsers.length);
   $('networkAnchor').value = mutualNetwork.anchor || '';
@@ -1526,10 +1810,12 @@ function renderMutualNetwork() {
     const cat = mutualUserCategory(user);
     (groups[cat] || groups.none).push(user);
   }
-  if ($('mutualTabMutualCount')) $('mutualTabMutualCount').textContent = String(groups.mutual.length);
-  if ($('mutualTabFollowingCount')) $('mutualTabFollowingCount').textContent = String(groups.following.length);
-  if ($('mutualTabFollowBackCount')) $('mutualTabFollowBackCount').textContent = String(groups.followBack.length);
-  if ($('mutualTabNoneCount')) $('mutualTabNoneCount').textContent = String(groups.none.length);
+  const mutualTabs = servedMutual?.summary?.tabs;
+  if ($('mutualTabMutualCount')) $('mutualTabMutualCount').textContent = String(mutualTabs ? (mutualTabs.mutual || 0) : groups.mutual.length);
+  if ($('mutualTabFollowingCount')) $('mutualTabFollowingCount').textContent = String(mutualTabs ? (mutualTabs.following || 0) : groups.following.length);
+  if ($('mutualTabFollowBackCount')) $('mutualTabFollowBackCount').textContent = String(mutualTabs ? (mutualTabs.followBack || 0) : groups.followBack.length);
+  if ($('mutualTabNoneCount')) $('mutualTabNoneCount').textContent = String(mutualTabs ? (mutualTabs.none || 0) : groups.none.length);
+  if (mutualTabs && $('mutualNetworkCount')) $('mutualNetworkCount').textContent = String(mutualTabs.all || 0);
   document.querySelectorAll('.mutual-tab').forEach(button => {
     const isActive = button.dataset.mutualTab === activeMutualTab;
     button.classList.toggle('active', isActive);
@@ -1567,8 +1853,17 @@ function renderMutualNetwork() {
     }
   }
 
-  const startIdx = (mutualPage - 1) * mutualPageSize;
-  const pageUsers = users.slice(startIdx, startIdx + mutualPageSize);
+  const mutualWindow = servedRecordWindow('mutual', users, mutualPage, mutualPageSize);
+  if (!mutualWindow.served) mutualPage = mutualWindow.page;
+  const pageUsers = mutualWindow.users;
+  if (mutualWindow.served && $('mutualPageSummary')) {
+    $('mutualPageSummary').textContent = mutualWindow.total == null
+      ? countText(null, servedMutual?.scanned)
+      : `第 ${mutualWindow.page} / ${mutualWindow.totalPages} 页（共 ${mutualWindow.total} 条）`;
+  }
+  if (mutualWindow.served && $('mutualPrevPage')) $('mutualPrevPage').disabled = !((servedMutual?.cursors || []).length > 1);
+  if (mutualWindow.served && $('mutualNextPage')) $('mutualNextPage').disabled = !servedMutual?.nextCursor;
+  if (mutualWindow.served && $('mutualTotalVisibleCount')) $('mutualTotalVisibleCount').textContent = countText(mutualWindow.total, servedMutual?.scanned);
   const selectAllEl = $('mutualSelectAll');
   if (selectAllEl) {
     selectAllEl.checked = pageUsers.length > 0 && pageUsers.every(u => selectedMutualHandles.has(u.handle.toLowerCase()));
@@ -1591,8 +1886,8 @@ function renderMutualNetwork() {
     checkbox.checked = selectedMutualHandles.has(key);
     checkbox.title = '选择后可指定执行批量更新或 Grok 分析';
     checkbox.addEventListener('change', () => {
-      if (checkbox.checked) selectedMutualHandles.add(key);
-      else selectedMutualHandles.delete(key);
+      if (checkbox.checked) { selectedMutualHandles.add(key); selectedRowCopies.retain('mutual', key, user); }
+      else { selectedMutualHandles.delete(key); selectedRowCopies.forget('mutual', key); }
       renderMutualNetwork();
     });
     checkTd.append(checkbox);
@@ -1753,7 +2048,7 @@ async function followMutualUser(user, button) {
     }
     if (result.reason === 'rate_limited') {
       monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-      await chrome.storage.local.set({monitor});
+      await writeLocal({monitor});
       persist('monitor', monitor);
       networkStatus(`@${user.handle} 触发关注限制，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
       return;
@@ -1855,7 +2150,7 @@ async function refreshMutualUser(user) {
     if (item) Object.assign(item, updated);
     profileCache[key] = {...(profileCache[key] || {}), ...user, ...updated};
     await saveMutualNetwork();
-    await chrome.storage.local.set({monitor, profileCache});
+    await writeLocal({monitor, profileCache});
     persist('monitor', monitor);
     persist('profileCache', profileCache);
     const evalRes = evaluateMutualProfile(profileCache[key]);
@@ -1875,6 +2170,11 @@ async function batchRefreshMutualNetwork() {
     batchRefreshRunning = false;
     networkStatus('正在停止批量更新…');
     return;
+  }
+  if (!selectedMutualHandles.size) {
+    await ensureCompleteModule('mutual', 'mutualNetwork', records => {
+      mutualNetwork = {...mutualNetwork, users: records.map(record => record.payload)};
+    });
   }
   const selectedList = selectedMutualUsersList();
   let targetUsers = selectedList;
@@ -1917,7 +2217,7 @@ async function batchRefreshMutualNetwork() {
       } catch (e) {}
       if (i % 5 === 0 || i === targetUsers.length - 1) {
         await saveMutualNetwork();
-        await chrome.storage.local.set({monitor, profileCache});
+        await writeLocal({monitor, profileCache});
         persist('monitor', monitor);
         persist('profileCache', profileCache);
       }
@@ -2099,58 +2399,7 @@ function probeXGrokInPage() {
   return { ok: true, reason: 'x.com Grok 正常可用（输入框就绪）' };
 }
 
-function probeGrokComInPage() {
-  const url = window.location.href;
-  if (/login|signin/i.test(url)) {
-    return { ok: false, reason: 'grok.com 用户未登录' };
-  }
-  const bodyText = (document.body ? document.body.innerText : '') || '';
-  if (/(Sign in|Log in to continue|Sign in with X)/i.test(bodyText) && !document.querySelector('textarea, [contenteditable="true"]')) {
-    return { ok: false, reason: 'grok.com 用户未登录' };
-  }
-  if (/Subscription required|Upgrade to continue|Limit reached/i.test(bodyText)) {
-    return { ok: false, reason: 'grok.com 未开通使用权限或额度耗尽' };
-  }
 
-  const inputEl = document.querySelector('textarea, [contenteditable="true"], [data-placeholder], input[type="text"]');
-  if (inputEl) {
-    return { ok: true, reason: 'grok.com 输入框就绪（可进行对话互动）' };
-  }
-  return { ok: false, reason: '未在 grok.com 找到对话输入框' };
-}
-
-function driveGrokComInput(prompt) {
-  const inputEl = document.querySelector('textarea, [contenteditable="true"]');
-  if (!inputEl) return { ok: false, err: '未找到 grok.com 输入框' };
-  if (inputEl.tagName === 'TEXTAREA') {
-    const proto = Object.getPrototypeOf(inputEl);
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) setter.call(inputEl, prompt);
-    else inputEl.value = prompt;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-  } else {
-    inputEl.focus();
-    inputEl.textContent = prompt;
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  const submitBtn = document.querySelector('button[type="submit"], button[aria-label*="Send"], button[aria-label*="提交"], button svg[data-icon="arrow-up"]')?.closest('button');
-  if (submitBtn && !submitBtn.disabled) {
-    submitBtn.click();
-    return { ok: true };
-  }
-  inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-  return { ok: true };
-}
-
-function readGrokComDomAnswer(anchor) {
-  const text = (document.body ? document.body.innerText : '') || '';
-  const i = text.lastIndexOf(anchor);
-  if (i < 0) return { text: '', done: false };
-  const slice = text.slice(i + anchor.length).trim();
-  const done = !document.querySelector('button[aria-label*="Stop"], .animate-spin') && slice.length > 10;
-  return { text: slice, done };
-}
 
 async function checkGrokAvailability(force = false) {
   const now = Date.now();
@@ -2199,27 +2448,18 @@ async function checkGrokAvailability(force = false) {
     return cachedGrokAvailability;
   }
 
-  // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常
-  let winGrok = null;
+  // 3. x.com 不可用时，探测 grok.com 用户是否已开通且模型正常（统一由协调器管理，绝不创建独立的 8 分钟临时窗口池）
   try {
-    winGrok = await createBackgroundGrokWindow('https://grok.com/');
-    const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
-    if (tabId) {
-      await sleep(3500);
-      const res = (await executeGrokScript({
-        target: { tabId },
-        func: probeGrokComInPage
-      }).catch(error=>{if(error.userActionRequired)throw error;return [];}))?.[0]?.result;
-      if (res) {
-        grokComOk = Boolean(res.ok);
-        grokComReason = res.reason;
-      }
+    const probeRes = await chrome.runtime.sendMessage({ cmd: 'grokSessionProbe' });
+    if (probeRes?.ok) {
+      grokComOk = Boolean(probeRes.result?.ok);
+      grokComReason = probeRes.result?.reason || '';
+    } else {
+      grokComReason = probeRes?.error || 'grok.com 协调器探测失败';
     }
   } catch (err) {
-    if(err.userActionRequired)throw err;
+    if (err.userActionRequired) throw err;
     grokComReason = err.message;
-  } finally {
-    if (winGrok?.id) await releaseGrokWindow(winGrok.id).catch(() => {});
   }
 
   // 4. 综合判断：若 grok.com 可用，使用 grok.com；若两者均不可用，则评论不可用
@@ -2409,6 +2649,9 @@ async function visitScrollAndFollowCandidate(user, cfg) {
 }
 
 async function runMutualAutoFollowBatch(source = 'manual') {
+  await ensureCompleteModule('mutual', 'mutualNetwork', records => {
+    mutualNetwork = {...mutualNetwork, users: records.map(record => record.payload)};
+  });
   if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) {
     if (source === 'manual') setTab('followQueue');
     return {ok:false,error:'关注操作已由统一队列调度'};
@@ -2427,7 +2670,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
     (mutualNetwork.users || []).filter(user => !wasAutoFollowAttempted(user.handle, attempts)),
     cfg,
     profileCache,
-    ownFollowingHandles()
+    ownFollowingHandles(buildRelationshipIndex(monitor))
   );
   if (!candidates.length) {
     const msg = '当前没有符合条件的未关注价值账号（可先扩展互关追踪或批量更新资料）。';
@@ -2504,7 +2747,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             posts: postsScanned
           });
           monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-          await chrome.storage.local.set({monitor});
+          await writeLocal({monitor});
           persist('monitor', monitor);
           networkStatus(`@${target.handle} 触发关注限制，已暂停 1 小时。`);
           break;
@@ -2565,7 +2808,7 @@ async function runMutualAutoFollowBatch(source = 'manual') {
       lastSummary: summary
     };
     await saveMutualNetwork();
-    await chrome.storage.local.set({monitor, profileCache});
+    await writeLocal({monitor, profileCache});
     persist('monitor', monitor);
     persist('profileCache', profileCache);
     networkStatus(summary);
@@ -2580,14 +2823,15 @@ document.querySelectorAll('.mutual-tab').forEach(button => {
   button.addEventListener('click', () => {
     activeMutualTab = button.dataset.mutualTab;
     mutualPage = 1;
-    renderMutualNetwork();
+    reloadRecordModule('mutual', renderMutualNetwork);
   });
 });
 
 $('mutualSelectAll')?.addEventListener('change', event => {
-  const users = getFilteredMutualUsers();
-  const startIdx = (mutualPage - 1) * mutualPageSize;
-  const pageUsers = users.slice(startIdx, startIdx + mutualPageSize);
+  const users = recordPaging && recordPages?.window('mutual')
+    ? recordPages.window('mutual').records.map(record => record.payload)
+    : getFilteredMutualUsers().slice((mutualPage - 1) * mutualPageSize, mutualPage * mutualPageSize);
+  const pageUsers = users;
   for (const user of pageUsers) {
     const key = user.handle.toLowerCase();
     if (event.target.checked) selectedMutualHandles.add(key);
@@ -2599,18 +2843,19 @@ $('mutualSelectAll')?.addEventListener('change', event => {
 $('mutualSearch')?.addEventListener('input', event => {
   mutualSearch = event.target.value;
   mutualPage = 1;
-  renderMutualNetwork();
+  if (recordPaging && recordPages) runRecordPageAction('mutual', () => recordPages.search('mutual', currentRecordFilter('mutual')), renderMutualNetwork);
+  else renderMutualNetwork();
 });
 $('mutualSearchBtn')?.addEventListener('click', () => {
   mutualSearch = ($('mutualSearch')?.value || '').trim();
   mutualPage = 1;
-  renderMutualNetwork();
+  reloadRecordModule('mutual', renderMutualNetwork);
 });
 $('mutualSearch')?.addEventListener('keydown', event => {
   if (event.key === 'Enter') {
     mutualSearch = ($('mutualSearch')?.value || '').trim();
     mutualPage = 1;
-    renderMutualNetwork();
+    reloadRecordModule('mutual', renderMutualNetwork);
   }
 });
 
@@ -2640,7 +2885,7 @@ $('mutualTagPills')?.addEventListener('click', event => {
   });
 
   mutualPage = 1;
-  renderMutualNetwork();
+  reloadRecordModule('mutual', renderMutualNetwork);
 });
 
 $('openMutualSettingsDrawer')?.addEventListener('click', openMutualSettingsDrawer);
@@ -2693,19 +2938,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 $('batchRefreshMutual')?.addEventListener('click', batchRefreshMutualNetwork);
 
 $('mutualPrevPage')?.addEventListener('click', () => {
+  if (recordPaging && recordPages) { runRecordPageAction('mutual', () => recordPages.previous('mutual'), renderMutualNetwork); return; }
   if (mutualPage > 1) {
     mutualPage--;
     renderMutualNetwork();
   }
 });
 $('mutualNextPage')?.addEventListener('click', () => {
+  if (recordPaging && recordPages) { runRecordPageAction('mutual', () => recordPages.next('mutual'), renderMutualNetwork); return; }
   mutualPage++;
   renderMutualNetwork();
 });
 $('mutualPageSize')?.addEventListener('change', event => {
-  mutualPageSize = Number(event.target.value) || 50;
+  mutualPageSize = capPageSize(event.target.value);
   mutualPage = 1;
-  renderMutualNetwork();
+  reloadRecordModule('mutual', renderMutualNetwork);
 });
 
 
@@ -2738,6 +2985,7 @@ async function collectMutualNetwork(rawAnchor, reset = false) {
       next.set(key, {...merged, sourceAnchors:[...sources], discoveredAt:old.discoveredAt || new Date().toISOString()});
     }
     mutualNetwork = {...mutualNetwork, anchor, anchors:[...new Set([...(mutualNetwork.anchors || []), anchor])], users:[...next.values()], lastCollected:new Date().toISOString()};
+    recordPages?.markComplete('mutualNetwork');
     await saveMutualNetwork(); renderMutualNetwork();
     const relationCounts = Object.groupBy ? Object.groupBy([...relationMap.values()].map(applyOwnFollowingSnapshot), personalRelationshipLabel) : [...relationMap.values()].map(applyOwnFollowingSnapshot).reduce((groups, user) => { const label=personalRelationshipLabel(user); groups[label] ||= []; groups[label].push(user); return groups; }, {});
     networkStatus(`@${anchor} 已发现 ${relationMap.size} 个账号；与你互相关注 ${relationCounts['互相关注']?.length || 0} 个，对方关注你 ${relationCounts['对方关注你']?.length || 0} 个，你关注对方 ${relationCounts['你关注对方']?.length || 0} 个，你未关注对方 ${relationCounts['你未关注对方']?.length || 0} 个，关系未知 ${relationCounts['关系未知']?.length || 0} 个。`);
@@ -2749,7 +2997,11 @@ async function markQueueFollowed(user) {
   registerTrackedFollow(user);
   const now = new Date().toISOString();
   const stamp = entry => { entry.followedAt = now; delete entry.followBackAt; entry.relationship = {...(entry.relationship || {}), following: true}; };
-  const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
+  let item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
+  if (!item && user?.handle) {
+    item = {...user, handle: user.handle};
+    monitor.queue = [...(monitor.queue || []), item];
+  }
   if (item) { item.status = 'followed'; stamp(item); }
   const userItem = (monitor.users || []).find(entry => entry.handle?.toLowerCase() === key);
   if (userItem) { userItem.state = 'following'; stamp(userItem); }
@@ -2758,9 +3010,9 @@ async function markQueueFollowed(user) {
   const followingItem = (monitor.followingUsers || []).find(entry => entry.handle?.toLowerCase() === key);
   if (followingItem) stamp(followingItem);
   const commentItem = (commentTracking.users || []).find(entry => String(entry.handle || '').toLowerCase() === key);
-  if (commentItem) { stamp(commentItem); await chrome.storage.local.set({commentTracking}); persist('commentTracking', commentTracking); }
+  if (commentItem) { stamp(commentItem); await writeLocal({commentTracking}); persist('commentTracking', commentTracking); }
   user.followedAt = now;
-  await chrome.storage.local.set({monitor, mutualNetwork});
+  await writeLocal({monitor, mutualNetwork});
   persist('monitor', monitor);
   persist('mutualNetwork', mutualNetwork);
   renderMonitorList();
@@ -2776,7 +3028,7 @@ async function markQueueBlocked(user) {
     item.blockedAt = new Date().toISOString();
     item.blockReason = 'X relationship blocking';
   }
-  await chrome.storage.local.set({monitor});
+  await writeLocal({monitor});
   persist('monitor', monitor);
   renderMonitorList();
 }
@@ -2790,9 +3042,13 @@ function setFollowFailure(user, reason) {
 
 async function markQueueFollowFailed(user, reason) {
   const key = user.handle.toLowerCase();
-  const item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
+  let item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
+  if (!item && user?.handle) {
+    item = {...user, handle: user.handle};
+    monitor.queue = [...(monitor.queue || []), item];
+  }
   if (item) setFollowFailure(item, reason);
-  await chrome.storage.local.set({monitor});
+  await writeLocal({monitor});
   persist('monitor', monitor);
   renderMonitorList();
 }
@@ -2855,7 +3111,7 @@ async function followBackOne(user, button) {
   const key = String(user.handle || '').toLowerCase();
   if (!key || user.status === 'followed' || followBackBusy.has(key)) return;
   if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
-    await chrome.storage.local.set({monitor});
+    await writeLocal({monitor});
     persist('monitor', monitor);
     monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`);
     return;
@@ -2880,7 +3136,7 @@ async function followBackOne(user, button) {
     if (result.reason === 'rate_limited') {
       await markQueueFollowFailed(user, result.error || 'X 关注频率受限');
       monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-      await chrome.storage.local.set({monitor});
+      await writeLocal({monitor});
       persist('monitor', monitor);
       renderMonitorList();
       monitorStatus(`@${user.handle} 触发关注限制，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
@@ -2926,7 +3182,7 @@ async function unfollowOne(user, button) {
     const result = await unfollowViaNetwork(tabId, user);
     if (result.ok) {
       removeUnfollowedUser(key);
-      await chrome.storage.local.set({monitor, mutualNetwork});
+      await writeLocal({monitor, mutualNetwork});
       persist('monitor', monitor);
       persist('mutualNetwork', mutualNetwork);
       renderMonitorList();
@@ -2975,6 +3231,7 @@ async function addSelectedFollowersToMutualNetwork() {
   }
 
   const existingMutualMap = new Map((mutualNetwork.users || []).map(u => [u.handle.toLowerCase(), u]));
+  const relationshipIndex = buildRelationshipIndex(monitor);
   let addedCount = 0;
   let updatedCount = 0;
   const now = new Date().toISOString();
@@ -2998,12 +3255,12 @@ async function addSelectedFollowersToMutualNetwork() {
     };
 
     if (!existingMutualMap.has(key)) {
-      const full = applyOwnFollowingSnapshot(mergeNetworkAccount({}, baseAccount));
+      const full = applyOwnFollowingSnapshot(mergeNetworkAccount({}, baseAccount), relationshipIndex);
       existingMutualMap.set(key, full);
       addedCount++;
     } else {
       const old = existingMutualMap.get(key);
-      const merged = applyOwnFollowingSnapshot(mergeNetworkAccount(old, baseAccount));
+      const merged = applyOwnFollowingSnapshot(mergeNetworkAccount(old, baseAccount), relationshipIndex);
       existingMutualMap.set(key, merged);
       updatedCount++;
     }
@@ -3075,7 +3332,7 @@ async function batchUnfollowSelected() {
         monitorStatus(`@${user.handle} 取关出错：${err.message}`);
       }
       if (i % 3 === 0 || i === targets.length - 1) {
-        await chrome.storage.local.set({monitor, mutualNetwork});
+        await writeLocal({monitor, mutualNetwork});
         persist('monitor', monitor);
         persist('mutualNetwork', mutualNetwork);
         renderMonitorList();
@@ -3089,7 +3346,7 @@ async function batchUnfollowSelected() {
     await closeBackgroundXActionTab(tabId);
     unfollowRunning = false;
     if (btn) btn.textContent = '批量取关';
-    await chrome.storage.local.set({monitor, mutualNetwork});
+    await writeLocal({monitor, mutualNetwork});
     persist('monitor', monitor);
     persist('mutualNetwork', mutualNetwork);
     renderMonitorList();
@@ -3144,8 +3401,9 @@ async function saveMonitorSettings() {
   };
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
+  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
   monitor = {...monitor, ...next};
-  await chrome.storage.local.set({monitor});
+  await writeLocal({monitor});
   persist('monitor', monitor);
   await chrome.alarms.clear('x-followers-scan');
   if (monitor.enabled) {
@@ -3242,7 +3500,7 @@ async function syncOwnFollowingList(tabId, handle) {
       for (const user of result.users) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
       monitor.followingUsers = [...previous.values()];
       if (result.complete) monitor.followingListComplete = true;
-      const followingHandles = ownFollowingHandles();
+      const followingHandles = ownFollowingHandles(buildRelationshipIndex(monitor));
       const apply = user => {
         if (!user?.handle) return;
         if (followingHandles.has(user.handle.toLowerCase())) user.relationship = {...(user.relationship || {}), following:true};
@@ -3298,6 +3556,18 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
 }
 
 async function scanFollowerList(scanSource = 'manual') {
+  await ensureCompleteModule('fans', 'monitor', records => {
+    const users = [];
+    const queue = [];
+    const followingUsers = [];
+    for (const record of records) {
+      const bucket = record.sourcePath?.[1];
+      if (bucket === 'queue') queue.push(record.payload);
+      else if (bucket === 'followingUsers') followingUsers.push(record.payload);
+      else if (bucket === 'users') users.push(record.payload);
+    }
+    monitor = {...monitor, users, queue, followingUsers};
+  });
   const scanTarget = await followerTab();
   const {tabId, temporary, handle} = scanTarget;
   try {
@@ -3365,7 +3635,7 @@ async function scanFollowerList(scanSource = 'manual') {
         checkpointAt: new Date().toISOString(),
         source: sourceOperation === 'BlueVerifiedFollowers' ? 'verified_followers_network' : 'followers_network'
       };
-      await chrome.storage.local.set({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
+      await writeLocal({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
 
       await recordMonitorLog({
         source: scanSource,
@@ -3468,7 +3738,7 @@ async function scanFollowerList(scanSource = 'manual') {
       checkpointAt: new Date().toISOString(),
       source: 'followers_dom'
     };
-    await chrome.storage.local.set({monitor});
+    await writeLocal({monitor});
     persist('monitor', monitor);
     renderQueue();
     renderSettingsDrawer();
@@ -3540,11 +3810,72 @@ $('runMonitorScanNow')?.addEventListener('click', async () => {
   }
 });
 $('openMonitorDrawerLogs')?.addEventListener('click', () => openLogsModal('fans'));
+function installPageCopies(moduleName) {
+  const legacyKey = moduleName === 'fans' ? 'monitor' : moduleName === 'mutual' ? 'mutualNetwork' : moduleName === 'comments' ? 'commentTracking' : 'unreciprocatedTracker';
+  if (recordPaging && recordPages?.isComplete(legacyKey)) return;
+  const page = recordPaging && recordPages ? recordPages.window(moduleName) : null;
+  if (!page) return;
+  const signature = page.records.map(record => record.userKey).join('\0');
+  if (installedPageSignature.get(moduleName) === signature) return;
+  installedPageSignature.set(moduleName, signature);
+  const users = [];
+  const queue = [];
+  const followingUsers = [];
+  for (const record of page.records) {
+    const copy = structuredClone(record.payload || {});
+    copy.__userKey = record.userKey;
+    copy.__expectedHandle = record.handle;
+    copy.__sourceBucket = record.sourcePath?.[1] === 'synthetic' ? 'synthetic' : (record.sourcePath?.[1] || 'users');
+    copy.__sourceKey = record.sourcePath?.[1] === 'synthetic' ? 'unreciprocatedTracker' : (record.sourcePath?.[0] || '');
+    const bucket = copy.__sourceBucket;
+    if (bucket === 'queue') queue.push(copy);
+    else if (bucket === 'followingUsers') followingUsers.push(copy);
+    else users.push(copy);
+  }
+  if (moduleName === 'fans') monitor = {...monitor, users, queue, followingUsers};
+  else if (moduleName === 'mutual') mutualNetwork = {...mutualNetwork, users};
+  else if (moduleName === 'comments') commentTracking = {...commentTracking, users};
+  else if (moduleName === 'unreciprocated') unreciprocatedTracker = {...unreciprocatedTracker, users};
+}
+const RECORD_PAGE_PANEL = {fans: 'monitor', mutual: 'mutual', comments: 'comments', unreciprocated: 'unreciprocated'};
+const RECORD_PAGE_FAIL = {
+  fans: '关注与粉丝记录加载失败',
+  mutual: '互关追踪记录加载失败',
+  comments: '评论追踪记录加载失败',
+  unreciprocated: '回关监测记录加载失败'
+};
+function paintRecordModuleState(moduleName) {
+  const panelId = RECORD_PAGE_PANEL[moduleName];
+  if (!panelId) return;
+  applyModuleView(document, panelId, loadRegistry.get(panelId), moduleRowCount(panelId));
+  refreshSidebarBadges();
+}
+async function runRecordPageAction(moduleName, action, render) {
+  const panelId = RECORD_PAGE_PANEL[moduleName];
+  try {
+    const page = await action();
+    if (page == null) return;
+    if (panelId) {
+      loadRegistry.succeed(panelId);
+      paintRecordModuleState(moduleName);
+    }
+    render();
+  } catch (error) {
+    if (!panelId) return;
+    loadRegistry.fail(panelId, `${RECORD_PAGE_FAIL[moduleName]}：${error?.message || error || '加载失败'}`);
+    paintRecordModuleState(moduleName);
+  }
+}
+function reloadRecordModule(moduleName, render) {
+  if (!(recordPaging && recordPages)) { render(); return; }
+  return runRecordPageAction(moduleName, () => recordPages.open(moduleName, currentRecordFilter(moduleName)), render);
+}
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
   activeFollowerTab = button.dataset.followerTab;
   selectedFollowerHandles.clear();
+  selectedRowCopies.clear('fans');
   followerPage = 1;
-  renderMonitorList();
+  reloadRecordModule('fans', renderMonitorList);
 }));
 $('listSelectAll').addEventListener('change', event => {
   const allUsers = currentFollowerUsers();
@@ -3575,12 +3906,12 @@ $('listSelectAll').addEventListener('change', event => {
 });
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
 $('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
-$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; renderMonitorList(); });
+$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; if (recordPaging && recordPages) runRecordPageAction('fans', () => recordPages.search('fans', currentRecordFilter('fans')), renderMonitorList); else renderMonitorList(); });
 $('followerSearchBtn')?.addEventListener('click', () => { followerSearch=$('followerSearch').value.trim(); followerPage=1; renderMonitorList(); });
 $('followerSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { followerSearch=event.target.value.trim(); followerPage=1; renderMonitorList(); } });
-$('followerPageSize').addEventListener('change', event => { followerPageSize=Number(event.target.value); followerPage=1; renderMonitorList(); });
-$('followerPrevPage').addEventListener('click', () => { followerPage--; renderMonitorList(); });
-$('followerNextPage').addEventListener('click', () => { followerPage++; renderMonitorList(); });
+$('followerPageSize').addEventListener('change', event => { followerPageSize=capPageSize(event.target.value); followerPage=1; reloadRecordModule('fans', renderMonitorList); });
+$('followerPrevPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.previous('fans'), renderMonitorList); return; } followerPage--; renderMonitorList(); });
+$('followerNextPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
 $('collectNetwork').addEventListener('click', () => collectMutualNetwork($('networkAnchor').value, true));
 $('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
@@ -3626,7 +3957,15 @@ function grokPrompt() {
   return `你是 X 账号互粉与推荐筛选助手。下面是同一批 ${analysisRows.length} 个账号的公开 profile 和最近帖子。请逐个分析并输出：\n1. 账号主题与真实活跃方向；\n2. 是否有愿意互粉倾向（结合简介与帖子互关/回关意向、互动习惯及关注/粉丝比例综合判断）；\n3. 推荐评估：关注人数比粉丝数少在 1/5 以内（即关注量 >= 粉丝量×80%，例如关注 4000、粉丝 5000）视为推荐；若关注人数比粉丝数少超过 1/5（关注量 < 粉丝量×80%）视为不推荐；\n4. 最近帖子质量、原创性和明显风险，特别标记擦边色情、成人平台、私密导流、博彩、诈骗或可疑外链；\n5. 每个账号分析末尾必须单独输出一行标准回填标记（严格按以下格式，便于系统自动识别互粉标签与推荐原因）：\n[@用户名 | 互粉意向: 有/无 | 互粉标签: 互粉/无 | 推荐评估: 推荐/不推荐 | 理由: 一句话推荐原因或不推荐原因]\n\n${items}`;
 }
 
+function selectedFromPage(moduleName, selected) {
+  for (const record of recordPages?.window(moduleName)?.records || []) {
+    const key = String(record.handle || record.payload?.handle || '').toLowerCase();
+    if (selected.has(key)) selectedRowCopies.retain(moduleName, key, record.payload || {});
+  }
+  return selectedRowCopies.selected(moduleName, selected);
+}
 function selectedFollowerUsers() {
+  if (recordPaging && recordPages) return selectedFromPage('fans', selectedFollowerHandles).slice(0, 20);
   const users = new Map();
   for (const user of [...(monitor.users || []), ...(monitor.queue || []), ...(monitor.followingUsers || []), ...(mutualNetwork.users || [])]) {
     if (user?.handle) users.set(user.handle.toLowerCase(), user);
@@ -3657,7 +3996,7 @@ async function applyGrokAnalysisResults(parsedMap) {
     updatedCount++;
   }
   if (updatedCount > 0) {
-    await chrome.storage.local.set({profileCache, monitor, mutualNetwork, analysisRows});
+    await writeLocal({profileCache, monitor, mutualNetwork, analysisRows});
     persist('profileCache', profileCache);
     persist('monitor', monitor);
     persist('mutualNetwork', mutualNetwork);
@@ -3701,7 +4040,7 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
       const row = {...mergedData, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || [], risk:riskAssess(mergedData), profileCachedAt:new Date().toISOString()};
       profileCache[key] = row; collected.push(row);
       applyProfileToMonitor(row);
-      await chrome.storage.local.set({profileCache}); persist('profileCache', profileCache);
+      await writeLocal({profileCache}); persist('profileCache', profileCache);
     }
   } finally {
     if (tabId) await chrome.tabs.remove(tabId).catch(() => {});
@@ -3709,7 +4048,7 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
     renderMutualNetwork();
   }
   analysisRows = collected;
-  await chrome.storage.local.set({analysisRows}); persist('analysisRows', analysisRows);
+  await writeLocal({analysisRows}); persist('analysisRows', analysisRows);
   return collected;
 }
 
@@ -3724,7 +4063,7 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
       tabId = tabs?.[0]?.id;
     }
     if (!tabId) throw new Error('Grok 窗口创建失败。');
-    await chrome.storage.local.set({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
+    await writeLocal({grokWindowId:created.id, grokSubmittedAt:new Date().toISOString()});
     const handles = analysisRows.map(r => r.handle);
     const submitDeadline = Date.now() + 30000;
     let lastReason = 'Grok 页面尚未准备好';
@@ -3787,8 +4126,19 @@ function sanitizeMojibakeCollections() {
 }
 
 $('analyzeSelected').addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok 分析互粉倾向…'); await submitBatchToGrok(null, analysisStatus); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
+async function ensureCompleteModule(moduleName, key, assign) {
+  if (!recordPaging || !recordPages || recordPages.isComplete(key)) return;
+  const records = await recordPages.loadComplete(moduleName, key);
+  assign(records.filter(record => record.sourcePath?.[1] !== 'synthetic' && !String(record.userKey || '').startsWith('not-mutual/') && !String(record.userKey || '').startsWith('derived-tracker/')).map(record => ({
+    ...record,
+    payload: {...(record.payload || {}), __userKey: record.userKey, __expectedHandle: record.handle, __sourceBucket: record.sourcePath?.[1] === 'synthetic' ? 'synthetic' : (record.sourcePath?.[1] || 'users'), __sourceKey: record.sourcePath?.[1] === 'synthetic' ? 'unreciprocatedTracker' : (record.sourcePath?.[0] || '')}
+  })));
+}
 $('grokAnalyzeMutual')?.addEventListener('click', async () => {
   try {
+    await ensureCompleteModule('mutual', 'mutualNetwork', records => {
+      mutualNetwork = {...mutualNetwork, users: records.map(record => record.view ? {...record.payload, relationship: record.view} : record.payload)};
+    });
     const selectedUsers = selectedMutualUsersList();
     let targets = selectedUsers.slice(0, 20);
     if (!targets.length) {
@@ -3807,115 +4157,242 @@ $('grokAnalyzeMutual')?.addEventListener('click', async () => {
     networkStatus(`Grok 分析失败：${error.message}`);
   }
 });
-try {
-  const savedMonitor = await chrome.storage.local.get('monitor');
-  monitor = {...monitor, ...(savedMonitor.monitor || {})};
-  monitor.every = Math.max(10, Math.min(1440, Number(monitor.every) || 60));
-  monitor.jitter = Math.max(1, Math.min(monitor.every - 1, Number(monitor.jitter) || 15));
-  if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = [];
-  const reconciledQueue = reconcileFollowBackQueue(monitor.queue, monitor.users, riskAssess);
-  if (JSON.stringify(reconciledQueue) !== JSON.stringify(monitor.queue || [])) {
-    monitor = {...monitor, queue:reconciledQueue};
-    await chrome.storage.local.set({monitor});
-    persist('monitor', monitor);
+const startupKeyPresence = {};
+function noteStartupPresence(saved, keys) {
+  if (!saved) return;
+  for (const key of keys) startupKeyPresence[key] = localKeyPresent(saved, key);
+}
+async function loadMonitorModule() {
+  loadRegistry.begin('monitor');
+  applyModuleView(document, 'monitor', loadRegistry.get('monitor'), (monitor.users || []).length + (monitor.queue || []).length + (monitor.followingUsers || []).length);
+  try {
+    const savedMonitor = await chrome.storage.local.get('monitor');
+    noteStartupPresence(savedMonitor, ['monitor']);
+    monitor = {...monitor, ...(savedMonitor.monitor || {})};
+    monitor.every = Math.max(10, Math.min(1440, Number(monitor.every) || 60));
+    monitor.jitter = Math.max(1, Math.min(monitor.every - 1, Number(monitor.jitter) || 15));
+    if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = [];
+    const reconciledQueue = reconcileFollowBackQueue(monitor.queue, monitor.users, riskAssess);
+    if (JSON.stringify(reconciledQueue) !== JSON.stringify(monitor.queue || [])) {
+      monitor = {...monitor, queue:reconciledQueue};
+      await writeLocal({monitor});
+      persist('monitor', monitor);
+    }
+    if (!holdForRecovery('monitor')) loadRegistry.succeed('monitor');
+    renderSettingsDrawer();
+    if (monitor.lastScan) monitorStatus(`上次检索 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
+    renderMonitorList();
+  } catch (error) {
+    loadRegistry.fail('monitor', `关注与粉丝记录加载失败：${error.message}`);
+    applyModuleView(document, 'monitor', loadRegistry.get('monitor'), (monitor.users || []).length);
+    if ($('monitorEmpty')) $('monitorEmpty').hidden = true;
+    refreshSidebarBadges();
+    monitorStatus(`关注与粉丝记录加载失败：${error.message}`);
   }
-  renderSettingsDrawer();
-  if (monitor.lastScan) monitorStatus(`上次检索 ${new Date(monitor.lastScan).toLocaleString()}，待回关 ${monitor.queue?.filter(user => user.status === 'pending').length || 0} 个。`);
-  renderQueue();
-  renderMonitorList();
-} catch (error) { monitorStatus(`关注与粉丝记录加载失败：${error.message}`); }
+}
+
+async function loadAnalysisRecords() {
+  try {
+    const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'profileCache']);
+    noteStartupPresence(savedAnalysis, ['analysisRows', 'profileCache']);
+    analysisRows = savedAnalysis.analysisRows || [];
+    profileCache = savedAnalysis.profileCache || {};
+    if (holdForRecovery('monitor')) return;
+  } catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
+}
+
+async function loadMutualModule() {
+  loadRegistry.begin('mutual');
+  applyModuleView(document, 'mutual', loadRegistry.get('mutual'), (mutualNetwork.users || []).length);
+  try {
+    const savedNetwork = await chrome.storage.local.get(['mutualNetwork', 'mutualAutoFollowSettings']);
+    noteStartupPresence(savedNetwork, ['mutualNetwork', 'mutualAutoFollowSettings']);
+    let mutualCfg = savedNetwork.mutualAutoFollowSettings
+      ? mergeAutoFollowProgress(savedNetwork.mutualAutoFollowSettings, savedNetwork.mutualNetwork?.autoFollow)
+      : savedNetwork.mutualNetwork?.autoFollow;
+    if (!mutualCfg) {
+      mutualCfg = await loadPersistedAutoFollowSettings('mutual');
+    }
+    mutualNetwork = {
+      ...mutualNetwork,
+      ...(savedNetwork.mutualNetwork || {}),
+      autoFollow: normalizeAutoFollowConfig(mutualCfg || {})
+    };
+    renderMutualSettingsDrawer();
+    if (holdForRecovery('mutual')) return;
+    loadRegistry.succeed('mutual');
+    renderMutualNetwork();
+    if (mutualNetwork.lastCollected) networkStatus(`已恢复 ${mutualNetwork.users?.length || 0} 个去重账号，最近锚点 @${mutualNetwork.anchor}。`);
+  } catch (error) {
+    loadRegistry.fail('mutual', `互关追踪记录加载失败：${error.message}`);
+    applyModuleView(document, 'mutual', loadRegistry.get('mutual'), (mutualNetwork.users || []).length);
+    if ($('mutualEmpty')) $('mutualEmpty').hidden = true;
+    refreshSidebarBadges();
+    networkStatus(`互关追踪记录加载失败：${error.message}`);
+  }
+}
+
+async function loadCommentModule() {
+  loadRegistry.begin('comments');
+  applyModuleView(document, 'comments', loadRegistry.get('comments'), (commentTracking.users || []).length);
+  try {
+    const savedComments = await chrome.storage.local.get(['commentTracking', 'commentTrackingStatus', 'commentAutoFollowSettings']);
+    noteStartupPresence(savedComments, ['commentTracking', 'commentAutoFollowSettings']);
+    let commentCfg = savedComments.commentAutoFollowSettings
+      ? mergeAutoFollowProgress(savedComments.commentAutoFollowSettings, savedComments.commentTracking?.autoFollow)
+      : savedComments.commentTracking?.autoFollow;
+    if (!commentCfg) {
+      commentCfg = await loadPersistedAutoFollowSettings('comment');
+    }
+    commentTracking = {
+      ...commentTracking,
+      ...(savedComments.commentTracking || {}),
+      autoFollow: normalizeAutoFollowConfig(commentCfg || {})
+    };
+    commentTrackingStatus = savedComments.commentTrackingStatus || null;
+    renderCommentAutoFollowSettings();
+    chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
+    if (holdForRecovery('comments')) return;
+    loadRegistry.succeed('comments');
+    renderCommentTracking();
+  } catch (error) {
+    loadRegistry.fail('comments', `评论追踪记录加载失败：${error.message}`);
+    applyModuleView(document, 'comments', loadRegistry.get('comments'), (commentTracking.users || []).length);
+    if ($('commentUsersEmpty')) $('commentUsersEmpty').hidden = true;
+    refreshSidebarBadges();
+    if ($('commentTrackingStatus')) $('commentTrackingStatus').textContent = `评论追踪记录加载失败：${error.message}`;
+  }
+}
+
+async function loadUnreciprocatedModule() {
+  loadRegistry.begin('unreciprocated');
+  applyModuleView(document, 'unreciprocated', loadRegistry.get('unreciprocated'), (unreciprocatedTracker.users || []).length);
+  try {
+    const savedUnrecip = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings']);
+    noteStartupPresence(savedUnrecip, ['unreciprocatedTracker']);
+    let unrecipCfg = savedUnrecip.unreciprocatedSettings || savedUnrecip.unreciprocatedTracker?.config;
+    if (!unrecipCfg) {
+      try {
+        if (chrome.storage?.sync) {
+          const syncData = await chrome.storage.sync.get('unreciprocatedSettings');
+          if (syncData?.unreciprocatedSettings) unrecipCfg = syncData.unreciprocatedSettings;
+        }
+      } catch {}
+    }
+    unreciprocatedTracker = {
+      users: savedUnrecip.unreciprocatedTracker?.users || [],
+      config: normalizeUnreciprocatedConfig(unrecipCfg || {}),
+      updatedAt: savedUnrecip.unreciprocatedTracker?.updatedAt || ''
+    };
+    syncAllActiveFollowedUsers();
+    renderUnreciprocatedSettingsDrawer();
+    if (holdForRecovery('unreciprocated')) return;
+    loadRegistry.succeed('unreciprocated');
+    renderUnreciprocatedUI();
+  } catch (error) {
+    loadRegistry.fail('unreciprocated', `回关监测记录加载失败：${error.message}`);
+    applyModuleView(document, 'unreciprocated', loadRegistry.get('unreciprocated'), (unreciprocatedTracker.users || []).length);
+    if ($('unreciprocatedEmpty')) $('unreciprocatedEmpty').hidden = true;
+    refreshSidebarBadges();
+    console.warn('回关监测记录初始化错误：', error);
+  }
+}
+
+document.querySelectorAll('[data-load-retry]').forEach(button => {
+  button.addEventListener('click', () => {
+    const moduleId = button.dataset.loadRetry;
+    const retry = recordPaging && recordPages ? {
+      monitor: () => reloadRecordModule('fans', renderMonitorList),
+      mutual: () => reloadRecordModule('mutual', renderMutualNetwork),
+      comments: () => reloadRecordModule('comments', renderCommentTracking),
+      unreciprocated: () => reloadRecordModule('unreciprocated', renderUnreciprocatedUI),
+      followQueue: () => openFollowQueue($('followQueueSection'))
+    }[moduleId] : {
+      monitor: loadMonitorModule,
+      mutual: loadMutualModule,
+      comments: loadCommentModule,
+      unreciprocated: loadUnreciprocatedModule,
+      followQueue: () => openFollowQueue($('followQueueSection'))
+    }[moduleId];
+    Promise.resolve(retry?.()).then(() => {
+      if (!recordPaging && moduleId && moduleId !== 'followQueue') return recoverMissingStartupBackups();
+    }).catch(() => {});
+  });
+});
+
+async function bootRecordDashboard() {
+  const host = $('recordMigration');
+  recordPages = createPanelPages({
+    request: message => chrome.runtime.sendMessage({cmd: 'recordData', ...message}),
+    onProgress(status) {
+      if (!host || !status) return;
+      host.hidden = false;
+      paintMigrationProgress(host, {stage: status.label || migrationStageLabel(status), completed: Number(status.completed) || 0, total: Number(status.total) || 0});
+      if (status.stage === 'failed' && !host.querySelector('[data-migration-retry]')) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'secondary dash-retry';
+        button.dataset.migrationRetry = '1';
+        button.textContent = '重试迁移';
+        button.addEventListener('click', () => bootRecordDashboard().catch(error => monitorStatus(`记录迁移失败：${error.message}`)));
+        host.append(button);
+      }
+    }
+  });
+  const booted = await recordPages.boot(() => {
+    const moduleName = panelModuleForTab(activeDashboardTab) || 'fans';
+    return {module: moduleName, filter: currentRecordFilter(moduleName)};
+  });
+  recordPaging = true;
+  const metadata = (await chrome.runtime.sendMessage({cmd: 'recordData', op: 'metadata'}))?.metadata || {};
+  if (metadata.monitor) {
+    recordScalarBaseline.monitor = structuredClone(metadata.monitor);
+    monitor = {...monitor, ...structuredClone(metadata.monitor)};
+  }
+  if (metadata.mutualNetwork) {
+    recordScalarBaseline.mutualNetwork = structuredClone(metadata.mutualNetwork);
+    mutualNetwork = {...mutualNetwork, ...structuredClone(metadata.mutualNetwork)};
+  }
+  if (metadata.commentTracking) {
+    recordScalarBaseline.commentTracking = structuredClone(metadata.commentTracking);
+    commentTracking = {...commentTracking, ...structuredClone(metadata.commentTracking)};
+  }
+  if (metadata.unreciprocatedTracker) {
+    recordScalarBaseline.unreciprocatedTracker = structuredClone(metadata.unreciprocatedTracker);
+    unreciprocatedTracker = {...unreciprocatedTracker, ...structuredClone(metadata.unreciprocatedTracker)};
+  }
+  if (booted?.config?.mutualAutoFollowSettings) mutualNetwork = {...mutualNetwork, autoFollow: normalizeAutoFollowConfig(booted.config.mutualAutoFollowSettings)};
+  if (booted?.config?.commentAutoFollowSettings) commentTracking = {...commentTracking, autoFollow: normalizeAutoFollowConfig(booted.config.commentAutoFollowSettings)};
+  if (booted?.config?.unreciprocatedSettings) unreciprocatedTracker = {...unreciprocatedTracker, config: normalizeUnreciprocatedConfig(booted.config.unreciprocatedSettings)};
+  if (host) host.hidden = true;
+  const activeModule = booted?.module || panelModuleForTab(activeDashboardTab) || 'fans';
+  const panelId = activeModule === 'fans' ? 'monitor' : activeModule === 'mutual' ? 'mutual' : activeModule;
+  loadRegistry.succeed(panelId);
+  refreshSidebarBadges();
+  renderSettledModule(panelId);
+}
 
 try {
-  const savedAnalysis = await chrome.storage.local.get(['analysisRows', 'profileCache']);
-  analysisRows = savedAnalysis.analysisRows || [];
-  profileCache = savedAnalysis.profileCache || {};
-} catch (error) { analysisStatus(`分析记录加载失败：${error.message}`); }
-
-try {
-  const savedNetwork = await chrome.storage.local.get(['mutualNetwork', 'mutualAutoFollowSettings']);
-  let mutualCfg = savedNetwork.mutualAutoFollowSettings
-    ? mergeAutoFollowProgress(savedNetwork.mutualAutoFollowSettings, savedNetwork.mutualNetwork?.autoFollow)
-    : savedNetwork.mutualNetwork?.autoFollow;
-  if (!mutualCfg) {
-    mutualCfg = await loadPersistedAutoFollowSettings('mutual');
-  }
-  mutualNetwork = {
-    ...mutualNetwork,
-    ...(savedNetwork.mutualNetwork || {}),
-    autoFollow: normalizeAutoFollowConfig(mutualCfg || {})
-  };
-  renderMutualNetwork();
-  renderMutualSettingsDrawer();
-  if (mutualNetwork.lastCollected) networkStatus(`已恢复 ${mutualNetwork.users?.length || 0} 个去重账号，最近锚点 @${mutualNetwork.anchor}。`);
-} catch (error) { networkStatus(`互关追踪记录加载失败：${error.message}`); }
-
-try {
-  const {autoFollowLogs: savedLocalLogs = []} = await chrome.storage.local.get('autoFollowLogs');
-  if (Array.isArray(savedLocalLogs) && savedLocalLogs.length) { autoFollowLogs = savedLocalLogs; renderLogsModal(); }
-  const savedComments = await chrome.storage.local.get(['commentTracking', 'commentTrackingStatus', 'commentAutoFollowSettings']);
-  let commentCfg = savedComments.commentAutoFollowSettings
-    ? mergeAutoFollowProgress(savedComments.commentAutoFollowSettings, savedComments.commentTracking?.autoFollow)
-    : savedComments.commentTracking?.autoFollow;
-  if (!commentCfg) {
-    commentCfg = await loadPersistedAutoFollowSettings('comment');
-  }
-  commentTracking = {
-    ...commentTracking,
-    ...(savedComments.commentTracking || {}),
-    autoFollow: normalizeAutoFollowConfig(commentCfg || {})
-  };
-  commentTrackingStatus = savedComments.commentTrackingStatus || null;
-  renderCommentAutoFollowSettings();
-  chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
-  renderCommentTracking();
-} catch (error) { $('commentTrackingStatus').textContent = `评论追踪记录加载失败：${error.message}`; }
+  recordBootAttempted = true;
+  await bootRecordDashboard();
+} catch (error) {
+  recordPaging = false;
+  monitorStatus(`记录迁移失败：${error.message}`);
+}
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.4.0';
-  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
-    sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
+  const expectedVersion = '1.6.7';
+  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_6_7') !== '1') {
+    sessionStorage.setItem('x_bg_reloaded_1_6_7', '1');
     chrome.runtime.reload();
   }
 }).catch(() => {});
 
-try {
-  const savedMonitorLogs = await chrome.storage.local.get('monitorLogs');
-  if (savedMonitorLogs.monitorLogs && Array.isArray(savedMonitorLogs.monitorLogs)) {
-    monitorLogs = savedMonitorLogs.monitorLogs;
-  }
-} catch (error) {
-  console.warn('粉丝管理执行日志加载错误：', error);
-}
 
-try {
-  const savedUnrecip = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings', 'unreciprocatedLogs']);
-  if (savedUnrecip.unreciprocatedLogs && Array.isArray(savedUnrecip.unreciprocatedLogs)) {
-    unreciprocatedLogs = savedUnrecip.unreciprocatedLogs;
-  }
-  let unrecipCfg = savedUnrecip.unreciprocatedSettings || savedUnrecip.unreciprocatedTracker?.config;
-  if (!unrecipCfg) {
-    try {
-      if (chrome.storage?.sync) {
-        const syncData = await chrome.storage.sync.get('unreciprocatedSettings');
-        if (syncData?.unreciprocatedSettings) unrecipCfg = syncData.unreciprocatedSettings;
-      }
-    } catch {}
-  }
-  unreciprocatedTracker = {
-    users: savedUnrecip.unreciprocatedTracker?.users || [],
-    config: normalizeUnreciprocatedConfig(unrecipCfg || {}),
-    updatedAt: savedUnrecip.unreciprocatedTracker?.updatedAt || ''
-  };
-  syncAllActiveFollowedUsers();
-  renderUnreciprocatedSettingsDrawer();
-  renderUnreciprocatedUI();
-} catch (error) {
-  console.warn('回关监测记录初始化错误：', error);
-}
 
-if (sanitizeMojibakeCollections()) {
-  chrome.storage.local.set({monitor, mutualNetwork, profileCache}).catch(() => {});
+if (!recordBootAttempted && sanitizeMojibakeCollections()) {
+  writeLocal({monitor, mutualNetwork, profileCache}).catch(() => {});
   persist('monitor', monitor);
   persist('mutualNetwork', mutualNetwork);
   persist('profileCache', profileCache);
@@ -3923,108 +4400,138 @@ if (sanitizeMojibakeCollections()) {
   renderMutualNetwork();
 }
 
-setTab('monitor');
-
-Promise.all([
-  durableGet('rows'),
-  durableGet('monitor'),
-  durableGet('analysisRows'),
-  durableGet('profileCache'),
-  durableGet('mutualNetwork'),
-  durableGet('commentTracking'),
-  durableGet('autoFollowLogs'),
-  durableGet('mutualAutoFollowSettings'),
-  durableGet('commentAutoFollowSettings'),
-  durableGet('unreciprocatedTracker'),
-  durableGet('unreciprocatedLogs'),
-  durableGet('monitorLogs')
-]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto, durableUnrecip, durableUnrecipLogs, durableMonitorLogs]) => {
-  if (Array.isArray(durableMonitorLogs) && durableMonitorLogs.length && !monitorLogs.length) {
-    monitorLogs = durableMonitorLogs;
-    await chrome.storage.local.set({ monitorLogs });
+async function applyRecoveredStartupValue(key, value) {
+  if (key === 'rows' && Array.isArray(value)) {
+    rows = value;
+    await writeLocal({rows});
+    return;
   }
-  if (!monitorLogs.length && (monitor.users?.length || monitor.lastScan)) {
-    const pendingCount = (monitor.queue || []).filter(u => u.status === 'pending').length;
-    const initialEntry = {
-      id: 'fan_log_init',
-      at: monitor.lastScan || new Date().toISOString(),
-      timeStr: monitor.lastScan ? new Date(monitor.lastScan).toLocaleString() : new Date().toLocaleString(),
-      scope: 'fans',
-      source: 'manual',
-      handle: monitor.checkpointHandle || '',
-      scannedCount: (monitor.users || []).length,
-      newFollowersCount: 0,
-      totalFollowers: (monitor.users || []).length,
-      totalFollowing: (monitor.followingUsers || []).length,
-      followBackCount: pendingCount,
-      notMutualCount: getNotMutualUsers().length,
-      enqueuedCount: 0,
-      enqueuedHandles: [],
-      checkpointHandle: monitor.checkpointHandle || '',
-      summary: monitor.lastSummary || `当前粉丝数据基准：粉丝 ${(monitor.users || []).length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${getNotMutualUsers().length} 人。`,
-      result: 'success'
+  if (key === 'monitor' && value && typeof value === 'object' && !Array.isArray(value)) {
+    monitor = {...monitor, ...value};
+    if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = [];
+    await writeLocal({monitor});
+    renderMonitorList();
+    return;
+  }
+  if (key === 'analysisRows' && Array.isArray(value)) {
+    analysisRows = value;
+    await writeLocal({analysisRows});
+    analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`);
+    return;
+  }
+  if (key === 'profileCache' && typeof value === 'object' && !Array.isArray(value)) {
+    profileCache = value;
+    await writeLocal({profileCache});
+    return;
+  }
+  if (key === 'mutualNetwork' && value && typeof value === 'object' && !Array.isArray(value)) {
+    mutualNetwork = {
+      ...mutualNetwork,
+      ...value,
+      autoFollow: normalizeAutoFollowConfig(mergeAutoFollowProgress(value.autoFollow, mutualNetwork.autoFollow))
     };
-    monitorLogs.push(initialEntry);
-    chrome.storage.local.set({monitorLogs}).catch(() => {});
-    persist('monitorLogs', monitorLogs);
+    await writeLocal({mutualNetwork});
+    renderMutualNetwork();
+    renderMutualSettingsDrawer();
+    networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`);
+    return;
   }
-  if (durableUnrecip && Array.isArray(durableUnrecip.users) && (!unreciprocatedTracker.users.length || (durableUnrecip.updatedAt && durableUnrecip.updatedAt > unreciprocatedTracker.updatedAt))) {
+  if (key === 'commentTracking' && value && typeof value === 'object' && !Array.isArray(value)) {
+    commentTracking = {...commentTracking, ...value, autoFollow:normalizeAutoFollowConfig(mergeAutoFollowProgress(value.autoFollow, commentTracking.autoFollow))};
+    await writeLocal({commentTracking});
+    renderCommentTracking();
+    renderCommentAutoFollowSettings();
+    chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
+    return;
+  }
+  if (key === 'mutualAutoFollowSettings') {
+    mutualNetwork.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, key, value), mutualNetwork.autoFollow));
+    renderMutualSettingsDrawer();
+    return;
+  }
+  if (key === 'commentAutoFollowSettings') {
+    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, key, value), commentTracking.autoFollow));
+    renderCommentAutoFollowSettings();
+    return;
+  }
+  if (key === 'unreciprocatedTracker' && value && typeof value === 'object' && !Array.isArray(value)) {
     unreciprocatedTracker = {
-      ...durableUnrecip,
-      config: normalizeUnreciprocatedConfig(durableUnrecip.config || unreciprocatedTracker.config)
+      users: Array.isArray(value.users) ? value.users : [],
+      config: normalizeUnreciprocatedConfig(value.config || unreciprocatedTracker.config),
+      updatedAt: value.updatedAt || ''
     };
-    await chrome.storage.local.set({ unreciprocatedTracker });
+    await writeLocal({unreciprocatedTracker});
     syncAllActiveFollowedUsers();
     renderUnreciprocatedSettingsDrawer();
     renderUnreciprocatedUI();
   }
-  if (Array.isArray(durableUnrecipLogs) && durableUnrecipLogs.length && !unreciprocatedLogs.length) {
-    unreciprocatedLogs = durableUnrecipLogs;
-    await chrome.storage.local.set({ unreciprocatedLogs });
+}
+
+async function recoverMissingStartupBackups() {
+  try {
+    const savedRows = await chrome.storage.local.get('rows');
+    noteStartupPresence(savedRows, ['rows']);
+    if (Array.isArray(savedRows.rows)) rows = savedRows.rows;
+  } catch {}
+  const missing = STARTUP_DURABLE_KEYS.filter(key => startupKeyPresence[key] === false);
+  const involved = [];
+  for (const key of missing) {
+    const moduleId = recoveryModuleForKey(key);
+    if (moduleId && !involved.includes(moduleId)) involved.push(moduleId);
   }
-  if (durableMutualAuto) {
-    mutualNetwork.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, 'mutualAutoFollowSettings', durableMutualAuto), mutualNetwork.autoFollow));
-    renderMutualSettingsDrawer();
+  for (const moduleId of involved) holdForRecovery(moduleId);
+  const failed = new Map();
+  let restoredCount = 0;
+  for (const key of missing) {
+    const moduleId = recoveryModuleForKey(key);
+    let recovered;
+    try { recovered = await durableGet(key); }
+    catch (error) {
+      if (moduleId) failed.set(moduleId, error);
+      continue;
+    }
+    let latest = {};
+    try { latest = await chrome.storage.local.get(key); }
+    catch (error) {
+      if (moduleId) failed.set(moduleId, error);
+      continue;
+    }
+    const value = recoveredValueIfStillMissing(latest, key, recovered);
+    if (value === undefined) continue;
+    try {
+      await applyRecoveredStartupValue(key, value);
+      startupKeyPresence[key] = true;
+      restoredCount += 1;
+    }
+    catch (error) {
+      if (moduleId) failed.set(moduleId, error);
+    }
   }
-  if (durableCommentAuto) {
-    commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(await restoreMissingLocalSetting(chrome.storage.local, 'commentAutoFollowSettings', durableCommentAuto), commentTracking.autoFollow));
-    renderCommentAutoFollowSettings();
+  for (const moduleId of involved) {
+    if (preserveReadError(loadRegistry.get(moduleId))) continue;
+    if (failed.has(moduleId)) {
+      const error = failed.get(moduleId);
+      loadRegistry.fail(moduleId, `本地备份恢复失败：${error?.message || error}`);
+      applyModuleView(document, moduleId, loadRegistry.get(moduleId), moduleRowCount(moduleId));
+      const emptyId = {monitor: 'monitorEmpty', mutual: 'mutualEmpty', comments: 'commentUsersEmpty', unreciprocated: 'unreciprocatedEmpty'}[moduleId];
+      if ($(emptyId)) $(emptyId).hidden = true;
+      refreshSidebarBadges();
+      continue;
+    }
+    if (!settleRecoveredModule(loadRegistry, moduleId)) continue;
+    renderSettledModule(moduleId);
   }
-  if (Array.isArray(savedLogs) && savedLogs.length && !autoFollowLogs.length) { autoFollowLogs = savedLogs; await chrome.storage.local.set({autoFollowLogs}); renderLogsModal(); }
-  if (!rows.length && Array.isArray(savedRows) && savedRows.length) {
-    rows = savedRows;
-    await chrome.storage.local.set({rows});
-  }
-  if (!monitor.lastScan && savedMonitor) { monitor = {...monitor, ...savedMonitor}; if (!Array.isArray(monitor.followingUsers)) monitor.followingUsers = []; await chrome.storage.local.set({monitor}); renderQueue(); renderMonitorList(); }
-  if (!analysisRows.length && Array.isArray(savedAnalysis) && savedAnalysis.length) { analysisRows = savedAnalysis; await chrome.storage.local.set({analysisRows}); analysisStatus(`已从 X 本地数据库恢复 ${analysisRows.length} 个历史分析账号。`); }
-  if (!Object.keys(profileCache).length && savedProfiles && typeof savedProfiles === 'object') { profileCache=savedProfiles; await chrome.storage.local.set({profileCache}); }
-  if (!(mutualNetwork.users || []).length && savedNetwork) {
-    mutualNetwork = {
-      ...mutualNetwork,
-      ...savedNetwork,
-      autoFollow: normalizeAutoFollowConfig(mergeAutoFollowProgress(savedNetwork.autoFollow, mutualNetwork.autoFollow))
-    };
-    await chrome.storage.local.set({mutualNetwork});
-    renderMutualNetwork();
-    renderMutualSettingsDrawer();
-    networkStatus(`已从 X 本地数据库恢复 ${mutualNetwork.users?.length || 0} 个去重账号。`);
-  }
-  if (!(commentTracking.users || []).length && savedComments?.users?.length) {
-    commentTracking = {...savedComments, autoFollow:normalizeAutoFollowConfig(mergeAutoFollowProgress(savedComments.autoFollow, commentTracking.autoFollow))};
-    await chrome.storage.local.set({commentTracking});
-    renderCommentTracking();
-    renderCommentAutoFollowSettings();
-    chrome.runtime.sendMessage({cmd:'configureCommentAutoFollow', config:commentTracking.autoFollow}).catch(() => {});
-  }
+  if (!shouldRescanMojibake(restoredCount)) return;
   if (sanitizeMojibakeCollections()) {
-    await chrome.storage.local.set({monitor, mutualNetwork, profileCache});
+    await writeLocal({monitor, mutualNetwork, profileCache}).catch(() => {});
     persist('monitor', monitor);
     persist('mutualNetwork', mutualNetwork);
     persist('profileCache', profileCache);
     renderMonitorList();
     renderMutualNetwork();
   }
-}).catch(() => {});
+}
+// Record paging boots the projection. Startup X-backup recovery reads whole keys and marks the module failed when rows are absent.
 
 
 
@@ -4070,14 +4577,10 @@ async function recordMonitorLog(entry) {
     summary: entry.summary || '',
     result: entry.result || 'success'
   };
-  monitorLogs.unshift(logItem);
-  if (monitorLogs.length > 300) monitorLogs = monitorLogs.slice(0, 300);
-  await chrome.storage.local.set({monitorLogs});
-  persist('monitorLogs', monitorLogs);
-  if (currentLogsScope === 'fans' || currentLogsScope === 'monitor') {
-    renderLogsModal();
-  }
-  return logItem;
+  const saved = await chrome.runtime.sendMessage({cmd:'appendExecutionLog', entry:{...logItem, origin:'monitorLogs'}});
+  if (!saved?.ok) throw new Error(saved?.error || '日志后台未响应，请重新加载扩展');
+  if ((currentLogsScope === 'fans' || currentLogsScope === 'monitor') && $('logsModal') && !$('logsModal').hidden) await loadExecutionLogPage();
+  return saved.entry || logItem;
 }
 
 async function recordAutoFollowLog(entry) {
@@ -4103,25 +4606,86 @@ async function recordAutoFollowLog(entry) {
     grokCommentPostUrl: entry.grokCommentPostUrl || '',
     commentPosted: Boolean(entry.commentPosted)
   };
-  const saved = await chrome.runtime.sendMessage({cmd:'appendExecutionLog', entry:logItem});
+  const saved = await chrome.runtime.sendMessage({cmd:'appendExecutionLog', entry:{...logItem, origin:'autoFollowLogs'}});
   if (!saved?.ok) throw new Error(saved?.error || '日志后台未响应，请重新加载扩展');
-  autoFollowLogs = saved.logs;
-  persist('autoFollowLogs', autoFollowLogs);
-  renderLogsModal();
+  if ($('logsModal') && !$('logsModal').hidden) await loadExecutionLogPage();
+}
+
+function appendVerificationLogCard(list, log) {
+  const card = document.createElement('div');
+  card.className = 'log-card';
+  const header = document.createElement('div');
+  header.className = 'log-card-header';
+  const meta = document.createElement('div');
+  meta.className = 'log-card-meta';
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'log-time';
+  timeSpan.textContent = log.timeStr || (log.at ? new Date(log.at).toLocaleString() : '未知时间');
+  const scopeSpan = document.createElement('span');
+  scopeSpan.className = 'log-scope-badge';
+  scopeSpan.textContent = '安全验证';
+  const sourceSpan = document.createElement('span');
+  sourceSpan.className = 'log-scope-badge';
+  sourceSpan.textContent = '系统检测';
+  meta.append(timeSpan, scopeSpan, sourceSpan);
+  const resultBadge = document.createElement('span');
+  resultBadge.className = 'badge review';
+  resultBadge.textContent = log.result === 'paused' ? '等待人工验证' : '安全验证';
+  header.append(meta, resultBadge);
+  card.append(header);
+  const detail = log.detail || '';
+  if (detail) {
+    const desc = document.createElement('p');
+    desc.className = 'log-detail-text';
+    desc.textContent = detail;
+    card.append(desc);
+  }
+  if (log.signals?.length && !detail.includes('证据')) {
+    const evidence = document.createElement('p');
+    evidence.className = 'log-detail-text';
+    const labels = {'cf-challenge-iframe':'Cloudflare 验证框','cf-page-title':'页面标题与正文','cf-page-dom':'验证页标记','arkose-iframe':'Arkose 验证框','arkose-widget':'Arkose 组件'};
+    evidence.textContent = '证据：' + log.signals.map(code => `${code} ${labels[code] || code}`).join('；');
+    card.append(evidence);
+  }
+  list.append(card);
+}
+
+function logCardKind(log) {
+  if (log.scope === 'verification') return 'verification';
+  if (log.origin === 'monitorLogs' || log.scope === 'fans' || log.scope === 'monitor') return 'fans';
+  if (log.origin === 'unreciprocatedLogs' || log.scope === 'unreciprocated' || log.totalTracked != null || log.unfollowedHandles) return 'unreciprocated';
+  return 'standard';
 }
 
 function renderLogsModal() {
   const modal = $('logsModal');
-  if (!modal) return;
+  if (!modal || modal.hidden) return;
   const isUnrecip = currentLogsScope === 'unreciprocated';
   const isFans = currentLogsScope === 'fans' || currentLogsScope === 'monitor';
-  const logsData = isUnrecip ? unreciprocatedLogs : (isFans ? monitorLogs : selectExecutionLogs(autoFollowLogs, currentLogsScope));
+  const logsData = logPageEntries;
+  const verificationLogs = logsData.filter(log => logCardKind(log) === 'verification');
+  const fansLogs = logsData.filter(log => logCardKind(log) === 'fans');
+  const unrecipLogs = logsData.filter(log => logCardKind(log) === 'unreciprocated');
+  const standardLogs = logsData.filter(log => logCardKind(log) === 'standard');
   const badge = $('logsTotalBadge');
-  if (badge) badge.textContent = `${logsData.length} 条记录`;
+  if (badge) badge.textContent = `${logPageTotal} 条记录`;
   const empty = $('logsEmpty');
+  const loading = $('logsLoading');
+  const errorBox = $('logsError');
   const list = $('logsList');
+  if (loading) loading.hidden = logModalStatus !== 'loading';
+  if (errorBox) {
+    errorBox.hidden = logModalStatus !== 'error';
+    const text = $('logsErrorText');
+    if (text) text.textContent = logModalError || '请稍后重试。';
+  }
+  const prev = $('logsPrevBtn');
+  const next = $('logsNextBtn');
+  const logsBusy = logModalStatus === 'loading';
+  if (prev) prev.disabled = logsBusy || !logPager.canPrev();
+  if (next) next.disabled = logsBusy || !logPager.canNext();
   if (empty) {
-    empty.hidden = logsData.length > 0;
+    empty.hidden = logModalStatus !== 'ready' || logsData.length > 0;
     const strongEl = empty.querySelector('strong');
     const spanEl = empty.querySelector('span');
     if (strongEl && spanEl) {
@@ -4138,10 +4702,12 @@ function renderLogsModal() {
     }
   }
   if (!list) return;
+  list.hidden = logModalStatus !== 'ready' || logsData.length === 0;
   list.replaceChildren();
+  for (const log of verificationLogs) appendVerificationLogCard(list, log);
 
-  if (isFans) {
-    for (const log of logsData) {
+  {
+    for (const log of fansLogs) {
       const card = document.createElement('div');
       card.className = 'log-card';
 
@@ -4215,11 +4781,10 @@ function renderLogsModal() {
 
       list.append(card);
     }
-    return;
   }
 
-  if (isUnrecip) {
-    for (const log of logsData) {
+  {
+    for (const log of unrecipLogs) {
       const card = document.createElement('div');
       card.className = 'log-card';
 
@@ -4274,10 +4839,9 @@ function renderLogsModal() {
 
       list.append(card);
     }
-    return;
   }
 
-  for (const rawLog of logsData) {
+  for (const rawLog of standardLogs) {
     const log = rawLog.scope === 'queue' ? normalizeQueueExecutionLog(rawLog, {}, rawLog) : rawLog;
     const card = document.createElement('div');
     card.className = 'log-card';
@@ -4295,11 +4859,11 @@ function renderLogsModal() {
 
     const scopeSpan = document.createElement('span');
     scopeSpan.className = 'log-scope-badge';
-    scopeSpan.textContent = log.scope === 'queue' ? '关注队列' : log.scope === 'comment' ? '评论追踪' : '互关追踪';
+    scopeSpan.textContent = log.scope === 'verification' ? '安全验证' : log.scope === 'queue' ? '关注队列' : log.scope === 'comment' ? '评论追踪' : '互关追踪';
 
     const sourceSpan = document.createElement('span');
     sourceSpan.className = 'log-scope-badge';
-    sourceSpan.textContent = log.source === 'manual' ? '手动执行' : log.source === 'scheduled' || log.scope !== 'queue' ? '定时执行' : '触发方式未记录';
+    sourceSpan.textContent = log.scope === 'verification' ? '系统检测' : log.source === 'manual' ? '手动执行' : log.source === 'scheduled' || log.scope !== 'queue' ? '定时执行' : '触发方式未记录';
 
     meta.append(timeSpan, scopeSpan, sourceSpan);
 
@@ -4329,6 +4893,9 @@ function renderLogsModal() {
       resultBadge.style.background = '#fde8e4';
       resultBadge.style.color = '#a23924';
       resultBadge.textContent = '频率限制';
+    } else if (log.scope === 'verification' && log.result === 'paused') {
+      resultBadge.classList.add('review');
+      resultBadge.textContent = '等待人工验证';
     } else {
       resultBadge.style.background = '#fbe9e7';
       resultBadge.style.color = '#c62828';
@@ -4362,7 +4929,6 @@ function renderLogsModal() {
       desc.textContent = log.detail;
       card.append(desc);
     }
-
     // 扫描帖子展示
     const postsBox = document.createElement('div');
     postsBox.className = 'log-posts-box';
@@ -4488,17 +5054,63 @@ function renderLogsModal() {
   }
 }
 
-let currentLogsScope = 'autoFollow';
+function assignLogBuffer(name, value) {
+  const logs = Array.isArray(value) ? value : [];
+  if (name === 'monitorLogs') monitorLogs = logs;
+  else if (name === 'unreciprocatedLogs') unreciprocatedLogs = logs;
+  else autoFollowLogs = logs;
+}
+
+async function ensureLogBuffer(name) {
+  return takeLogBufferTask(logBufferTasks, name, () => loadLogBuffer(name));
+}
+
+async function loadLogBuffer(name) {
+  const outcome = await loadDurableLogBuffer(name, {
+    localGet: key => chrome.storage.local.get(key),
+    durableGet
+  });
+  if (outcome.action !== 'assign') return;
+  assignLogBuffer(name, outcome.value);
+  if (outcome.persist) await writeLocal({[name]: outcome.value}).catch(() => {});
+}
+
+async function loadExecutionLogPage() {
+  const token = logPager.begin();
+  logModalStatus = 'loading';
+  logModalError = '';
+  renderLogsModal();
+  let saved;
+  try {
+    saved = await chrome.runtime.sendMessage({cmd:'queryExecutionLogs', scope:currentLogsScope, limit:LOG_PAGE_SIZE, cursor:logPager.cursor()});
+  } catch (error) {
+    if (!logPager.current(token)) return;
+    logModalStatus = 'error';
+    logModalError = error?.message || '日志后台未响应，请重新加载扩展';
+    logPageEntries = [];
+    renderLogsModal();
+    return;
+  }
+  if (!logPager.current(token)) return;
+  if (!saved?.ok) {
+    logModalStatus = 'error';
+    logModalError = saved?.error || '日志后台未响应，请重新加载扩展';
+    logPageEntries = [];
+    renderLogsModal();
+    return;
+  }
+  logPager.notePage(token, saved);
+  logPageEntries = Array.isArray(saved.entries) ? saved.entries : [];
+  logPageTotal = Number(saved.total) || 0;
+  logModalStatus = 'ready';
+  renderLogsModal();
+}
 
 async function openLogsModal(scope = 'autoFollow') {
   currentLogsScope = scope;
-  if (scope === 'fans' || scope === 'monitor') {
-    const saved = await chrome.storage.local.get('monitorLogs');
-    monitorLogs = saved.monitorLogs || [];
-  } else if (scope !== 'unreciprocated') {
-    const saved = await chrome.storage.local.get('autoFollowLogs');
-    autoFollowLogs = saved.autoFollowLogs || [];
-  }
+  logPager.reset();
+  logPageEntries = [];
+  logPageTotal = 0;
   const modal = $('logsModal');
   const mask = $('logsModalMask');
   const title = $('logsModalTitle');
@@ -4511,7 +5123,7 @@ async function openLogsModal(scope = 'autoFollow') {
   }
   if (modal) modal.hidden = false;
   if (mask) mask.hidden = false;
-  renderLogsModal();
+  await loadExecutionLogPage();
 }
 
 function closeLogsModal() {
@@ -4522,27 +5134,30 @@ function closeLogsModal() {
 }
 
 async function clearAutoFollowLogs() {
-  if (currentLogsScope === 'fans' || currentLogsScope === 'monitor') {
-    if (!confirm('确定清空所有粉丝管理检测与回关入队日志吗？此操作不可撤销。')) return;
-    monitorLogs = [];
-    await chrome.storage.local.set({monitorLogs});
-    persist('monitorLogs', monitorLogs);
+  const label = currentLogsScope === 'fans' || currentLogsScope === 'monitor' ? '粉丝管理检测与回关入队日志'
+    : currentLogsScope === 'unreciprocated' ? '回关监测执行日志' : '当前范围的执行日志';
+  if (!confirm(`确定清空${label}吗？此操作不可撤销。`)) return;
+  const token = logPager.generation();
+  const scope = currentLogsScope;
+  let saved;
+  try {
+    saved = await chrome.runtime.sendMessage({cmd:'clearExecutionLogs', scope});
+  } catch (error) {
+    if ($('logsModal')?.hidden || currentLogsScope !== scope || logPager.generation() !== token) return;
+    logModalStatus = 'error';
+    logModalError = error?.message || '清空日志失败';
     renderLogsModal();
     return;
   }
-  if (currentLogsScope === 'unreciprocated') {
-    if (!confirm('确定清空所有回关监测执行日志吗？此操作不可撤销。')) return;
-    unreciprocatedLogs = [];
-    await chrome.storage.local.set({unreciprocatedLogs});
-    persist('unreciprocatedLogs', unreciprocatedLogs);
+  if ($('logsModal')?.hidden || currentLogsScope !== scope || logPager.generation() !== token) return;
+  if (!saved?.ok) {
+    logModalStatus = 'error';
+    logModalError = saved?.error || '清空日志失败';
     renderLogsModal();
     return;
   }
-  if (!confirm('确定清空所有执行日志记录吗？此操作不可撤销。')) return;
-  autoFollowLogs = [];
-  await chrome.storage.local.set({autoFollowLogs});
-  persist('autoFollowLogs', autoFollowLogs);
-  renderLogsModal();
+  logPager.reset();
+  await loadExecutionLogPage();
 }
 
 // 绑定日志弹窗与 Grok 实测事件
@@ -4646,6 +5261,8 @@ $('viewCommentLogsLink')?.addEventListener('click', () => openLogsModal('comment
 $('closeLogsModal')?.addEventListener('click', closeLogsModal);
 $('logsModalMask')?.addEventListener('click', closeLogsModal);
 $('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
+$('logsPrevBtn')?.addEventListener('click', async () => { if (!logPager.back()) return; await loadExecutionLogPage(); });
+$('logsNextBtn')?.addEventListener('click', async () => { if (!logPager.forward()) return; await loadExecutionLogPage(); });
 
 // ==============================================================================
 // 回关监测模块核心实现 (Unreciprocated Followback Tracker Module)
@@ -4678,7 +5295,7 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
 
 async function saveUnreciprocatedTracker() {
   unreciprocatedTracker.updatedAt = new Date().toISOString();
-  await chrome.storage.local.set({
+  await writeLocal({
     unreciprocatedTracker,
     unreciprocatedSettings: unreciprocatedTracker.config
   });
@@ -4686,7 +5303,7 @@ async function saveUnreciprocatedTracker() {
   persist('unreciprocatedSettings', unreciprocatedTracker.config);
   try {
     if (chrome.storage?.sync) {
-      await chrome.storage.sync.set({ unreciprocatedSettings: unreciprocatedTracker.config });
+      await writeSync({ unreciprocatedSettings: unreciprocatedTracker.config });
     }
   } catch {}
 }
@@ -4694,15 +5311,13 @@ async function saveUnreciprocatedTracker() {
 async function appendUnreciprocatedLog(logEntry) {
   const entry = {
     at: new Date().toISOString(),
+    scope: 'unreciprocated',
+    origin: 'unreciprocatedLogs',
     ...logEntry
   };
-  unreciprocatedLogs.unshift(entry);
-  if (unreciprocatedLogs.length > 300) unreciprocatedLogs = unreciprocatedLogs.slice(0, 300);
-  await chrome.storage.local.set({ unreciprocatedLogs });
-  persist('unreciprocatedLogs', unreciprocatedLogs);
-  if (currentLogsScope === 'unreciprocated') {
-    renderLogsModal();
-  }
+  const saved = await chrome.runtime.sendMessage({cmd:'appendExecutionLog', entry});
+  if (!saved?.ok) throw new Error(saved?.error || '日志后台未响应，请重新加载扩展');
+  if (currentLogsScope === 'unreciprocated' && $('logsModal') && !$('logsModal').hidden) await loadExecutionLogPage();
 }
 
 function registerTrackedFollow(user) {
@@ -4810,6 +5425,21 @@ function evaluateUnreciprocatedUser(item, followerHandles, overdueDays) {
 
 async function runUnreciprocatedCheckCycle(source = 'manual') {
   if (unreciprocatedCheckRunning) return { ok: false, error: '回关检测任务已在运行中' };
+  await ensureCompleteModule('unreciprocated', 'unreciprocatedTracker', records => {
+    unreciprocatedTracker = {...unreciprocatedTracker, users: records.map(record => record.payload)};
+  });
+  await ensureCompleteModule('fans', 'monitor', records => {
+    const users = [];
+    const queue = [];
+    const followingUsers = [];
+    for (const record of records) {
+      const bucket = record.sourcePath?.[1];
+      if (bucket === 'queue') queue.push(record.payload);
+      else if (bucket === 'followingUsers') followingUsers.push(record.payload);
+      else if (bucket === 'users') users.push(record.payload);
+    }
+    monitor = {...monitor, users, queue, followingUsers};
+  });
   unreciprocatedCheckRunning = true;
   const cfg = normalizeUnreciprocatedConfig(unreciprocatedTracker.config);
   const statusEl = $('unreciprocatedStatus');
@@ -4938,7 +5568,7 @@ async function unfollowOneUnreciprocated(user, btn) {
       user.unfollowedAt = new Date().toISOString();
       removeUnfollowedUser(user.handle);
       await saveUnreciprocatedTracker();
-      await chrome.storage.local.set({ monitor, mutualNetwork });
+      await writeLocal({ monitor, mutualNetwork });
       persist('monitor', monitor);
       persist('mutualNetwork', mutualNetwork);
       renderUnreciprocatedUI();
@@ -5021,7 +5651,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
       }
       if (i % 3 === 0 || i === targets.length - 1) {
         await saveUnreciprocatedTracker();
-        await chrome.storage.local.set({ monitor, mutualNetwork });
+        await writeLocal({ monitor, mutualNetwork });
         persist('monitor', monitor);
         persist('mutualNetwork', mutualNetwork);
         renderUnreciprocatedUI();
@@ -5036,7 +5666,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
     if (batchBtn) { batchBtn.textContent = '批量取关'; batchBtn.disabled = selectedUnreciprocatedHandles.size === 0; }
     if (allOverdueBtn) allOverdueBtn.disabled = false;
     await saveUnreciprocatedTracker();
-    await chrome.storage.local.set({ monitor, mutualNetwork });
+    await writeLocal({ monitor, mutualNetwork });
     persist('monitor', monitor);
     persist('mutualNetwork', mutualNetwork);
     renderUnreciprocatedUI();
@@ -5073,16 +5703,23 @@ function getFilteredUnreciprocatedUsers() {
 }
 
 function renderUnreciprocatedUI() {
+  installPageCopies('unreciprocated');
+  const servedTracker = recordPaging && recordPages ? recordPages.window('unreciprocated') : null;
+  const unreciprocatedRows = servedTracker ? (servedTracker.summary?.total || servedTracker.records.length || 1) : (unreciprocatedTracker.users || []).length;
+  const unreciprocatedView = guardModuleRender('unreciprocated', unreciprocatedRows, $('unreciprocatedEmpty'));
+  if (!unreciprocatedView.allowList) return;
+  const trackerTabs = servedTracker?.summary?.tabs;
   const allActive = (unreciprocatedTracker.users || []).filter(u => u.status !== 'unfollowed');
-  const overdueCount = allActive.filter(u => u.status === 'overdue').length;
-  const pendingCount = allActive.filter(u => u.status === 'pending').length;
-  const mutualCount = allActive.filter(u => u.status === 'mutual').length;
-  const totalCount = allActive.length;
+  const overdueCount = trackerTabs ? (trackerTabs.overdue || 0) : allActive.filter(u => u.status === 'overdue').length;
+  const pendingCount = trackerTabs ? (trackerTabs.pending || 0) : allActive.filter(u => u.status === 'pending').length;
+  const mutualCount = trackerTabs ? (trackerTabs.mutual || 0) : allActive.filter(u => u.status === 'mutual').length;
+  const totalCount = trackerTabs ? (trackerTabs.all || 0) : allActive.length;
 
   if ($('unreciprocatedOverdueBadge')) $('unreciprocatedOverdueBadge').textContent = overdueCount;
   if ($('unreciprocatedPendingBadge')) $('unreciprocatedPendingBadge').textContent = pendingCount;
   if ($('unreciprocatedTotalBadge')) $('unreciprocatedTotalBadge').textContent = totalCount;
   if ($('unreciprocatedCount')) $('unreciprocatedCount').textContent = overdueCount;
+  if (!dashboardPanelVisible('unreciprocated')) return;
 
   if ($('tabOverdueCount')) $('tabOverdueCount').textContent = overdueCount;
   if ($('tabPendingCount')) $('tabPendingCount').textContent = pendingCount;
@@ -5090,20 +5727,22 @@ function renderUnreciprocatedUI() {
   if ($('tabAllCount')) $('tabAllCount').textContent = totalCount;
 
   const filtered = getFilteredUnreciprocatedUsers();
-  const totalPages = Math.max(1, Math.ceil(filtered.length / unreciprocatedPageSize));
-  if (unreciprocatedPage > totalPages) unreciprocatedPage = totalPages;
-
-  const start = (unreciprocatedPage - 1) * unreciprocatedPageSize;
-  const pageUsers = filtered.slice(start, start + unreciprocatedPageSize);
+  const trackerWindow = servedRecordWindow('unreciprocated', filtered, unreciprocatedPage, unreciprocatedPageSize);
+  if (!trackerWindow.served) unreciprocatedPage = trackerWindow.page;
+  const totalPages = trackerWindow.totalPages;
+  const pageUsers = trackerWindow.users;
+  const trackerVisible = trackerWindow.served ? trackerWindow.total : filtered.length;
 
   if ($('unreciprocatedPageSummary')) {
-    $('unreciprocatedPageSummary').textContent = `第 ${unreciprocatedPage} / ${totalPages} 页（共 ${filtered.length} 人）`;
+    $('unreciprocatedPageSummary').textContent = trackerWindow.served && trackerWindow.total == null
+      ? countText(null, servedTracker?.scanned)
+      : `第 ${trackerWindow.page} / ${totalPages} 页（共 ${countText(trackerVisible, servedTracker?.scanned)} 人）`;
   }
-  if ($('unreciprocatedPrevPage')) $('unreciprocatedPrevPage').disabled = unreciprocatedPage <= 1;
-  if ($('unreciprocatedNextPage')) $('unreciprocatedNextPage').disabled = unreciprocatedPage >= totalPages;
+  if ($('unreciprocatedPrevPage')) $('unreciprocatedPrevPage').disabled = trackerWindow.served ? !((servedTracker?.cursors || []).length > 1) : unreciprocatedPage <= 1;
+  if ($('unreciprocatedNextPage')) $('unreciprocatedNextPage').disabled = trackerWindow.served ? !servedTracker?.nextCursor : unreciprocatedPage >= totalPages;
 
   if ($('unreciprocatedSelectedCount')) $('unreciprocatedSelectedCount').textContent = selectedUnreciprocatedHandles.size;
-  if ($('unreciprocatedTotalVisibleCount')) $('unreciprocatedTotalVisibleCount').textContent = filtered.length;
+  if ($('unreciprocatedTotalVisibleCount')) $('unreciprocatedTotalVisibleCount').textContent = trackerVisible;
   if ($('batchUnfollowUnreciprocatedBtn')) {
     $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0 || unreciprocatedUnfollowRunning;
   }
@@ -5132,8 +5771,8 @@ function renderUnreciprocatedUI() {
     check.type = 'checkbox';
     check.checked = selectedUnreciprocatedHandles.has(key);
     check.addEventListener('change', () => {
-      if (check.checked) selectedUnreciprocatedHandles.add(key);
-      else selectedUnreciprocatedHandles.delete(key);
+      if (check.checked) { selectedUnreciprocatedHandles.add(key); selectedRowCopies.retain('unreciprocated', key, user); }
+      else { selectedUnreciprocatedHandles.delete(key); selectedRowCopies.forget('unreciprocated', key); }
       if ($('unreciprocatedSelectedCount')) $('unreciprocatedSelectedCount').textContent = selectedUnreciprocatedHandles.size;
       if ($('batchUnfollowUnreciprocatedBtn')) $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0;
     });
@@ -5314,16 +5953,6 @@ function openUnreciprocatedDrawer() {
   renderUnreciprocatedSettingsDrawer();
 }
 
-function closeUnreciprocatedDrawer() {
-  const drawer = $('unreciprocatedSettingsDrawer');
-  if (drawer) drawer.hidden = true;
-  syncDrawerMask();
-}
-
-function closeUnreciprocatedSettingsDrawer() {
-  closeUnreciprocatedDrawer();
-}
-
 async function saveUnreciprocatedSettingsFromDrawer() {
   const cfg = normalizeUnreciprocatedConfig({
     every: $('unreciprocatedAutoEvery')?.value,
@@ -5375,7 +6004,10 @@ $('checkUnreciprocatedBtn')?.addEventListener('click', async () => {
 
 $('batchUnfollowUnreciprocatedBtn')?.addEventListener('click', () => batchUnfollowUnreciprocated());
 
-$('unfollowAllOverdueBtn')?.addEventListener('click', () => {
+$('unfollowAllOverdueBtn')?.addEventListener('click', async () => {
+  await ensureCompleteModule('unreciprocated', 'unreciprocatedTracker', records => {
+    unreciprocatedTracker = {...unreciprocatedTracker, users: records.map(record => record.payload)};
+  });
   const overdueTargets = (unreciprocatedTracker.users || []).filter(u => u.status === 'overdue' && !u.exempt);
   if (!overdueTargets.length) {
     alert('当前没有超时未回关且未豁免的账号！');
@@ -5391,7 +6023,7 @@ document.querySelectorAll('.unreciprocated-tab').forEach(tabBtn => {
     tabBtn.classList.add('active');
     activeUnreciprocatedTab = tabBtn.dataset.unreciprocatedTab || 'overdue';
     unreciprocatedPage = 1;
-    renderUnreciprocatedUI();
+    reloadRecordModule('unreciprocated', renderUnreciprocatedUI);
   });
 });
 
@@ -5399,27 +6031,30 @@ document.querySelectorAll('.unreciprocated-tab').forEach(tabBtn => {
 $('unreciprocatedSearch')?.addEventListener('input', debounce(() => {
   unreciprocatedSearch = $('unreciprocatedSearch')?.value || '';
   unreciprocatedPage = 1;
-  renderUnreciprocatedUI();
+  if (recordPaging && recordPages) runRecordPageAction('unreciprocated', () => recordPages.search('unreciprocated', currentRecordFilter('unreciprocated')), renderUnreciprocatedUI);
+  else renderUnreciprocatedUI();
 }, 250));
 $('unreciprocatedSearchBtn')?.addEventListener('click', () => {
   unreciprocatedSearch = $('unreciprocatedSearch')?.value || '';
   unreciprocatedPage = 1;
-  renderUnreciprocatedUI();
+  reloadRecordModule('unreciprocated', renderUnreciprocatedUI);
 });
 
 // 分页
 $('unreciprocatedPageSize')?.addEventListener('change', () => {
-  unreciprocatedPageSize = Number($('unreciprocatedPageSize')?.value) || 50;
+  unreciprocatedPageSize = capPageSize($('unreciprocatedPageSize')?.value);
   unreciprocatedPage = 1;
-  renderUnreciprocatedUI();
+  reloadRecordModule('unreciprocated', renderUnreciprocatedUI);
 });
 $('unreciprocatedPrevPage')?.addEventListener('click', () => {
+  if (recordPaging && recordPages) { runRecordPageAction('unreciprocated', () => recordPages.previous('unreciprocated'), renderUnreciprocatedUI); return; }
   if (unreciprocatedPage > 1) {
     unreciprocatedPage--;
     renderUnreciprocatedUI();
   }
 });
 $('unreciprocatedNextPage')?.addEventListener('click', () => {
+  if (recordPaging && recordPages) { runRecordPageAction('unreciprocated', () => recordPages.next('unreciprocated'), renderUnreciprocatedUI); return; }
   unreciprocatedPage++;
   renderUnreciprocatedUI();
 });

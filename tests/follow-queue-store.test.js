@@ -1,21 +1,71 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { IDBKeyRange } from 'fake-indexeddb';
 import {createFollowQueueStore, FOLLOW_QUEUE_DEFAULT_SETTINGS} from '../follow-queue-store.js';
 
+function installKeyRange() {
+  globalThis.IDBKeyRange = IDBKeyRange;
+}
+
 function createFakeIndexedDB() {
+  installKeyRange();
   const databases = new Map();
 
   function clone(value) {
     return value == null ? value : structuredClone(value);
   }
 
+  function typeRank(value) {
+    if (typeof value === 'number') return 1;
+    if (typeof value === 'string') return 2;
+    if (Array.isArray(value)) return 3;
+    return 4;
+  }
+
+  function compareKeys(a, b) {
+    if (Array.isArray(a) && Array.isArray(b)) {
+      const length = Math.min(a.length, b.length);
+      for (let i = 0; i < length; i += 1) {
+        const diff = compareKeys(a[i], b[i]);
+        if (diff) return diff;
+      }
+      return a.length - b.length;
+    }
+    const rank = typeRank(a) - typeRank(b);
+    if (rank) return rank;
+    if (typeof a === 'number' && typeof b === 'number') return a === b ? 0 : a < b ? -1 : 1;
+    const left = String(a);
+    const right = String(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
+
+  function inRange(key, range) {
+    if (!range) return true;
+    if (Object.prototype.hasOwnProperty.call(range, 'lower')) {
+      const diff = compareKeys(key, range.lower);
+      if (diff < 0 || (diff === 0 && range.lowerOpen)) return false;
+    }
+    if (Object.prototype.hasOwnProperty.call(range, 'upper')) {
+      const diff = compareKeys(key, range.upper);
+      if (diff > 0 || (diff === 0 && range.upperOpen)) return false;
+    }
+    return true;
+  }
+
   function createDatabase() {
-    const data = {jobs: new Map(), outcomes: new Map(), settings: new Map()};
+    const data = {jobs: new Map(), outcomes: new Map(), settings: new Map(), meta: new Map()};
+    const indexes = {jobs: new Map(), outcomes: new Map(), settings: new Map(), meta: new Map()};
     let chain = Promise.resolve();
     return {
       data,
-      createObjectStore() {
-        return {createIndex() {}};
+      createObjectStore(name) {
+        if (!data[name]) data[name] = new Map();
+        if (!indexes[name]) indexes[name] = new Map();
+        return {
+          createIndex(indexName, keyPath, options = {}) {
+            indexes[name].set(indexName, {keyPath, multiEntry: options.multiEntry === true});
+          }
+        };
       },
       transaction(_storeNames, mode) {
         let releaseLock = () => {};
@@ -67,6 +117,22 @@ function createFakeIndexedDB() {
           return requestObject;
         }
 
+        function indexEntries(name, spec) {
+          const rows = [];
+          for (const record of data[name].values()) {
+            const raw = Array.isArray(spec.keyPath) ? spec.keyPath.map(part => record[part]) : record[spec.keyPath];
+            let keys = [];
+            if (Array.isArray(spec.keyPath)) {
+              if (raw.every(part => part !== undefined)) keys = [raw];
+            } else if (spec.multiEntry && Array.isArray(raw)) {
+              keys = raw.filter(part => part !== undefined);
+            } else if (raw !== undefined) keys = [raw];
+            for (const key of keys) rows.push({key, record});
+          }
+          rows.sort((a, b) => compareKeys(a.key, b.key));
+          return rows;
+        }
+
         const storeApi = name => ({
           getAll() {
             return request(() => [...data[name].values()].map(clone));
@@ -87,6 +153,53 @@ function createFakeIndexedDB() {
               if (mode !== 'readwrite') throw new Error('read-only');
               data[name].delete(key);
             });
+          },
+          index(indexName) {
+            const spec = indexes[name].get(indexName);
+            if (!spec) throw new Error(`missing index ${indexName}`);
+            const rowsFor = range => indexEntries(name, spec).filter(entry => inRange(entry.key, range));
+            return {
+              get(key) {
+                return request(() => clone(rowsFor({lower: key, upper: key, lowerOpen: false, upperOpen: false})[0]?.record));
+              },
+              count(range) {
+                return request(() => rowsFor(range).length);
+              },
+              openCursor(range) {
+                const requestObject = {};
+                let rows = null;
+                let index = 0;
+                const step = () => {
+                  pending += 1;
+                  previous.then(() => {
+                    try {
+                      if (!rows) rows = rowsFor(range);
+                      if (index >= rows.length) requestObject.result = null;
+                      else {
+                        const current = rows[index];
+                        requestObject.result = {
+                          value: clone(current.record),
+                          key: clone(current.key),
+                          primaryKey: current.record.id || current.record.key,
+                          continue() { index += 1; step(); },
+                          update(value) { return storeApi(name).put(value); }
+                        };
+                      }
+                      pending -= 1;
+                      requestObject.onsuccess?.();
+                      scheduleCommit();
+                    } catch (error) {
+                      pending -= 1;
+                      requestObject.error = error;
+                      tx.error = error;
+                      requestObject.onerror?.();
+                    }
+                  });
+                };
+                step();
+                return requestObject;
+              }
+            };
           }
         });
 
