@@ -37,3 +37,19 @@
 2. **X.com 官方接口与 DOM 兼容性**：
    - 蓝V 图标跟随账号名右侧展示，标签列表保持 12px 字体与 24px 高度规范；
    - 处理 X 官方接口请求时，注意区分 Tweet Snowflake ID 与 User Rest ID，并提供 screen_name 与网络降级兜底机制。
+3. **版本号迭代管理规范**：
+   - 每次开发完新版本，必须及时同步更新版本号（涉及 `manifest.json`、`package.json`、`background.js` 的 `BACKGROUND_BUILD_VERSION` 及 `panel.js` 的版本握手标识）；
+   - **小功能优化与 Bug 修复**：递增第 3 位修订号（Patch，如 `1.0.12` -> `1.0.13`）；
+   - **新功能增强与较大特性迭代**：递增第 2 位次版本号（Minor，且第 3 位归零，如 `1.0.12` -> `1.1.0`），保持清晰的版本迭代习惯。
+
+## 三、CDP 实机验收的已验证入口
+
+- 本项目允许并使用 CDP 实测 X 和扩展。不要把其他浏览器工具的访问限制推断成 CDP 禁令；先运行 `tools/cdp-session.ps1` 读取当前进程、9222 端口、`/json/version` 和 `/json/list` 的真实状态。
+- 固定使用已有登录态的 `C:\jtmp\xfollower-cdp-profile`。2026-10-17 的实测成功路径是附加到已运行的实例，再从返回的 XFollower 面板目标和 X 页面目标取得实时 WebSocket 地址；PID 和扩展 ID 不能写死。
+- 只有该 profile 完全未运行且端口空闲时才可用脚本的 `-StartIfAbsent` 启动一次。已运行却无可用 CDP 端点时，先报告现场状态，不另开同 profile 实例。
+- 导航或修改草稿时使用本次测试创建的非激活标签；完成后只关闭这个标签。验收以实际 X 页面结果为准，不能只看脚本返回值。详见全局 `x-each-follower-cdp` skill。
+
+## Git Flow 分支纪律
+
+- 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；当前统一整合分支为 `feature/next-iteration`。此约定替代旧的默认 `codex/` 前缀规则。
+- 本次 1.4.0 为发行准备：完成测试和实机验收后，按用户指令执行 feature finish、release start/finish 和推送；准备版本号不等于已发布。

@@ -43,6 +43,14 @@ export function readProfileBundle(handle, recentLimit = 8) {
   const followers = countLink(['followers', 'verified_followers']);
   const avatarUrl = root.querySelector(`a[href="/${handle}/photo"] img`)?.src || '';
   if (!name || !following || !followers) return {pending:true, name, bio};
+  const action = [...root.querySelectorAll('button[data-testid]')].find(button => {
+    const label = button.getAttribute('aria-label') || '';
+    const target = label.match(/@([a-zA-Z0-9_]{1,15})(?![a-zA-Z0-9_])/);
+    return target?.[1].toLowerCase() === handle.toLowerCase() && /-(?:unfollow|follow)$/.test(button.getAttribute('data-testid') || '');
+  });
+  const actionId = action?.getAttribute('data-testid') || '';
+  const relationship = action ? {following:actionId.endsWith('-unfollow')} : {};
+  const id = actionId.match(/^(\d+)-(?:unfollow|follow)$/)?.[1];
   const articles = [...(root?.querySelectorAll('article') || [])];
   if (articles.length < Math.min(5, recentLimit) && typeof window !== 'undefined' && typeof window.scrollBy === 'function') {
     window.scrollBy(0, 700);
@@ -53,7 +61,7 @@ export function readProfileBundle(handle, recentLimit = 8) {
     const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
     return {text, time, url: link ? new URL(link.href, location.origin).href : ''};
   });
-  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts};
+  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts, relationship, ...(id ? {id} : {})};
 }
 
 export function scanFollowers() {
@@ -186,6 +194,47 @@ export function clickAnyFollowOnProfile(handle) {
   return {ok:true};
 }
 
+export function setQuoteFrameFallbackOnPage(enabled) {
+  // 在 MAIN world 临时运行。被遮挡的小窗口会暂停 rAF，X 的弹窗虚拟列表因此不渲染。
+  const key = '__xfollowerQuoteFrameFallback';
+  if (!enabled) { window[key]?.restore(); return; }
+  if (window[key]) return;
+  const request = window.requestAnimationFrame;
+  const cancel = window.cancelAnimationFrame;
+  const pending = new Map();
+  let expiry;
+  const restore = () => {
+    clearTimeout(expiry);
+    window.requestAnimationFrame = request;
+    window.cancelAnimationFrame = cancel;
+    for (const [id, timer] of pending) { clearTimeout(timer); cancel.call(window, id); }
+    pending.clear();
+    delete window[key];
+  };
+  window[key] = {restore};
+  window.requestAnimationFrame = function(callback) {
+    if (!document.hidden) return request.call(window, callback);
+    let done = false;
+    const finish = time => {
+      if (done) return;
+      done = true;
+      clearTimeout(pending.get(id));
+      pending.delete(id);
+      cancel.call(window, id);
+      callback(time);
+    };
+    const id = request.call(window, finish);
+    pending.set(id, setTimeout(() => finish(performance.now()), 100));
+    return id;
+  };
+  window.cancelAnimationFrame = function(id) {
+    clearTimeout(pending.get(id));
+    pending.delete(id);
+    cancel.call(window, id);
+  };
+  expiry = setTimeout(restore, 120000);
+}
+
 export function openQuoteComposerOnPage(tweetUrl) {
   // 经 executeScript 序列化注入，必须自包含。点击 Quote 可能让 X 导航到 /compose/post，
   // 因此本阶段只打开编辑框，填写和发布必须在 background 等待路由稳定后重新注入。
@@ -198,10 +247,16 @@ export function openQuoteComposerOnPage(tweetUrl) {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
     };
-    const hasQuoteComposer = () => [...document.querySelectorAll('[role="dialog"]')].some(dialog => {
-      const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-      return visible(dialog) && box && [...dialog.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
-    });
+    const hasQuoteComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')]
+      .filter(visible)
+      .some(box => {
+        const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+        const rootText = root.innerText || '';
+        const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+        const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
+        const originalLink = [...root.querySelectorAll('a')].some(a => a.href.includes(`/status/${tweetId}`));
+        return (root === document || visible(root)) && quoteLabel && !replyingLabel && originalLink;
+      });
     if (hasQuoteComposer()) return { ok: true, stage: 'already_open' };
 
     let article = null;
@@ -212,6 +267,9 @@ export function openQuoteComposerOnPage(tweetUrl) {
     if (!article) return { ok: false, reason: '没有在页面中找到目标帖子' };
     const repostBtn = article.querySelector('[data-testid="retweet"]');
     if (!repostBtn) return { ok: false, reason: '目标帖没有引用/转发按钮' };
+    // 长帖的操作栏可能在视窗外；先定位按钮，避免 X 将菜单放在屏幕下方。
+    repostBtn.scrollIntoView?.({block: 'center', inline: 'nearest', behavior: 'instant'});
+    await sleep(200);
     repostBtn.click();
 
     let quoteItem = null;
@@ -228,7 +286,7 @@ export function openQuoteComposerOnPage(tweetUrl) {
   })();
 }
 
-export function inspectQuoteComposerOnPage(tweetUrl) {
+export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expectedHandle = '') {
   // 经 executeScript 序列化注入，必须自包含。
   const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
   if (!tweetId) return { ok: false, ready: false, reason: '帖子链接无效' };
@@ -237,6 +295,18 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
   };
+  // X can reshape punctuation in a quoted card; keep the textual match strict
+  // while ignoring whitespace and punctuation, and still require the author.
+  const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+  const sameExcerpt = (source, embedded) => {
+    const full = normalize(source), shown = normalize(embedded);
+    if (!full || !shown) return false;
+    const len = Math.min(full.length, shown.length);
+    const minLen = Math.min(4, len);
+    const prefix = full.slice(0, Math.min(60, len));
+    return prefix.length >= minLen && (shown.startsWith(prefix) || shown.includes(prefix) || full.includes(shown));
+  };
+  const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
   const composers = [];
   const sourceArticle = [...document.querySelectorAll('article')].find(article =>
     [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
@@ -244,44 +314,99 @@ export function inspectQuoteComposerOnPage(tweetUrl) {
   const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
   const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
   const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
-  for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-    if (!visible(dialog)) continue;
-    const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-    if (!box) continue;
-    const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
-    const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
-      .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
-    const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
-    const articleCardText = dialog.innerText || '';
-    const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
-      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+  const boxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible);
+  for (const box of boxes) {
+    const dialog = box.closest?.('[role="dialog"]');
+    const root = dialog || box.closest?.('main') || document;
+    if (root !== document && !visible(root)) continue;
+    const rootText = root.innerText || '';
+    const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+    const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
+    const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+    const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+      .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+    const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+    const articleCardText = root.innerText || '';
+    const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+      sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
     ));
-    const rect = dialog.getBoundingClientRect();
-    composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+    const expectedPrefix = normalize(expectedPostText).slice(0, Math.min(30, normalize(expectedPostText).length));
+    const expectedTextMatch = !expectedPostText
+      || (expectedPrefix.length >= 4 && normalize(rootText).includes(expectedPrefix))
+      || normalize(rootText).includes(normalize(expectedPostText));
+    const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
+    // X can render the quote card before the "Quote" label, and article cards omit
+    // their status link. In a dialog, verify the embedded author and card content.
+    // A main-column composer still needs the explicit Quote label so the original
+    // article behind an inline Reply box cannot masquerade as its quote card.
+    const quoteVerified = !replyingLabel && handleMatch && (dialog
+      ? Boolean(originalLink || articleFallback || expectedTextMatch)
+      : quoteLabel && expectedTextMatch && Boolean(originalLink || articleFallback));
+    const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
+    if (quoteVerified) composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
   }
   composers.sort((a, b) => a.area - b.area);
   const composer = composers[0];
-  if (!composer) return { ok: true, ready: false, reason: '等待 X 的引用帖编辑框及原帖卡片' };
-  if (!composer.originalLink && !composer.articleFallback) return { ok: true, ready: false, reason: '引用编辑框尚未嵌入目标原帖' };
-  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || location.href, text: composer.box.innerText || '' };
+  if (!composer) {
+    const replyMode = boxes.some(box => {
+      const dialog = box.closest?.('[role="dialog"]');
+      return dialog && /replying to\s+@|回复\s*@/i.test(dialog.innerText || '');
+    });
+    return { ok: true, ready: false, reason: replyMode ? 'X 当前显示的是回复编辑器，不是 Quote 引用编辑器' : '等待 X 的引用帖编辑框及原帖卡片' };
+  }
+  return { ok: true, ready: true, originalUrl: composer.originalLink?.href || tweetUrl, text: composer.box.innerText || '', mode:'quote' };
 }
 
-export function dismissQuoteComposerOnPage(tweetUrl) {
+export function dismissQuoteComposerOnPage(tweetUrl, expectedPostText = '', expectedHandle = '') {
   // 仅关闭本次自动化目标原帖对应的引用草稿；不得碰其他帖子或页面编辑器。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const tweetId = (String(tweetUrl || '').match(/\/status\/(\d+)/) || [])[1] || '';
     if (!tweetId) return {ok:false, closed:false, reason:'帖子链接无效'};
     const dialogs = [...document.querySelectorAll('[role="dialog"]')];
-    const dialog = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
-    if (!dialog) return {ok:true, closed:false};
-    const close = dialog.querySelector('[data-testid="app-bar-close"]') || [...dialog.querySelectorAll('button')].find(button =>
+    let composer = dialogs.find(item => [...item.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`)));
+    if (!composer) {
+      const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+      const wantedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
+      const sourceArticle = [...document.querySelectorAll('article')].find(article =>
+        [...article.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))
+      );
+      const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
+      const sourceTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
+      const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || expectedPostText;
+      const visibleBoxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(box => {
+        const rect = box.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
+      });
+      composer = visibleBoxes.map(box => box.closest?.('[role="dialog"]') || box.closest?.('main'))
+        .find(root => {
+          if (!root) return false;
+          if ([...root.querySelectorAll('a')].some(link => link.href.includes(`/status/${tweetId}`))) return true;
+          const text = root.innerText || '';
+          if (/replying to\s+@|回复\s*@/i.test(text) ||
+              (wantedHandle && !text.toLowerCase().includes(`@${wantedHandle}`))) return false;
+          if (root.getAttribute?.('role') === 'dialog' && sourceAuthor) {
+            const avatars = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')];
+            const embeddedAuthor = avatars.find(node => node !== avatars[0])?.getAttribute('data-testid') || '';
+            const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+            const normalizedSource = normalize(sourceText), normalizedEmbedded = normalize(embeddedText);
+            const prefix = normalizedSource.slice(0, Math.min(60, normalizedSource.length, normalizedEmbedded.length));
+            return embeddedAuthor === sourceAuthor && (sourceTitle
+              ? text.includes(sourceTitle)
+              : prefix.length >= Math.min(4, normalizedSource.length) && (normalizedEmbedded.startsWith(prefix) || normalizedEmbedded.includes(prefix)));
+          }
+          return /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(text) &&
+            (!expectedPostText || normalize(text).includes(normalize(expectedPostText)));
+        }) || null;
+    }
+    if (!composer) return {ok:true, closed:false};
+    const close = composer.querySelector('[data-testid="app-bar-close"]') || composer.querySelector('[data-testid="app-bar-back"]') || [...composer.querySelectorAll('button')].find(button =>
       /^(close|关闭)$/i.test((button.getAttribute('aria-label') || button.innerText || '').trim())
     );
     if (close) close.click();
-    else dialog.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
+    else composer.dispatchEvent?.(new KeyboardEvent('keydown', {key:'Escape', code:'Escape', keyCode:27, which:27, bubbles:true}));
     await sleep(200);
-    const discard = [...document.querySelectorAll('[role="dialog"] button')].find(button =>
+    const discard = [...document.querySelectorAll('[role="dialog"] button, button')].find(button =>
       /^(discard|discard post|丢弃|丢弃帖子)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim())
     );
     if (discard) discard.click();
@@ -289,7 +414,7 @@ export function dismissQuoteComposerOnPage(tweetUrl) {
   })();
 }
 
-export function publishQuotePostOnPage(tweetUrl, quoteText) {
+export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '', expectedHandle = '') {
   // 经 executeScript 序列化注入，必须自包含。
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -305,6 +430,16 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < (window.innerHeight || 1000);
     };
+    const normalize = value => String(value || '').replace(/[\s\p{P}]+/gu, '').toLowerCase();
+    const sameExcerpt = (source, embedded) => {
+      const full = normalize(source), shown = normalize(embedded);
+      if (!full || !shown) return false;
+      const len = Math.min(full.length, shown.length);
+      const minLen = Math.min(4, len);
+      const prefix = full.slice(0, Math.min(60, len));
+      return prefix.length >= minLen && (shown.startsWith(prefix) || shown.includes(prefix) || full.includes(shown));
+    };
+    const wantedHandle = String(expectedHandle || new URL(tweetUrl, location.href).pathname.split('/')[1] || '').replace(/^@/, '').toLowerCase();
     const findComposer = () => {
       const composers = [];
       const sourceArticle = [...document.querySelectorAll('article')].find(article =>
@@ -313,44 +448,89 @@ export function publishQuotePostOnPage(tweetUrl, quoteText) {
       const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
       const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
       const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
-      for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-        if (!visible(dialog)) continue;
-        const box = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"]')].find(visible);
-        if (!box) continue;
-        const originalLink = [...dialog.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
-        const embeddedAuthor = [...dialog.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
-          .find(node => node !== dialog.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
-        const embeddedText = dialog.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
-        const articleCardText = dialog.innerText || '';
-        const articleFallback = !originalLink && Boolean(sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
-          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sourceText && embeddedText === sourceText
+      for (const box of [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible)) {
+        const dialog = box.closest?.('[role="dialog"]');
+        const root = dialog || box.closest?.('main') || document;
+        if (root !== document && !visible(root)) continue;
+        const rootText = root.innerText || '';
+        const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
+        const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
+        const originalLink = [...root.querySelectorAll('a')].find(a => a.href.includes(`/status/${tweetId}`));
+        const embeddedAuthor = [...root.querySelectorAll('[data-testid^="UserAvatar-Container-"]')]
+          .find(node => node !== root.querySelector('[data-testid^="UserAvatar-Container-"]'))?.getAttribute('data-testid') || '';
+        const embeddedText = root.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
+        const articleCardText = root.innerText || '';
+        const articleFallback = !originalLink && Boolean(dialog && sourceArticle && sourceAuthor && embeddedAuthor === sourceAuthor && (
+          sourceArticleTitle ? articleCardText.includes(sourceArticleTitle) : sameExcerpt(sourceText || expectedPostText, embeddedText)
         ));
-        const rect = dialog.getBoundingClientRect();
-        composers.push({dialog, box, originalLink, articleFallback, area: rect.width * rect.height});
+        const expectedPrefix = normalize(expectedPostText).slice(0, Math.min(30, normalize(expectedPostText).length));
+    const textMatch = !expectedPostText
+      || (expectedPrefix.length >= 4 && normalize(rootText).includes(expectedPrefix))
+      || normalize(rootText).includes(normalize(expectedPostText));
+        const handleMatch = !wantedHandle || rootText.toLowerCase().includes(`@${wantedHandle}`);
+        const quoteVerified = !replyingLabel && handleMatch && (dialog
+          ? Boolean(originalLink || articleFallback || textMatch)
+          : quoteLabel && textMatch && Boolean(originalLink || articleFallback));
+        if (!quoteVerified) continue;
+        const rect = root === document ? box.getBoundingClientRect() : root.getBoundingClientRect();
+        composers.push({root, box, originalLink, articleFallback, area: rect.width * rect.height});
       }
       composers.sort((a, b) => a.area - b.area);
       return composers[0] || null;
     };
     const blocked = () => /unable to post|rate limit|try again|something went wrong|无法发布|操作过于频繁|稍后再试|已被限制/i.test(
       (document.querySelector('[data-testid="toast"]') || {}).innerText || '');
+    const hasReplyComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible).some(box => {
+      const dialog = box.closest?.('[role="dialog"]');
+      return dialog && /replying to\s+@|回复\s*@/i.test(dialog.innerText || '');
+    });
 
     let composer = null;
     for (let i = 0; i < 50 && !composer; i++) {
       composer = findComposer();
+      if (!composer && hasReplyComposer()) return { ok:false, reason:'X 当前显示的是回复编辑器，不是 Quote 引用编辑器，已停止发布' };
       if (!composer) await sleep(300);
     }
-    if (!composer) return { ok: false, reason: '没有弹出嵌入目标原帖的引用编辑框' };
-    if (!composer.originalLink && !composer.articleFallback) return { ok: false, reason: '引用编辑框未嵌入目标原帖，已停止发布' };
+    if (!composer) return { ok: false, reason: '没有找到包含目标原帖的 Quote 编辑框，已停止发布' };
 
     composer.box.focus();
-    document.execCommand('insertText', false, text);
+    const normalizeText = value => String(value || '').replace(/\s+/g, '');
+    try {
+      if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        composer.box.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dt
+        }));
+      }
+    } catch {}
     await sleep(500);
-    const typed = (composer.box.innerText || '').replace(/\s+/g, '');
-    if (typed.length < text.replace(/\s+/g, '').length * 0.9) return { ok: false, reason: '引用评价没有写入输入框' };
+    let typed = normalizeText(composer.box.innerText);
+    if (typed !== normalizeText(text)) {
+      const inserted = document.execCommand('insertText', false, text);
+      await sleep(300);
+      typed = normalizeText(composer.box.innerText);
+      if (!inserted && !typed.includes(normalizeText(text))) {
+        composer.box.textContent = text;
+        const inputEvent = typeof InputEvent === 'function'
+          ? new InputEvent('input', {bubbles:true, inputType:'insertText', data:text})
+          : new Event('input', {bubbles:true});
+        composer.box.dispatchEvent?.(inputEvent);
+        await sleep(300);
+        typed = normalizeText(composer.box.innerText);
+      }
+    }
+    if (typed !== normalizeText(text) && !typed.includes(normalizeText(text))) {
+      return { ok: false, reason: '引用评价没有准确写入输入框，已停止发布' };
+    }
 
     let send = null;
     for (let i = 0; i < 25; i++) {
-      send = composer.dialog.querySelector('[data-testid="tweetButton"]');
+      send = composer.root.querySelector('[data-testid="tweetButton"]') || [...composer.root.querySelectorAll('button')].find(button =>
+        /^post$/i.test((button.innerText || '').trim())
+      );
       if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
       send = null; await sleep(300);
     }

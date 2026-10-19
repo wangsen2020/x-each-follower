@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "XFollower · 粉丝管理",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "本地保存 X 粉丝画像，管理待回关账号，并批量提交选中账号给 Grok 分析。",
   "permissions": ["scripting", "storage", "alarms", "notifications", "tabs", "windows", "clipboardWrite"],
-  "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://grok.com/*", "http://127.0.0.1:*/*"],
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*", "https://grok.com/*"],
   "background": {"service_worker": "background.js", "type":"module"},
   "content_scripts": [
     {"matches":["https://x.com/*","https://twitter.com/*"],"js":["bridge.js","tweet-comment-button.js"],"css":["tweet-comment-button.css"],"run_at":"document_start"},

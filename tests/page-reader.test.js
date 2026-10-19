@@ -101,7 +101,7 @@ test('readProfileBundle extracts profile bundle and posts up to recentLimit', ()
   ];
   globalThis.document = {querySelector:()=>({
     querySelector:selector=>selector.includes('UserName') ? {innerText:'Alice\n@alice'} : selector.includes('UserDescription') ? {innerText:'Bio text'} : null,
-    querySelectorAll:selector=>selector==='article'?articles:links
+    querySelectorAll:selector=>selector==='article'?articles:selector==='a[href]'?links:[]
   })};
   const result = readProfileBundle('alice', 1);
   assert.equal(result.pending, false);
@@ -111,4 +111,22 @@ test('readProfileBundle extracts profile bundle and posts up to recentLimit', ()
   assert.equal(result.followingText, '110 Following');
   assert.equal(result.posts.length, 1);
   assert.equal(result.posts[0].text, 'Hello world 1');
+});
+
+test('profile bundle reads the target account follow button and user ID, not another account', () => {
+  globalThis.location = {pathname:'/pnsin1',origin:'https://x.com'};
+  const links = [link('/pnsin1/following','5,418 Following'),link('/pnsin1/verified_followers','5,203 Followers')];
+  const button = (label,id)=>({getAttribute:key=>key==='aria-label'?label:key==='data-testid'?id:null});
+  let buttons=[button('Following @another_user','123-unfollow'),button('Following @pnsin1','1562136801183027200-unfollow')];
+  globalThis.document = {querySelector:()=>({
+    querySelector:s=>s.includes('UserName')?{innerText:'SeNa\n@pnsin1'}:null,
+    querySelectorAll:s=>s==='button[data-testid]'?buttons:s==='article'?[]:links
+  })};
+  const followed=readProfileBundle('pnsin1',0);
+  assert.equal(followed.relationship.following,true);
+  assert.equal(followed.id,'1562136801183027200');
+  buttons=[button('Following @another_user','123-unfollow'),button('Follow @pnsin1','1562136801183027200-follow')];
+  assert.equal(readProfileBundle('pnsin1',0).relationship.following,false);
+  buttons=[button('Following @pnsin12','999-unfollow')];
+  assert.deepEqual(readProfileBundle('pnsin1',0).relationship,{});
 });

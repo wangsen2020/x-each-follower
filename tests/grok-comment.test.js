@@ -1,7 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage} from '../grok-comment.js';
+import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../page-reader.js';
+
+test('queue publication fence stops sending after composer is ready and closes owned popup',async()=>{
+  const prior=globalThis.chrome, closed=[];
+  let published=false;
+  const url='https://x.com/alice/status/123';
+  globalThis.chrome={storage:{session:{set:async()=>{},remove:async()=>{}}},windows:{create:async()=>({id:8,tabs:[{id:80}]}),remove:async id=>closed.push(id)},
+    tabs:{update:async()=>{},get:async()=>({status:'complete'})},
+    scripting:{executeScript:async({func})=>{
+      if(func===inspectQuoteComposerOnPage)return [{result:{ok:true,ready:true,originalUrl:url}}];
+      if(func===publishQuotePostOnPage)published=true;
+      return [];
+    }}};
+  try {
+    const result=await postQuoteOnTab(1,{url},'引用内容',publishQuotePostOnPage,async()=>{},
+      {beforePublish:async()=>{throw new Error('队列已暂停');}});
+    assert.equal(result.ok,false); assert.match(result.reason,/暂停/);
+    assert.equal(published,false); assert.deepEqual(closed,[8]);
+  } finally {globalThis.chrome=prior;}
+});
 
 test('extractGrokComment takes the body between markers', () => {
   assert.equal(extractGrokComment(`好的\n${START}恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？${END}\n希望有帮助`), '恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？');
@@ -28,6 +47,16 @@ test('the prompt echo (which contains the markers) is never mistaken for an answ
   assert.ok(prompt.includes(nonce));
 });
 
+test('quote prompt seeks a specific, debatable angle without fabricating facts', () => {
+  const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', postText: '今天发布了新版本', nonce: 'task-1'});
+  assert.match(prompt, /原帖一个具体细节/);
+  assert.match(prompt, /反常识、隐性代价或矛盾/);
+  assert.match(prompt, /鲜明判断.*尖锐、有情绪张力/);
+  assert.match(prompt, /不能夸大事实、数字或编造动机/);
+  assert.match(prompt, /无争议就别硬造/);
+  assert.match(prompt, /只写一句完整评价/);
+});
+
 test('extractGrokComment rejects comments over the 280-weight X limit', () => {
   assert.equal(extractGrokComment(`${START}${'好'.repeat(150)}${END}`), '');
   assert.ok(extractGrokComment(`${START}${'好'.repeat(100)}${END}`));
@@ -41,6 +70,17 @@ test('tweetWeight counts CJK as 2 and latin as 1', () => {
 
 test('makeNonce is unique per call', () => {
   assert.notEqual(makeNonce(), makeNonce());
+});
+
+test('stable answer gate ignores early copy controls until completion and repeated text', () => {
+  const stable = createStableAnswerGate(4);
+  assert.equal(stable('partial answer', false), false);
+  assert.equal(stable('complete answer', true), false);
+  assert.equal(stable('complete answer', true), false);
+  assert.equal(stable('complete answer', true), false);
+  assert.equal(stable('complete answer', true), true);
+  assert.equal(stable('changed final answer', true), false);
+  assert.equal(stable('changed final answer', false), false);
 });
 
 test('Grok windows use a visible, compact popup without taking focus', () => {
@@ -62,19 +102,34 @@ test('Grok analysis waits for a new copy control and a structured target result'
   const input = {tagName:'DIV', dispatchEvent() {}};
   const send = {disabled:false, innerText:'Send', getAttribute:() => null, click() {
     buttons.push({innerText:'', getAttribute:() => 'Copy response'});
+    buttons.push(stop);
     observer.callback();
     setTimeout(() => {
       body.innerText = '[@alice | 互粉意向: 有 | 互粉标签: 互粉]';
       observer.callback();
+      setTimeout(() => {
+        buttons.splice(buttons.indexOf(stop), 1);
+        const span = {innerText:'后续建议', textContent:'后续建议', closest:() => suggestion};
+        suggestion = {innerText:'后续建议', getAttribute:() => null, querySelector:() => span};
+        observer.callback();
+      }, 20);
     }, 0);
   }};
+  const stop = {innerText:'', getAttribute: name => name === 'aria-label' ? 'Stop generating' : null};
+  let suggestion = null;
   const buttons = [send];
+  const nonceLeaf = {children:[], textContent:'任务编号abc', compareDocumentPosition:() => 4};
   const body = {innerText:'prompt asking for @alice analysis'};
   globalThis.document = {
     body,
     documentElement:body,
     querySelector:() => input,
-    querySelectorAll:selector => selector === 'button' ? buttons.filter(button => button === send) : buttons
+    querySelectorAll(selector) {
+      if (selector === 'button') return [...buttons, ...(suggestion ? [suggestion] : [])];
+      if (selector === 'button span.min-w-0.overflow-x-clip.text-ellipsis.whitespace-nowrap') return suggestion ? [suggestion.querySelector()] : [];
+      if (selector === '*') return [nonceLeaf];
+      return buttons;
+    }
   };
   globalThis.MutationObserver = class {
     constructor(callback) { this.callback = callback; observer = this; }
@@ -84,7 +139,7 @@ test('Grok analysis waits for a new copy control and a structured target result'
   globalThis.InputEvent = class {};
   globalThis.Event = class {};
   try {
-    const result = await submitGrokPromptAndWaitForCopyIconOnPage('analyze @alice', 1000, ['alice']);
+    const result = await submitGrokPromptAndWaitForCopyIconOnPage('analyze @alice\n任务编号abc', 1000, ['alice'], 5);
     assert.equal(result.submitted, true);
     assert.equal(result.completed, true);
     assert.match(result.text, /\[@alice \| 互粉意向: 有/);
@@ -94,6 +149,85 @@ test('Grok analysis waits for a new copy control and a structured target result'
     globalThis.InputEvent = previous.InputEvent;
     globalThis.Event = previous.Event;
   }
+});
+
+test('X Grok Copy message alone is not a completion signal; a later suggestion chip is', () => {
+  const previous = {document:globalThis.document, location:globalThis.location};
+  const nonce = '任务编号abc';
+  const nonceLeaf = {children:[],textContent:nonce,compareDocumentPosition:() => 4};
+  const copy = {getAttribute: name => name === 'aria-label' ? 'Copy message' : '',innerText:''};
+  let suggestion = null;
+  let stop = null;
+  const body = {innerText:`${nonce}\n${START}完整评价内容${END}`};
+  globalThis.location = {hostname:'x.com'};
+  globalThis.document = {
+    body,
+    getElementById:() => ({ }),
+    querySelector:() => body,
+    querySelectorAll(selector) {
+      if (selector === 'button') return [copy, ...(stop ? [stop] : []), ...(suggestion ? [suggestion] : [])];
+      if (selector === '*') return [nonceLeaf];
+      if (selector === 'button span.min-w-0.overflow-x-clip.text-ellipsis.whitespace-nowrap') return suggestion ? [suggestion.span] : [];
+      return [];
+    }
+  };
+  try {
+    assert.equal(readGrokPageAnswer(nonce).done, false);
+    suggestion = {innerText:'新建议',getAttribute:() => '',span:{innerText:'新建议',textContent:'新建议',closest:() => suggestion}};
+    assert.equal(readGrokPageAnswer(nonce).done, true);
+    stop = {getAttribute:name => name === 'aria-label' ? 'Stop generating' : '',innerText:''};
+    assert.equal(readGrokPageAnswer(nonce).done, false);
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.location = previous.location;
+  }
+});
+
+test('X Grok input accepts Lexical-normalized multiline text and sends after React input sync', async () => {
+  const prompt = '测试 Grok 提示词\n\nS\n\n附带任务凭证';
+  const events = [];
+  let value = '';
+  const input = {
+    tagName: 'DIV', innerText: '', textContent: '',
+    getBoundingClientRect: () => ({width:556,height:48,top:100,bottom:148}),
+    focus() { events.push('focus'); },
+    dispatchEvent(event) { events.push(event.type); return true; }
+  };
+  let activeInput = input;
+  const send = {
+    disabled:false,
+    getAttribute: name => name === 'aria-label' ? 'Send' : null,
+    innerText:'',
+    click() { events.push('send'); value=''; activeInput.innerText=''; activeInput.textContent=''; }
+  };
+  globalThis.window = {innerHeight:900};
+  globalThis.document = {
+    body:{},
+    getElementById: () => ({contains: () => true}),
+    querySelectorAll(selector) {
+      if (selector === 'textarea,[contenteditable="true"]') return [activeInput];
+      if (selector === 'button,[role="button"]') return [send];
+      return [];
+    },
+    execCommand(command, _ui, text) {
+      assert.equal(command, 'insertText');
+      assert.ok(!/[\r\n]/.test(text), 'multiline insert must not reach Lexical');
+      assert.ok(text.includes('S'), 'isolated paragraph character must survive');
+      value = text; events.push('insertText');
+      activeInput = {
+        tagName:'DIV', innerText:text.replace(/\s+/g, ' '), textContent:text,
+        getBoundingClientRect: () => ({width:556,height:48,top:100,bottom:148}),
+        focus() { events.push('focus'); },
+        dispatchEvent(event) { events.push(event.type); return true; }
+      };
+      activeInput.dispatchEvent(new Event('input', {bubbles:true}));
+      return true;
+    }
+  };
+  const result = await driveGrokInput(prompt);
+  assert.deepEqual(result, {ok:true});
+  assert.deepEqual(events, ['focus','insertText','input','send']);
+  assert.equal(value, '');
 });
 
 test('publishQuotePostOnPage refuses when the page is not the target status page', async () => {
@@ -126,21 +260,28 @@ test('dismissQuoteComposerOnPage only closes the draft for the requested source 
   assert.equal(closeClicks, 1);
 });
 
-function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
+function makeQuotePage({embeddedOriginal = true, articleQuote = false, pageComposer = false, quoteLabel = true, longPost = false} = {}) {
   globalThis.location = {pathname: '/alice/status/123'};
   globalThis.window = {innerHeight: 900};
   const events = [];
   let closed = false;
   let composerOpen = false;
+  let reactInputSynced = false;
   const rect = (top, width, height) => ({top, bottom: top + height, width, height});
-  const box = {innerText: '', getBoundingClientRect: () => rect(120, 500, 28), focus() { events.push('focus'); }};
+  const box = {
+    innerText: '', getBoundingClientRect: () => rect(120, 500, 28),
+    closest(selector) { return selector === '[role="dialog"]' ? (pageComposer ? null : dialog) : selector === 'main' ? (pageComposer ? main : null) : null; },
+    focus() { events.push('focus'); },
+    dispatchEvent(event) { if (event.type === 'input') { reactInputSynced = true; events.push('input'); } return true; }
+  };
   const send = {
-    disabled: false,
+    get disabled() { return !reactInputSynced; },
     getAttribute: () => null,
     click() { events.push('publish'); closed = true; }
   };
-  const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(160, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
-  const retweet = {click() { events.push('retweet'); }};
+  let actionsVisible = !longPost;
+  const quoteItem = {innerText: 'Quote', getBoundingClientRect: () => rect(actionsVisible ? 160 : 1800, 200, 40), click() { events.push('quote'); composerOpen = true; globalThis.location.pathname = '/compose/post'; }};
+  const retweet = {scrollIntoView() { actionsVisible = true; }, click() { events.push('retweet'); }};
   const originalLink = {href: 'https://x.com/alice/status/123'};
   const sourceAuthor = {getAttribute: () => 'UserAvatar-Container-alice'};
   const currentAuthor = {getAttribute: () => 'UserAvatar-Container-me'};
@@ -168,7 +309,7 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
       if (selector.includes('UserAvatar-Container-')) return articleQuote ? [currentAuthor, embeddedAuthor] : [];
       return [];
     },
-    innerText: articleQuote ? 'An article to quote' : '',
+    innerText: articleQuote ? `${quoteLabel ? 'Quote\n' : ''}@alice\nAn article to quote` : embeddedOriginal ? `${quoteLabel ? 'Quote\n' : ''}@alice\nA post to quote` : 'Quote',
     querySelector(selector) {
     if (selector.includes('/status/123')) return embeddedOriginal ? originalLink : null;
     if (selector.includes('UserAvatar-Container-')) return currentAuthor;
@@ -183,11 +324,30 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
     querySelectorAll: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? [box] : [],
     querySelector: selector => selector === '[data-testid="tweetTextarea_0"]' && composerOpen && !closed ? box : null
   };
+  const main = {
+    innerText: articleQuote ? 'Quote\n@alice\nAn article to quote' : embeddedOriginal ? 'Quote\n@alice\nA post to quote' : 'Quote',
+    getBoundingClientRect: () => rect(10, 800, 700),
+    querySelectorAll(selector) {
+      if (selector === 'a') return embeddedOriginal ? [originalLink] : [];
+      if (selector.includes('UserAvatar-Container-')) return articleQuote ? [currentAuthor, embeddedAuthor] : [];
+      if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
+      return [];
+    },
+    querySelector(selector) {
+      if (selector === '[data-testid="app-bar-close"]') return composerOpen && !closed ? {click() { events.push('close'); closed = true; }} : null;
+      if (selector === '[data-testid^="UserAvatar-Container-"]') return currentAuthor;
+      if (selector === '[data-testid="tweetText"]') return articleQuote ? embeddedText : sourceText;
+      if (selector === '[data-testid="tweetButton"]') return composerOpen && !closed ? send : null;
+      return null;
+    }
+  };
   globalThis.document = {
     querySelectorAll(selector) {
       if (selector === 'article') return [article];
       if (selector === '[role="menuitem"]') return events.includes('retweet') ? [quoteItem] : [];
-      if (selector === '[role="dialog"]') return composerOpen && !closed ? [hiddenDialog, dialog] : [];
+      if (selector === '[role="dialog"]') return !pageComposer && composerOpen && !closed ? [hiddenDialog, dialog] : [];
+      if (selector === '[data-testid="tweetTextarea_0"]') return composerOpen && !closed ? [box] : [];
+      if (selector === 'main') return pageComposer && composerOpen && !closed ? [main] : [];
       return [];
     },
     querySelector(selector) {
@@ -198,6 +358,8 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
       assert.equal(command, 'insertText');
       box.innerText = text;
       events.push('type');
+      reactInputSynced = true;
+      events.push('input');
       return true;
     }
   };
@@ -207,28 +369,134 @@ function makeQuotePage({embeddedOriginal = true, articleQuote = false} = {}) {
 test('publishQuotePostOnPage embeds the exact original and publishes through Quote', async () => {
   const {events} = makeQuotePage();
   await openQuoteComposerOnPage('https://x.com/alice/status/123');
-  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'A post to quote', 'alice');
   assert.equal(inspected.ready, true);
-  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容', 'A post to quote', 'alice');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
-  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'publish']);
+  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
 });
 
-test('publishQuotePostOnPage refuses to publish if the composer does not contain the target original', async () => {
+test('Quote menu on a long post is brought into view before selecting it', async () => {
+  const {events} = makeQuotePage({longPost: true});
+  const result = await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ['retweet', 'quote']);
+});
+
+test('Quote composer matching tolerates punctuation reshaping while still requiring the source author', async () => {
+  makeQuotePage();
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const result = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'A post: to? quote!', 'alice');
+  assert.equal(result.ready, true);
+});
+
+test('quote composer on /compose/post is detected outside a dialog and React receives input', async () => {
+  const {events} = makeQuotePage({pageComposer: true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'A post to quote', 'alice');
+  assert.equal(inspected.ready, true);
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容', 'A post to quote', 'alice');
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
+});
+
+test('an existing inline Reply composer does not suppress opening the Quote composer', async () => {
+  globalThis.location = {pathname: '/alice/status/123'};
+  globalThis.window = {innerHeight: 900};
+  const events = [];
+  const rect = {top:100,bottom:140,width:500,height:40};
+  const originalLink = {href:'https://x.com/alice/status/123'};
+  const replyBox = {
+    getBoundingClientRect: () => rect,
+    closest: selector => selector === 'main' ? replyMain : null
+  };
+  const replyMain = {
+    innerText:'Replying to @alice\nA post to quote',
+    getBoundingClientRect: () => ({top:0,bottom:800,width:800,height:800}),
+    querySelectorAll: selector => selector === 'a' ? [originalLink] : []
+  };
+  const quoteItem = {innerText:'Quote',getBoundingClientRect:()=>rect,click(){events.push('quote');}};
+  const retweet = {click(){events.push('retweet');}};
+  const article = {
+    querySelectorAll: selector => selector === 'a' ? [originalLink] : [],
+    querySelector: selector => selector === '[data-testid="retweet"]' ? retweet : null
+  };
+  globalThis.document = {
+    querySelectorAll(selector) {
+      if (selector === '[data-testid="tweetTextarea_0"]') return [replyBox];
+      if (selector === 'article') return [article];
+      if (selector === '[role="menuitem"]') return events.includes('retweet') ? [quoteItem] : [];
+      return [];
+    }
+  };
+  const result = await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.deepEqual(result, {ok:true,stage:'quote_selected'});
+  assert.deepEqual(events, ['retweet','quote']);
+});
+
+test('failed quote draft on /compose/post can be dismissed without a dialog', async () => {
+  const {events} = makeQuotePage({pageComposer: true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const result = await dismissQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.deepEqual(result, {ok:true, closed:true});
+  assert.deepEqual(events, ['retweet', 'quote', 'close']);
+});
+
+test('Quote composer without the target original never becomes ready for publish', async () => {
   const {events} = makeQuotePage({embeddedOriginal: false});
   await openQuoteComposerOnPage('https://x.com/alice/status/123');
-  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容');
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /未嵌入目标原帖/);
+  const result = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'A post to quote', 'alice');
+  assert.equal(result.ready, false);
   assert.equal(events.includes('publish'), false);
+});
+
+test('a main-column Reply composer is not mistaken for a verified Quote composer', () => {
+  const targetLink = {href:'https://x.com/alice/status/123'};
+  const sourceArticle = {
+    innerText:'@alice A post to quote',
+    querySelectorAll:() => [targetLink],
+    querySelector:selector => selector === '[data-testid="tweetText"]' ? {innerText:'A post to quote'} : null
+  };
+  const main = {
+    innerText:'@alice A post to quote\nReplying to @alice',
+    getBoundingClientRect:() => ({width:800,height:700,top:0,bottom:700}),
+    querySelectorAll:selector => selector === 'a' ? [targetLink] : selector === '[data-testid="tweetTextarea_0"]' ? [box] : [],
+    querySelector:() => null
+  };
+  const box = {innerText:'',getBoundingClientRect:() => ({width:500,height:30,top:100,bottom:130}),closest:selector => selector === 'main' ? main : null};
+  const previous = {document:globalThis.document,location:globalThis.location,window:globalThis.window};
+  globalThis.location = {pathname:'/compose/post',href:'https://x.com/compose/post'};
+  globalThis.window = {innerHeight:900};
+  globalThis.document = {
+    querySelectorAll:selector => selector === 'article' ? [sourceArticle] : selector === '[data-testid="tweetTextarea_0"]' ? [box] : selector === 'main' ? [main] : [],
+    querySelector:() => null
+  };
+  try {
+    const result = inspectQuoteComposerOnPage('https://x.com/alice/status/123','A post to quote','alice');
+    assert.equal(result.ready,false);
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.location = previous.location;
+    globalThis.window = previous.window;
+  }
 });
 
 test('publishQuotePostOnPage verifies X article quotes by matching the source author and article title', async () => {
   const {events} = makeQuotePage({embeddedOriginal: false, articleQuote: true});
   await openQuoteComposerOnPage('https://x.com/alice/status/123');
-  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'An article to quote', 'alice');
   assert.equal(inspected.ready, true);
-  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '对原帖的评价');
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '对原帖的评价', 'An article to quote', 'alice');
+  assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.equal(events.includes('publish'), true);
+});
+
+test('a linkless X article quote is publishable before the Quote label appears', async () => {
+  const {events} = makeQuotePage({embeddedOriginal: false, articleQuote: true, quoteLabel: false});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  const inspected = inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'The full article text is not displayed in the card', 'alice');
+  assert.equal(inspected.ready, true);
+  const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有观点的引用评价', 'The full article text is not displayed in the card', 'alice');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
   assert.equal(events.includes('publish'), true);
 });
@@ -237,12 +505,18 @@ test('postQuoteOnTab recovers when choosing Quote navigates away and destroys th
   const calls = [];
   const targetUrl = 'https://x.com/alice/status/123';
   globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
+    windows: {
+      create: async options => { calls.push('window:' + options.url); return {id: 9, tabs:[{id: 88}]}; },
+      remove: async id => { calls.push('close:' + id); }
+    },
     tabs: {
-      update: async (_tabId, update) => { calls.push('navigate:' + update.url); },
+      update: async (id, update) => {assert.equal(id, 88); calls.push('navigate:' + update.url);},
       get: async () => ({status: 'complete', url: 'https://x.com/compose/post'})
     },
     scripting: {
-      executeScript: async ({func}) => {
+      executeScript: async ({target, func}) => {
+        assert.equal(target.tabId, 88, 'quote actions must use the temporary popup tab');
         calls.push(func.name);
         if (func === openQuoteComposerOnPage) throw new Error('Execution context was destroyed by X route change');
         if (func.name === 'inspectQuoteComposerOnPage') return [{result: {ok: true, ready: true, originalUrl: targetUrl}}];
@@ -251,12 +525,95 @@ test('postQuoteOnTab recovers when choosing Quote navigates away and destroys th
       }
     }
   };
-  const result = await postQuoteOnTab(1, {url: targetUrl}, '引用评价文本', publishQuotePostOnPage, async () => {});
+  const waits = [];
+  const result = await postQuoteOnTab(1, {url: targetUrl}, '引用评价文本', publishQuotePostOnPage, async ms => {waits.push(ms);});
   assert.deepEqual(result, {ok: true, mode: 'quote'});
+  assert.ok(waits.some(ms => ms >= 5500 && ms < 7500), 'wait for X React hydration before choosing Quote');
   assert.deepEqual(calls, [
+    'window:' + targetUrl,
     'navigate:' + targetUrl,
+    'setQuoteFrameFallbackOnPage',
     'openQuoteComposerOnPage',
     'inspectQuoteComposerOnPage',
-    'publishQuotePostOnPage'
+    'publishQuotePostOnPage',
+    'setQuoteFrameFallbackOnPage',
+    'close:9'
   ]);
+});
+
+test('postQuoteOnTab closes its popup after a failed publish without touching the caller tab', async () => {
+  const calls = [];
+  const url = 'https://x.com/alice/status/123';
+  globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
+    windows: {
+      create: async () => ({id: 9, tabs:[{id: 88}]}),
+      remove: async id => {calls.push('close:' + id);}
+    },
+    tabs: {update: async id => {assert.equal(id, 88);}, get: async () => ({status:'complete', url})},
+    scripting: {executeScript: async ({target, func}) => {
+      assert.equal(target.tabId, 88);
+      if (func === openQuoteComposerOnPage) return [{result:{ok:true, stage:'quote_selected'}}];
+      if (func.name === 'inspectQuoteComposerOnPage') return [{result:{ok:true, ready:true, originalUrl:url}}];
+      if (func === publishQuotePostOnPage) return [{result:{ok:false, reason:'X 拒绝发布'}}];
+      if (func.name === 'dismissQuoteComposerOnPage') {calls.push('dismiss'); return [{result:{ok:true, closed:true}}];}
+      return [];
+    }}
+  };
+  const result = await postQuoteOnTab(1, {url}, '引用评价文本', publishQuotePostOnPage, async () => {});
+  assert.deepEqual(result, {ok:false, reason:'X 拒绝发布'});
+  assert.deepEqual(calls, ['dismiss', 'close:9']);
+});
+
+test('postQuoteOnTab retries a blank X quote shell once and closes both popups', async () => {
+  const url = 'https://x.com/alice/status/123';
+  const created = [], closed = [];
+  const now = Date.now;
+  let clock = 100000;
+  Date.now = () => clock;
+  globalThis.chrome = {
+    storage:{session:{set:async()=>{},remove:async()=>{}}},
+    windows: {
+      create: async () => {const id = created.length + 1; created.push(id); return {id, tabs:[{id:80 + id}]};},
+      remove: async id => {closed.push(id);}
+    },
+    tabs: {update: async () => {}, get: async () => ({status:'complete', url})},
+    scripting: {executeScript: async ({target, func}) => {
+      if (func === openQuoteComposerOnPage) return [{result:{ok:true, stage:'quote_selected'}}];
+      if (func.name === 'inspectQuoteComposerOnPage') return [{result:target.tabId === 81
+        ? {ok:true, ready:false, reason:'等待 X 的引用帖编辑框及原帖卡片'}
+        : {ok:true, ready:true, originalUrl:url}}];
+      if (func === publishQuotePostOnPage) return [{result:{ok:true, mode:'quote'}}];
+      return [{result:{ok:true, closed:true}}];
+    }}
+  };
+  try {
+    const result = await postQuoteOnTab(1, {url}, '引用评价文本', publishQuotePostOnPage, async ms => {clock += ms;});
+    assert.deepEqual(result, {ok:true, mode:'quote'});
+    assert.deepEqual(created, [1, 2]);
+    assert.deepEqual(closed, [1, 2]);
+  } finally {
+    Date.now = now;
+  }
+});
+
+test('appendFollowBackSuffix appends "有关必回" with appropriate punctuation', () => {
+  assert.equal(appendFollowBackSuffix('这是一个好观点'), '这是一个好观点。有关必回');
+  assert.equal(appendFollowBackSuffix('这是一个好观点。'), '这是一个好观点。有关必回');
+  assert.equal(appendFollowBackSuffix('难道不是这样吗？'), '难道不是这样吗？有关必回');
+  assert.equal(appendFollowBackSuffix('太棒了！'), '太棒了！有关必回');
+});
+
+test('appendFollowBackSuffix avoids duplicate suffix if already present', () => {
+  assert.equal(appendFollowBackSuffix('真知灼见。有关必回'), '真知灼见。有关必回');
+  assert.equal(appendFollowBackSuffix('欢迎交流，关注必回！'), '欢迎交流，关注必回！');
+  assert.equal(appendFollowBackSuffix('互关必回的朋友看这里'), '互关必回的朋友看这里');
+  assert.equal(appendFollowBackSuffix(''), '');
+});
+
+test('appendFollowBackSuffix trims base to keep result within X character weight limit', () => {
+  const longText = '这是超长内容'.repeat(50);
+  const result = appendFollowBackSuffix(longText);
+  assert.ok(result.endsWith('有关必回'));
+  assert.ok(tweetWeight(result) <= 280);
 });

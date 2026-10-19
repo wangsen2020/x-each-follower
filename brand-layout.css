@@ -134,8 +134,11 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .drawer-checkpoint-display .checkpoint-handle{font-weight:600;color:#1a4d36}
 .drawer-checkpoint-display .checkpoint-time{font-size:11px;color:#6d8277}
 .drawer-setting-switch{padding-top:4px;border-bottom:none}
+.drawer-setting-label > :not(:last-child),.drawer-switch-label > :not(:last-child),.mutual-field-label > :not(:last-child),.monitor-toolbar label > :not(:last-child),#monitorPagination label > :not(:last-child),#commentPagination label > :not(:last-child),#unreciprocatedPagination label > :not(:last-child),#mutualPagination label > :not(:last-child){margin-bottom:0}
 .drawer-switch-label{display:flex;flex-direction:row;align-items:center;font-size:13px;font-weight:600;color:#2c4238;cursor:pointer}
-.drawer-switch-label input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer}
+.drawer-switch-label > *{display:inline-block;margin-bottom:0}
+.drawer-switch-label input[type="checkbox"]{width:16px;height:16px;margin:0 8px 0 0;padding:0;flex-shrink:0;cursor:pointer}
+.drawer-switch-label .info-tip{display:inline-grid;margin:0 0 0 4px;flex-shrink:0}
 .info-tip{position:relative;display:inline-grid;place-items:center;width:14px;height:14px;margin-left:3px;vertical-align:middle;border-radius:50%;background:#769287;color:#fff;font-family:Arial,sans-serif;font-size:10px;font-weight:700;line-height:1;cursor:help}.info-tip::after{position:absolute;z-index:40;left:50%;bottom:calc(100% + 8px);width:max-content;max-width:220px;padding:7px 9px;transform:translateX(-50%);border-radius:5px;background:#2c3834;color:#fff;box-shadow:0 4px 12px rgba(18,32,26,.18);content:attr(data-tip);font-size:12px;font-weight:400;line-height:1.35;opacity:0;pointer-events:none;transition:opacity .12s;white-space:normal}.info-tip:hover::after{opacity:1}.monitor-toolbar .info-tip{margin-left:2px}.selection-bar .info-tip{margin-left:1px}.queue-head h2 .info-tip{vertical-align:2px}
 .mutual-network-head{display:flex;align-items:end;margin:8px 0}.mutual-network-head label{display:grid;grid-template-columns:auto minmax(150px,280px);align-items:center;color:#52685d;font-size:12px}.mutual-network-head label:nth-child(2){grid-template-columns:auto 86px}.mutual-network-head input,.mutual-network-head select{height:34px;padding:7px 8px;font-size:13px}.mutual-network-head button{height:34px;padding:7px 12px;font-size:12px}.network-status{min-height:20px;margin:7px 0 10px;color:#60756a;font-size:12px}@media(max-width:700px){.mutual-network-head{align-items:stretch;flex-wrap:wrap}.mutual-network-head label{flex:1 1 100%;grid-template-columns:auto 1fr}.mutual-network-head button{width:100%}}
 
@@ -888,7 +891,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 .drawer-setting-group > :not(:last-child){margin-bottom:6px}
 .drawer-setting-label > :not(:last-child){margin-right:6px}
 .drawer-checkpoint-display > :not(:last-child){margin-bottom:3px}
-.drawer-switch-label > :not(:last-child){margin-right:8px}
+.drawer-switch-label > :not(:last-child){margin-right:0}
 .mutual-network-head > :not(:last-child){margin-right:10px}
 .mutual-network-head > :not(:last-child){margin-right:14px}
 .mutual-network-head .mutual-field > :not(:last-child){margin-bottom:5px}
@@ -969,3 +972,58 @@ main > :not(.sidebar){margin-left:20px}
 .monitor-pagination label > select,#monitorPagination label > select,#commentPagination label > select,#unreciprocatedPagination label > select,.monitor-toolbar label > input,.monitor-toolbar label > select{margin-top:0}
 .queue-list{display:flex;flex-direction:column}.queue-list > :not(:last-child){margin-bottom:8px}
 .drawer-section ol{display:flex;flex-direction:column}.drawer-section ol > :not(:last-child){margin-bottom:8px}
+
+/* Shared panel inset and inline control alignment. */
+main > header { padding:0 10px 4px; }
+main > .tab-panel { padding:10px; }
+main > :not(.sidebar) { margin-left:10px; }
+.mutual-network-head > :not(:last-child) { margin-right:10px; }
+.mutual-network-head .mutual-field > input,
+.mutual-network-head .mutual-field > select { margin-left:0; margin-top:0; }
+label:has(> input[type="checkbox"]) { flex-direction:row; align-items:center; justify-content:flex-start; }
+label:has(> input[type="checkbox"]) > * { margin-bottom:0; }
+label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; margin:0 6px 0 0; }
+.info-tip { flex:none; align-self:center; }
+.mutual-field-label, .drawer-setting-label { justify-content:flex-start; }
+main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+main > #unreciprocatedSection, main > #followQueueSection { padding:10px; margin-left:10px; }
+#followQueueSection { overflow:auto; }
+@media(max-width:600px) {
+  main > header, main > .tab-panel { margin-left:0; }
+  main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+  main > #unreciprocatedSection, main > #followQueueSection { margin-left:0; }
+}
+main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+main > #unreciprocatedSection, main > #followQueueSection { width:auto; max-width:calc(100% - 10px); }
+#commentsSection #commentBatchAddToQueue { height:32px; padding:0 10px; display:inline-flex; align-items:center; }
+@media(max-width:600px) {
+  main > #monitorSection, main > #candidatesSection, main > #commentsSection,
+  main > #unreciprocatedSection, main > #followQueueSection { max-width:100%; }
+}
+
+/* Align toolbar controls without inherited form spacing. */
+#commentsSection .comments-head-left > * { margin-top:0; margin-bottom:0; }
+#commentsSection .comments-head-left > :not(:last-child) { margin-right:10px; }
+#commentsSection #commentPagination { display:flex; align-items:center; gap:0; }
+#commentsSection #commentPagination > :not(:last-child) { margin-right:10px; }
+#commentsSection #commentPagination .page-summary { margin-left:0; }
+#commentsSection #commentPagination label > select { margin:0 0 0 5px; }
+#commentsSection #commentPagination label > * { margin-bottom:0; }
+
+#grokVerificationNotice {position:fixed;top:16px;right:20px;z-index:2000;display:flex;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px;margin:0;background:#fff4d6;border:1px solid #e5c373;border-radius:6px;box-shadow:0 4px 16px #18302e26;}
+#grokVerificationNotice > :not(:last-child) {margin-right:10px;}
+
+/* Module-level actions live together at the top right; logs are always last. */
+.module-header-actions { display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; margin-left:auto; }
+.module-header-actions > * { margin-top:0; margin-bottom:0; }
+.module-header-actions > :not(:last-child) { margin-right:10px; }
+.module-log-button { display:inline-flex; align-items:center; justify-content:center; flex:none; height:32px; min-height:32px; padding:0 12px; margin:0; box-sizing:border-box; font-size:12px; line-height:1; white-space:nowrap; }
+#monitorSection .monitor-head-right > * { margin-bottom:0; }
+#monitorSection .monitor-head-right > :not(:last-child) { margin-right:10px; }
+#candidatesSection .mutual-network-head > .module-header-actions { margin:0 0 0 auto; align-self:flex-end; }
+#candidatesSection .mutual-network-head .module-log-button { height:32px; width:auto; margin:0; padding:0 12px; }
+#commentsSection .comments-head > .module-header-actions { margin:0 0 0 auto; }
+#unreciprocatedSection .module-header-actions > button { margin-top:0; margin-bottom:0; }
+@media(max-width:700px) { #candidatesSection .mutual-network-head > .module-header-actions { flex:1 0 100%; justify-content:flex-end; padding-top:10px; } }
+
+#monitorSection .monitor-head .monitor-head-right.module-header-actions { justify-content:flex-end; margin-left:auto; }

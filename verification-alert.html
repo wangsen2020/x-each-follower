@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 主人，需要你帮帮忙</title><link rel="stylesheet" href="verification-alert.css"></head>
+<body>
+  <main class="help-window" aria-labelledby="helpTitle">
+    <header><span class="brand"><img src="icon128.png" alt="">XFollower</span><span class="attention"><i></i>需要手动验证</span></header>
+    <div class="art-wrap"><img class="help-art" src="verification-help-generated.webp" alt="夜色与萤火虫中，泪汪汪的小机器人双手合十请求帮助"><span class="speech">呜呜…我过不去 🥺</span></div>
+    <section class="message">
+      <h1 id="helpTitle">主人，救救我…</h1>
+      <p class="lead" id="helpLead">我被安全验证拦住了，<br>这一步只有你能帮我完成。</p>
+      <div class="task-state"><span class="pause-mark">Ⅱ</span><span id="taskState">当前 Grok 任务已暂停</span></div>
+      <div class="where"><span id="siteLabel">正在读取验证页面</span><span id="detectedAt"></span></div>
+      <p class="instructions" id="instructions">完成验证并恢复聊天输入框后，任务会自动继续。</p>
+      <button class="primary" id="openVerification" type="button">去手动验证 <span aria-hidden="true">↗</span></button>
+      <button class="dismiss" id="dismissAlert" type="button">我知道了，先关闭</button>
+      <p class="delivery" id="deliveryStatus" role="status" aria-live="polite">手机私信提醒正在准备中</p>
+      <p class="error" id="actionError" role="alert" hidden></p>
+    </section>
+    <footer>等待期间不会重复提交；验证完成后继续当前任务。</footer>
+  </main>
+  <script type="module" src="verification-alert.js"></script>
+</body>
+</html>
