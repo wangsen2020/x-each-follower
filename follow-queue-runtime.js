@@ -8,7 +8,7 @@ import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage} fr
 import {parseCount, riskAssess, evaluateMutualProfile} from './scoring.js';
 import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from './grok-comment.js';
 import {randomizedSeconds, randomizedInteger} from './timing.js';
-import {appendExecutionLog} from './execution-log.js';
+import {appendExecutionLog, normalizeQueueExecutionLog} from './execution-log.js';
 
 export const QUEUE_ALARM = 'x-unified-follow-queue';
 const BINDING_KEY = 'followQueueBinding';
@@ -59,7 +59,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   const script = async (tabId, func, args = []) => (await api.scripting.executeScript({target:{tabId}, func, args}))?.[0]?.result;
   const safeLog = async entry => {
     if (typeof api?.storage?.local?.get === 'function' && typeof api?.storage?.local?.set === 'function') {
-      await appendExecutionLog(entry, api.storage.local).catch(() => {});
+      await (async () => {
+        const job = entry.jobId ? (await store.list({accountId:entry.accountId})).find(item=>item.id===entry.jobId) || {} : {};
+        await appendExecutionLog(normalizeQueueExecutionLog({...entry,source:'manual'},job), api.storage.local);
+      })().catch(() => {});
     }
   };
   async function viewer(tabId) { return canonical(await script(tabId, readQueueViewerOnPage)); }
@@ -147,7 +150,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     syncing = run.catch(() => {});
     return run;
   }
+  const executionAudits = new Map();
   async function execute(job, settings, control) {
+    const audit = {startedAt:new Date().toISOString(), posts:[], scanned:false, scrollRounds:0, plannedScrollRounds:settings.scrollRounds, grokEnabled:settings.grokEnabled, autoPublish:settings.autoPublish};
+    executionAudits.set(job.id,audit);
     let tab;
     let followResult = job.followResult || {};
     let attemptedFollow = false;
@@ -167,6 +173,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await sleep(500);
       }
       if (!profile || profile.pending) return {state:'retry', reason:'主页资料读取超时'};
+      Object.assign(audit,{name:profile.name,posts:profile.posts || [],scanned:true});
       await guard();
       // Resolve authoritative User Rest ID from a user operation, never a tweet's ID.
       const lookup = await networkFetch(tab.id,'UserByScreenName',{screen_name:job.handle});
@@ -198,10 +205,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       for (let round=0; round<settings.scrollRounds; round++) {
         await guard();
         await script(tab.id,simulateProfileScrollStep,[round,420]);
+        audit.scrollRounds = round + 1;
         await sleep(dwell * 1000 / settings.scrollRounds);
       }
       const fresh = await script(tab.id,readProfileBundle,[job.handle,5]);
       if (fresh && !fresh.pending) profile = {...profile,...fresh};
+      Object.assign(audit,{name:profile.name,posts:profile.posts || [],dwellSeconds:dwell});
       const {profileCache = {}} = await api.storage.local.get('profileCache');
       const previous = profileCache[canonical(job.handle)] || {};
       profileCache[canonical(job.handle)] = {...previous,...profile,posts:mergeRecentPosts(previous.posts || [],profile.posts || [],100),profileCachedAt:new Date().toISOString()};
@@ -229,7 +238,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!post) return {state:'followed',followResult,evaluations,reason:'没有可评价的近期帖子'};
       const originalPostId = post.url.match(/\/status\/(\d+)/)[1];
       const evaluation = {taskId:`${job.accountId}:${originalPostId}`,followJobId:job.id,targetUserId:target.id,
-        originalAuthorId:target.id,originalPostId,originalPostUrl:post.url,status:'generating',attempts:1};
+        originalAuthorId:target.id,originalPostId,originalPostUrl:post.url,originalPostText:post.text,status:'generating',attempts:1};
       const jobs = await store.list({accountId:job.accountId});
       if (jobs.some(other => other.evaluations?.some(e => e.originalPostId === originalPostId))) return {state:'followed',followResult,evaluations};
       evaluations.push(evaluation);
@@ -264,12 +273,14 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       return {state:'followed',followResult,evaluations};
     } catch (error) {
       return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,reason:String(error?.message || error)};
-    } finally { if (tab) await api.tabs.remove(tab.id).catch(() => {}); }
+    } finally { audit.finishedAt = new Date().toISOString(); audit.evaluations = structuredClone(evaluations); if (tab) await api.tabs.remove(tab.id).catch(() => {}); }
   }
-  const scheduler = createFollowQueueScheduler({store,execute,canRun,onEvent:event => appendExecutionLog({
-    ...event, scope:'queue', at:new Date(event.at || Date.now()).toISOString(),
-    result:event.state || event.type, detail:event.summary || event.reason || event.type
-  })});
+  const scheduler = createFollowQueueScheduler({store,execute,canRun,onEvent:async event => {
+    const job = event.jobId ? (await store.list({accountId:event.accountId})).find(j=>j.id===event.jobId) || {} : {};
+    const audit = executionAudits.get(event.jobId) || {};
+    await appendExecutionLog(normalizeQueueExecutionLog(event,job,audit),api.storage.local);
+    if (event.type === 'job-complete' || event.type === 'job-settle-failed') executionAudits.delete(event.jobId);
+  }});
   async function reflectFollowed(accountId) {
     const followed = new Map((await store.list({accountId})).filter(job=>job.state === 'followed').map(job=>[canonical(job.handle),job]));
     if (!followed.size) return;

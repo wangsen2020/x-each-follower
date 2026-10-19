@@ -560,7 +560,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         ]),
         el('span', { className: 'fq-header-subtitle' }, '唯一后台调度器 · 统一候选执行中心')
       ]),
-      el('div', { className: 'fq-header-actions' }, [
+      el('div', { className: 'fq-header-actions module-header-actions' }, [
         currentAccountId
           ? el('span', { className: 'fq-account-badge' }, [
               el('span', { className: 'fq-account-icon' }, '👤'),
@@ -570,7 +570,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         autoScheduleSwitch,
         refreshBtn,
         settingsBtn,
-        execBtn
+        execBtn,
+        el('button', {
+          type: 'button', className: 'fq-btn fq-btn-secondary fq-open-logs module-log-button',
+          onClick: () => root.dispatchEvent(new CustomEvent('open-execution-logs', {bubbles:true}))
+        }, '执行日志')
       ])
     ]);
   }

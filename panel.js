@@ -1,8 +1,9 @@
+import {executeGrokScript, assertGrokVerificationClear} from './grok-verification.js';
 import {releaseGrokWindow} from './temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from './scoring.js';
 import { restoreMissingLocalSetting } from './automation-recovery.js';
-import {selectExecutionLogs} from './execution-log.js';
+import {selectExecutionLogs, normalizeQueueExecutionLog} from './execution-log.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from './auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from './page-reader.js';
 import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from './network-api.js';
@@ -162,6 +163,7 @@ let unreciprocatedTracker = {
   updatedAt: ''
 };
 let unreciprocatedLogs = [];
+let monitorLogs = [];
 let activeUnreciprocatedTab = 'overdue';
 let unreciprocatedSearch = '';
 let unreciprocatedPage = 1;
@@ -918,7 +920,7 @@ function createVerifiedBadgeElement(size = 14) {
   svg.style.cssText = `width:${size}px;height:${size}px;min-width:${size}px;margin:0 3px;vertical-align:-2px;display:inline-block;fill:#1d9bf0;flex-shrink:0;`;
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.6.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
+  path.setAttribute('d', 'M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.434-1.246.296-.59.4-1.256.302-1.91-.097-.654-.39-1.26-.838-1.742-.442-.482-1.018-.813-1.66-1.002-.643-.19-1.32-.152-1.92.112-.395-.515-.926-.89-1.536-1.085C12.16 2.116 11.5 2.14 10.884 2.38c-.598.232-1.11.63-1.48 1.15-.37.52-.57 1.14-.57 1.78-.607.03-1.196.22-1.7.55-.504.33-.913.78-1.18 1.3-.578.18-1.076.54-1.435 1.03-.36.49-.55 1.08-.55 1.69 0 .61.19 1.2.55 1.69.36.49.86.85 1.44 1.03.27.52.68.97 1.18 1.3.14.33 1.09.52 1.7.55 0 .64.2 1.26.57 1.78.37.52.88.92 1.48 1.15.62.24 1.28.26 1.89.07.61-.19 1.14-.57 1.54-1.08.6.26 1.28.3 1.92.11.64-.19 1.22-.52 1.66-1 .45-.48.74-1.09.84-1.74.1-.65-.01-1.32-.3-1.91.58-.27 1.08-.71 1.43-1.25.36-.54.55-1.17.57-1.82zM8.9 15.65l-3.3-3.3 1.41-1.41 1.89 1.89 5.89-5.89 1.41 1.41-7.3 7.3z');
   g.append(path);
   svg.append(g);
   return svg;
@@ -979,6 +981,9 @@ function createMutualTagCell(user, cellTag = 'div') {
 function syncDrawerMask() {
   const anyOpen = [
     $('profileDrawer'),
+    $('settingsDrawer'),
+    $('mutualSettingsDrawer'),
+    $('commentAutoFollowDrawer'),
     $('unreciprocatedSettingsDrawer')
   ].some(el => el && !el.hidden);
   if ($('profileDrawerMask')) $('profileDrawerMask').hidden = !anyOpen;
@@ -1010,11 +1015,14 @@ function closeCommentAutoFollowDrawer() {
 
 function renderSettingsDrawer() {
   if (!$('settingsDrawer')) return;
-  $('monitorEnabled').checked = !!monitor.enabled;
-  $('monitorEvery').value = monitor.every || 60;
+  if ($('monitorEnabled')) $('monitorEnabled').checked = !!monitor.enabled;
+  if ($('monitorEvery')) $('monitorEvery').value = monitor.every || 60;
   if ($('monitorJitter')) $('monitorJitter').value = monitor.jitter ?? 15;
+  if ($('monitorAutoEnqueue')) $('monitorAutoEnqueue').checked = monitor.autoEnqueue !== false;
+  if ($('monitorFilterDanger')) $('monitorFilterDanger').checked = monitor.filterDanger !== false;
   const handleEl = $('monitorCheckpointHandle');
   const timeEl = $('monitorCheckpointTime');
+  const summaryEl = $('monitorLastSummaryDisplay');
   if (handleEl) {
     if (monitor.checkpointHandle) {
       handleEl.textContent = `最新位点：@${monitor.checkpointHandle}`;
@@ -1024,11 +1032,16 @@ function renderSettingsDrawer() {
       if (timeEl) timeEl.textContent = '';
     }
   }
+  if (summaryEl) {
+    summaryEl.textContent = monitor.lastSummary || (monitor.lastScan ? `上次检测于 ${new Date(monitor.lastScan).toLocaleString()}` : '尚未执行检测');
+  }
 }
 
 function openSettingsDrawer() {
   closeProfileDrawer();
   closeMutualSettingsDrawer();
+  closeCommentAutoFollowDrawer();
+  closeUnreciprocatedDrawer();
   renderSettingsDrawer();
   if ($('settingsDrawer')) $('settingsDrawer').hidden = false;
   syncDrawerMask();
@@ -2210,16 +2223,17 @@ async function checkGrokAvailability(force = false) {
     const tabId = winX.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winX.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
-      const res = (await chrome.scripting.executeScript({
+      const res = (await executeGrokScript({
         target: { tabId },
         func: probeXGrokInPage
-      }).catch(() => []))?.[0]?.result;
+      }).catch(error=>{if(error.userActionRequired)throw error;return [];}))?.[0]?.result;
       if (res) {
         xOk = Boolean(res.ok);
         xReason = res.reason;
       }
     }
   } catch (err) {
+    if(err.userActionRequired)throw err;
     xReason = err.message;
   } finally {
     if (winX?.id) await releaseGrokWindow(winX.id).catch(() => {});
@@ -2245,16 +2259,17 @@ async function checkGrokAvailability(force = false) {
     const tabId = winGrok.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: winGrok.id }))?.[0]?.id;
     if (tabId) {
       await sleep(3500);
-      const res = (await chrome.scripting.executeScript({
+      const res = (await executeGrokScript({
         target: { tabId },
         func: probeGrokComInPage
-      }).catch(() => []))?.[0]?.result;
+      }).catch(error=>{if(error.userActionRequired)throw error;return [];}))?.[0]?.result;
       if (res) {
         grokComOk = Boolean(res.ok);
         grokComReason = res.reason;
       }
     }
   } catch (err) {
+    if(err.userActionRequired)throw err;
     grokComReason = err.message;
   } finally {
     if (winGrok?.id) await releaseGrokWindow(winGrok.id).catch(() => {});
@@ -2719,6 +2734,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     runUnreciprocatedCheckCycle('alarm').catch(() => {});
     return true;
   }
+  if (message?.cmd === 'runFollowersScanTick') {
+    sendResponse({ok: true, handledByPanel: true});
+    if (!followerScanRunning) {
+      scanFollowerList('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
+    }
+    return true;
+  }
 });
 
 $('batchRefreshMutual')?.addEventListener('click', batchRefreshMutualNetwork);
@@ -3167,9 +3189,11 @@ async function navigate(url) {
 
 async function saveMonitorSettings() {
   const next = {
-    enabled: $('monitorEnabled').checked,
-    every: Number($('monitorEvery').value),
-    jitter: Math.max(1, Number($('monitorJitter')?.value || 0))
+    enabled: $('monitorEnabled') ? $('monitorEnabled').checked : !!monitor.enabled,
+    every: Number($('monitorEvery')?.value || monitor.every || 60),
+    jitter: Math.max(1, Number($('monitorJitter')?.value || monitor.jitter || 15)),
+    autoEnqueue: $('monitorAutoEnqueue') ? $('monitorAutoEnqueue').checked : monitor.autoEnqueue !== false,
+    filterDanger: $('monitorFilterDanger') ? $('monitorFilterDanger').checked : monitor.filterDanger !== false
   };
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
@@ -3181,6 +3205,7 @@ async function saveMonitorSettings() {
     const delay = randomizedInteger(monitor.every, monitor.jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', {delayInMinutes: delay});
   }
+  renderSettingsDrawer();
 }
 
 async function followerTab() {
@@ -3325,7 +3350,7 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
   return {users:[...found.values()], topFollower, reachedCheckpoint, limited:found.size>=maxUsers && !reachedCheckpoint, operation};
 }
 
-async function scanFollowerList() {
+async function scanFollowerList(scanSource = 'manual') {
   const scanTarget = await followerTab();
   const {tabId, temporary, handle} = scanTarget;
   try {
@@ -3339,26 +3364,79 @@ async function scanFollowerList() {
       const foundAt = new Date().toISOString();
       for (const user of networkUsers) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
       const users = [...previous.values()];
+      await syncOwnFollowingList(tabId, handle);
       const queue = reconcileFollowBackQueue(monitor.queue, users, riskAssess);
       queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
-      await syncOwnFollowingList(tabId, handle);
+
+      const filterDanger = monitor.filterDanger !== false;
+      const pendingEligible = queue.filter(user =>
+        user.status === 'pending'
+        && (!filterDanger || user.risk?.level !== 'danger')
+        && user.state !== 'following'
+        && user.relationship?.following !== true
+      );
+      let enqueuedCount = 0;
+      const enqueuedHandles = [];
+      const autoEnqueue = monitor.autoEnqueue !== false;
+      if (autoEnqueue && pendingEligible.length > 0) {
+        try {
+          const res = await chrome.runtime.sendMessage({
+            cmd: 'followQueueEnqueue',
+            candidates: pendingEligible.map(user => ({
+              handle: user.handle,
+              targetUserId: user.id || user.rest_id || '',
+              module: 'fans',
+              url: `https://x.com/${user.handle}`,
+              enabled: true
+            }))
+          });
+          if (res?.ok) {
+            enqueuedCount = res.count ?? pendingEligible.length;
+            enqueuedHandles.push(...pendingEligible.map(u => u.handle));
+          }
+        } catch (err) {
+          console.warn('自动拉取待回关用户到关注队列提示：', err);
+        }
+      }
+
       const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || networkUsers[0]?.handle || null;
+      const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
+      const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
+      const cpText = reachedCheckpoint ? '已到达上次记录位点（已自动停止拉取历史数据）' : (limited ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限` : '已同步至最新位点');
+      const notMutualCount = getNotMutualUsers().length;
+      const pendingCount = queue.filter(user => user.status === 'pending').length;
+      const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+
       monitor = {
         ...monitor,
         users,
         queue,
         followingUsers: monitor.followingUsers || [],
         lastScan: new Date().toISOString(),
+        lastSummary: summary,
         checkpointHandle: newCheckpointHandle,
         checkpointAt: new Date().toISOString(),
         source: sourceOperation === 'BlueVerifiedFollowers' ? 'verified_followers_network' : 'followers_network'
       };
-      await chrome.storage.local.set({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer();
-      const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
-      const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
-      const cpText = reachedCheckpoint ? '已到达上次记录位点（已自动停止拉取历史数据）' : (limited ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限` : '已同步至最新位点');
-      const notMutualCount = getNotMutualUsers().length;
-      monitorStatus(`已从 ${sourceName} 增量读取 ${networkUsers.length} 个账号，新增 ${newCount} 个；${cpText}；累计保存 ${users.length} 个，待回关 ${queue.filter(user => user.status === 'pending').length} 个，未互关 ${notMutualCount} 个。`);
+      await chrome.storage.local.set({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
+
+      await recordMonitorLog({
+        source: scanSource,
+        handle,
+        scannedCount: networkUsers.length,
+        newFollowersCount: newCount,
+        totalFollowers: users.length,
+        totalFollowing: (monitor.followingUsers || []).length,
+        followBackCount: pendingCount,
+        notMutualCount,
+        enqueuedCount,
+        enqueuedHandles,
+        checkpointHandle: newCheckpointHandle,
+        summary,
+        result: 'success'
+      });
+
+      monitorStatus(summary);
       return;
     }
     const fallbackReason = networkResult?.fallbackReason || '接口暂不可用';
@@ -3390,16 +3468,55 @@ async function scanFollowerList() {
     const foundAt = new Date().toISOString();
     for (const user of users) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
     const allUsers = [...previous.values()];
+    await syncOwnFollowingList(tabId, handle);
     const queue = reconcileFollowBackQueue(monitor.queue, allUsers, riskAssess);
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
-    await syncOwnFollowingList(tabId, handle);
+
+    const filterDanger = monitor.filterDanger !== false;
+    const pendingEligible = queue.filter(user =>
+      user.status === 'pending'
+      && (!filterDanger || user.risk?.level !== 'danger')
+      && user.state !== 'following'
+      && user.relationship?.following !== true
+    );
+    let enqueuedCount = 0;
+    const enqueuedHandles = [];
+    const autoEnqueue = monitor.autoEnqueue !== false;
+    if (autoEnqueue && pendingEligible.length > 0) {
+      try {
+        const res = await chrome.runtime.sendMessage({
+          cmd: 'followQueueEnqueue',
+          candidates: pendingEligible.map(user => ({
+            handle: user.handle,
+            targetUserId: user.id || user.rest_id || '',
+            module: 'fans',
+            url: `https://x.com/${user.handle}`,
+            enabled: true
+          }))
+        });
+        if (res?.ok) {
+          enqueuedCount = res.count ?? pendingEligible.length;
+          enqueuedHandles.push(...pendingEligible.map(u => u.handle));
+        }
+      } catch (err) {
+        console.warn('自动拉取待回关用户到关注队列提示：', err);
+      }
+    }
+
     const newCheckpointHandle = topFollowerDom?.handle || monitor.checkpointHandle || users[0]?.handle || null;
+    const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
+    const notMutualCount = getNotMutualUsers().length;
+    const pendingCount = queue.filter(user => user.status === 'pending').length;
+    const capText = users.length >= MAX_FOLLOWER_SCAN ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限；` : '';
+    const summary = `从页面读取完成：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}最新位点 @${newCheckpointHandle}；当前粉丝 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+
     monitor = {
       ...monitor,
       users: allUsers,
       queue,
       followingUsers: monitor.followingUsers || [],
       lastScan: new Date().toISOString(),
+      lastSummary: summary,
       checkpointHandle: newCheckpointHandle,
       checkpointAt: new Date().toISOString(),
       source: 'followers_dom'
@@ -3408,12 +3525,42 @@ async function scanFollowerList() {
     persist('monitor', monitor);
     renderQueue();
     renderSettingsDrawer();
-    const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
-    const notMutualCount = getNotMutualUsers().length;
-    const capText = users.length >= MAX_FOLLOWER_SCAN ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限；` : '';
-    monitorStatus(`已从 @${handle} 的粉丝列表增量读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}最新位点 @${newCheckpointHandle}；累计保存 ${allUsers.length} 个，待回关 ${queue.filter(user => user.status === 'pending').length} 个，未互关 ${notMutualCount} 个。`);
+    renderMonitorList();
+
+    await recordMonitorLog({
+      source: scanSource,
+      handle,
+      scannedCount: users.length,
+      newFollowersCount: newCount,
+      totalFollowers: allUsers.length,
+      totalFollowing: (monitor.followingUsers || []).length,
+      followBackCount: pendingCount,
+      notMutualCount,
+      enqueuedCount,
+      enqueuedHandles,
+      checkpointHandle: newCheckpointHandle,
+      summary,
+      result: 'success'
+    });
+
+    monitorStatus(summary);
   } catch (error) {
     monitorStatus(`扫描失败：${error.message}`);
+    await recordMonitorLog({
+      source: scanSource,
+      handle: handle || '',
+      scannedCount: 0,
+      newFollowersCount: 0,
+      totalFollowers: (monitor.users || []).length,
+      totalFollowing: (monitor.followingUsers || []).length,
+      followBackCount: (monitor.queue || []).filter(u => u.status === 'pending').length,
+      notMutualCount: getNotMutualUsers().length,
+      enqueuedCount: 0,
+      enqueuedHandles: [],
+      checkpointHandle: monitor.checkpointHandle || '',
+      summary: `检测异常：${error.message}`,
+      result: 'error'
+    }).catch(() => {});
   } finally {
     if (temporary) await chrome.tabs.remove(tabId).catch(() => {});
   }
@@ -3423,22 +3570,51 @@ let followBackRunning = false;
 let followBackStopped = false;
 
 async function processFollowBack() {
-  if ((await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) {
-    setTab('followQueue');
-    return;
-  }
-  if (followBackRunning) {
-    followBackStopped = true;
-    monitorStatus('正在停止回关…');
-    return;
-  }
-  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
-    monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`);
-    return;
-  }
   const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.risk?.level !== 'danger' && user.state !== 'following' && user.relationship?.following !== true);
   if (!pending.length) {
-    monitorStatus('没有待回关账号，请先扫描粉丝列表。');
+    monitorStatus('没有待回关账号，所有粉丝均已回关或条件不符。');
+    return;
+  }
+  let enqueuedCount = 0;
+  const enqueuedHandles = [];
+  try {
+    const res = await chrome.runtime.sendMessage({
+      cmd: 'followQueueEnqueue',
+      candidates: pending.map(user => ({
+        handle: user.handle,
+        targetUserId: user.id || user.rest_id || '',
+        module: 'fans',
+        url: `https://x.com/${user.handle}`,
+        enabled: true
+      }))
+    });
+    if (res?.ok) {
+      enqueuedCount = res.count ?? pending.length;
+      enqueuedHandles.push(...pending.map(u => u.handle));
+      await recordMonitorLog({
+        source: 'manual',
+        handle: '',
+        scannedCount: 0,
+        newFollowersCount: 0,
+        totalFollowers: (monitor.users || []).length,
+        totalFollowing: (monitor.followingUsers || []).length,
+        followBackCount: pending.length,
+        notMutualCount: getNotMutualUsers().length,
+        enqueuedCount,
+        enqueuedHandles,
+        checkpointHandle: monitor.checkpointHandle || '',
+        summary: `一键回关触发：已将 ${enqueuedCount} 位待回关粉丝拉取至统一关注队列。`,
+        result: 'success'
+      });
+    }
+  } catch (err) {
+    console.warn('拉取待回关用户到关注队列提示：', err);
+  }
+
+  const binding = (await chrome.storage.local.get('followQueueBinding')).followQueueBinding;
+  if (binding?.activated) {
+    monitorStatus(`已将 ${pending.length} 个待回关粉丝拉取至关注队列，正在跳转至关注队列…`);
+    setTab('followQueue');
     return;
   }
   let tabId;
@@ -3512,7 +3688,18 @@ $('scanFollowers').addEventListener('click', startFollowerScan);
 $('initialFollowers').addEventListener('click', startFollowerScan);
 $('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
-for (const id of ['monitorEvery','monitorJitter']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+for (const id of ['monitorEvery','monitorJitter','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+$('runMonitorScanNow')?.addEventListener('click', async () => {
+  const btn = $('runMonitorScanNow');
+  const oldText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '检测与入队中…'; }
+  try {
+    await scanFollowerList('manual-drawer');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
+});
+$('openMonitorDrawerLogs')?.addEventListener('click', () => openLogsModal('fans'));
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
   activeFollowerTab = button.dataset.followerTab;
   selectedFollowerHandles.clear();
@@ -3564,6 +3751,7 @@ $('profileDrawerMask').addEventListener('click', () => {
   closeSettingsDrawer();
   closeMutualSettingsDrawer();
   closeCommentAutoFollowDrawer();
+  closeUnreciprocatedDrawer();
 });
 $('drawerRefreshProfile').addEventListener('click', refreshDrawerProfile);
 $('drawerOpenX').addEventListener('click', () => { if (drawerUser?.handle) chrome.tabs.create({url:`https://x.com/${drawerUser.handle}`, active:true}); });
@@ -3573,6 +3761,7 @@ document.addEventListener('keydown', event => {
     if ($('settingsDrawer') && !$('settingsDrawer').hidden) closeSettingsDrawer();
     if ($('mutualSettingsDrawer') && !$('mutualSettingsDrawer').hidden) closeMutualSettingsDrawer();
     if ($('commentAutoFollowDrawer') && !$('commentAutoFollowDrawer').hidden) closeCommentAutoFollowDrawer();
+    if ($('unreciprocatedSettingsDrawer') && !$('unreciprocatedSettingsDrawer').hidden) closeUnreciprocatedDrawer();
     if ($('logsModal') && !$('logsModal').hidden) closeLogsModal();
   }
 });
@@ -3701,7 +3890,7 @@ async function submitBatchToGrok(customCandidates = null, reportStatus = analysi
     let lastReason = 'Grok 页面尚未准备好';
     while (Date.now() < submitDeadline) {
       await sleep(1000);
-      const result = (await chrome.scripting.executeScript({
+      const result = (await executeGrokScript({
         target:{tabId}, func:submitGrokPromptAndWaitForCopyIconOnPage, args:[prompt, 75000, handles]
       }))[0]?.result;
       if (!result?.submitted) {
@@ -3843,12 +4032,21 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.3.6';
+  const expectedVersion = '1.3.15';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
     chrome.runtime.reload();
   }
 }).catch(() => {});
+
+try {
+  const savedMonitorLogs = await chrome.storage.local.get('monitorLogs');
+  if (savedMonitorLogs.monitorLogs && Array.isArray(savedMonitorLogs.monitorLogs)) {
+    monitorLogs = savedMonitorLogs.monitorLogs;
+  }
+} catch (error) {
+  console.warn('粉丝管理执行日志加载错误：', error);
+}
 
 try {
   const savedUnrecip = await chrome.storage.local.get(['unreciprocatedTracker', 'unreciprocatedSettings', 'unreciprocatedLogs']);
@@ -3898,8 +4096,38 @@ Promise.all([
   durableGet('mutualAutoFollowSettings'),
   durableGet('commentAutoFollowSettings'),
   durableGet('unreciprocatedTracker'),
-  durableGet('unreciprocatedLogs')
-]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto, durableUnrecip, durableUnrecipLogs]) => {
+  durableGet('unreciprocatedLogs'),
+  durableGet('monitorLogs')
+]).then(async ([savedRows, savedMonitor, savedAnalysis, savedProfiles, savedNetwork, savedComments, savedLogs, durableMutualAuto, durableCommentAuto, durableUnrecip, durableUnrecipLogs, durableMonitorLogs]) => {
+  if (Array.isArray(durableMonitorLogs) && durableMonitorLogs.length && !monitorLogs.length) {
+    monitorLogs = durableMonitorLogs;
+    await chrome.storage.local.set({ monitorLogs });
+  }
+  if (!monitorLogs.length && (monitor.users?.length || monitor.lastScan)) {
+    const pendingCount = (monitor.queue || []).filter(u => u.status === 'pending').length;
+    const initialEntry = {
+      id: 'fan_log_init',
+      at: monitor.lastScan || new Date().toISOString(),
+      timeStr: monitor.lastScan ? new Date(monitor.lastScan).toLocaleString() : new Date().toLocaleString(),
+      scope: 'fans',
+      source: 'manual',
+      handle: monitor.checkpointHandle || '',
+      scannedCount: (monitor.users || []).length,
+      newFollowersCount: 0,
+      totalFollowers: (monitor.users || []).length,
+      totalFollowing: (monitor.followingUsers || []).length,
+      followBackCount: pendingCount,
+      notMutualCount: getNotMutualUsers().length,
+      enqueuedCount: 0,
+      enqueuedHandles: [],
+      checkpointHandle: monitor.checkpointHandle || '',
+      summary: monitor.lastSummary || `当前粉丝数据基准：粉丝 ${(monitor.users || []).length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${getNotMutualUsers().length} 人。`,
+      result: 'success'
+    };
+    monitorLogs.push(initialEntry);
+    chrome.storage.local.set({monitorLogs}).catch(() => {});
+    persist('monitorLogs', monitorLogs);
+  }
   if (durableUnrecip && Array.isArray(durableUnrecip.users) && (!unreciprocatedTracker.users.length || (durableUnrecip.updatedAt && durableUnrecip.updatedAt > unreciprocatedTracker.updatedAt))) {
     unreciprocatedTracker = {
       ...durableUnrecip,
@@ -3978,7 +4206,39 @@ bindSaveButton('saveCommentAutoSettings', () => saveCommentAutoFollowSettings(),
 
 
 
-// ==================== 定时看帖关注执行日志模块 ====================
+// ==================== 粉丝管理与定时看帖关注执行日志模块 ====================
+
+async function recordMonitorLog(entry) {
+  const now = new Date();
+  const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+  const logItem = {
+    id: entry.id || ('log_fan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    at: entry.at || now.toISOString(),
+    timeStr: entry.timeStr || timeStr,
+    scope: 'fans',
+    source: entry.source || 'manual',
+    handle: entry.handle || '',
+    scannedCount: Number(entry.scannedCount) || 0,
+    newFollowersCount: Number(entry.newFollowersCount) || 0,
+    totalFollowers: Number(entry.totalFollowers) || 0,
+    totalFollowing: Number(entry.totalFollowing) || 0,
+    followBackCount: Number(entry.followBackCount) || 0,
+    notMutualCount: Number(entry.notMutualCount) || 0,
+    enqueuedCount: Number(entry.enqueuedCount) || 0,
+    enqueuedHandles: Array.isArray(entry.enqueuedHandles) ? entry.enqueuedHandles : [],
+    checkpointHandle: entry.checkpointHandle || '',
+    summary: entry.summary || '',
+    result: entry.result || 'success'
+  };
+  monitorLogs.unshift(logItem);
+  if (monitorLogs.length > 300) monitorLogs = monitorLogs.slice(0, 300);
+  await chrome.storage.local.set({monitorLogs});
+  persist('monitorLogs', monitorLogs);
+  if (currentLogsScope === 'fans' || currentLogsScope === 'monitor') {
+    renderLogsModal();
+  }
+  return logItem;
+}
 
 async function recordAutoFollowLog(entry) {
   const now = new Date();
@@ -4014,14 +4274,109 @@ function renderLogsModal() {
   const modal = $('logsModal');
   if (!modal) return;
   const isUnrecip = currentLogsScope === 'unreciprocated';
-  const logsData = isUnrecip ? unreciprocatedLogs : selectExecutionLogs(autoFollowLogs, currentLogsScope);
+  const isFans = currentLogsScope === 'fans' || currentLogsScope === 'monitor';
+  const logsData = isUnrecip ? unreciprocatedLogs : (isFans ? monitorLogs : selectExecutionLogs(autoFollowLogs, currentLogsScope));
   const badge = $('logsTotalBadge');
   if (badge) badge.textContent = `${logsData.length} 条记录`;
   const empty = $('logsEmpty');
   const list = $('logsList');
-  if (empty) empty.hidden = logsData.length > 0;
+  if (empty) {
+    empty.hidden = logsData.length > 0;
+    const strongEl = empty.querySelector('strong');
+    const spanEl = empty.querySelector('span');
+    if (strongEl && spanEl) {
+      if (isFans) {
+        strongEl.textContent = '暂无粉丝管理执行日志';
+        spanEl.textContent = '点击“↻ 增量同步关注与粉丝数据”或开启定时检测后，检测记录、粉丝变动及自动拉取至关注队列的明细将显示在此。';
+      } else if (isUnrecip) {
+        strongEl.textContent = '暂无回关监测日志';
+        spanEl.textContent = '点击“开始检测”或开启定时取关后，检测与取关记录将显示在此。';
+      } else {
+        strongEl.textContent = '暂无执行日志记录';
+        spanEl.textContent = '开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。';
+      }
+    }
+  }
   if (!list) return;
   list.replaceChildren();
+
+  if (isFans) {
+    for (const log of logsData) {
+      const card = document.createElement('div');
+      card.className = 'log-card';
+
+      const header = document.createElement('div');
+      header.className = 'log-card-header';
+
+      const meta = document.createElement('div');
+      meta.className = 'log-card-meta';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'log-time';
+      timeSpan.textContent = log.timeStr || (log.at ? new Date(log.at).toLocaleString() : '未知时间');
+
+      const scopeSpan = document.createElement('span');
+      scopeSpan.className = 'log-scope-badge';
+      scopeSpan.textContent = '粉丝管理';
+
+      const sourceSpan = document.createElement('span');
+      sourceSpan.className = 'log-scope-badge';
+      sourceSpan.textContent = log.source === 'alarm' ? '定时检测' : '手动同步';
+
+      meta.append(timeSpan, scopeSpan, sourceSpan);
+
+      const resultBadge = document.createElement('span');
+      resultBadge.className = 'badge';
+      if (log.result === 'success') {
+        resultBadge.classList.add('candidate');
+        resultBadge.textContent = '检测完成 ✓';
+      } else if (log.result === 'warning') {
+        resultBadge.style.background = '#fff8e1';
+        resultBadge.style.color = '#f57f17';
+        resultBadge.textContent = '部分同步';
+      } else {
+        resultBadge.style.background = '#fbe9e7';
+        resultBadge.style.color = '#c62828';
+        resultBadge.textContent = '检测异常';
+      }
+      header.append(meta, resultBadge);
+      card.append(header);
+
+      const statsBar = document.createElement('div');
+      statsBar.className = 'log-stats-bar';
+      statsBar.style.cssText = 'display:flex;gap:12px;padding:8px 12px;background:#f8fafc;font-size:12px;color:#475569;border-bottom:1px solid #e2e8f0;flex-wrap:wrap;align-items:center;';
+      statsBar.innerHTML = `
+        <span>当前粉丝：<strong style="color:#0f172a">${log.totalFollowers ?? 0}</strong></span>
+        <span>当前关注：<strong style="color:#0f172a">${log.totalFollowing ?? 0}</strong></span>
+        <span>待回关：<strong style="color:#0284c7">${log.followBackCount ?? 0}</strong></span>
+        <span>未互关：<strong style="color:#64748b">${log.notMutualCount ?? 0}</strong></span>
+        <span>本次新增：<strong style="color:#059669">${log.newFollowersCount ?? 0}</strong></span>
+        <span>自动拉取入队：<strong style="color:#16a34a">${log.enqueuedCount ?? 0}</strong></span>
+      `;
+      card.append(statsBar);
+
+      const summaryRow = document.createElement('div');
+      summaryRow.style.padding = '8px 12px';
+      summaryRow.style.fontSize = '13px';
+      summaryRow.style.lineHeight = '1.5';
+      summaryRow.style.color = '#1e293b';
+      summaryRow.textContent = log.summary || '';
+      card.append(summaryRow);
+
+      if (log.enqueuedHandles && log.enqueuedHandles.length > 0) {
+        const enqRow = document.createElement('div');
+        enqRow.style.padding = '0 12px 10px';
+        enqRow.style.fontSize = '12px';
+        enqRow.style.color = '#15803d';
+        enqRow.innerHTML = `<strong>已自动拉取至关注队列（${log.enqueuedHandles.length} 人）：</strong>` +
+          log.enqueuedHandles.map(h => `<span style="display:inline-block;background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;margin:2px 4px 2px 0;">@${h}</span>`).join('');
+        card.append(enqRow);
+      }
+
+      list.append(card);
+    }
+    return;
+  }
 
   if (isUnrecip) {
     for (const log of logsData) {
@@ -4082,7 +4437,8 @@ function renderLogsModal() {
     return;
   }
 
-  for (const log of logsData) {
+  for (const rawLog of logsData) {
+    const log = rawLog.scope === 'queue' ? normalizeQueueExecutionLog(rawLog, {}, rawLog) : rawLog;
     const card = document.createElement('div');
     card.className = 'log-card';
 
@@ -4103,7 +4459,7 @@ function renderLogsModal() {
 
     const sourceSpan = document.createElement('span');
     sourceSpan.className = 'log-scope-badge';
-    sourceSpan.textContent = log.source === 'manual' ? '手动测试' : '定时执行';
+    sourceSpan.textContent = log.source === 'manual' ? '手动执行' : log.source === 'scheduled' || log.scope !== 'queue' ? '定时执行' : '触发方式未记录';
 
     meta.append(timeSpan, scopeSpan, sourceSpan);
 
@@ -4120,6 +4476,9 @@ function renderLogsModal() {
     } else if (['started', 'completed', 'already_following'].includes(log.result)) {
       resultBadge.classList.add('review');
       resultBadge.textContent = {started:'任务开始', completed:'本轮结束', already_following:'已关注'}[log.result];
+    } else if (['info','running','pending','retry','uncertain','excluded','posted','draft','failed','publishing','generating'].includes(log.result)) {
+      resultBadge.classList.add('review');
+      resultBadge.textContent = {info:'状态更新',running:'执行中',pending:'待执行',retry:'等待重试',uncertain:'结果待核实',excluded:'已排除',posted:'评价已发布',draft:'评价草稿',failed:'执行失败',publishing:'发布待核实',generating:'生成评价中'}[log.result];
     } else if (log.result === 'followed') {
       resultBadge.classList.add('candidate');
       resultBadge.textContent = '关注成功 ✓';
@@ -4170,7 +4529,7 @@ function renderLogsModal() {
 
     const postsTitle = document.createElement('strong');
     postsTitle.className = 'log-posts-title';
-    postsTitle.textContent = log.posts?.length ? `扫描主页帖子（共 ${log.posts.length} 条）：` : '未扫描到主页公开帖子';
+    postsTitle.textContent = log.posts?.length ? `扫描主页帖子（共 ${log.posts.length} 条）：` : log.scope === 'queue' ? (log.scanned ? '本次主页读取未获取到公开帖子' : '此记录未包含主页扫描详情') : '未扫描到主页公开帖子';
     postsBox.append(postsTitle);
 
     if (log.posts?.length) {
@@ -4269,7 +4628,22 @@ function renderLogsModal() {
       card.append(grokBox);
     }
 
-    card.append(postsBox);
+    if (log.posts?.length || (log.handle && log.result !== 'already_following' && log.result !== 'started' && (log.scope !== 'queue' || log.scanned || log.type === 'job-complete'))) card.append(postsBox);
+    if (log.scope === 'queue') {
+      const addText = text => { const row=document.createElement('p'); row.className='log-detail-text'; row.textContent=text; card.append(row); };
+      const addLink = (text,url) => { try { const parsed=new URL(url); if(parsed.protocol!=='https:' || !['x.com','twitter.com'].includes(parsed.hostname)) return; const a=document.createElement('a'); a.href=parsed.href; a.textContent=text; a.target='_blank'; a.rel='noopener noreferrer'; const row=document.createElement('p'); row.className='log-detail-text'; row.append(a); card.append(row); } catch {} };
+      if (log.runId || log.jobId) addText('执行批次：'+(log.runId || '未记录')+' · 任务：'+(log.jobId || '批次汇总'));
+      if (log.sources?.length) addText('候选来源：'+[...new Set(log.sources.map(s=>({fans:'粉丝管理',mutual:'互关追踪',comments:'评论追踪'}[s.module] || s.module)))].join('、'));
+      if (log.startedAt) addText('实际用时：'+Math.max(0,Math.round((Date.parse(log.finishedAt || log.at)-Date.parse(log.startedAt))/1000))+' 秒 · 已滚动 '+(log.scrollRounds || 0)+' / '+log.plannedScrollRounds+' 轮'+(log.dwellSeconds ? ' · 目标停留 '+log.dwellSeconds+' 秒' : ''));
+      for (const ev of log.evaluations || []) {
+        addText('引用评价：'+({posted:'已发布并核验',published:'已发布',draft:'已生成草稿',failed:'失败',uncertain:'发布结果待核实',publishing:'发布中，待核实',generating:'生成中'}[ev.status] || ev.status || '未记录状态')+(ev.reason ? ' · 原因：'+ev.reason : ''));
+        addLink('被引用原帖 ↗',ev.originalPostUrl);
+        if (ev.originalPostText) addText('原帖正文：'+ev.originalPostText);
+        if (ev.text) { addText('评价正文：'+ev.text); const copy=document.createElement('button'); copy.type='button'; copy.className='log-copy-btn'; copy.textContent='复制评价'; copy.addEventListener('click',async()=>{try {await navigator.clipboard.writeText(ev.text);copy.textContent='已复制';}catch{copy.textContent='复制失败';}});card.append(copy); }
+        if (ev.publishedPostUrl) addLink('查看已发布评价 ↗',ev.publishedPostUrl);
+      }
+      if (log.type === 'job-complete' && !log.evaluations?.length && log.result !== 'already_following') addText(log.grokEnabled === false ? '引用评价未启用，本次仅处理关注。' : log.reason || '此记录未包含引用评价详情。');
+    }
     list.append(card);
   }
 }
@@ -4278,7 +4652,10 @@ let currentLogsScope = 'autoFollow';
 
 async function openLogsModal(scope = 'autoFollow') {
   currentLogsScope = scope;
-  if (scope !== 'unreciprocated') {
+  if (scope === 'fans' || scope === 'monitor') {
+    const saved = await chrome.storage.local.get('monitorLogs');
+    monitorLogs = saved.monitorLogs || [];
+  } else if (scope !== 'unreciprocated') {
     const saved = await chrome.storage.local.get('autoFollowLogs');
     autoFollowLogs = saved.autoFollowLogs || [];
   }
@@ -4286,7 +4663,11 @@ async function openLogsModal(scope = 'autoFollow') {
   const mask = $('logsModalMask');
   const title = $('logsModalTitle');
   if (title) {
-    title.textContent = scope === 'unreciprocated' ? '回关监测 · 定时检测与取关日志' : `${scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '定时看帖关注'} · 执行日志`;
+    if (scope === 'fans' || scope === 'monitor') {
+      title.textContent = '粉丝管理 · 粉丝检测与回关入队日志';
+    } else {
+      title.textContent = scope === 'unreciprocated' ? '回关监测 · 定时检测与取关日志' : `${scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '关注队列'} · 执行日志`;
+    }
   }
   if (modal) modal.hidden = false;
   if (mask) mask.hidden = false;
@@ -4301,6 +4682,14 @@ function closeLogsModal() {
 }
 
 async function clearAutoFollowLogs() {
+  if (currentLogsScope === 'fans' || currentLogsScope === 'monitor') {
+    if (!confirm('确定清空所有粉丝管理检测与回关入队日志吗？此操作不可撤销。')) return;
+    monitorLogs = [];
+    await chrome.storage.local.set({monitorLogs});
+    persist('monitorLogs', monitorLogs);
+    renderLogsModal();
+    return;
+  }
   if (currentLogsScope === 'unreciprocated') {
     if (!confirm('确定清空所有回关监测执行日志吗？此操作不可撤销。')) return;
     unreciprocatedLogs = [];
@@ -4325,7 +4714,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
   btn.disabled = true;
   btn.textContent = '实测引用评价生成中…';
   if (handleEl) {
-    handleEl.textContent = '正在并发探测 x.com 与 grok.com 运行环境…';
+    handleEl.textContent = '优先使用 X 内置 Grok，不可用时再尝试 grok.com…';
     handleEl.style.color = '#536558';
   }
 
@@ -5075,18 +5464,24 @@ function renderUnreciprocatedSettingsDrawer() {
 }
 
 function openUnreciprocatedDrawer() {
+  closeProfileDrawer();
+  closeSettingsDrawer();
+  closeMutualSettingsDrawer();
+  closeCommentAutoFollowDrawer();
   const drawer = $('unreciprocatedSettingsDrawer');
-  const mask = $('profileDrawerMask');
   if (drawer) drawer.hidden = false;
-  if (mask) mask.hidden = false;
+  syncDrawerMask();
   renderUnreciprocatedSettingsDrawer();
 }
 
 function closeUnreciprocatedDrawer() {
   const drawer = $('unreciprocatedSettingsDrawer');
-  const mask = $('profileDrawerMask');
   if (drawer) drawer.hidden = true;
-  if (mask) mask.hidden = true;
+  syncDrawerMask();
+}
+
+function closeUnreciprocatedSettingsDrawer() {
+  closeUnreciprocatedDrawer();
 }
 
 async function saveUnreciprocatedSettingsFromDrawer() {
@@ -5202,3 +5597,22 @@ $('unreciprocatedSelectAll')?.addEventListener('change', () => {
   }
   renderUnreciprocatedUI();
 });
+
+document.addEventListener('open-execution-logs', () => openLogsModal('autoFollow'));
+$('openFollowLogs')?.addEventListener('click', () => openLogsModal('fans'));
+
+async function renderGrokVerificationNotice() {
+  const {grokVerification:notice,grokVerificationSelfMessage:delivery}=await chrome.storage.local.get(['grokVerification','grokVerificationSelfMessage']);
+  let banner=document.getElementById('grokVerificationNotice');
+  if(!notice){banner?.remove();return;}
+  if(!banner){banner=document.createElement('div');banner.id='grokVerificationNotice';banner.setAttribute('role','alert');document.querySelector('main > header').after(banner);}
+  banner.replaceChildren();
+  const message=document.createElement('span');message.textContent='Grok 需要手动安全验证，任务已结束等待。完成验证后请重试。';
+  const open=document.createElement('button');open.type='button';open.textContent='打开验证窗口';
+  open.addEventListener('click',async()=>{try{const tab=await chrome.tabs.get(notice.tabId);if(!/^https:\/\/(x\.com|twitter\.com|grok\.com)\//.test(tab.url || ''))throw Error('验证页已关闭');await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});await chrome.tabs.update(tab.id,{active:true});}catch{message.textContent='验证页已关闭，请重新执行任务。';}});
+  const check=document.createElement('button');check.type='button';check.textContent='我已完成验证';
+  check.addEventListener('click',async()=>{try{await assertGrokVerificationClear(notice.tabId);message.textContent='验证已解除，请重试原任务。';}catch(error){message.textContent=error.userActionRequired?'验证尚未完成，请先处理验证页面。':'验证页已关闭，请重新执行任务。';}});
+  const phone=document.createElement('span');phone.textContent='手机私信提醒：'+({sending:'发送中',sent:'已发送至本人会话',uncertain:'发送结果待确认',failed:'发送失败'}[delivery?.status] || '准备发送')+(delivery?.reason?' · '+delivery.reason:'');banner.append(message,open,check,phone);
+}
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local' && (changes.grokVerification || changes.grokVerificationSelfMessage))renderGrokVerificationNotice();});
+renderGrokVerificationNotice();

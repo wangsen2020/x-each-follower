@@ -1,4 +1,4 @@
-import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool} from './temporary-windows.js';
+import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from './temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
 import { durableGet, durableSet } from './persistent-db.js';
@@ -8,11 +8,22 @@ import { randomizedInteger, randomizedSeconds } from './timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, appendFollowBackSuffix } from './grok-comment.js';
 import { loadCommentTracking } from './tracking-storage.js';
 import {appendExecutionLog} from './execution-log.js';
+import {sendVerificationSelfMessage} from './verification-self-message.js';
+import {showVerificationAlert,markVerificationAlertClosed,focusVerificationPage} from './verification-alert-window.js';
 import { recoverAutomationAlarms, restoreMissingSyncedSettings } from './automation-recovery.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt} from './auto-follow-history.js';
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
+});
+
+chrome.notifications.onClicked.addListener(async id => {
+  if (id !== 'xf-grok-verification') return;
+  await showVerificationAlert({force:true}).catch(()=>{});
+});
+chrome.windows.onRemoved.addListener(windowId=>{markVerificationAlertClosed(windowId).catch(()=>{});});
+chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{
+  if(change.status==='complete')markTemporaryWindowReady(tab.windowId,tabId).catch(()=>{});
 });
 
 const followQueueRuntime = createFollowQueueRuntime();
@@ -456,9 +467,29 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.6';
+export const BACKGROUND_BUILD_VERSION = '1.3.15';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (['showGrokVerificationAlert','focusGrokVerificationPage'].includes(message?.cmd)) {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可操作验证提醒'});return;}
+    const operation=message.cmd==='showGrokVerificationAlert'?showVerificationAlert():focusVerificationPage();
+    operation.then(value=>sendResponse({ok:true,...value}),error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
+  if (message?.cmd === 'notifyGrokVerificationSelf') {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可发送本人验证提醒'});return;}
+    (async()=>{
+      const {grokVerification:notice}=await chrome.storage.local.get('grokVerification');
+      if(!notice || notice.at!==message.at)return {ok:false,stale:true};
+      const identity=await followQueueRuntime.handle({cmd:'followQueueIdentity'});
+      return sendVerificationSelfMessage({identity,notice}).finally(()=>showVerificationAlert().catch(()=>{}));
+    })().then(sendResponse,async error=>{
+      const reason=String(error?.message || error);
+      await chrome.storage.local.set({grokVerificationSelfMessage:{status:'failed',reason,at:Date.now()}});
+      sendResponse({ok:false,error:reason});
+    });
+    return true;
+  }
   if (message?.cmd === 'grokWindowPool') {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可管理 Grok 窗口'}); return; }
     handleGrokWindowPool(message).then(value=>sendResponse({ok:true,value}),error=>sendResponse({ok:false,error:error.message}));
@@ -549,11 +580,18 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Math.max(1, Number(monitor.jitter) || 1);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    await createNotification(`x-followers-${Date.now()}`, {
-      type: 'basic',
-      title: 'X 关注与粉丝检索提醒',
-      message: `增量检索周期已到（下次检索约 ${nextDelay} 分钟后），点击同步增量数据。`
-    });
+    let handledByPanel = false;
+    try {
+      const res = await chrome.runtime.sendMessage({ cmd: 'runFollowersScanTick' });
+      if (res?.ok) handledByPanel = true;
+    } catch {}
+    if (!handledByPanel) {
+      await createNotification(`x-followers-${Date.now()}`, {
+        type: 'basic',
+        title: 'X 粉丝管理 · 定时检测提醒',
+        message: `增量检测周期已到（下次约 ${nextDelay} 分钟后），请打开管理面板以自动同步粉丝数据并拉取待回关用户。`
+      });
+    }
     return;
   }
 

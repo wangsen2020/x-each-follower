@@ -10,9 +10,9 @@
     <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
     <button class="nav-tab" data-tab="followQueue">关注队列</button>
     <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count">0</span></button>
-  <div class="sidebar-foot">v1.3.6<br>本地数据</div>
+  <div class="sidebar-foot">v1.3.15<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v1.3.6</span><h1>粉丝管理</h1></header>
+  <header><span class="eyebrow">XFollower · v1.3.15</span><h1>粉丝管理</h1></header>
   <section id="followQueueSection" class="tab-panel" data-panel="followQueue" hidden></section>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
@@ -22,11 +22,13 @@
         <button class="follower-tab" data-follower-tab="notMutual" role="tab">未互关 <span id="notMutualCount">0</span></button>
         <span class="info-tip" data-tip="已关注：相互关注与已关注账号；待回关：对方关注了我们但未回关；未互关：我们关注了对方但对方未回关（单向关注）。" aria-label="粉丝分类说明">?</span>
       </div>
-      <div class="monitor-head-right">
+      <div class="monitor-head-right module-header-actions">
         <div class="icon-actions">
           <button id="scanFollowers" class="icon-button" title="增量同步关注与粉丝数据" aria-label="增量同步关注与粉丝">↻</button>
-          <button id="processFollowBack" class="icon-button secondary" title="一键回关所有待关注账号" aria-label="一键回关"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.55-3.35 2.7-5.25 5.5-5.25s4.95 1.9 5.5 5.25"/><path d="M18 8v7M14.5 11.5h7"/></svg></button>
+          <button id="processFollowBack" class="icon-button secondary" title="一键将待回关粉丝拉取至关注队列" aria-label="自动回关入队"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.55-3.35 2.7-5.25 5.5-5.25s4.95 1.9 5.5 5.25"/><path d="M18 8v7M14.5 11.5h7"/></svg></button>
+          <button id="openSettingsDrawer" class="icon-button secondary settings-gear-btn" title="粉丝管理 · 定时检测与自动回关设置" aria-label="粉丝管理设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
         </div>
+        <button id="openFollowLogs" class="secondary module-log-button" type="button">执行日志</button>
       </div>
     </div>
     <div id="selectionBar" class="selection-bar monitor-subbar" hidden>
@@ -67,6 +69,7 @@
       <button id="collectNetwork">开始新追踪</button>
       <button id="batchRefreshMutual" class="secondary" title="优先批量更新已勾选账号，未勾选时更新当前页公开资料及关注关系">批量更新</button>
       <button id="grokAnalyzeMutual" class="secondary" title="优先将已勾选账号（最多 20 个）提交给 Grok 分析互粉倾向并回填标签">Grok 分析</button>
+      <div class="module-header-actions"><button id="openMutualLogs" class="secondary module-log-button" type="button">执行日志</button></div>
     </div>
     <div class="mutual-subbar">
       <div class="subbar-left">
@@ -151,8 +154,8 @@
           <button class="follower-tab active" data-comment-filter="notMutual" role="tab" aria-selected="true">未互关 <span id="commentNotMutualCount">0</span></button>
           <button class="follower-tab" data-comment-filter="all" role="tab" aria-selected="false">全部 <span id="commentAllCount">0</span></button>
         </div>
-        <button id="commentBatchAddToQueue" class="secondary" disabled title="批量将已勾选的评论用户加入统一关注队列">加入关注队列</button>
       </div>
+      <div class="module-header-actions"><button id="openCommentLogs" class="secondary module-log-button" type="button">执行日志</button></div>
     </div>
     <div class="comments-toolbar">
       <div class="search-wrap"><input id="commentSearch" type="search" placeholder="搜索账号、评论或帖子链接" autocomplete="off"><button id="commentSearchBtn" class="secondary search-btn" type="button">搜索</button></div>
@@ -193,7 +196,7 @@
         <button id="batchUnfollowUnreciprocatedBtn" class="secondary danger-btn" disabled title="批量取消关注已勾选的未回关账号">批量取关</button>
         <button id="unfollowAllOverdueBtn" class="secondary danger-btn" title="一键取消关注所有超过2周仍未回关的账号">一键取关超时账号</button>
       </div>
-      <button id="openUnreciprocatedSettingsDrawer" class="icon-button secondary settings-gear-btn" title="回关监测与定时取关设置" aria-label="回关监测与定时取关设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      <div class="module-header-actions"><button id="openUnreciprocatedSettingsDrawer" class="icon-button secondary settings-gear-btn" title="回关监测与定时取关设置" aria-label="回关监测与定时取关设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button><button id="openUnreciprocatedLogs" class="secondary module-log-button" type="button">执行日志</button></div>
     </div>
     <div class="mutual-subbar unreciprocated-subbar">
       <div class="subbar-left">
@@ -242,7 +245,6 @@
     <div class="profile-drawer-head">
       <strong id="unreciprocatedSettingsDrawerTitle">回关监测 · 定时检测与自动取关设置</strong>
       <div class="drawer-head-actions">
-        <button id="openUnreciprocatedLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
         <button id="closeUnreciprocatedSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
       </div>
     </div>
@@ -336,6 +338,51 @@
     <div class="profile-drawer-actions">
       <button id="saveUnreciprocatedSettings" type="button">保存配置</button>
       <button id="runUnreciprocatedNow" class="secondary" type="button">立即执行一次检测</button>
+    </div>
+  </aside>
+  <aside id="settingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="settingsDrawerTitle" hidden>
+    <div class="profile-drawer-head">
+      <strong id="settingsDrawerTitle">粉丝管理 · 定时检测与自动回关设置</strong>
+      <div class="drawer-head-actions">
+        <button id="openMonitorDrawerLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
+        <button id="closeSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <div class="profile-drawer-content settings-drawer-content">
+      <div class="drawer-setting-group">
+        <label for="monitorEvery" class="drawer-setting-label"><span>定时检测周期（分钟）</span><span class="info-tip" data-tip="每隔多少分钟自动检测自己的 following 和 follower，检查新增粉丝与回关状态。" aria-label="定时检测周期说明">?</span></label>
+        <input id="monitorEvery" type="number" value="60" min="10" max="1440">
+        <small class="drawer-setting-desc">定期检测自身粉丝与关注列表的基础时间间隔。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label for="monitorJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机浮动，避免固定时间触发。" aria-label="随机浮动间隔说明">?</span></label>
+        <input id="monitorJitter" type="number" value="15" min="1" max="120">
+        <small class="drawer-setting-desc">每次浮动至少 1 分钟，按基础周期动态调度。</small>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="monitorAutoEnqueue" type="checkbox" checked><span>自动将待回关用户拉取到关注队列</span><span class="info-tip" data-tip="检测到关注自己但未回关且符合条件的用户时，自动推送到统一关注队列进行看帖和回关处理。" aria-label="自动入队说明">?</span></label>
+        <small class="drawer-setting-desc">开启后，符合条件的待回关粉丝将自动加入统一关注队列，无需手动重复添加。</small>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="monitorFilterDanger" type="checkbox" checked><span>自动过滤高风险账号</span><span class="info-tip" data-tip="过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。" aria-label="过滤高风险账号说明">?</span></label>
+        <small class="drawer-setting-desc">排查命中关键词和危险信号的账号，确保回关安全性。</small>
+      </div>
+      <div class="drawer-setting-group">
+        <label class="drawer-setting-label"><span>执行状态与记录</span></label>
+        <div class="drawer-checkpoint-display">
+          <span id="monitorCheckpointHandle" class="checkpoint-handle">未记录位点</span>
+          <span id="monitorCheckpointTime" class="checkpoint-time"></span>
+        </div>
+        <small id="monitorLastSummaryDisplay" class="drawer-setting-desc" style="margin-top:6px;display:block;">尚未执行检测</small>
+      </div>
+      <div class="drawer-setting-group drawer-setting-switch">
+        <label class="drawer-switch-label"><input id="monitorEnabled" type="checkbox"><span>开启后台定时检测与自动入队</span><span class="info-tip" data-tip="开启后后台定时唤醒检测粉丝变动，自动同步并拉取待回关用户。" aria-label="开启定时检测说明">?</span></label>
+        <small class="drawer-setting-desc">关闭时仅支持手动点击“↻”进行同步。</small>
+      </div>
+    </div>
+    <div class="profile-drawer-actions">
+      <button id="saveSettingsDrawer" type="button">保存配置</button>
+      <button id="runMonitorScanNow" class="secondary" type="button">立即检测并拉取入队</button>
     </div>
   </aside>
   <aside id="profileDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle" hidden>

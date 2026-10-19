@@ -1000,3 +1000,30 @@ main > #unreciprocatedSection, main > #followQueueSection { width:auto; max-widt
   main > #monitorSection, main > #candidatesSection, main > #commentsSection,
   main > #unreciprocatedSection, main > #followQueueSection { max-width:100%; }
 }
+
+/* Align toolbar controls without inherited form spacing. */
+#commentsSection .comments-head-left > * { margin-top:0; margin-bottom:0; }
+#commentsSection .comments-head-left > :not(:last-child) { margin-right:10px; }
+#commentsSection #commentPagination { display:flex; align-items:center; gap:0; }
+#commentsSection #commentPagination > :not(:last-child) { margin-right:10px; }
+#commentsSection #commentPagination .page-summary { margin-left:0; }
+#commentsSection #commentPagination label > select { margin:0 0 0 5px; }
+#commentsSection #commentPagination label > * { margin-bottom:0; }
+
+#grokVerificationNotice {position:fixed;top:16px;right:20px;z-index:2000;display:flex;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px;margin:0;background:#fff4d6;border:1px solid #e5c373;border-radius:6px;box-shadow:0 4px 16px #18302e26;}
+#grokVerificationNotice > :not(:last-child) {margin-right:10px;}
+
+/* Module-level actions live together at the top right; logs are always last. */
+.module-header-actions { display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; margin-left:auto; }
+.module-header-actions > * { margin-top:0; margin-bottom:0; }
+.module-header-actions > :not(:last-child) { margin-right:10px; }
+.module-log-button { display:inline-flex; align-items:center; justify-content:center; flex:none; height:32px; min-height:32px; padding:0 12px; margin:0; box-sizing:border-box; font-size:12px; line-height:1; white-space:nowrap; }
+#monitorSection .monitor-head-right > * { margin-bottom:0; }
+#monitorSection .monitor-head-right > :not(:last-child) { margin-right:10px; }
+#candidatesSection .mutual-network-head > .module-header-actions { margin:0 0 0 auto; align-self:flex-end; }
+#candidatesSection .mutual-network-head .module-log-button { height:32px; width:auto; margin:0; padding:0 12px; }
+#commentsSection .comments-head > .module-header-actions { margin:0 0 0 auto; }
+#unreciprocatedSection .module-header-actions > button { margin-top:0; margin-bottom:0; }
+@media(max-width:700px) { #candidatesSection .mutual-network-head > .module-header-actions { flex:1 0 100%; justify-content:flex-end; padding-top:10px; } }
+
+#monitorSection .monitor-head .monitor-head-right.module-header-actions { justify-content:flex-end; margin-left:auto; }

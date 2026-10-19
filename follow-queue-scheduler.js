@@ -640,6 +640,8 @@ export function createFollowQueueScheduler({
 
     await emit({
       type: 'job-start',
+      manual,
+      sources: clone(currentJob.sources || []),
       runId: runState.runId,
       accountId: account,
       jobId: currentJob.id,
@@ -712,6 +714,7 @@ export function createFollowQueueScheduler({
         leaseVersion,
         account,
         outcome,
+        manual,
         followSucceeded,
         hasExternalEffect,
         latestFollowResult,
@@ -727,6 +730,7 @@ export function createFollowQueueScheduler({
     leaseVersion,
     account,
     outcome,
+    manual,
     followSucceeded,
     hasExternalEffect,
     latestFollowResult,
@@ -897,6 +901,7 @@ export function createFollowQueueScheduler({
 
     await emit({
       type: 'job-complete',
+      manual,
       runId: runState.runId,
       accountId: account,
       jobId: currentJob.id,
@@ -905,6 +910,9 @@ export function createFollowQueueScheduler({
       state: finalState,
       stage: finalStage,
       alreadyFollowing: Boolean(latestFollowResult?.alreadyFollowing),
+      followResult: clone(latestFollowResult || {}),
+      evaluations: clone(latestEvaluations),
+      sources: clone(currentJob.sources || []),
       reason,
       nextEligibleAt: nextEligibleAt || null
     });

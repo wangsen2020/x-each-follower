@@ -976,3 +976,18 @@
 .fq-verified-label { margin-left:4px; font-size:11px; color:#60756a; }
 .fq-profile-bio { font-size:12px; font-weight:400; line-height:1.5; white-space:pre-line; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .fq-profile-counts { color:#52685d; font-size:12px; }
+
+.fq-panel-root .fq-subbar-left label,
+.fq-panel-root .fq-pagination label { margin:0; flex-direction:row; align-items:center; }
+.fq-panel-root .fq-subbar-left label > *,
+.fq-panel-root .fq-pagination label > * { margin-top:0; margin-bottom:0; }
+.fq-panel-root .fq-subbar-left input,
+.fq-panel-root .fq-subbar-left select,
+.fq-panel-root .fq-pagination select { margin-top:0; margin-bottom:0; box-sizing:border-box; height:28px; }
+.fq-panel-root .fq-pagination { gap:0; }
+.fq-panel-root .fq-pagination > :not(:last-child) { margin-right:10px; }
+
+.fq-header-actions.module-header-actions { gap:0; margin-left:auto; }
+.fq-header-actions.module-header-actions > * { margin-top:0; margin-bottom:0; }
+.fq-header-actions.module-header-actions > :not(:last-child) { margin-right:10px; }
+.fq-header-actions .module-log-button { height:32px; min-height:32px; font-size:12px; }

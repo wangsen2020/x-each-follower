@@ -1,3 +1,4 @@
+import {waitForGrokVerification, grokTaskNow, assertPendingGrokVerificationClear, executeGrokScript} from './grok-verification.js';
 import {createTemporaryWindow, closeTemporaryWindow, acquireGrokWindow, releaseGrokWindow} from './temporary-windows.js';
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
@@ -19,7 +20,8 @@ export function buildBackgroundGrokWindowOptions(url) {
   };
 }
 
-export function createBackgroundGrokWindow(url, lifetime) {
+export async function createBackgroundGrokWindow(url, lifetime) {
+  await assertPendingGrokVerificationClear();
   return acquireGrokWindow(url, lifetime);
 }
 
@@ -411,15 +413,16 @@ async function openMinimized(url, lifetime) {
   try {
     const tabId = win.tabs?.[0]?.id || (await chrome.tabs.query({ windowId: win.id }))?.[0]?.id;
     if (!tabId) throw new Error('Grok 窗口没有可用标签页');
-    const deadline = Date.now() + 25000;
+    const deadline = grokTaskNow() + 25000;
     while ((await chrome.tabs.get(tabId)).status !== 'complete') {
-      if (Date.now() > deadline) throw new Error('Grok 页面加载超时');
+      if (grokTaskNow() > deadline) throw new Error('Grok 页面加载超时');
+      await waitForGrokVerification(tabId);
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:setGrokFrameFallbackOnPage, args:[true]});
+    await executeGrokScript({target:{tabId}, world:'MAIN', func:setGrokFrameFallbackOnPage, args:[true]});
     return { winId: win.id, tabId };
   } catch (error) {
-    await closeTemporaryWindow(win.id).catch(() => {});
+    if (!error.userActionRequired) await closeTemporaryWindow(win.id).catch(() => {});
     throw error;
   }
 }
@@ -429,19 +432,19 @@ async function askOnX(prompt, nonce, sleep) {
   const { winId, tabId } = await openMinimized('https://x.com/i/grok');
   try {
     if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
-    const probe = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => {
+    const probe = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: () => {
       const t = (document.body?.innerText || '').slice(0, 3000);
       return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
-    } }).catch(() => []))?.[0]?.result;
+    } }).catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
     if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
-    const drive = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [prompt] })
-      .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+    const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [prompt] })
+      .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
     if (!drive?.ok) return { ok: false, reason: `x.com Grok：${drive?.err || '提交失败'}` };
-    const deadline = Date.now() + 60000;
-    while (Date.now() < deadline) {
+    const deadline = grokTaskNow() + 60000;
+    while (grokTaskNow() < deadline) {
       await sleep(2000);
-      const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
-        .catch(() => []))?.[0]?.result;
+      const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
+        .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
       const fromDom = extractGrokComment(dom?.text);
       if (stable(fromDom, Boolean(dom?.done))) return { ok: true, reply: fromDom, language: extractGrokCommentLanguage(dom?.text), channel: 'x.com' };
     }
@@ -457,14 +460,14 @@ async function askOnGrokCom(prompt, nonce, sleep) {
   try {
     if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
     await sleep(3000);
-    const drive = (await chrome.scripting.executeScript({ target: { tabId }, func: driveGrokComInput, args: [prompt] })
-      .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+    const drive = (await executeGrokScript({ target: { tabId }, func: driveGrokComInput, args: [prompt] })
+      .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
     if (!drive?.ok) return { ok: false, reason: drive?.err || 'grok.com 提交失败' };
-    const deadline = Date.now() + 60000;
-    while (Date.now() < deadline) {
+    const deadline = grokTaskNow() + 60000;
+    while (grokTaskNow() < deadline) {
       await sleep(2500);
-      const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
-        .catch(() => []))?.[0]?.result;
+      const dom = (await executeGrokScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
+        .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
       const reply = extractGrokComment(dom?.text);
       if (stable(reply, Boolean(dom?.done))) return { ok: true, reply, language: extractGrokCommentLanguage(dom?.text), channel: 'grok.com' };
     }
@@ -490,7 +493,7 @@ export async function requestGrokComment(handle, post, authorName, { sleep, fix 
       const res = await ask(prompt, nonce, sleep);
       if (res.ok) return { ...res, postText: postText.slice(0, 140), postUrl: post.url || '' };
       reasons.push(res.reason);
-    } catch (e) { reasons.push(String(e?.message || e)); }
+    } catch (e) { if(e.userActionRequired) return {ok:false,userActionRequired:true,reason:e.message}; reasons.push(String(e?.message || e)); }
   }
   return { ok: false, reason: reasons.join('；') };
 }
@@ -508,21 +511,21 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
     const { winId, tabId } = await openMinimized('https://x.com/i/grok', timeoutMs + 120000);
     try {
       if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
-      const probe = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => {
+      const probe = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: () => {
         const t = (document.body?.innerText || '').slice(0, 3000);
         return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
-      } }).catch(() => []))?.[0]?.result;
+      } }).catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
       if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
-      const drive = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [fullPrompt] })
-        .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+      const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [fullPrompt] })
+        .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
       if (!drive?.ok) return { ok: false, reason: `x.com Grok 提交失败: ${drive?.err || ''}` };
 
-      const deadline = Date.now() + timeoutMs;
+      const deadline = grokTaskNow() + timeoutMs;
       const stable = createStableAnswerGate(4);
-      while (Date.now() < deadline) {
+      while (grokTaskNow() < deadline) {
         await sleep(2000);
-        const dom = (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
-          .catch(() => []))?.[0]?.result;
+        const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
+          .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
         if (dom?.failed) return { ok: false, reason: 'Grok 回复异常或触发风控' };
         const text = String(dom?.text || '').trim();
         if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'x.com' };
@@ -538,16 +541,16 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
     try {
       if (!tabId) return { ok: false, reason: '无法创建 grok.com 窗口' };
       await sleep(3000);
-      const drive = (await chrome.scripting.executeScript({ target: { tabId }, func: driveGrokComInput, args: [fullPrompt] })
-        .catch(e => [{ result: { ok: false, err: String(e?.message || e) } }]))?.[0]?.result;
+      const drive = (await executeGrokScript({ target: { tabId }, func: driveGrokComInput, args: [fullPrompt] })
+        .catch(e => {if(e.userActionRequired) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
       if (!drive?.ok) return { ok: false, reason: `grok.com 提交失败: ${drive?.err || ''}` };
 
-      const deadline = Date.now() + timeoutMs;
+      const deadline = grokTaskNow() + timeoutMs;
       const stable = createStableAnswerGate(4);
-      while (Date.now() < deadline) {
+      while (grokTaskNow() < deadline) {
         await sleep(2500);
-        const dom = (await chrome.scripting.executeScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
-          .catch(() => []))?.[0]?.result;
+        const dom = (await executeGrokScript({ target: { tabId }, func: readGrokPageAnswer, args: [nonce] })
+          .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
         if (dom?.failed) return { ok: false, reason: 'grok.com 回复异常' };
         const text = String(dom?.text || '').trim();
         if (stable(text, Boolean(dom?.done))) return { ok: true, text, channel: 'grok.com' };
@@ -564,6 +567,7 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       if (res.ok) return res;
       reasons.push(res.reason);
     } catch (e) {
+      if(e.userActionRequired) return {ok:false,userActionRequired:true,reason:e.message};
       reasons.push(String(e?.message || e));
     }
   }
@@ -579,7 +583,7 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
   if (!/\/status\/\d+/.test(url)) return { ok: false, reason: '该帖没有可用的帖子链接' };
   const expectedPostText = String(post?.text || post?.postText || '').trim();
   const expectedHandle = String(post?.handle || post?.username || new URL(url).pathname.split('/')[1] || '').replace(/^@/, '');
-  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(() => []);
+  const dismissDraft = () => chrome.scripting.executeScript({target:{tabId}, func:dismissQuoteComposerOnPage, args:[url, expectedPostText, expectedHandle]}).catch(error => {if(error.userActionRequired) throw error; return [];});
   await chrome.tabs.update(tabId, {url});
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -605,7 +609,7 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
     if (!tab) return { ok: false, reason: '引用帖标签页已关闭' };
     if (tab.status !== 'complete') { await sleep(300); continue; }
     const state = (await chrome.scripting.executeScript({ target: { tabId }, func: inspectQuoteComposerOnPage, args: [url, expectedPostText, expectedHandle] })
-      .catch(() => []))?.[0]?.result;
+      .catch(error => {if(error.userActionRequired) throw error; return [];}))?.[0]?.result;
     if (state) lastComposerState = state;
     if (state?.reason?.includes('不是 Quote')) {
       await dismissDraft();
