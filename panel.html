@@ -1,25 +1,25 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"><link rel="stylesheet" href="follow-queue-panel.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"><link rel="stylesheet" href="follow-queue-panel.css"><link rel="stylesheet" href="dashboard-load.css"></head>
 <body>
 <main>
   <aside class="sidebar" aria-label="主导航">
     <div class="brand-mark"><div class="brand-logo"><img src="icon128.png" alt="XFollower logo"></div><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
-    <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count">0</span></button>
-    <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count">0</span></button>
+    <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+    <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+    <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
     <button class="nav-tab" data-tab="followQueue">关注队列</button>
-    <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count">0</span></button>
-  <div class="sidebar-foot">v1.4.1<br>本地数据</div>
+    <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+  <div class="sidebar-foot">v1.6.0<br>本地数据</div>
   </aside>
-  <header><span class="eyebrow">XFollower · v1.4.1</span><h1>粉丝管理</h1></header>
-  <section id="followQueueSection" class="tab-panel" data-panel="followQueue" hidden></section>
+  <header><span class="eyebrow">XFollower · v1.6.0</span><h1>粉丝管理</h1><div id="recordMigration" hidden></div></header>
+  <section id="followQueueSection" class="tab-panel" data-panel="followQueue" hidden><div id="followQueueLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载关注队列…</span></div><div id="followQueueLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="followQueue">重试</button></div></section>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
       <div class="follower-tabs" role="tablist">
-        <button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount">0</span></button>
-        <button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount">0</span></button>
-        <button class="follower-tab" data-follower-tab="notMutual" role="tab">未互关 <span id="notMutualCount">0</span></button>
+        <button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount" aria-busy="true">…</span></button>
+        <button class="follower-tab" data-follower-tab="followBack" role="tab">待回关 <span id="followBackCount" aria-busy="true">…</span></button>
+        <button class="follower-tab" data-follower-tab="notMutual" role="tab">未互关 <span id="notMutualCount" aria-busy="true">…</span></button>
         <span class="info-tip" data-tip="已关注：相互关注与已关注账号；待回关：对方关注了我们但未回关；未互关：我们关注了对方但对方未回关（单向关注）。" aria-label="粉丝分类说明">?</span>
       </div>
       <div class="monitor-head-right module-header-actions">
@@ -45,8 +45,10 @@
         <div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
       </div>
     </div>
+    <div id="monitorLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载粉丝管理…</span></div>
+    <div id="monitorLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="monitor">重试</button></div>
     <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite"></p>
-    <div id="monitorEmpty" class="monitor-empty"><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>
+    <div id="monitorEmpty" class="monitor-empty" hidden><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>
     <div id="monitorListHeader" class="monitor-list-header" hidden>
       <span class="col-check">
         <input id="listSelectAll" type="checkbox" title="全选 / 取消全选当前页" aria-label="全选当前页">
@@ -91,7 +93,6 @@
               <option value="20">20</option>
               <option value="50" selected>50</option>
               <option value="100">100</option>
-              <option value="200">200</option>
             </select>
           </label>
           <span id="mutualPageSummary" class="page-summary">第 1 / 1 页</span>
@@ -101,6 +102,8 @@
           </div>
         </div>
     </div>
+    <div id="mutualLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载互关追踪…</span></div>
+    <div id="mutualLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="mutual">重试</button></div>
     <div id="mutualTagFilterBar" class="tag-filter-bar">
       <span class="tag-filter-label">🏷️ 标签筛选:</span>
       <div class="tag-filter-pills" id="mutualTagPills">
@@ -138,7 +141,7 @@
         </thead>
         <tbody id="mutualResults"></tbody>
       </table>
-      <p id="mutualEmpty">还没有互关追踪记录。</p>
+      <p id="mutualEmpty" hidden>还没有互关追踪记录。</p>
     </div>
   </div>
   <section id="commentsSection" class="tab-panel comments-panel" data-panel="comments" aria-label="评论追踪" hidden>
@@ -164,6 +167,8 @@
         <div class="page-actions"><button id="commentPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="commentNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
       </div>
     </div>
+    <div id="commentsLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载评论追踪…</span></div>
+    <div id="commentsLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="comments">重试</button></div>
     <p id="commentTrackingStatus" class="monitor-status" role="status" aria-live="polite">在 X 帖子旁点击评论图标，静默收集评论用户。</p>
     <div class="table-wrap comments-table-wrap">
       <table id="commentUsersTable" class="mutual-table comment-table" hidden>
@@ -181,7 +186,7 @@
         </thead>
         <tbody id="commentUsersList"></tbody>
       </table>
-      <p id="commentUsersEmpty" class="comment-empty"><strong>还没有评论用户</strong><span>打开 X，在帖子操作栏点击评论追踪图标开始收集。</span></p>
+      <p id="commentUsersEmpty" class="comment-empty" hidden><strong>还没有评论用户</strong><span>打开 X，在帖子操作栏点击评论追踪图标开始收集。</span></p>
     </div>
   </section>
   <section id="unreciprocatedSection" class="tab-panel unreciprocated-panel" data-panel="unreciprocated" aria-label="回关监测" hidden>
@@ -212,11 +217,13 @@
         </div>
       </div>
       <div id="unreciprocatedPagination" class="monitor-pagination">
-        <label>每页<select id="unreciprocatedPageSize"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option></select></label>
+        <label>每页<select id="unreciprocatedPageSize"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <span id="unreciprocatedPageSummary" class="page-summary">第 1 / 1 页</span>
         <div class="page-actions"><button id="unreciprocatedPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button><button id="unreciprocatedNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button></div>
       </div>
     </div>
+    <div id="unreciprocatedLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载回关监测…</span></div>
+    <div id="unreciprocatedLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="unreciprocated">重试</button></div>
     <p id="unreciprocatedStatus" class="monitor-status" role="status" aria-live="polite">定时检测所有主动关注账号，超过 2 周未回关将标为超时，可批量取关减少浑水摸鱼。</p>
     <div class="table-wrap unreciprocated-table-wrap">
       <table class="mutual-table unreciprocated-table">
@@ -398,11 +405,15 @@
         <span id="logsTotalBadge" class="badge">0 条记录</span>
       </div>
       <div class="logs-modal-head-btns">
-        <button id="clearLogsBtn" class="secondary danger-btn" type="button" title="清空全部执行日志">清空日志</button>
+        <button id="logsPrevBtn" class="secondary" type="button" style="margin-right:10px">上一页</button>
+        <button id="logsNextBtn" class="secondary" type="button" style="margin-right:10px">下一页</button>
+        <button id="clearLogsBtn" class="secondary danger-btn" type="button" title="清空当前范围的执行日志" style="margin-right:10px">清空日志</button>
         <button id="closeLogsModal" class="icon-button secondary" type="button" title="关闭" aria-label="关闭">×</button>
       </div>
     </div>
     <div class="logs-modal-body">
+      <div id="logsLoading" class="logs-empty" hidden><p><strong>正在加载执行日志…</strong></p></div>
+      <div id="logsError" class="logs-empty" hidden><p><strong>执行日志加载失败</strong></p><span id="logsErrorText"></span></div>
       <div id="logsEmpty" class="logs-empty">
         <p><strong>暂无执行日志记录</strong></p>
         <span>开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。</span>

@@ -58,4 +58,29 @@ test('fans scope selects fan-specific logs and queue jobs with fans source',()=>
   assert.equal(selected[0].id,'fan-queue');
   assert.equal(selected[1].id,'fan-sync');
 });
+test('concurrent verification writers keep one episode through A/B/A',async()=>{
+  let saved=[];
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const storage={get:async()=>{await gate;return {autoFollowLogs:structuredClone(saved)};},set:async data=>{saved=structuredClone(data.autoFollowLogs)}};
+  const entry=signals=>({scope:'verification',episodeKey:'8:2026-10-01T00:00:00.000Z',tabId:8,at:'2026-10-01T00:00:00.000Z',signals,detail:'证据：'+signals.join(','),result:'paused'});
+  const both=Promise.all([appendExecutionLog(entry(['A']),storage),appendExecutionLog(entry(['A']),storage)]);
+  release();
+  await both;
+  assert.equal(saved.length,1);
+  await appendExecutionLog(entry(['B']),storage);
+  await appendExecutionLog(entry(['A']),storage);
+  assert.equal(saved.length,1);
+  assert.deepEqual(saved[0].signals,['A']);
+  assert.equal(saved[0].at,'2026-10-01T00:00:00.000Z');
+  assert.match(saved[0].detail,/证据：A/);
+  const other=await appendExecutionLog({scope:'mutual',detail:'panel'},storage);
+  assert.equal(other.length,2);
+});
+test('verification records stay visible in every module log selector',()=>{
+  const logs=[{id:'verify',scope:'verification',at:'2026-10-19T00:00:00Z',signals:['cf-page-title']}];
+  for (const scope of ['comment','mutual','fans','monitor','unreciprocated','autoFollow']) {
+    assert.equal(selectExecutionLogs(logs,scope)[0].id,'verify',scope);
+  }
+});
 

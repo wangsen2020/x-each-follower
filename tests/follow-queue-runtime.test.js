@@ -28,6 +28,25 @@ test('queue does not open tabs, create a database or migrate before explicit act
   await assert.rejects(runtime.handle({cmd:'followQueueRun',accountId:'123'}),/确认队列账号/);
 });
 
+test('candidate synchronization stores a profile from one snapshot without enqueueing an unchanged source',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
+  const source={module:'mutual',url:'',enabled:true};
+  const gets=[];
+  const enqueued=[];
+  const api={storage:{local:{get:async keys=>{gets.push(keys);return {followQueueBinding:binding,mutualNetwork:{users:[{handle:'target',name:'Ada',bio:'简介'}]}};}}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const store={
+    lookup:async()=>({handle:'target',state:'pending',sources:[source],profile:null}),
+    enqueue:async item=>{enqueued.push(item);return item;},
+    importOutcome:async()=>{throw new Error('no import');}
+  };
+  await createFollowQueueRuntime({api,store}).syncCandidates();
+  assert.equal(gets.filter(key => key == null).length,1);
+  assert.equal(enqueued.length,1);
+  assert.equal(enqueued[0].profile.name,'Ada');
+  assert.equal(enqueued[0].profile.bio,'简介');
+});
+
 test('candidate synchronization preserves an active successful follow against stale skipped data',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
   const source={module:'mutual',url:'',enabled:true};
