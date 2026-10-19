@@ -402,9 +402,6 @@ function renderCommentTracking() {
     if ($('commentSelectedCount')) $('commentSelectedCount').textContent = String(selectedCount);
     if ($('commentTotalVisibleCount')) $('commentTotalVisibleCount').textContent = String(users.length);
   }
-  if ($('commentBatchAddToQueue')) {
-    $('commentBatchAddToQueue').disabled = selectedCount === 0;
-  }
   document.querySelectorAll('[data-comment-filter]').forEach(button => {
     const active = button.dataset.commentFilter === activeCommentFilter;
     button.classList.toggle('active', active);
@@ -519,32 +516,7 @@ function renderCommentTracking() {
     const followButton = monitorIconButton('follow', user.followedAt ? '已关注' : '关注');
     followButton.disabled = !!user.followedAt || user.relationship?.following === true;
     followButton.addEventListener('click', () => followCommentUser(user, followButton));
-    const isFollowing = !!user.followedAt || user.relationship?.following === true;
-    const queueButton = monitorIconButton('queue', isFollowing ? '已关注' : '加入关注队列');
-    if (isFollowing) {
-      queueButton.disabled = true;
-    } else {
-      queueButton.addEventListener('click', async () => {
-        queueButton.disabled = true;
-        setMonitorIconButtonState(queueButton, true, '入队中…');
-        const res = await chrome.runtime.sendMessage({
-          cmd: 'followQueueEnqueue',
-          candidate: {
-            handle: user.handle,
-            targetUserId: user.targetUserId || user.rest_id || '',
-            sources: (user.sources || []).map(s => ({ module: 'comments', url: s.url || '', enabled: true }))
-          }
-        }).catch(err => ({ ok: false, error: err.message }));
-        if (res?.ok) {
-          setMonitorIconButtonState(queueButton, false, '已在队列');
-          $('commentTrackingStatus').textContent = `@${user.handle} 已加入关注队列。`;
-        } else {
-          setMonitorIconButtonState(queueButton, false, '加入关注队列');
-          $('commentTrackingStatus').textContent = `加入关注队列失败：${res?.error || '未知错误'}`;
-        }
-      });
-    }
-    actions.append(postsButton, queueButton, followButton, profileButton);
+    actions.append(postsButton, followButton, profileButton);
     row.append(actions);
     list.append(row);
   }
@@ -574,31 +546,6 @@ $('commentSelectAll')?.addEventListener('change', event => {
     else selectedCommentHandles.delete(k);
   }
   renderCommentTracking();
-});
-
-$('commentBatchAddToQueue')?.addEventListener('click', async () => {
-  if (!selectedCommentHandles.size) return;
-  const users = (commentTracking.users || []).filter(u => selectedCommentHandles.has(String(u.handle || '').toLowerCase()));
-  if (!users.length) return;
-  const candidates = users.map(u => ({
-    handle: u.handle,
-    targetUserId: u.targetUserId || u.rest_id || '',
-    sources: (u.sources || []).map(s => ({ module: 'comments', url: s.url || '', enabled: true }))
-  }));
-  $('commentTrackingStatus').textContent = `正在将 ${candidates.length} 位评论用户加入关注队列…`;
-  if ($('commentBatchAddToQueue')) $('commentBatchAddToQueue').disabled = true;
-  const res = await chrome.runtime.sendMessage({
-    cmd: 'followQueueEnqueue',
-    candidates
-  }).catch(err => ({ ok: false, error: err.message }));
-  if ($('commentBatchAddToQueue')) $('commentBatchAddToQueue').disabled = false;
-  if (res?.ok) {
-    $('commentTrackingStatus').textContent = `已成功将 ${res.count || candidates.length} 位评论用户加入关注队列。`;
-    selectedCommentHandles.clear();
-    renderCommentTracking();
-  } else {
-    $('commentTrackingStatus').textContent = `加入关注队列失败：${res?.error || '未知错误'}`;
-  }
 });
 
 $('openCommentAutoFollowSettings')?.addEventListener('click', openCommentAutoFollowSettings);
@@ -3566,114 +3513,8 @@ async function scanFollowerList(scanSource = 'manual') {
   }
 }
 
-let followBackRunning = false;
-let followBackStopped = false;
 
-async function processFollowBack() {
-  const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.risk?.level !== 'danger' && user.state !== 'following' && user.relationship?.following !== true);
-  if (!pending.length) {
-    monitorStatus('没有待回关账号，所有粉丝均已回关或条件不符。');
-    return;
-  }
-  let enqueuedCount = 0;
-  const enqueuedHandles = [];
-  try {
-    const res = await chrome.runtime.sendMessage({
-      cmd: 'followQueueEnqueue',
-      candidates: pending.map(user => ({
-        handle: user.handle,
-        targetUserId: user.id || user.rest_id || '',
-        module: 'fans',
-        url: `https://x.com/${user.handle}`,
-        enabled: true
-      }))
-    });
-    if (res?.ok) {
-      enqueuedCount = res.count ?? pending.length;
-      enqueuedHandles.push(...pending.map(u => u.handle));
-      await recordMonitorLog({
-        source: 'manual',
-        handle: '',
-        scannedCount: 0,
-        newFollowersCount: 0,
-        totalFollowers: (monitor.users || []).length,
-        totalFollowing: (monitor.followingUsers || []).length,
-        followBackCount: pending.length,
-        notMutualCount: getNotMutualUsers().length,
-        enqueuedCount,
-        enqueuedHandles,
-        checkpointHandle: monitor.checkpointHandle || '',
-        summary: `一键回关触发：已将 ${enqueuedCount} 位待回关粉丝拉取至统一关注队列。`,
-        result: 'success'
-      });
-    }
-  } catch (err) {
-    console.warn('拉取待回关用户到关注队列提示：', err);
-  }
 
-  const binding = (await chrome.storage.local.get('followQueueBinding')).followQueueBinding;
-  if (binding?.activated) {
-    monitorStatus(`已将 ${pending.length} 个待回关粉丝拉取至关注队列，正在跳转至关注队列…`);
-    setTab('followQueue');
-    return;
-  }
-  let tabId;
-  try { tabId = await backgroundXActionTab(); }
-  catch (error) {
-    for (const user of pending) setFollowFailure(user, error.message);
-    await chrome.storage.local.set({monitor});
-    persist('monitor', monitor);
-    renderQueue();
-    monitorStatus(`X 后台会话不可用，${pending.length} 个待回关账号已标记关注失败。`);
-    return;
-  }
-  followBackRunning = true;
-  followBackStopped = false;
-  $('processFollowBack')?.classList.add('is-busy');
-  let completed = 0;
-  try {
-    for (let i = 0; i < pending.length; i++) {
-      if (followBackStopped) {
-        monitorStatus(`已手动停止回关，本次成功回关 ${completed} 个，剩余待回关 ${monitor.queue.filter(user => user.status === 'pending').length} 个。`);
-        break;
-      }
-      const user = pending[i];
-      monitorStatus(`正在回关 (${i + 1}/${pending.length})：@${user.handle}…`);
-      let result;
-      try { result = await followViaNetwork(tabId, user); }
-      catch (error) { setFollowFailure(user, error.message); continue; }
-      if (result.reason === 'rate_limited') {
-        setFollowFailure(user, result.error || 'X 关注频率受限');
-        monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-        monitorStatus(`检测到 X 限制，已暂停后续回关（已成功回关 ${completed} 个），约一小时后再提醒。`);
-        break;
-      }
-      if (result.ok || result.reason === 'already_following') {
-        user.status = 'followed';
-        user.followedAt = new Date().toISOString();
-        completed++;
-      } else {
-        setFollowFailure(user, result.error || result.reason || '关注请求未完成');
-      }
-      monitor.queue = monitor.queue.map(item => (item.handle === user.handle ? user : item));
-      await chrome.storage.local.set({monitor});
-      renderQueue();
-
-      if (i < pending.length - 1 && !followBackStopped) {
-        await sleep(2500 + Math.floor(Math.random() * 2500));
-      }
-    }
-  } finally {
-    await closeBackgroundXActionTab(tabId);
-    followBackRunning = false;
-    $('processFollowBack')?.classList.remove('is-busy');
-    persist('monitor', monitor);
-    renderQueue();
-    if (!followBackStopped) {
-      monitorStatus(`回关处理完成，本次成功回关 ${completed} 个账号，剩余待回关 ${monitor.queue.filter(user => user.status === 'pending').length} 个。`);
-    }
-  }
-}
 
 async function startFollowerScan() {
   if (followerScanRunning) return;
@@ -3686,7 +3527,6 @@ async function startFollowerScan() {
 }
 $('scanFollowers').addEventListener('click', startFollowerScan);
 $('initialFollowers').addEventListener('click', startFollowerScan);
-$('processFollowBack').addEventListener('click', async () => { try { await processFollowBack(); } catch (error) { monitorStatus(`处理失败：${error.message}`); } });
 $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','monitorJitter','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 $('runMonitorScanNow')?.addEventListener('click', async () => {
@@ -4032,7 +3872,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.3.15';
+  const expectedVersion = '1.3.16';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_1_1') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_1_1', '1');
     chrome.runtime.reload();

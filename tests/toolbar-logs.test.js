@@ -13,3 +13,13 @@ test('execution logs remain reachable from all source pages and the queue',()=>{
  assert.ok(panel.includes("document.addEventListener('open-execution-logs'"));
  assert.equal(html.includes('id="commentBatchAddToQueue"'),false);
 });
+
+test('source pages omit redundant manual queue controls and handlers',()=>{
+ const html=readFileSync(new URL('../panel.html',import.meta.url),'utf8');
+ const panel=readFileSync(new URL('../panel.js',import.meta.url),'utf8');
+ for(const token of ['commentBatchAddToQueue','processFollowBack','加入关注队列']) {
+  assert.equal(html.includes(token),false);assert.equal(panel.includes(token),false);
+ }
+ assert.ok(html.includes('id="monitorAutoEnqueue"'));
+ assert.ok(html.includes('id="runMonitorScanNow"'));
+});

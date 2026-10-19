@@ -467,7 +467,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.3.15';
+export const BACKGROUND_BUILD_VERSION = '1.3.16';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (['showGrokVerificationAlert','focusGrokVerificationPage'].includes(message?.cmd)) {
