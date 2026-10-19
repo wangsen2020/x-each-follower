@@ -472,7 +472,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.6.6';
+export const BACKGROUND_BUILD_VERSION = '1.6.7';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd === 'recordData') {
