@@ -4382,7 +4382,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.8.0';
+  const expectedVersion = '1.8.1';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_8_0') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_8_0', '1');
     chrome.runtime.reload();
