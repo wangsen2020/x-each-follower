@@ -63,10 +63,28 @@ export function detectGrokVerificationOnPage() {
     if (name !== 'client-api.arkoselabs.com' && !name.endsWith('.arkoselabs.com')) return false;
     return pathAt(url.pathname, '/fc') || pathAt(url.pathname, '/v2');
   }
+  const turnstileInputs = document.querySelectorAll?.('input[name="cf-turnstile-response"], [name="cf-chl-widget-response"], [name="cf_chl_turnstile_response"]');
+  const hasValidTurnstileToken = Array.from(turnstileInputs || []).some(input => {
+    const val = input?.value || input?.getAttribute?.('value') || '';
+    return typeof val === 'string' && val.length > 20;
+  });
+  const composer = composerUsable();
+  const title = document.title || '';
+  const text = (document.body?.innerText || '').slice(0, 4000);
+  const titleHit = /just a moment|attention required|checking your browser|security verification|请稍候|安全检查|正在验证/i.test(title);
+  const bodyHit = /verify (?:that )?you are human|verifying you are human|checking your browser|performing security verification|确认您是真人|验证您是人类|请完成安全验证|人机验证|正在进行安全验证|安全服务防护恶意自动程序|在验证您不是自动程序期间/i.test(text);
+  const cfAttribution = /cloudflare|由\s*cloudflare\s*提供/i.test(text);
+  const challengeDom = [...(document.querySelectorAll?.('#challenge-running,#challenge-stage,#cf-challenge-running,.cf-browser-verification') || [])].some(visible);
+  const activeChallengeUi = challengeDom || (titleHit && (cfAttribution || bodyHit)) || (bodyHit && cfAttribution);
+
   for (const node of document.querySelectorAll?.('iframe') || []) {
     const url = parsed(node.getAttribute?.('src') || node.src);
     if (!visible(node) || !url) continue;
-    if (cloudflareFrame(url)) signals.push('cf-challenge-iframe');
+    if (cloudflareFrame(url)) {
+      if (!hasValidTurnstileToken || activeChallengeUi || !composer) {
+        signals.push('cf-challenge-iframe');
+      }
+    }
     else if (arkoseFrame(url)) signals.push('arkose-iframe');
   }
   for (const node of document.querySelectorAll?.('#arkoseFrame,[data-testid="arkoseFrame"]') || []) {
@@ -76,14 +94,8 @@ export function detectGrokVerificationOnPage() {
     const url = parsed(node.getAttribute?.('src') || node.src);
     if (arkoseFrame(url)) signals.push('arkose-widget');
   }
-  const composer = composerUsable();
-  const title = document.title || '';
-  const text = (document.body?.innerText || '').slice(0, 4000);
-  const titleHit = /just a moment|attention required|checking your browser|security verification|请稍候|安全检查|正在验证/i.test(title);
-  const bodyHit = /verify (?:that )?you are human|verifying you are human|checking your browser|performing security verification|确认您是真人|验证您是人类|请完成安全验证|人机验证|正在进行安全验证|安全服务防护恶意自动程序|在验证您不是自动程序期间/i.test(text);
-  const cfAttribution = /cloudflare|由\s*cloudflare\s*提供/i.test(text);
-  const challengeDom = [...(document.querySelectorAll?.('#challenge-running,#challenge-stage,#cf-challenge-running,.cf-browser-verification') || [])].some(visible);
   // Challenge copy alone is not enough. Need a visible challenge node, or a matching title plus Cloudflare attribution.
+  if (hasValidTurnstileToken && composer && !activeChallengeUi && signals.length === 0) return null;
   if (!composer && bodyHit && (challengeDom || (titleHit && cfAttribution))) {
     if (challengeDom) signals.push('cf-page-dom');
     if (titleHit) signals.push('cf-page-title');

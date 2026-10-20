@@ -79,6 +79,7 @@ export function createDefaultSessionState(overrides = {}) {
     lastUsedAt: 0,
     lastError: null,
     pausedReuse: false,
+    quotaUsage: null,
     ...overrides
   };
 }
@@ -114,6 +115,260 @@ export async function resetGrokSessionState() {
 }
 
 // ---------------- in-page 函数（注入 grok.com 页面执行，必须完全自包含） ----------------
+
+/**
+ * in-page: 探测 grok.com 额度使用量与重置时间
+ * 路径：打开账号菜单 -> 点击设置 -> 选择“使用量”标签页 -> 读取 SuperGrok 与 Grok Bot 剩余额度与重置时间 -> 安全关闭弹窗
+ */
+export async function inspectGrokComUsageOnPage() {
+  const host = location.hostname;
+  if (!host.includes('grok.com')) return { ok: false, reason: '非 grok.com 页面' };
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const btn = document.querySelector('button[aria-label*="Account menu"], button[aria-label*="Watson Taylor"], [aria-label*="Account"], [aria-label*="账户"], [aria-label*="账号"]');
+  if (!btn) return { ok: false, notLoggedIn: true, reason: '未找到账户菜单按钮（可能未登录）' };
+
+  let menuOpenedByUs = false;
+  let dialogOpenedByUs = false;
+
+  const closeDialog = () => {
+    if (!dialogOpenedByUs) return;
+    const currentDialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
+    if (!currentDialog) return;
+    const closeBtn = currentDialog.querySelector('button[aria-label="关闭"], button[aria-label="Close"], button[aria-label*="close"]');
+    if (closeBtn) closeBtn.click();
+    else {
+      try {
+        currentDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      } catch {}
+    }
+  };
+
+  const closeMenu = () => {
+    if (!menuOpenedByUs) return;
+    try {
+      btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+    } catch {}
+  };
+
+  try {
+    const existingMenu = document.querySelector('[role="menu"]');
+    if (!existingMenu) {
+      btn.click();
+      menuOpenedByUs = true;
+      await sleep(600);
+    }
+
+    const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], [role="menu"] button, [role="menu"] div'));
+    const settingsItem = menuItems.find(el => {
+      const t = (el.innerText || el.textContent || '').trim();
+      return /^(?:设置|settings)$/i.test(t) || t.includes('设置') || t.includes('Settings');
+    });
+    if (!settingsItem) {
+      return { ok: false, reason: '未找到设置菜单项' };
+    }
+
+    const priorDialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
+    settingsItem.click();
+    if (!priorDialog) dialogOpenedByUs = true;
+    await sleep(1000);
+
+    const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
+    if (!dialog) return { ok: false, reason: '设置弹窗未打开' };
+
+    const tabs = Array.from(dialog.querySelectorAll('button, [role="tab"], div'));
+    const usageTab = tabs.find(el => {
+      const t = (el.innerText || el.textContent || '').trim();
+      return /^(?:使用量|usage)$/i.test(t);
+    });
+    if (!usageTab) {
+      return { ok: false, reason: '未找到使用量选项卡' };
+    }
+    usageTab.click();
+    await sleep(1200);
+
+    let superGrokUsed = null;
+    let superGrokResetAt = null;
+    let grokBotUsed = null;
+    let grokBotResetAt = null;
+
+    const h3List = Array.from(dialog.querySelectorAll('h3, h4, div.font-semibold'));
+    for (const h3 of h3List) {
+      const title = (h3.innerText || h3.textContent || '').trim();
+      const card = h3.closest('.flex-col') || h3.parentElement;
+      if (/SuperGrok/i.test(title)) {
+        const flow = card?.querySelector('number-flow-react[aria-label]');
+        const aria = flow?.getAttribute('aria-label') || '';
+        const m = aria.match(/(\d+)%/);
+        if (m) superGrokUsed = parseInt(m[1], 10);
+
+        if (superGrokUsed === null) {
+          const text = card?.innerText || card?.textContent || '';
+          const buildM = text.match(/Grok Build\s*(\d+)%/);
+          const chatM = text.match(/(?:聊天|Chat)\s*(\d+)%/);
+          if (buildM || chatM) {
+            superGrokUsed = (buildM ? parseInt(buildM[1], 10) : 0) + (chatM ? parseInt(chatM[1], 10) : 0);
+          }
+        }
+
+        const resetMatch = (card?.innerText || card?.textContent || '').match(/(?:重置|Resets?)\s*(\d+年\d+月\d+日\s*\d+:\d+|\S+)/i);
+        if (resetMatch) superGrokResetAt = resetMatch[1].trim();
+      } else if (/Grok Bot/i.test(title)) {
+        const flow = card?.querySelector('number-flow-react[aria-label]');
+        const aria = flow?.getAttribute('aria-label') || '';
+        const m = aria.match(/(\d+)%/);
+        if (m) grokBotUsed = parseInt(m[1], 10);
+
+        const bar = card?.querySelector('[role="progressbar"][aria-valuenow]');
+        if (grokBotUsed === null && bar) {
+          grokBotUsed = parseInt(bar.getAttribute('aria-valuenow'), 10);
+        }
+
+        const resetMatch = (card?.innerText || card?.textContent || '').match(/(?:重置|Resets?)\s*(\d+年\d+月\d+日\s*\d+:\d+|\S+)/i);
+        if (resetMatch) grokBotResetAt = resetMatch[1].trim();
+      }
+    }
+
+    const superGrokRemaining = superGrokUsed !== null ? Math.max(0, 100 - superGrokUsed) : null;
+    const grokBotRemaining = grokBotUsed !== null ? Math.max(0, 100 - grokBotUsed) : null;
+
+    return {
+      ok: true,
+      sampledAt: Date.now(),
+      confidence: (superGrokUsed !== null || grokBotUsed !== null) ? 'high' : 'low',
+      superGrok: {
+        usedPercent: superGrokUsed,
+        remainingPercent: superGrokRemaining,
+        resetAt: superGrokResetAt,
+        isExhausted: superGrokRemaining !== null ? superGrokRemaining <= 2 : false
+      },
+      grokBot: {
+        usedPercent: grokBotUsed,
+        remainingPercent: grokBotRemaining,
+        resetAt: grokBotResetAt,
+        isAvailable: grokBotRemaining !== null ? grokBotRemaining > 5 : false
+      }
+    };
+  } finally {
+    closeDialog();
+    closeMenu();
+  }
+}
+
+/**
+ * in-page: 探测当前用户配置的 Grok Bot 列表（优先读取 localStorage 目录，辅助匹配侧边栏）
+ */
+export function inspectGrokBotsOnPage() {
+  const bots = [];
+  try {
+    const raw = localStorage.getItem('grok-bot-mention-directory');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && item.name) {
+            bots.push({
+              agentId: item.agentId || null,
+              name: item.name,
+              description: item.description || ''
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  const sidebarElements = Array.from(document.querySelectorAll('a, button, div[role="button"]'));
+  for (const el of sidebarElements) {
+    const text = (el.innerText || el.textContent || '').trim();
+    if (text && !bots.some(b => b.name === text)) {
+      const parentSection = el.closest('nav, aside, [role="navigation"]') || el.parentElement;
+      const sectionText = (parentSection?.innerText || parentSection?.textContent || '');
+      if (sectionText.includes('机器人') || sectionText.includes('Bots') || sectionText.includes('Agents')) {
+        if (text !== '机器人' && text !== 'Bots' && text !== 'Agents' && text.length < 30) {
+          bots.push({ agentId: null, name: text, description: '' });
+        }
+      }
+    }
+  }
+
+  return { ok: true, bots };
+}
+
+/**
+ * in-page: 切换至目标 Grok Bot 会话
+ */
+export async function switchToGrokBotOnPage(target) {
+  const botName = typeof target === 'string' ? target : (target?.name || '');
+  const agentId = typeof target === 'object' && target?.agentId ? target.agentId : null;
+  if (!botName && !agentId) return { ok: false, reason: '未指定目标 Grok Bot' };
+
+  const currentPath = typeof location !== 'undefined' ? (location.pathname || '') : '';
+  const currentSearch = typeof location !== 'undefined' ? (location.search || '') : '';
+  const composer = document.querySelector('[contenteditable="true"], textarea');
+  const placeholder = composer?.getAttribute('placeholder') || '';
+  const headerText = (document.querySelector('header, [role="banner"], h1, h2, [data-testid="chat-header"]')?.innerText || '');
+
+  const matchesBotTarget = () => {
+    if (agentId && (currentPath.includes(`/agent/${agentId}`) || currentPath.includes(`/bot/${agentId}`) || currentSearch.includes(`agent=${agentId}`) || currentSearch.includes(`bot=${agentId}`))) {
+      return true;
+    }
+    if (botName) {
+      if (currentPath.includes(`/agent/${encodeURIComponent(botName)}`) || currentPath.includes(`/bot/${encodeURIComponent(botName)}`)) return true;
+      if (placeholder && placeholder.toLowerCase().includes(botName.toLowerCase())) return true;
+      if (headerText && headerText.toLowerCase().includes(botName.toLowerCase())) return true;
+    }
+    return false;
+  };
+
+  if (matchesBotTarget() && composer) {
+    return { ok: true, botName, agentId, alreadyActive: true };
+  }
+
+  const candidates = Array.from(document.querySelectorAll('a, button, div[role="button"], span'));
+  const match = candidates.find(el => {
+    const text = (el.innerText || el.textContent || '').trim();
+    const href = el.closest('a')?.getAttribute('href') || el.getAttribute('href') || '';
+    if (agentId && href && (href.includes(`/agent/${agentId}`) || href.includes(`/bot/${agentId}`))) {
+      return true;
+    }
+    if (botName && text.toLowerCase() === botName.toLowerCase()) {
+      return el.closest('a') || el.closest('button') || el.getAttribute('role') === 'button' || el.classList?.contains('cursor-pointer') || el.parentElement?.getAttribute('role') === 'button';
+    }
+    return false;
+  });
+
+  const clickable = match ? (match.closest('a') || match.closest('button') || match) : null;
+  if (!clickable) {
+    return { ok: false, reason: `未在页面中找到 Grok Bot [${botName || agentId}] 的入口` };
+  }
+
+  clickable.click();
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (let i = 0; i < 20; i++) {
+    await sleep(300);
+    const curPath = typeof location !== 'undefined' ? (location.pathname || '') : '';
+    const curSearch = typeof location !== 'undefined' ? (location.search || '') : '';
+    const curComposer = document.querySelector('[contenteditable="true"], textarea');
+    const curPlaceholder = curComposer?.getAttribute('placeholder') || '';
+    const curHeader = (document.querySelector('header, [role="banner"], h1, h2, [data-testid="chat-header"]')?.innerText || '');
+
+    const verified = (
+      (agentId && (curPath.includes(`/agent/${agentId}`) || curPath.includes(`/bot/${agentId}`) || curSearch.includes(`agent=${agentId}`) || curSearch.includes(`bot=${agentId}`))) ||
+      (botName && (
+        (curPlaceholder && curPlaceholder.toLowerCase().includes(botName.toLowerCase())) ||
+        (curHeader && curHeader.toLowerCase().includes(botName.toLowerCase())) ||
+        curPath.includes(`/agent/${encodeURIComponent(botName)}`) ||
+        curPath.includes(`/bot/${encodeURIComponent(botName)}`)
+      ))
+    );
+
+    if (verified && curComposer) {
+      return { ok: true, botName, agentId, switched: true };
+    }
+  }
+  return { ok: false, reason: `切换至 Grok Bot [${botName || agentId}] 超时或未能确认目标会话就绪` };
+}
 
 /**
  * in-page: 从可见的账号菜单检查账号身份，提取登录邮箱并转换为稳定哈希值
@@ -218,7 +473,7 @@ export function findVisibleGrokComInputOnPage() {
  * in-page: 提交前安全检查
  * 检查项：是否已登录、输入框是否存在未发送的用户草稿、当前会话是否被用户手动切换
  */
-export function inspectGrokComPageBeforeSubmitOnPage(nonce, conversationId) {
+export function inspectGrokComPageBeforeSubmitOnPage(nonce, conversationId, options = {}) {
   const host = location.hostname;
   if (host !== 'grok.com' && !String(host || '').endsWith('.grok.com')) return { ok: false, reason: '当前页面不是 grok.com' };
   if (/\/(login|sign-?in)/i.test(location.pathname)) return { ok: false, notLoggedIn: true, reason: 'grok.com 未登录' };
@@ -257,26 +512,51 @@ export function inspectGrokComPageBeforeSubmitOnPage(nonce, conversationId) {
     };
   }
 
-  // 2. 会话归属检查：期望会话与当前会话必须完全一致。首页对已有会话、或已有会话对期望新会话，都拒绝。
+  // 2. 会话归属与目标 Bot 核验
   const pathname = location.pathname;
-  const match = pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
-  const currentConvId = match ? match[1] : null;
-  const expectedConvId = conversationId || null;
-  if (expectedConvId !== currentConvId) {
-    return {
-      ok: false,
-      switchedConversation: true,
-      currentConvId,
-      expectedConvId,
-      reason: expectedConvId
-        ? '当前页面不是已记录的会话，已暂停自动提交'
-        : '期望新会话，但当前页面已位于其他会话，已暂停自动提交'
-    };
+  const search = location.search;
+  const expectedBotName = options?.expectedBotName;
+  const expectedAgentId = options?.expectedAgentId;
+
+  if (expectedBotName || expectedAgentId) {
+    const headerText = (document.querySelector('header, [role="banner"], h1, h2, [data-testid="chat-header"]')?.innerText || '');
+    const placeholder = input.getAttribute('placeholder') || '';
+    const inBotPage = Boolean(
+      (expectedAgentId && (pathname.includes(`/agent/${expectedAgentId}`) || pathname.includes(`/bot/${expectedAgentId}`) || search.includes(`agent=${expectedAgentId}`) || search.includes(`bot=${expectedAgentId}`))) ||
+      (expectedBotName && (
+        (placeholder && placeholder.toLowerCase().includes(expectedBotName.toLowerCase())) ||
+        (headerText && headerText.toLowerCase().includes(expectedBotName.toLowerCase())) ||
+        pathname.includes(`/agent/${encodeURIComponent(expectedBotName)}`) ||
+        pathname.includes(`/bot/${encodeURIComponent(expectedBotName)}`)
+      ))
+    );
+    if (!inBotPage) {
+      return {
+        ok: false,
+        switchedConversation: true,
+        reason: `提交前核验失败：当前页面不是目标 Grok Bot [${expectedBotName || expectedAgentId}] 会话`
+      };
+    }
+  } else {
+    const match = pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
+    const currentConvId = match ? match[1] : null;
+    const expectedConvId = conversationId || null;
+    if (expectedConvId !== currentConvId) {
+      return {
+        ok: false,
+        switchedConversation: true,
+        currentConvId,
+        expectedConvId,
+        reason: expectedConvId
+          ? '当前页面不是已记录的会话，已暂停自动提交'
+          : '期望新会话，但当前页面已位于其他会话，已暂停自动提交'
+      };
+    }
   }
 
   return {
     ok: true,
-    currentConvId,
+    currentConvId: (pathname.match(/\/c\/([a-zA-Z0-9_-]+)/) || [])[1] || null,
     currentUrl: location.href,
     hasDraft: draft.length > 0
   };
@@ -333,13 +613,9 @@ export function confirmGrokComPromptAcceptedOnPage(nonce) {
     return { accepted: false, reason: '非 grok.com 页面' };
   }
 
-  const pathname = location.pathname;
-  const match = pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
-  const conversationId = match ? match[1] : null;
+  const composers = Array.from(document.querySelectorAll?.('[contenteditable="true"], textarea, form, [data-testid="chat-input-container"]') || []);
 
-  const composers = Array.from(document.querySelectorAll('[contenteditable="true"], textarea, form, [data-testid="chat-input-container"]'));
-
-  const userBubbles = Array.from(document.querySelectorAll('[data-testid="user-message"]'));
+  const userBubbles = Array.from(document.querySelectorAll?.('[data-testid="user-message"]') || []);
   const matchingBubble = userBubbles.find(bubble => {
     const text = bubble.textContent || '';
     if (!text.includes(nonce)) return false;
@@ -348,6 +624,9 @@ export function confirmGrokComPromptAcceptedOnPage(nonce) {
   });
 
   const hasUserBubbleOutsideComposer = Boolean(matchingBubble);
+  const pathname = location.pathname || '';
+  const match = pathname.match(/^\/(?:c|agent|bot|g)\/([a-zA-Z0-9_-]+)/) || pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
+  const conversationId = match ? match[1] : null;
   const accepted = hasUserBubbleOutsideComposer && Boolean(conversationId);
 
   return {
@@ -372,7 +651,7 @@ export function confirmGrokComPromptAcceptedOnPage(nonce) {
  * 5. 推荐问题支持变体 1（xds-button / min-w-0 span / 弯箭头）与变体 2（arrow-down-right / text-box:trim-both）。
  * 6. 必须核验无 active stop 按钮，且 Markdown 正文非空稳定。
  */
-export function readGrokComTurnAnswerOnPage(nonce, preSubmitSignatures = []) {
+export function readGrokComTurnAnswerOnPage(nonce, preSubmitSignatures = [], options = {}) {
   // 1. 定位包含此 nonce 的用户气泡
   const userBubbles = Array.from(document.querySelectorAll('[data-testid="user-message"]'));
   const userMessage = userBubbles.find(b => (b.textContent || '').includes(nonce));
@@ -403,6 +682,38 @@ export function readGrokComTurnAnswerOnPage(nonce, preSubmitSignatures = []) {
     return { text: '', done: false, userMessageFound: true, waitingForAssistant: true };
   }
 
+  // 检查额度提示卡片（识别用户提供的内联提示卡片：您的使用上限已更新 / 您现在可以继续了 / 重试）
+  const wholeAssistantText = (assistantMessage.innerText || assistantMessage.textContent || '').trim();
+  const isQuotaUpdatedCard = /使用上限已更新|usage limit has (?:been )?updated|usage limit has reset|现在可以继续了|you can (?:now )?continue/i.test(wholeAssistantText);
+  const isQuotaExhaustedCard = /已达(?:到)?使用上限|已达到上限|usage limit reached|limit reached|you(?:'ve| have) reached your (?:daily |weekly )?limit/i.test(wholeAssistantText);
+
+  const retryBtn = Array.from(assistantMessage.querySelectorAll('button, [role="button"]')).find(b => {
+    const t = (b.innerText || b.textContent || b.getAttribute?.('aria-label') || '').trim();
+    return /^(?:重试|retry)$/i.test(t) || t.includes('重试') || t.includes('Retry');
+  });
+
+  if (isQuotaUpdatedCard && retryBtn) {
+    return {
+      text: '',
+      done: false,
+      quotaPrompt: { type: 'quota_updated_retry_available', canRetry: true },
+      failed: false,
+      reason: '检测到 Grok 使用上限已更新提示卡片，可安全重试',
+      userMessageFound: true
+    };
+  }
+
+  if (isQuotaExhaustedCard && !retryBtn) {
+    return {
+      text: '',
+      done: false,
+      quotaPrompt: { type: 'quota_exhausted', canRetry: false },
+      failed: true,
+      reason: 'Grok 使用上限已达',
+      userMessageFound: true
+    };
+  }
+
   // 3. 提取 Markdown 正文（严格仅取 .response-content-markdown，严禁全页面 fallback）
   const mdEl = assistantMessage.querySelector('.response-content-markdown');
   const turnText = mdEl ? (mdEl.innerText || mdEl.textContent || '').trim() : '';
@@ -421,7 +732,7 @@ export function readGrokComTurnAnswerOnPage(nonce, preSubmitSignatures = []) {
   const stillGenerating = stopButtons.length > 0;
 
   // 5. 检查模型报错信息
-  const failed = /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复|An error occurred|Limit reached/i.test(turnText);
+  const failed = /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复|An error occurred|Limit reached|已达到使用上限/i.test(turnText);
   if (failed) {
     return { text: '', done: false, failed: true, reason: 'Grok 模型报错或无法回复' };
   }
@@ -496,8 +807,16 @@ export function readGrokComTurnAnswerOnPage(nonce, preSubmitSignatures = []) {
   // 同一问句可以在新回合再次出现。新鲜度看当前回合的节点是否为新节点或文本已相对快照更新，不看问句是否和上一轮相同。
   const hasNewRecommendations = currentQuestions.length > 0;
 
-  // 严格完成门禁：无停止按钮、具有非空 Markdown、且本轮新推荐问题已出现
-  const done = !stillGenerating && turnText.length > 0 && Boolean(hasNewRecommendations);
+  // 严格完成门禁：无停止按钮、具有非空 Markdown、且本轮新推荐问题已出现或匹配 Bot 回复终态
+  const hasTerminatingCommentTag = /【引用评价结束】/.test(turnText) && /【评价语言:/.test(turnText);
+  const isBotChat = Boolean(
+    (options && options.isBotChannel) ||
+    (typeof location !== 'undefined' && (
+      (location.pathname && (location.pathname.includes('/agent/') || location.pathname.includes('/bot/'))) ||
+      (location.search && location.search.includes('bot='))
+    ))
+  );
+  const done = !stillGenerating && turnText.length > 0 && (Boolean(hasNewRecommendations) || isBotChat || hasTerminatingCommentTag);
 
   return {
     text: turnText,
@@ -1206,6 +1525,7 @@ export async function executeGrokComTask({
   prompt,
   nonce,
   taskType = 'comment',
+  targetBot = null,
   timeoutMs = 60000,
   sleep = ms => new Promise(r => setTimeout(r, ms)),
   extractFn = null
@@ -1288,17 +1608,94 @@ export async function executeGrokComTask({
       return { ok: false, reason: '检测到当前登录账号与常驻会话所有者不一致，已拒绝提交以保护账号隔离' };
     }
 
+    // 检查额度与配额熔断（小于等于 2% 触发备用通道或熔断）
+    const now = Date.now();
+    const quotaCacheTtl = 15 * 60 * 1000;
+    let quota = session.quotaUsage;
+    if (!quota || !quota.fetchedAt || (now - quota.fetchedAt > quotaCacheTtl)) {
+      try {
+        const quotaRes = (await executeGrokScript({
+          target: { tabId },
+          func: inspectGrokComUsageOnPage
+        }).catch(err => {
+          if (err?.userActionRequired || err?.grokVerificationTimeout) throw err;
+          return [];
+        }))?.[0]?.result;
+        if (quotaRes?.ok) {
+          quota = { ...quotaRes, fetchedAt: now };
+          session.quotaUsage = quota;
+          await saveGrokSessionState(session);
+        } else {
+          session.quotaUsage = null;
+        }
+      } catch (err) {
+        console.warn('[executeGrokComTask] inspectGrokComUsageOnPage error:', err);
+        session.quotaUsage = null;
+      }
+    }
+
+    let activeBotName = null;
+    let activeAgentId = null;
+    let targetChannel = 'grok.com';
+    if (quota?.superGrok?.isExhausted) {
+      if (quota?.grokBot?.isAvailable) {
+        const botRes = (await executeGrokScript({
+          target: { tabId },
+          func: inspectGrokBotsOnPage
+        }).catch(() => []))?.[0]?.result;
+
+        const availableBots = botRes?.bots || [];
+        let candidateBot = null;
+        if (targetBot) {
+          const reqName = typeof targetBot === 'string' ? targetBot : targetBot.name;
+          const reqAgentId = typeof targetBot === 'object' ? targetBot.agentId : null;
+          candidateBot = availableBots.find(b => (reqAgentId && b.agentId === reqAgentId) || (reqName && b.name === reqName)) || null;
+        } else if (session.preferredBot) {
+          const pref = session.preferredBot;
+          candidateBot = availableBots.find(b => (pref.agentId && b.agentId === pref.agentId) || (pref.name && b.name === pref.name)) || null;
+        } else if (availableBots.length === 1) {
+          candidateBot = availableBots[0];
+        }
+
+        if (candidateBot) {
+          const switchRes = (await executeGrokScript({
+            target: { tabId },
+            func: switchToGrokBotOnPage,
+            args: [candidateBot]
+          }).catch(() => []))?.[0]?.result;
+
+          if (switchRes?.ok) {
+            activeBotName = switchRes.botName || candidateBot.name;
+            activeAgentId = switchRes.agentId || candidateBot.agentId || null;
+            targetChannel = `grok.com (bot: ${activeBotName}${activeAgentId ? `, id: ${activeAgentId}` : ''})`;
+          } else {
+            activeBotName = null;
+            activeAgentId = null;
+          }
+        }
+      }
+
+      if (!activeBotName) {
+        return {
+          ok: false,
+          quotaExhausted: true,
+          reason: `SuperGrok 额度已耗尽（剩余 ${quota?.superGrok?.remainingPercent ?? 0}%${quota?.superGrok?.resetAt ? `，重置时间：${quota.superGrok.resetAt}` : ''}），且无可用 Grok Bot 备用通道`,
+          quota
+        };
+      }
+    }
+
     // 1. 检查是否需要轮换（第 51 轮前核验删除旧会话并在同一窗口开启新会话）
     if (session.acceptedCount >= session.limit) {
       await rotateGrokConversation(session, tabId, sleep);
       session = await getGrokSessionState();
     }
 
-    // 2. 提交前安全核验（未登录、用户草稿、错误会话）
+    // 2. 提交前安全核验（未登录、用户草稿、错误会话或错误 Bot）
     const inspect = (await executeGrokScript({
       target: { tabId },
       func: inspectGrokComPageBeforeSubmitOnPage,
-      args: [nonce, session.conversationId]
+      args: [nonce, session.conversationId, { expectedBotName: activeBotName, expectedAgentId: activeAgentId }]
     }).catch(e => {
       if (e?.userActionRequired || e?.grokVerificationTimeout) throw e;
       return [{ result: { ok: false, reason: String(e?.message || e) } }];
@@ -1409,7 +1806,7 @@ export async function executeGrokComTask({
         dom = (await executeGrokScript({
           target: { tabId },
           func: readGrokComTurnAnswerOnPage,
-          args: [nonce, session.activeRequest.preSubmitSignatures]
+          args: [nonce, session.activeRequest.preSubmitSignatures, { isBotChannel: Boolean(activeBotName) }]
         }))?.[0]?.result;
       } catch (error) {
         if (error?.userActionRequired || error?.grokVerificationTimeout) throw error;
@@ -1418,6 +1815,23 @@ export async function executeGrokComTask({
         session.lastError = '读取回答时发生异常，在途请求已隔离直至对账';
         await saveGrokSessionState(session);
         return { ok: false, reason: session.lastError, uncertain: true };
+      }
+
+      if (dom?.quotaPrompt) {
+        if (dom.quotaPrompt.type === 'quota_updated_retry_available') {
+          session.activeRequest = null;
+          session.state = session.acceptedCount >= session.limit ? 'rotation_pending' : 'ready';
+          session.lastError = dom.reason;
+          await saveGrokSessionState(session);
+          return { ok: false, quotaUpdatedRetryAvailable: true, reason: dom.reason };
+        }
+        if (dom.quotaPrompt.type === 'quota_exhausted') {
+          session.activeRequest = null;
+          session.state = session.acceptedCount >= session.limit ? 'rotation_pending' : 'ready';
+          session.lastError = dom.reason;
+          await saveGrokSessionState(session);
+          return { ok: false, quotaExhausted: true, reason: dom.reason };
+        }
       }
 
       if (dom?.failed) {
@@ -1466,9 +1880,9 @@ export async function executeGrokComTask({
     if (finalAnswer) {
       if (extractFn) {
         const extracted = extractFn(finalAnswer);
-        return { ok: true, ...extracted, rawText: finalAnswer, channel: 'grok.com', acceptedCount: session.acceptedCount };
+        return { ok: true, ...extracted, rawText: finalAnswer, channel: targetChannel, botName: activeBotName, agentId: activeAgentId, acceptedCount: session.acceptedCount };
       }
-      return { ok: true, text: finalAnswer, channel: 'grok.com', acceptedCount: session.acceptedCount };
+      return { ok: true, text: finalAnswer, channel: targetChannel, botName: activeBotName, agentId: activeAgentId, acceptedCount: session.acceptedCount };
     }
 
     return { ok: false, reason: 'grok.com 生成超时或未给出符合格式的输出', acceptedCount: session.acceptedCount };
@@ -1482,6 +1896,7 @@ export async function requestGrokComPersistentSession({
   prompt,
   nonce = makeNonce(),
   taskType = 'comment',
+  targetBot = null,
   timeoutMs = 60000,
   sleep = ms => new Promise(r => setTimeout(r, ms)),
   extractFn = null
@@ -1492,6 +1907,7 @@ export async function requestGrokComPersistentSession({
       prompt,
       nonce,
       taskType,
+      targetBot,
       timeoutMs
     });
     if (!response?.ok) {
@@ -1505,12 +1921,12 @@ export async function requestGrokComPersistentSession({
     const rawText = response.text || '';
     if (extractFn) {
       const extracted = extractFn(rawText);
-      return { ok: true, ...extracted, rawText, channel: 'grok.com', acceptedCount: response.acceptedCount };
+      return { ok: true, ...extracted, rawText, channel: response.channel || 'grok.com', botName: response.botName, agentId: response.agentId, acceptedCount: response.acceptedCount };
     }
-    return { ok: true, text: rawText, channel: 'grok.com', acceptedCount: response.acceptedCount };
+    return { ok: true, text: rawText, channel: response.channel || 'grok.com', botName: response.botName, agentId: response.agentId, acceptedCount: response.acceptedCount };
   }
 
-  return executeGrokComTask({ prompt, nonce, taskType, timeoutMs, sleep, extractFn });
+  return executeGrokComTask({ prompt, nonce, taskType, targetBot, timeoutMs, sleep, extractFn });
 }
 
 /**

@@ -51,5 +51,5 @@
 
 ## Git Flow 分支纪律
 
-- 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；当前统一整合分支为 `feature/next-iteration`。此约定替代旧的默认 `codex/` 前缀规则。
-- 本次 1.4.0 为发行准备：完成测试和实机验收后，按用户指令执行 feature finish、release start/finish 和推送；准备版本号不等于已发布。
+- 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；发布前先确认实际分支状态。此约定替代旧的默认 `codex/` 前缀规则。
+- 本次 1.7.1 为发行准备：完成测试和实机验收后，按用户指令执行 feature finish、release start/finish 和推送；准备版本号不等于已发布。

@@ -6,7 +6,7 @@ import {createRecordMigration, hashCanonical, flattenLegacySnapshot, moduleForPa
 import {createRecordProjection} from './record-projection.js';
 import {filterMutualTrackingUsers} from './scoring.js';
 import {mutualUserCategory, personalRelationshipLabel} from './network-api.js';
-import {applyRelationshipSnapshot, buildRelationshipIndex, commentRelationshipLabel, deriveNotMutualUsers, deriveTrackerUsers} from './panel-data.js';
+import {applyRelationshipSnapshot, buildRelationshipIndex, commentRelationshipLabel, deriveNotMutualUsers, deriveTrackerUsers} from './relationship-rules.js';
 import {createStorageWriteQueue} from './storage-write-queue.js';
 
 export const LEGACY_RECORD_KEYS = [
@@ -479,6 +479,10 @@ export function createRecordRuntime({
   storage,
   durableGet,
   durableSet,
+  durableKeys,
+  durableGetStrict,
+  durableKeysStrict,
+  durableAppendIncremental,
   indexedDB: indexedDBImpl,
   IDBKeyRange: keyRangeImpl,
   dbName = 'x-each-follower-records',
@@ -489,6 +493,9 @@ export function createRecordRuntime({
 } = {}) {
   if (!storage?.local?.get || !storage.local.set) throw new Error('storage.local get and set are required');
   if (typeof durableGet !== 'function' || typeof durableSet !== 'function') throw new Error('durable backup access is required');
+  // Recovery must see storage failures. Forgiving durableGet/durableKeys stay available for best-effort callers.
+  const readRecovery = typeof durableGetStrict === 'function' ? durableGetStrict : durableGet;
+  const listRecovery = typeof durableKeysStrict === 'function' ? durableKeysStrict : durableKeys;
   const indexed = indexedDBImpl || globalThis.indexedDB;
   const keyRange = keyRangeImpl || globalThis.IDBKeyRange;
   const repository = createRecordRepository({indexedDB: indexed, IDBKeyRange: keyRange, dbName, now});
@@ -525,21 +532,202 @@ export function createRecordRuntime({
     return clone(progress);
   }
 
+  async function discoverBaseline() {
+    let localSnapshot = {};
+    let localFlatCount = 0;
+    let localReadError = null;
+    try {
+      localSnapshot = await readLegacy(LEGACY_RECORD_KEYS);
+      localFlatCount = (await flattenLegacySnapshot(localSnapshot)).records.length;
+    } catch (err) {
+      localReadError = err;
+    }
+
+    if (localFlatCount > 0) {
+      const fingerprint = await hashCanonical(localSnapshot);
+      return {
+        sourceType: 'local',
+        snapshot: localSnapshot,
+        fingerprint,
+        total: localFlatCount
+      };
+    }
+
+    try {
+      let v2Keys = [];
+      if (typeof listRecovery === 'function') {
+        v2Keys = await listRecovery(BACKUP_PREFIX);
+      }
+      const candidates = [];
+      for (const key of v2Keys) {
+        const item = await readRecovery(key);
+        if (item && item.fingerprint && key.endsWith(item.fingerprint) && item.snapshot) {
+          const calculated = await hashCanonical(item.snapshot);
+          if (calculated === item.fingerprint) {
+            candidates.push(item);
+          }
+        }
+      }
+
+      if (candidates.length > 0) {
+        const nonEmpty = [];
+        for (const cand of candidates) {
+          const flat = await flattenLegacySnapshot(cand.snapshot);
+          if (flat.records.length > 0) {
+            nonEmpty.push({...cand, total: flat.records.length});
+          }
+        }
+        if (nonEmpty.length > 0) {
+          nonEmpty.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+          const best = nonEmpty[0];
+          return {
+            sourceType: 'durable-v2',
+            snapshot: clone(best.snapshot),
+            fingerprint: best.fingerprint,
+            savedAt: best.savedAt,
+            total: best.total
+          };
+        }
+      } else if (v2Keys.length > 0) {
+        const err = new Error('持久化快照数据损坏（指纹或内容校验失败），拒绝作为空基线恢复');
+        err.name = 'BaselineRecoveryAccessError';
+        throw err;
+      }
+
+      let v1Keys = [];
+      if (typeof listRecovery === 'function') {
+        const allBackupKeys = await listRecovery('recordLegacySnapshotBackup:');
+        v1Keys = allBackupKeys.filter(k => !k.startsWith('recordLegacySnapshotBackup:v2:'));
+      }
+      const v1Candidates = [];
+      for (const key of v1Keys) {
+        const item = await readRecovery(key);
+        if (item && item.fingerprint && item.snapshot) {
+          const calculated = await hashCanonical(item.snapshot);
+          if (calculated === item.fingerprint) {
+            v1Candidates.push(item);
+          }
+        }
+      }
+      if (v1Candidates.length > 0) {
+        const nonEmpty = [];
+        for (const cand of v1Candidates) {
+          const flat = await flattenLegacySnapshot(cand.snapshot);
+          if (flat.records.length > 0) {
+            nonEmpty.push({...cand, total: flat.records.length});
+          }
+        }
+        if (nonEmpty.length > 0) {
+          nonEmpty.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+          const best = nonEmpty[0];
+          return {
+            sourceType: 'durable-v1',
+            snapshot: clone(best.snapshot),
+            fingerprint: best.fingerprint,
+            savedAt: best.savedAt,
+            total: best.total
+          };
+        }
+      }
+
+      const durableSnapshot = {};
+      for (const key of LEGACY_RECORD_KEYS) {
+        const val = await readRecovery(key);
+        if (val !== undefined && val !== null) durableSnapshot[key] = clone(val);
+      }
+      const durableFlat = await flattenLegacySnapshot(durableSnapshot);
+      if (durableFlat.records.length > 0) {
+        const fingerprint = await hashCanonical(durableSnapshot);
+        return {
+          sourceType: 'durable-legacy-keys',
+          snapshot: durableSnapshot,
+          fingerprint,
+          total: durableFlat.records.length
+        };
+      }
+    } catch (durableError) {
+      const err = new Error(`持久化备份来源访问失败: ${durableError?.message || durableError}`);
+      err.name = 'BaselineRecoveryAccessError';
+      throw err;
+    }
+
+    if (localReadError) {
+      const err = new Error(`本地旧存储读取失败: ${localReadError?.message || localReadError}`);
+      err.name = 'BaselineRecoveryAccessError';
+      throw err;
+    }
+
+    return {
+      sourceType: 'empty',
+      snapshot: {},
+      fingerprint: await hashCanonical({}),
+      total: 0
+    };
+  }
+
+  async function reconcileIncrementalHead() {
+    const head = (await durableGet(INCREMENTAL_HEAD)) || {seq: 0};
+    let curSeq = head.seq || 0;
+    let advanced = false;
+    let lastOpId = head.operationId || null;
+    while (true) {
+      const nextSeqKey = `${INCREMENTAL_PREFIX}seq:${String(curSeq + 1).padStart(8, '0')}`;
+      const nextEntry = await durableGet(nextSeqKey);
+      if (!nextEntry || typeof nextEntry !== 'object') break;
+      curSeq += 1;
+      lastOpId = nextEntry.operationId || lastOpId;
+      advanced = true;
+    }
+    if (advanced) {
+      await durableSet(INCREMENTAL_HEAD, {seq: curSeq, operationId: lastOpId});
+    }
+    return curSeq;
+  }
+
   async function ensureOpen() {
     if (opened) return;
     const state = await projection.readState();
-    if (state.cutover) Object.assign(progress, {
-      stage: 'ready',
-      completed: state.completed,
-      total: state.total,
-      migrationId: state.migrationId,
-      fingerprint: state.fingerprint,
-      error: null,
-      cutover: true
-    });
-    else if (state.stage && state.stage !== 'idle') Object.assign(progress, state);
+    if (state.cutover) {
+      if (state.total === 0 || !state.total) {
+        let hasExternalData = false;
+        let baselineError = null;
+        try {
+          const baseline = await discoverBaseline();
+          if (baseline.sourceType !== 'empty' && baseline.total > 0) {
+            hasExternalData = true;
+          }
+        } catch (err) {
+          baselineError = err;
+        }
+        if (hasExternalData || baselineError) {
+          Object.assign(progress, {
+            stage: 'repair-required',
+            completed: 0,
+            total: 0,
+            error: baselineError ? `基线核对访问异常，暂停就绪以防丢失: ${baselineError.message}` : '检测到历史完整快照未恢复，需从持久快照重建',
+            cutover: false
+          });
+          await projection.writeState(publicProgress());
+          opened = true;
+          return;
+        }
+      }
+      Object.assign(progress, {
+        stage: 'ready',
+        completed: state.completed,
+        total: state.total,
+        migrationId: state.migrationId,
+        fingerprint: state.fingerprint,
+        error: null,
+        cutover: true
+      });
+    } else if (state.stage && state.stage !== 'idle') {
+      Object.assign(progress, state);
+    }
     opened = true;
-    if (progress.cutover) await retryPending(20);
+    if (progress.cutover) {
+      await retryPending(20);
+    }
   }
 
   async function readLegacy(keys) {
@@ -729,13 +917,48 @@ export function createRecordRuntime({
       try {
         await ensureOpen();
         if (progress.cutover) {
+          if (progress.total === 0 || !progress.total) {
+            try {
+              const baseline = await discoverBaseline();
+              if (baseline.sourceType !== 'empty' && baseline.total > 0) {
+                progress.cutover = false;
+              }
+            } catch (err) {
+              progress.cutover = false;
+              progress.stage = 'repair-required';
+              progress.error = `基线探查异常: ${err.message}`;
+              await projection.writeState(publicProgress());
+              throw err;
+            }
+          }
+        }
+        if (progress.cutover) {
           await retryPending(20);
           return publicProgress();
         }
-        progress.stage = 'reading';
+        progress.stage = 'discovering';
         progress.cutover = false;
         progress.error = null;
-        let snapshot = await readLegacy(LEGACY_RECORD_KEYS);
+        await projection.writeState(publicProgress());
+
+        const baseline = await discoverBaseline();
+        let snapshot = baseline.snapshot;
+
+        if (baseline.total === 0 && baseline.sourceType === 'empty') {
+          progress.stage = 'ready';
+          progress.total = 0;
+          progress.completed = 0;
+          progress.cutover = true;
+          progress.error = null;
+          progress.fingerprint = baseline.fingerprint;
+          progress.migrationId = `legacy-${baseline.fingerprint.slice(0, 32)}`;
+          await projection.writeState({
+            ...publicProgress(),
+            metadata: {emptyBaseline: true, discoveredAt: now()}
+          });
+          return publicProgress();
+        }
+
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const fingerprint = await hashCanonical(snapshot);
           const migrationId = `legacy-${fingerprint.slice(0, 32)}`;
@@ -744,6 +967,7 @@ export function createRecordRuntime({
           progress.completed = 0;
           progress.migrationId = migrationId;
           progress.fingerprint = fingerprint;
+
           progress.stage = 'backup';
           await projection.writeState(publicProgress());
           const existing = await repository.getMigration(migrationId);
@@ -751,21 +975,25 @@ export function createRecordRuntime({
             await publishProjection(snapshot);
             return await commitReadyProjection();
           }
-          await preserveBackup(snapshot, fingerprint);
-          progress.stage = 'importing';
+          if (progress.total > 0) {
+            await preserveBackup(snapshot, fingerprint);
+          }
+          progress.stage = 'snapshot-staged';
           await projection.writeState(publicProgress());
           const staged = await migration().stage(snapshot, migrationId);
           if (staged.nextIndex !== progress.total) throw new Error('migration import is incomplete');
-          const fresh = await readLegacy(LEGACY_RECORD_KEYS);
-          if (await hashCanonical(fresh) !== fingerprint) {
-            const changed = [];
-            for (const key of LEGACY_RECORD_KEYS) {
-              if (await hashCanonical(snapshot[key] ?? null) !== await hashCanonical(fresh[key] ?? null)) changed.push(key);
+          if (baseline.sourceType === 'local') {
+            const fresh = await readLegacy(LEGACY_RECORD_KEYS);
+            if (await hashCanonical(fresh) !== fingerprint) {
+              const changed = [];
+              for (const key of LEGACY_RECORD_KEYS) {
+                if (await hashCanonical(snapshot[key] ?? null) !== await hashCanonical(fresh[key] ?? null)) changed.push(key);
+              }
+              const state = await projection.readState();
+              await projection.writeState({dirtyKeys: [...new Set([...(state.dirtyKeys || []), ...changed])]});
+              snapshot = fresh;
+              continue;
             }
-            const state = await projection.readState();
-            await projection.writeState({dirtyKeys: [...new Set([...(state.dirtyKeys || []), ...changed])]});
-            snapshot = fresh;
-            continue;
           }
           if (hooks.beforeVerify) await hooks.beforeVerify({repository, migrationId, snapshot, fingerprint});
           progress.stage = 'verifying';
@@ -773,14 +1001,16 @@ export function createRecordRuntime({
           await projection.writeState(publicProgress());
           const verified = await migration().verify(snapshot, migrationId);
           if (verified?.status !== 'verified' && verified?.status !== 'active') throw new Error('migration verification did not finish');
-          const duringVerify = await readLegacy(LEGACY_RECORD_KEYS);
-          const changedDuringVerify = [];
-          for (const key of LEGACY_RECORD_KEYS) {
-            if (await hashCanonical(snapshot[key] ?? null) !== await hashCanonical(duringVerify[key] ?? null)) changedDuringVerify.push(key);
-          }
-          if (changedDuringVerify.length) {
-            const state = await projection.readState();
-            await projection.writeState({dirtyKeys: [...new Set([...(state.dirtyKeys || []), ...changedDuringVerify])]});
+          if (baseline.sourceType === 'local') {
+            const duringVerify = await readLegacy(LEGACY_RECORD_KEYS);
+            const changedDuringVerify = [];
+            for (const key of LEGACY_RECORD_KEYS) {
+              if (await hashCanonical(snapshot[key] ?? null) !== await hashCanonical(duringVerify[key] ?? null)) changedDuringVerify.push(key);
+            }
+            if (changedDuringVerify.length) {
+              const state = await projection.readState();
+              await projection.writeState({dirtyKeys: [...new Set([...(state.dirtyKeys || []), ...changedDuringVerify])]});
+            }
           }
           progress.stage = 'activating';
           const job = await migration().activate(migrationId);
@@ -791,7 +1021,7 @@ export function createRecordRuntime({
         if (!progress.cutover) throw new Error('legacy source kept changing');
         return publicProgress();
       } catch (error) {
-        progress.stage = 'failed';
+        progress.stage = error?.name === 'BaselineRecoveryAccessError' ? 'repair-required' : 'failed';
         progress.cutover = false;
         progress.error = String(error?.message || error);
         await projection.writeState(publicProgress()).catch(() => {});
@@ -1198,9 +1428,29 @@ export function createRecordRuntime({
     const operationId = entry.operationId;
     const existing = await projection.getBackup(operationId);
     if (existing?.status === 'stored') return existing;
+    if (typeof durableAppendIncremental === 'function') {
+      const res = await durableAppendIncremental(entry);
+      const stored = res?.entry || res || entry;
+      await projection.putBackup({...stored, status: 'stored'});
+      return stored;
+    }
     await writes.enqueue(async () => {
       const head = (await durableGet(INCREMENTAL_HEAD)) || {seq: 0};
-      const seq = (head.seq || 0) + 1;
+      let curSeq = head.seq || 0;
+      while (true) {
+        const nextSeqKey = `${INCREMENTAL_PREFIX}seq:${String(curSeq + 1).padStart(8, '0')}`;
+        const existingAtNext = await durableGet(nextSeqKey);
+        if (!existingAtNext) break;
+        curSeq += 1;
+        if (existingAtNext.operationId === operationId) {
+          if (curSeq > (head.seq || 0)) {
+            await durableSet(INCREMENTAL_HEAD, {seq: curSeq, operationId: existingAtNext.operationId});
+          }
+          await projection.putBackup(existingAtNext);
+          return existingAtNext;
+        }
+      }
+      const seq = curSeq + 1;
       const body = {...entry, seq, status: 'stored'};
       const seqKey = `${INCREMENTAL_PREFIX}seq:${String(seq).padStart(8, '0')}`;
       const published = await durableGet(seqKey);
@@ -1529,18 +1779,62 @@ export function createRecordRuntime({
     if (entry.handle) await recomputeHandle(entry.handle);
   }
 
+  function replayReadError(seq, cause) {
+    const error = new Error(seq == null
+      ? `增量日志头读取失败，重放未完成且不会按空日志结束: ${cause?.message || cause}`
+      : `增量序号 ${seq} 读取失败，重放已停止且不会越过缺口: ${cause?.message || cause}`);
+    error.name = 'IncrementalReplayError';
+    error.recoverable = true;
+    error.reason = 'read-failed';
+    if (seq != null) error.seq = seq;
+    if (cause) error.cause = cause;
+    return error;
+  }
+
+  function replayGapError(seq) {
+    const error = new Error(`增量序号 ${seq} 缺失，重放已停止且不会越过缺口`);
+    error.name = 'IncrementalReplayError';
+    error.recoverable = true;
+    error.reason = 'missing';
+    error.seq = seq;
+    return error;
+  }
+
+  async function stopReplay(error) {
+    progress.stage = 'repair-required';
+    progress.cutover = false;
+    progress.error = String(error?.message || error);
+    try {
+      await projection.writeState(publicProgress());
+    } catch {
+      // Keep the in-memory not-ready status when the projection itself cannot be saved.
+    }
+    throw error;
+  }
+
   async function replayBackups(request = {}) {
     await ensureOpen();
     const limit = request.limit == null ? 50 : request.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 to 100');
-    const head = await durableGet(INCREMENTAL_HEAD);
+    let head;
+    try {
+      head = await readRecovery(INCREMENTAL_HEAD);
+    } catch (cause) {
+      await stopReplay(replayReadError(null, cause));
+    }
     const start = request.cursor ? Number(decodeCursor(request.cursor).seq) : 1;
     if (!head?.seq || !Number.isInteger(start) || start < 1) return {applied: 0, nextCursor: null};
     let applied = 0;
     let seq = start;
     for (; seq <= head.seq && applied < limit; seq += 1) {
-      const entry = await durableGet(`${INCREMENTAL_PREFIX}seq:${String(seq).padStart(8, '0')}`);
-      if (!entry) continue;
+      const seqKey = `${INCREMENTAL_PREFIX}seq:${String(seq).padStart(8, '0')}`;
+      let entry;
+      try {
+        entry = await readRecovery(seqKey);
+      } catch (cause) {
+        await stopReplay(replayReadError(seq, cause));
+      }
+      if (!entry || typeof entry !== 'object') await stopReplay(replayGapError(seq));
       await applyReplay(entry);
       applied += 1;
     }

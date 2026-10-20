@@ -45,6 +45,7 @@ test('risk rules mark adult, private-content and high-risk funnel signals withou
     posts: [{text:'今天在机场候机写代码'}]
   }).level, 'normal');
   assert.equal(assess({name:'',bio:'NSFW 18+',followers:100,following:100,status:'ok'}, {...options,requirePromise:false}).verdict, '危险');
+  assert.equal(riskAssess({name:'Alice', bio:'AI', grokRiskAssessment:{safe:false, reasons:[], riskTags:['risk:politics']}}).level, 'danger');
 });
 
 test('repairMojibake restores CP1252/latin1-decoded UTF-8 text and keeps normal text untouched', () => {

@@ -25,6 +25,8 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   minFollowers: 50,
   ratioThreshold: 0.8,
   onlyRecommended: true,
+  skipRiskContent: true,
+  grokProfileAssessment: true,
   grokEnabled: false,
   autoPublish: false
 });
@@ -171,6 +173,8 @@ function normalizeSettings(input, base) {
   const next = {...FOLLOW_QUEUE_DEFAULT_SETTINGS};
   next.enabled = merged.enabled === true;
   next.onlyRecommended = merged.onlyRecommended !== false;
+  next.skipRiskContent = merged.skipRiskContent !== false;
+  next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
   for (const [key, [min, max]] of Object.entries(SETTING_BOUNDS)) {

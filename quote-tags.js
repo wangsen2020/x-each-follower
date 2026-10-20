@@ -1,4 +1,4 @@
-import {tweetWeight,resolveCommentLanguage} from './grok-comment.js';
+import {tweetWeight,resolveCommentLanguage} from './quote-text.js';
 
 export const RECOMMENDED_QUOTE_TAGS = Object.freeze(['互关','互关呀','互关互赞','互关互粉','互关必回','FollowBack','FollowForFollow','MutualFollow','F4F','LetsConnect']);
 export const QUOTE_TAG_DEFAULTS = Object.freeze({quoteTagsEnabled:false,quoteCustomTags:[],quoteSelectedTags:[...RECOMMENDED_QUOTE_TAGS]});

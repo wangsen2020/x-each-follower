@@ -145,6 +145,27 @@ test('followQueueRetryEvaluation verifies uncertain evaluation on profile before
   assert.equal(resolved[0].evaluations[0].status,'posted');
 });
 
+test('followQueueRetryEvaluation refuses a risky account before generating or publishing',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true};
+  const job={id:'123:id:42',accountId:'123',handle:'target_user',state:'followed',profile:{bio:'OnlyFans creator'},evaluations:[]};
+  let removed=false;
+  const api={
+    storage:{local:{get:async key=>key==='followQueueBinding'?{followQueueBinding:binding}:{profileCache:{target_user:{posts:[{url:'https://x.com/target_user/status/999',text:'A useful technical post'}]}}}}},
+    tabs:{create:async()=>({id:99}),remove:async()=>{removed=true;}},
+    scripting:{executeScript:async()=>[{result:'viewer'}]}
+  };
+  const runtime=createFollowQueueRuntime({api,store:{list:async()=>[job]},sleep:async()=>{}});
+  await assert.rejects(runtime.handle({cmd:'followQueueRetryEvaluation',accountId:'123',jobId:job.id,publish:true}),/高风险内容门禁/);
+  assert.equal(removed,true);
+});
+
+test('quote publication risk block is a skipped result, not an uncertain external effect', async () => {
+  const {quotePublicationState}=await import('../follow-queue-runtime.js');
+  assert.equal(quotePublicationState({ok:false,riskBlocked:true,reason:'生成的引用评价涉政'}),'skipped');
+  assert.equal(quotePublicationState({ok:false,stage:'composer'}),'failed');
+  assert.equal(quotePublicationState({ok:false,reason:'网络响应不明'}),'uncertain');
+});
+
 test('followQueueEnqueue enqueues single or batch candidates into queue store',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{comments:true}};
   const enqueued=[];

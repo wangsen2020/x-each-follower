@@ -9,12 +9,15 @@ export function panelModuleForTab(tab) {
 }
 
 const STAGE_LABELS = {
+  discovering: '正在发现历史备份',
   reading: '正在读取旧记录',
   backup: '正在保存迁移备份',
+  'snapshot-staged': '正在导入快照记录',
   importing: '正在导入记录',
   verifying: '正在校验记录',
   activating: '正在切换读取',
   replaying: '正在回放增量记录',
+  'repair-required': '发现未恢复历史快照，需重建',
   ready: '迁移完成',
   failed: '迁移失败'
 };
