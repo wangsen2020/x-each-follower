@@ -1200,7 +1200,10 @@ function syncDrawerMask() {
 function closeProfileDrawer() {
   drawerUser = null;
   drawerMode = 'profile';
-  $('profileDrawer').hidden = true;
+  if (window.__profileDrawerController) {
+    window.__profileDrawerController.close();
+  }
+  if ($('profileDrawer')) $('profileDrawer').hidden = true;
   syncDrawerMask();
 }
 
@@ -1325,6 +1328,10 @@ function drawerField(label, value) {
 function renderProfileDrawer() {
   const profile = drawerProfile();
   if (!profile) return closeProfileDrawer();
+  if (window.__profileDrawerController) {
+    window.__profileDrawerController.open(profile, drawerMode);
+    return;
+  }
   const evalResult = evaluateMutualProfile(profile);
   const root = $('profileDrawerContent'); root.replaceChildren();
   const identity = document.createElement('div'); identity.className = 'drawer-identity';
@@ -1455,9 +1462,9 @@ function renderProfileDrawer() {
     root.append(grokSec);
   }
   $('profileDrawerTitle').textContent = `@${profile.handle}`;
-  $('drawerRefreshProfile').disabled = drawerLoading;
-  $('drawerRefreshProfile').textContent = drawerLoading ? '采集中…' : '采集资料';
-  $('profileDrawer').hidden = false;
+  if ($('drawerRefreshProfile')) $('drawerRefreshProfile').disabled = drawerLoading;
+  if ($('drawerRefreshProfile')) $('drawerRefreshProfile').textContent = drawerLoading ? '采集中…' : '采集资料';
+  if ($('profileDrawer')) $('profileDrawer').hidden = false;
   syncDrawerMask();
 }
 
@@ -1517,6 +1524,9 @@ async function readProfileBundleInBackground(user, recentLimit = 10) {
 async function refreshDrawerProfile() {
   if (!drawerUser?.handle || drawerLoading || profileRefreshBusy.has(drawerUser.handle.toLowerCase())) return;
   drawerLoading = true;
+  if (window.__profileDrawerController) {
+    window.__profileDrawerController.loading.value = true;
+  }
   renderProfileDrawer();
   try {
     if (drawerMode === 'commentPosts') {
@@ -1543,6 +1553,10 @@ async function refreshDrawerProfile() {
     } else monitorStatus(`资料读取失败：${error.message}`);
   } finally {
     drawerLoading = false;
+    if (window.__profileDrawerController) {
+      window.__profileDrawerController.loading.value = false;
+      window.__profileDrawerController.updateUser(drawerProfile());
+    }
     renderProfileDrawer();
   }
 }
@@ -3914,7 +3928,7 @@ $('followerPrevPage').addEventListener('click', () => { if (recordPaging && reco
 $('followerNextPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
 $('collectNetwork').addEventListener('click', () => collectMutualNetwork($('networkAnchor').value, true));
 $('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
-$('closeProfileDrawer').addEventListener('click', closeProfileDrawer);
+$('closeProfileDrawer')?.addEventListener('click', closeProfileDrawer);
 $('openSettingsDrawer')?.addEventListener('click', openSettingsDrawer);
 $('closeSettingsDrawer')?.addEventListener('click', closeSettingsDrawer);
 $('profileDrawerMask').addEventListener('click', () => {
@@ -3924,8 +3938,8 @@ $('profileDrawerMask').addEventListener('click', () => {
   closeCommentAutoFollowDrawer();
   closeUnreciprocatedDrawer();
 });
-$('drawerRefreshProfile').addEventListener('click', refreshDrawerProfile);
-$('drawerOpenX').addEventListener('click', () => { if (drawerUser?.handle) chrome.tabs.create({url:`https://x.com/${drawerUser.handle}`, active:true}); });
+$('drawerRefreshProfile')?.addEventListener('click', refreshDrawerProfile);
+$('drawerOpenX')?.addEventListener('click', () => { if (drawerUser?.handle) chrome.tabs.create({url:`https://x.com/${drawerUser.handle}`, active:true}); });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     if (!$('profileDrawer').hidden) closeProfileDrawer();
@@ -4382,7 +4396,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.8.1';
+  const expectedVersion = '1.8.2';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_8_0') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_8_0', '1');
     chrome.runtime.reload();
@@ -6108,3 +6122,14 @@ async function renderGrokVerificationNotice() {
 }
 chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local' && (changes.grokVerification || changes.grokVerificationSelfMessage))renderGrokVerificationNotice();});
 renderGrokVerificationNotice();
+
+// Profile drawer Vue controller bridge
+if (window.__profileDrawerController) {
+  window.__profileDrawerController.setRefreshHandler(() => refreshDrawerProfile());
+} else {
+  window.addEventListener('DOMContentLoaded', () => {
+    if (window.__profileDrawerController) {
+      window.__profileDrawerController.setRefreshHandler(() => refreshDrawerProfile());
+    }
+  });
+}

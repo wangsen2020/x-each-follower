@@ -392,12 +392,8 @@
       <button id="runMonitorScanNow" class="secondary" type="button">立即检测并拉取入队</button>
     </div>
   </aside>
-  <aside id="profileDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="profileDrawerTitle" hidden>
-    <div class="profile-drawer-head"><strong id="profileDrawerTitle">账号资料</strong><button id="closeProfileDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button></div>
-    <div id="profileDrawerContent" class="profile-drawer-content"></div>
-    <div class="profile-drawer-actions"><button id="drawerRefreshProfile" class="secondary">采集资料</button><button id="drawerOpenX">在 X 打开</button></div>
-  </aside>
+  <!-- profileDrawer is reactively mounted by Vue 3 in #panel-vue-root -->
 </main><script type="module" src="panel.js"></script>
-  <div id="logs-modal-app"></div>
+  <div id="panel-vue-root"></div>
   <script type="module" src="./src/entries/panel/main.js"></script>
 </body></html>
