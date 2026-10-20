@@ -68,21 +68,21 @@ test('verifyDist rejects missing resource in CSS url()', async () => {
 
 test('verifyDist rejects changed runtime byte content', async () => {
   const testDir = createTempDist('neg-changed-byte');
-  const targetFile = join(testDir, 'panel-data.js');
+  const targetFile = join(testDir, 'page-reader.js');
   // Alter 1 byte in copied runtime JS
   writeFileSync(targetFile, '\n// byte tampering', { flag: 'a' });
 
   const res = await verifyDist(testDir, { rootDir: ROOT_DIR });
   assert.equal(res.ok, false);
   assert.ok(
-    res.errors.some((e) => e.includes('Runtime JS byte-for-byte mismatch') && e.includes('panel-data.js')),
+    res.errors.some((e) => e.includes('Runtime JS byte-for-byte mismatch') && e.includes('page-reader.js')),
     `Expected byte-for-byte mismatch error, got: ${res.errors.join('; ')}`
   );
 });
 
 test('verifyDist rejects bare imports in runtime JS', async () => {
   const testDir = createTempDist('neg-bare-import');
-  const targetFile = join(testDir, 'scoring.js');
+  const targetFile = join(testDir, 'bridge.js');
   writeFileSync(targetFile, "import { something } from 'unresolved-package';\n" + readFileSync(targetFile, 'utf8'));
 
   const res = await verifyDist(testDir, { rootDir: ROOT_DIR });
@@ -95,7 +95,7 @@ test('verifyDist rejects bare imports in runtime JS', async () => {
 
 test('verifyDist rejects absolute imports and directory traversal', async () => {
   const testDir = createTempDist('neg-traversal');
-  const targetFile = join(testDir, 'timing.js');
+  const targetFile = join(testDir, 'bridge.js');
   writeFileSync(targetFile, "import '/absolute/hack.js';\nimport '../../outside.js';\n" + readFileSync(targetFile, 'utf8'));
 
   const res = await verifyDist(testDir, { rootDir: ROOT_DIR });

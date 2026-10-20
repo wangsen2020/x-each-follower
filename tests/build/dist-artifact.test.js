@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runBuild } from '../../tools/build.mjs';
@@ -65,14 +65,13 @@ test('dynamic transaction-id.bundle.js is preserved byte-for-byte and references
   const stat = statSync(bundlePath);
   assert.ok(stat.size > 5000, `transaction-id.bundle.js size must be valid (got ${stat.size} bytes)`);
 
-  const netPath = join(TEST_DIST_DIR, 'network-api.js');
-  assert.ok(existsSync(netPath), 'network-api.js must exist in dist');
-  const netSource = readFileSync(netPath, 'utf8');
-  assert.match(netSource, /files:\s*\[['"]transaction-id\.bundle\.js['"]\]/);
+  const distFiles = readdirSync(join(TEST_DIST_DIR, 'assets')).map((f) => join(TEST_DIST_DIR, 'assets', f));
+  const hasTxRef = distFiles.some((f) => f.endsWith('.js') && readFileSync(f, 'utf8').includes('transaction-id.bundle.js'));
+  assert.ok(hasTxRef, 'bundled scripts must contain transaction-id.bundle.js reference');
 });
 
-test('runtime injection functions in page-reader.js and persistent-db.js are byte-identical to source', () => {
-  for (const file of ['page-reader.js', 'persistent-db.js', 'panel-data.js', 'relationship-rules.js']) {
+test('standalone runtime scripts are byte-identical to source', () => {
+  for (const file of ['page-reader.js', 'bridge.js', 'tweet-comment-button.js', 'net-hook.js', 'verification-alert.js', 'verification-alert-window.js']) {
     const srcBuf = readFileSync(join(ROOT_DIR, file));
     const distBuf = readFileSync(join(TEST_DIST_DIR, file));
     assert.equal(Buffer.compare(srcBuf, distBuf), 0, `${file} must be byte-for-byte identical to source`);
@@ -98,17 +97,38 @@ test('verification-alert page and its resources are completely preserved', () =>
   assert.match(html, /src=["']verification-help-generated\.webp["']/);
 });
 
-test('panel.html references externalized panel.js entry and valid hashed CSS', () => {
+test('panel.html references bundled panel entry and valid hashed CSS', () => {
   const panelHtmlPath = join(TEST_DIST_DIR, 'panel.html');
   assert.ok(existsSync(panelHtmlPath));
 
   const html = readFileSync(panelHtmlPath, 'utf8');
-  assert.match(html, /<script\s+type=["']module["'][^>]*src=["'](?:(?:\.\/)?panel\.js)["']/);
+  const hasScript =
+    /<script\s+type=["']module["'][^>]*src=["'](?:\.\/)?assets\/panel-[^"']+\.js["']/i.test(html) ||
+    /<script\s+type=["']module["'][^>]*src=["'](?:\.\/)?panel\.js["']/i.test(html);
+  assert.ok(hasScript, 'panel.html must link to a valid bundled script entry');
 
   const hasCss =
     /<link[^>]+rel=["']stylesheet["'][^>]+href=["'](?:\.\/)?assets\/panel-[^"']+\.css["']/i.test(html) ||
     /<link[^>]+rel=["']stylesheet["'][^>]+href=["'](?:\.\/)?panel\.css["']/i.test(html);
   assert.ok(hasCss, 'panel.html must link to a valid stylesheet');
+});
+
+test('loose internal business modules are strictly bundled and absent from dist root', () => {
+  const internalModules = [
+    'scoring.js',
+    'panel.js',
+    'panel-data.js',
+    'network-api.js',
+    'persistent-db.js',
+    'relationship-rules.js',
+    'grok-comment.js',
+    'grok-verification.js',
+    'follow-queue-store.js',
+    'record-repository.js'
+  ];
+  for (const mod of internalModules) {
+    assert.ok(!existsSync(join(TEST_DIST_DIR, mod)), `Internal module ${mod} must not be present as loose file in dist root`);
+  }
 });
 
 test('never copies forbidden items into dist', () => {

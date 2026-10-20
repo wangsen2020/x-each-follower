@@ -197,25 +197,38 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
   }
   checks.manifest = !errors.some((e) => e.includes('manifest'));
 
-  // 3. Byte-for-byte fidelity of all copied runtime JS against source
+  // 3. Byte-for-byte fidelity of standalone injection scripts & bundled background worker check
+  const STANDALONE_SCRIPTS = [
+    'bridge.js',
+    'tweet-comment-button.js',
+    'net-hook.js',
+    'transaction-id.bundle.js',
+    'page-reader.js',
+    'verification-alert.js',
+    'verification-alert-window.js'
+  ];
   let jsMismatchFound = false;
-  const rootEntries = readdirSync(rootDir, { withFileTypes: true });
-  for (const ent of rootEntries) {
-    if (!ent.isDirectory() && ent.name.endsWith('.js') && !FORBIDDEN_EXACT.has(ent.name)) {
-      const srcPath = join(rootDir, ent.name);
-      const distPath = join(distDir, ent.name);
-      if (!existsSync(distPath)) {
-        errors.push(`Required runtime JS "${ent.name}" is missing in dist`);
+  for (const name of STANDALONE_SCRIPTS) {
+    const srcPath = join(rootDir, name);
+    const distPath = join(distDir, name);
+    if (!existsSync(distPath)) {
+      errors.push(`Required standalone runtime JS "${name}" is missing in dist`);
+      jsMismatchFound = true;
+    } else {
+      const srcBuf = readFileSync(srcPath);
+      const distBuf = readFileSync(distPath);
+      if (Buffer.compare(srcBuf, distBuf) !== 0) {
+        errors.push(`Runtime JS byte-for-byte mismatch: dist/${name} does not match source ${name}`);
         jsMismatchFound = true;
-      } else {
-        const srcBuf = readFileSync(srcPath);
-        const distBuf = readFileSync(distPath);
-        if (Buffer.compare(srcBuf, distBuf) !== 0) {
-          errors.push(`Runtime JS byte-for-byte mismatch: dist/${ent.name} does not match source ${ent.name}`);
-          jsMismatchFound = true;
-        }
       }
     }
+  }
+
+  // Ensure bundled background.js exists
+  const bgPath = join(distDir, 'background.js');
+  if (!existsSync(bgPath)) {
+    errors.push('Bundled background service worker is missing in dist');
+    jsMismatchFound = true;
   }
   checks.runtimeJsByteFidelity = !jsMismatchFound;
 
@@ -399,14 +412,26 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
     }
   }
 
-  const networkApiPath = join(distDir, 'network-api.js');
-  if (existsSync(networkApiPath)) {
-    const netSource = readFileSync(networkApiPath, 'utf8');
-    if (!netSource.includes('transaction-id.bundle.js')) {
-      warnings.push('network-api.js does not contain expected transaction-id.bundle.js reference');
+  const allBundledJs = distFiles.filter((f) => f.endsWith('.js'));
+  const hasTxRef = allBundledJs.some((f) => readFileSync(f, 'utf8').includes('transaction-id.bundle.js'));
+  if (!hasTxRef) {
+    warnings.push('transaction-id.bundle.js is not referenced by any bundled JS');
+  }
+
+  // Ensure unbundled business logic modules are not loose root files in dist
+  const UNBUNDLED_BUSINESS_MODULES = [
+    'scoring.js',
+    'panel.js',
+    'panel-data.js',
+    'network-api.js',
+    'grok-comment.js',
+    'follow-queue-store.js',
+    'record-repository.js'
+  ];
+  for (const mod of UNBUNDLED_BUSINESS_MODULES) {
+    if (existsSync(join(distDir, mod))) {
+      errors.push('Unbundled business module "' + mod + '" should be bundled, not present as loose root file in dist');
     }
-  } else {
-    errors.push('network-api.js is missing from dist');
   }
   checks.transactionIdDynamicInjection = !errors.some((e) => e.includes('transaction-id.bundle.js'));
 
@@ -438,8 +463,11 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
     errors.push('panel.html is missing in dist');
   } else {
     const panelHtml = readFileSync(panelHtmlPath, 'utf8');
-    if (!panelHtml.includes('src="panel.js"') && !panelHtml.includes('src="./panel.js"')) {
-      errors.push('panel.html does not reference panel.js as entry script');
+    const hasScript =
+      /<script[^>]+type=["']module["'][^>]*src=["'](?:\.\/)?assets\/panel-[^"']+\.js["']/i.test(panelHtml) ||
+      /<script[^>]+type=["']module["'][^>]*src=["'](?:\.\/)?(?:panel\.js|assets\/[^"']+\.js)["']/i.test(panelHtml);
+    if (!hasScript) {
+      errors.push('panel.html does not reference a valid bundled script entry');
     }
     const hasCss =
       /<link[^>]+rel=["']stylesheet["'][^>]+href=["'](?:\.\/)?assets\/panel-[^"']+\.css["']/i.test(panelHtml) ||
