@@ -44,7 +44,8 @@
             id="clearLogsBtn"
             class="secondary danger-btn"
             type="button"
-            title="清空当前范围的执行日志"
+            :title="isFansScope && fansSubTab === 'followBack' ? '队列回关记录由关注队列统一管理' : '清空当前范围的执行日志'"
+            :disabled="isFansScope && fansSubTab === 'followBack'"
             style="margin-right: 10px"
             @click="clearLogs"
           >清空日志</button>
@@ -78,15 +79,6 @@
           @click="setFansSubTab('followBack')"
         >
           🤝 队列回关日志
-        </button>
-        <button
-          id="subtabFansAll"
-          type="button"
-          class="subtab-btn"
-          :class="{ active: fansSubTab === 'all' }"
-          @click="setFansSubTab('all')"
-        >
-          全部
         </button>
       </div>
 

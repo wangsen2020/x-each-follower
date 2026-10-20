@@ -4,9 +4,9 @@ main [hidden],main [id][hidden]{display:none}
 
 main{width:100%;max-width:100%;height:100%;max-height:100%;margin:0;box-sizing:border-box;display:grid;grid-template-columns:clamp(190px,18vw,240px) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);padding:10px;overflow:hidden}
 .sidebar{width:100%;height:100%;min-height:0;max-height:100%;grid-row:1 / -1;grid-column:1;position:static;top:auto;margin:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden}
-main>header{grid-column:2;grid-row:1;min-width:0;min-height:0;padding:0 0 4px 0;margin:0}
-main>header .eyebrow{font-size:11px;letter-spacing:1px;color:#63766a;margin:0;display:block}
-main>header h1{font-size:20px;letter-spacing:-.5px;margin:2px 0 2px 0;line-height:1.2}
+main .vue-panel-header{grid-column:2;grid-row:1;min-width:0;min-height:0;padding:0 0 4px 0;margin:0}
+main .vue-panel-header .eyebrow{font-size:11px;letter-spacing:1px;color:#63766a;margin:0;display:block}
+main .vue-panel-header h1{font-size:20px;letter-spacing:-.5px;margin:2px 0 2px 0;line-height:1.2}
 main>.tab-panel,main>.monitor-card,main>.controls,main>.queue-card,main>.note,main>.toolbar,main>.table-wrap,main>footer,.monitor-panel,#monitorSection,#candidatesSection{grid-column:2;grid-row:2;min-width:0;max-width:100%;height:100%;min-height:0;max-height:100%;margin:0;box-sizing:border-box}
 .table-wrap{width:100%;max-width:none;min-width:0}
 .brand-logo{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;background:#8bc7a6;color:#18302e;font-size:22px;font-weight:850;letter-spacing:-2px;box-shadow:0 8px 18px #0b201b55}
@@ -984,7 +984,9 @@ main > :not(.sidebar){margin-left:20px}
 .drawer-section ol{display:flex;flex-direction:column}.drawer-section ol > :not(:last-child){margin-bottom:8px}
 
 /* Shared panel inset and inline control alignment. */
-main > header { padding:0 10px 4px; }
+/* Vue shell stays in source order while its children participate in the main grid. */
+#panel-vue-root, #panel-vue-container { display:contents; }
+main .vue-panel-header { padding:0 10px 4px; margin-left:10px; }
 main > .tab-panel { padding:10px; }
 main > :not(.sidebar) { margin-left:10px; }
 .mutual-network-head > :not(:last-child) { margin-right:10px; }
@@ -999,7 +1001,7 @@ main > #monitorSection, main > #candidatesSection, main > #commentsSection,
 main > #unreciprocatedSection, main > #followQueueSection { padding:10px; margin-left:10px; }
 #followQueueSection { overflow:auto; }
 @media(max-width:600px) {
-  main > header, main > .tab-panel { margin-left:0; }
+  main .vue-panel-header, main > .tab-panel { margin-left:0; }
   main > #monitorSection, main > #candidatesSection, main > #commentsSection,
   main > #unreciprocatedSection, main > #followQueueSection { margin-left:0; }
 }

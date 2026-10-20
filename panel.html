@@ -3,16 +3,16 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="admin.css"><link rel="stylesheet" href="brand-layout.css"><link rel="stylesheet" href="follow-queue-panel.css"><link rel="stylesheet" href="dashboard-load.css"></head>
 <body>
 <main>
-  <aside class="sidebar" aria-label="主导航">
-    <div class="brand-mark"><div class="brand-logo"><img src="icon128.png" alt="XFollower logo"></div><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
-    <button class="nav-tab active" data-tab="monitor">粉丝管理 <span id="queueCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
-    <button class="nav-tab" data-tab="candidates">互关追踪 <span id="mutualNetworkCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
-    <button class="nav-tab" data-tab="comments">评论追踪 <span id="commentTrackingCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
-    <button class="nav-tab" data-tab="followQueue">关注队列</button>
-    <button class="nav-tab" data-tab="unreciprocated">回关监测 <span id="unreciprocatedCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
-  <div class="sidebar-foot">v1.6.0<br>本地数据</div>
-  </aside>
-  <header><span class="eyebrow">XFollower · v1.6.0</span><h1>粉丝管理</h1><div id="recordMigration" hidden></div></header>
+  <div id="panel-vue-root">
+    <aside class="sidebar" aria-label="主导航"><div class="brand-mark"><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
+      <button class="nav-tab active" type="button" disabled>粉丝管理 <span id="queueCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+      <button class="nav-tab" type="button" disabled>互关追踪 <span id="mutualNetworkCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+      <button class="nav-tab" type="button" disabled>评论追踪 <span id="commentTrackingCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+      <button class="nav-tab" type="button" disabled>关注队列</button>
+      <button class="nav-tab" type="button" disabled>回关监测 <span id="unreciprocatedCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+    </aside>
+    <header class="vue-panel-header"><span class="eyebrow">XFollower · 加载中</span><h1>粉丝管理</h1></header>
+  </div>
   <section id="followQueueSection" class="tab-panel" data-panel="followQueue" hidden><div id="followQueueLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载关注队列…</span></div><div id="followQueueLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="followQueue">重试</button></div></section>
   <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理">
     <div class="monitor-head">
@@ -248,152 +248,7 @@
     </div>
   </section>
   <div id="profileDrawerMask" class="profile-drawer-mask" hidden></div>
-  <aside id="unreciprocatedSettingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="unreciprocatedSettingsDrawerTitle" hidden>
-    <div class="profile-drawer-head">
-      <strong id="unreciprocatedSettingsDrawerTitle">回关监测 · 定时检测与自动取关设置</strong>
-      <div class="drawer-head-actions">
-        <button id="closeUnreciprocatedSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
-      </div>
-    </div>
-    <div class="profile-drawer-content settings-drawer-content">
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedAutoEvery" class="drawer-setting-label">
-          <span>定时检测周期（分钟）</span>
-          <span class="info-tip" data-tip="定时执行回关检测的基础时间周期，默认 60 分钟（即一小时一次）。" aria-label="定时检测周期说明">?</span>
-        </label>
-        <input id="unreciprocatedAutoEvery" type="number" value="60" min="5" max="1440">
-        <small class="drawer-setting-desc">默认一小时检测一次，定时比对最新粉丝列表确认对方是否回关。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedAutoJitter" class="drawer-setting-label">
-          <span>随机浮动间隔（±分钟）</span>
-          <span class="info-tip" data-tip="在基础周期上随机浮动，模拟真人自然作息，避免机械规律。" aria-label="随机浮动说明">?</span>
-        </label>
-        <input id="unreciprocatedAutoJitter" type="number" value="10" min="1" max="60">
-        <small class="drawer-setting-desc">每次至少浮动 1 分钟，实际检测按基准动态调度。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedOverdueDays" class="drawer-setting-label">
-          <span>超时未回关判定阈值（天）</span>
-          <span class="info-tip" data-tip="主动关注对方后，超过多少天仍未回关则判定为无信用超时粉丝，默认 14 天（2周）。" aria-label="超时阈值说明">?</span>
-        </label>
-        <input id="unreciprocatedOverdueDays" type="number" value="14" min="1" max="90">
-        <small class="drawer-setting-desc">默认 14 天（2周），超过此期限未回关将被标为超时浑水摸鱼账号。</small>
-      </div>
-
-      <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label">
-          <input id="unreciprocatedAutoUnfollow" type="checkbox">
-          <span>检测时自动取关超时未回关账号</span>
-          <span class="info-tip" data-tip="开启后，定时检测到超过设定期限（如14天）仍未回关的账号时，将按批次上限自动执行安全仿真取关。" aria-label="自动取关说明">?</span>
-        </label>
-        <small class="drawer-setting-desc">谨慎开启：定时检测若发现超过 14 天未回关，将自动安全取关清理。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedBatchLimit" class="drawer-setting-label">
-          <span>单次自动取关人数上限</span>
-          <span class="info-tip" data-tip="每轮定时任务最多自动取消关注多少人，建议单次 5-10 人，少量多次更安全。" aria-label="单次取关上限说明">?</span>
-        </label>
-        <input id="unreciprocatedBatchLimit" type="number" value="10" min="1" max="50">
-        <small class="drawer-setting-desc">控制单次清理频次，防止短时间内大量取关触发平台风控限制。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedUnfollowDelay" class="drawer-setting-label">
-          <span>取关操作间隔基准（秒）</span>
-          <span class="info-tip" data-tip="连续取消关注时以此秒数为中心，再按浮动范围随机等待。" aria-label="取关间隔说明">?</span>
-        </label>
-        <input id="unreciprocatedUnfollowDelay" type="number" value="3" min="1" max="30">
-        <small class="drawer-setting-desc">默认 3 秒基准、±2 秒浮动；至少浮动 1 秒。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedUnfollowDelayJitter" class="drawer-setting-label"><span>取关间隔随机浮动（±秒）</span></label>
-        <input id="unreciprocatedUnfollowDelayJitter" type="number" value="2" min="1" max="15">
-        <small class="drawer-setting-desc">每次取关前的等待时间会在基准范围内随机变化。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label for="unreciprocatedWhitelist" class="drawer-setting-label">
-          <span>白名单豁免账号（免取关）</span>
-          <span class="info-tip" data-tip="重要好友、行业大V或特殊关注对象，即使超时也不自动取关。支持用逗号或换行分隔账号 handle。" aria-label="白名单说明">?</span>
-        </label>
-        <textarea id="unreciprocatedWhitelist" rows="3" placeholder="例如：elonmusk, OpenAI （逗号或换行分隔，无需加@）" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px;border:1px solid #cbdacf;border-radius:6px;resize:vertical;"></textarea>
-        <small class="drawer-setting-desc">列入白名单的账号将始终受到保护，绝不被自动取关。</small>
-      </div>
-
-      <div class="drawer-setting-group">
-        <label class="drawer-setting-label"><span>执行状态与记录</span></label>
-        <div class="drawer-checkpoint-display">
-          <span id="unreciprocatedAutoSummary" class="checkpoint-handle">尚未执行回关监测</span>
-          <span id="unreciprocatedAutoLastTime" class="checkpoint-time"></span>
-        </div>
-      </div>
-
-      <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label">
-          <input id="unreciprocatedAutoEnabled" type="checkbox">
-          <span>开启定时回关监测任务</span>
-          <span class="info-tip" data-tip="开启后后台将默认按每小时一次（带随机浮动）定时自动检测回关情况并记录日志。" aria-label="开启定时监测说明">?</span>
-        </label>
-        <small class="drawer-setting-desc">默认每小时检测一次，及时掌握主动关注账号的回关动态与信用表现。</small>
-      </div>
-    </div>
-    <div class="profile-drawer-actions">
-      <button id="saveUnreciprocatedSettings" type="button">保存配置</button>
-      <button id="runUnreciprocatedNow" class="secondary" type="button">立即执行一次检测</button>
-    </div>
-  </aside>
-  <aside id="settingsDrawer" class="profile-drawer" role="dialog" aria-modal="true" aria-labelledby="settingsDrawerTitle" hidden>
-    <div class="profile-drawer-head">
-      <strong id="settingsDrawerTitle">粉丝管理 · 定时检测与自动回关设置</strong>
-      <div class="drawer-head-actions">
-        <button id="openMonitorDrawerLogs" class="icon-button secondary log-icon-btn" type="button" title="查看执行日志" aria-label="查看执行日志"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></button>
-        <button id="closeSettingsDrawer" class="icon-button secondary" title="关闭" aria-label="关闭">×</button>
-      </div>
-    </div>
-    <div class="profile-drawer-content settings-drawer-content">
-      <div class="drawer-setting-group">
-        <label for="monitorEvery" class="drawer-setting-label"><span>定时检测周期（分钟）</span><span class="info-tip" data-tip="每隔多少分钟自动检测自己的 following 和 follower，检查新增粉丝与回关状态。" aria-label="定时检测周期说明">?</span></label>
-        <input id="monitorEvery" type="number" value="60" min="10" max="1440">
-        <small class="drawer-setting-desc">定期检测自身粉丝与关注列表的基础时间间隔。</small>
-      </div>
-      <div class="drawer-setting-group">
-        <label for="monitorJitter" class="drawer-setting-label"><span>随机浮动间隔（±分钟）</span><span class="info-tip" data-tip="在基础周期上随机浮动，避免固定时间触发。" aria-label="随机浮动间隔说明">?</span></label>
-        <input id="monitorJitter" type="number" value="15" min="1" max="120">
-        <small class="drawer-setting-desc">每次浮动至少 1 分钟，按基础周期动态调度。</small>
-      </div>
-      <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label"><input id="monitorAutoEnqueue" type="checkbox" checked><span>自动将待回关用户拉取到关注队列</span><span class="info-tip" data-tip="检测到关注自己但未回关且符合条件的用户时，自动推送到统一关注队列进行看帖和回关处理。" aria-label="自动入队说明">?</span></label>
-        <small class="drawer-setting-desc">开启后，符合条件的待回关粉丝将自动加入统一关注队列，无需手动重复添加。</small>
-      </div>
-      <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label"><input id="monitorFilterDanger" type="checkbox" checked><span>自动过滤高风险账号</span><span class="info-tip" data-tip="过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。" aria-label="过滤高风险账号说明">?</span></label>
-        <small class="drawer-setting-desc">排查命中关键词和危险信号的账号，确保回关安全性。</small>
-      </div>
-      <div class="drawer-setting-group">
-        <label class="drawer-setting-label"><span>执行状态与记录</span></label>
-        <div class="drawer-checkpoint-display">
-          <span id="monitorCheckpointHandle" class="checkpoint-handle">未记录位点</span>
-          <span id="monitorCheckpointTime" class="checkpoint-time"></span>
-        </div>
-        <small id="monitorLastSummaryDisplay" class="drawer-setting-desc" style="margin-top:6px;display:block;">尚未执行检测</small>
-      </div>
-      <div class="drawer-setting-group drawer-setting-switch">
-        <label class="drawer-switch-label"><input id="monitorEnabled" type="checkbox"><span>开启后台定时检测与自动入队</span><span class="info-tip" data-tip="开启后后台定时唤醒检测粉丝变动，自动同步并拉取待回关用户。" aria-label="开启定时检测说明">?</span></label>
-        <small class="drawer-setting-desc">关闭时仅支持手动点击“↻”进行同步。</small>
-      </div>
-    </div>
-    <div class="profile-drawer-actions">
-      <button id="saveSettingsDrawer" type="button">保存配置</button>
-      <button id="runMonitorScanNow" class="secondary" type="button">立即检测并拉取入队</button>
-    </div>
-  </aside>
   <!-- profileDrawer is reactively mounted by Vue 3 in #panel-vue-root -->
 </main><script type="module" src="panel.js"></script>
-  <div id="panel-vue-root"></div>
   <script type="module" src="./src/entries/panel/main.js"></script>
 </body></html>

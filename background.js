@@ -476,7 +476,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.8.3';
+export const BACKGROUND_BUILD_VERSION = '1.8.4';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
@@ -620,6 +620,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+function safeSendMessageToPanel(message) {
+  return new Promise(resolve => {
+    try {
+      chrome.runtime.sendMessage(message, res => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(res);
+        }
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
   if (alarm.name === QUEUE_ALARM) {
@@ -648,11 +664,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Math.max(1, Number(monitor.jitter) || 1);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    let handledByPanel = false;
-    try {
-      const res = await chrome.runtime.sendMessage({ cmd: 'runFollowersScanTick' });
-      if (res?.ok) handledByPanel = true;
-    } catch {}
+    const res = await safeSendMessageToPanel({ cmd: 'runFollowersScanTick' });
+    const handledByPanel = Boolean(res?.ok);
     if (!handledByPanel) {
       await createNotification(`x-followers-${Date.now()}`, {
         type: 'basic',
@@ -671,11 +684,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Number(cfg.jitter) || 1;
     const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     await chrome.alarms.create('x-mutual-auto-follow', { delayInMinutes: nextDelay });
-    let handledByPanel = false;
-    try {
-      const res = await chrome.runtime.sendMessage({ cmd: 'runMutualAutoFollowTick' });
-      if (res?.ok) handledByPanel = true;
-    } catch {}
+    const res = await safeSendMessageToPanel({ cmd: 'runMutualAutoFollowTick' });
+    const handledByPanel = Boolean(res?.ok);
     if (!handledByPanel) {
       await createNotification(`x-mutual-auto-${Date.now()}`, {
         type: 'basic',
@@ -693,11 +703,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Number(cfg.jitter) || 1;
     const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     await chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
-    let handledByPanel = false;
-    try {
-      const res = await chrome.runtime.sendMessage({ cmd: 'runUnreciprocatedTick' });
-      if (res?.ok) handledByPanel = true;
-    } catch {}
+    const res = await safeSendMessageToPanel({ cmd: 'runUnreciprocatedTick' });
+    const handledByPanel = Boolean(res?.ok);
     if (!handledByPanel) {
       await createNotification(`x-unreciprocated-${Date.now()}`, {
         type: 'basic',

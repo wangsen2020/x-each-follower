@@ -3,7 +3,7 @@
     <!-- Mask -->
     <div
       v-if="profileDrawerController.isOpen.value"
-      id="profileDrawerMask"
+      id="vueProfileDrawerMask"
       class="profile-drawer-mask"
       @click="profileDrawerController.close()"
     ></div>

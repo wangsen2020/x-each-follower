@@ -33,7 +33,7 @@ async function render() {
   $('deliveryStatus').textContent=related?({sending:'也在给你的手机发私信提醒…',sent:'已向你的 X 本人会话发送私信提醒',uncertain:'手机私信结果待确认，请以这里的提醒为准',failed:'手机私信未能发送，请先在电脑完成验证'}[delivery.status] || '手机私信提醒正在准备中'):'手机私信提醒正在准备中';
 }
 
-$('openVerification').addEventListener('click',async()=>{
+$('openVerification')?.addEventListener('click',async()=>{
   if(preview){window.close();return;}
   $('openVerification').disabled=true;$('actionError').hidden=true;
   try {
@@ -47,7 +47,7 @@ $('openVerification').addEventListener('click',async()=>{
   } catch(error){$('actionError').textContent=error.message;$('actionError').hidden=false;}
   finally{$('openVerification').disabled=false;}
 });
-$('dismissAlert').addEventListener('click',()=>window.close());
+$('dismissAlert')?.addEventListener('click',()=>window.close());
 chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&(changes.grokVerification || changes.grokVerificationSelfMessage))render();});
 const win=await chrome.windows.getCurrent();
 await chrome.windows.update(win.id,centeredAlertBounds({left:screen.availLeft,top:screen.availTop,width:screen.availWidth,height:screen.availHeight}));

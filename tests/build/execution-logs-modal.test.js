@@ -138,20 +138,45 @@ test('useExecutionLogs fansSubTab cleanly isolates scan logs from queue follow-b
     { id: 'queue-1', scope: 'queue', sources: [{ module: 'fans' }], detail: 'followed' },
     { id: 'scan-2', scope: 'monitor', summary: 'scanned 30' },
     { id: 'queue-2', scope: 'queue', sources: [{ module: 'fans' }], detail: 'skipped' },
+    { id: 'unrelated-queue', scope: 'queue', sources: [{ module: 'comments' }], detail: 'followed' },
     { id: 'ver-1', scope: 'verification', detail: 'cf challenge' }
   ];
 
   // 1. scan tab: only scan and verification logs
   c.setFansSubTab('scan');
   assert.deepEqual(c.entries.value.map(e => e.id), ['scan-1', 'scan-2', 'ver-1']);
-  assert.equal(c.totalBadgeText.value, '3 条记录');
+  assert.equal(c.totalBadgeText.value, '0 条记录');
 
   // 2. followBack tab: only queue and verification logs
   c.setFansSubTab('followBack');
   assert.deepEqual(c.entries.value.map(e => e.id), ['queue-1', 'queue-2', 'ver-1']);
-  assert.equal(c.totalBadgeText.value, '3 条记录');
+  assert.equal(c.totalBadgeText.value, '本页 3 条记录');
 
-  // 3. all tab: all logs
   c.setFansSubTab('all');
-  assert.deepEqual(c.entries.value.map(e => e.id), ['scan-1', 'queue-1', 'scan-2', 'queue-2', 'ver-1']);
+  assert.equal(c.fansSubTab.value, 'followBack', 'Unsupported aggregate tab must not imply an incomplete combined query');
+});
+
+test('clearLogs targets the current module and never clears fan scan records from queue follow-back tab', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalWindow = globalThis.window;
+  const requests = [];
+  globalThis.chrome = {runtime: {sendMessage: async message => {
+    requests.push(message);
+    return message.cmd === 'queryExecutionLogs' ? {ok: true, entries: [], total: 0} : {ok: true};
+  }}};
+  globalThis.window = {confirm: () => true, alert: () => {}};
+  try {
+    const c = useExecutionLogs();
+    await c.open('comment');
+    await c.clearLogs();
+    assert.deepEqual(requests.filter(r => r.cmd === 'clearExecutionLogs').map(r => r.scope), ['comment']);
+    await c.open('fans');
+    await c.setFansSubTab('followBack');
+    const before = requests.filter(r => r.cmd === 'clearExecutionLogs').length;
+    await c.clearLogs();
+    assert.equal(requests.filter(r => r.cmd === 'clearExecutionLogs').length, before);
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.window = originalWindow;
+  }
 });

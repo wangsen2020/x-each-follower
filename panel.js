@@ -266,6 +266,15 @@ function dashboardPanelVisible(tab) {
   return !!panel && !panel.hidden;
 }
 function paintSidebarBadge(id, state, count) {
+  const tab = { queueCount: 'monitor', mutualNetworkCount: 'candidates', commentTrackingCount: 'comments', unreciprocatedCount: 'unreciprocated' }[id];
+  if (tab && window.__panelNavigationController) {
+    const presentation = badgePresentation(state, count);
+    window.__panelNavigationController.updateBadge(tab, {
+      count: presentation.mode === 'error' ? '!' : presentation.count,
+      loading: presentation.mode === 'loading'
+    });
+    return;
+  }
   const badge = $(id);
   if (!badge) return;
   const presentation = badgePresentation(state, count);
@@ -292,6 +301,11 @@ function paintSidebarBadge(id, state, count) {
   badge.removeAttribute('aria-label');
 }
 function paintSummaryCount(id, count) {
+  const tab = { queueCount: 'monitor', mutualNetworkCount: 'candidates', commentTrackingCount: 'comments', unreciprocatedCount: 'unreciprocated' }[id];
+  if (tab && window.__panelNavigationController) {
+    window.__panelNavigationController.updateBadge(tab, { count, loading: count == null });
+    return;
+  }
   const badge = $(id);
   if (!badge) return;
   badge.classList.remove('nav-count-loading');
@@ -315,6 +329,7 @@ function refreshSidebarBadges() {
   const overdue = (unreciprocatedTracker.users || []).filter(user => user.status !== 'unfollowed' && user.status === 'overdue').length;
   paintSidebarBadge('unreciprocatedCount', loadRegistry.get('unreciprocated'), overdue);
 }
+document.addEventListener('panel-vue-ready', refreshSidebarBadges);
 function guardModuleRender(moduleId, rowCount, empty) {
   const view = applyModuleView(document, moduleId, loadRegistry.get(moduleId), rowCount);
   refreshSidebarBadges();
@@ -348,13 +363,12 @@ function paintFollowerCount(id, value) {
   node.textContent = String(value);
   node.removeAttribute('aria-busy');
 }
+window.setTab = setTab;
 function setTab(tab) {
   const targets = tabRenderTargets(activeDashboardTab, tab);
   activeDashboardTab = tab;
-  document.querySelectorAll('.nav-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+  window.__panelNavigationController?.setTab(tab);
   document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = panel.dataset.panel !== tab; });
-  const h1 = document.querySelector('main > header > h1');
-  if (h1) h1.textContent = {followQueue:'关注队列',monitor:'粉丝管理', candidates:'互关追踪', comments:'评论追踪', unreciprocated:'回关监测'}[tab] || '粉丝管理';
   if (recordBootAttempted && !recordPaging) return;
   if (!targets.length) return;
   if (targets.includes('followQueue')) {
@@ -388,7 +402,6 @@ function setTab(tab) {
     renderUnreciprocatedUI();
   }
 }
-document.querySelectorAll('.nav-tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
 document.addEventListener('click', event => { if (event.target.closest('.info-tip')) event.preventDefault(); });
 const persist = (key, value) => bridgePersist(key, value);
 const RECORD_SNAPSHOT_KEYS = ['monitor', 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker'];
@@ -3813,14 +3826,14 @@ async function scanFollowerList(scanSource = 'manual') {
 async function startFollowerScan() {
   if (followerScanRunning) return;
   followerScanRunning = true;
-  $('scanFollowers').disabled = true; $('initialFollowers').disabled = true;
+  if ($('scanFollowers')) $('scanFollowers').disabled = true; if ($('initialFollowers')) $('initialFollowers').disabled = true;
   monitorStatus(monitor.users?.length ? '正在增量扫描新粉丝…' : '正在获取初始粉丝列表…');
   try { await scanFollowerList(); }
   catch (error) { monitorStatus(`扫描失败：${error.message}`); }
-  finally { followerScanRunning = false; $('scanFollowers').disabled = false; $('initialFollowers').disabled = false; renderMonitorList(); }
+  finally { followerScanRunning = false; if ($('scanFollowers')) $('scanFollowers').disabled = false; if ($('initialFollowers')) $('initialFollowers').disabled = false; renderMonitorList(); }
 }
-$('scanFollowers').addEventListener('click', startFollowerScan);
-$('initialFollowers').addEventListener('click', startFollowerScan);
+$('scanFollowers')?.addEventListener('click', startFollowerScan);
+$('initialFollowers')?.addEventListener('click', startFollowerScan);
 $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
 for (const id of ['monitorEvery','monitorJitter','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 $('runMonitorScanNow')?.addEventListener('click', async () => {
@@ -3901,7 +3914,7 @@ document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEve
   followerPage = 1;
   reloadRecordModule('fans', renderMonitorList);
 }));
-$('listSelectAll').addEventListener('change', event => {
+$('listSelectAll')?.addEventListener('change', event => {
   const allUsers = currentFollowerUsers();
   const keyword = followerSearch.trim().toLowerCase();
   const matchedUsers = keyword ? allUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allUsers;
@@ -3930,18 +3943,18 @@ $('listSelectAll').addEventListener('change', event => {
 });
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
 $('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
-$('followerSearch').addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; if (recordPaging && recordPages) runRecordPageAction('fans', () => recordPages.search('fans', currentRecordFilter('fans')), renderMonitorList); else renderMonitorList(); });
+$('followerSearch')?.addEventListener('input', event => { followerSearch=event.target.value; followerPage=1; if (recordPaging && recordPages) runRecordPageAction('fans', () => recordPages.search('fans', currentRecordFilter('fans')), renderMonitorList); else renderMonitorList(); });
 $('followerSearchBtn')?.addEventListener('click', () => { followerSearch=$('followerSearch').value.trim(); followerPage=1; renderMonitorList(); });
 $('followerSearch')?.addEventListener('keydown', event => { if (event.key === 'Enter') { followerSearch=event.target.value.trim(); followerPage=1; renderMonitorList(); } });
-$('followerPageSize').addEventListener('change', event => { followerPageSize=capPageSize(event.target.value); followerPage=1; reloadRecordModule('fans', renderMonitorList); });
-$('followerPrevPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.previous('fans'), renderMonitorList); return; } followerPage--; renderMonitorList(); });
-$('followerNextPage').addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
-$('collectNetwork').addEventListener('click', () => collectMutualNetwork($('networkAnchor').value, true));
-$('networkAnchor').addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
+$('followerPageSize')?.addEventListener('change', event => { followerPageSize=capPageSize(event.target.value); followerPage=1; reloadRecordModule('fans', renderMonitorList); });
+$('followerPrevPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.previous('fans'), renderMonitorList); return; } followerPage--; renderMonitorList(); });
+$('followerNextPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
+$('collectNetwork')?.addEventListener('click', () => collectMutualNetwork($('networkAnchor')?.value, true));
+$('networkAnchor')?.addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer')?.addEventListener('click', closeProfileDrawer);
 $('openSettingsDrawer')?.addEventListener('click', openSettingsDrawer);
 $('closeSettingsDrawer')?.addEventListener('click', closeSettingsDrawer);
-$('profileDrawerMask').addEventListener('click', () => {
+$('profileDrawerMask')?.addEventListener('click', () => {
   closeProfileDrawer();
   closeSettingsDrawer();
   closeMutualSettingsDrawer();
@@ -4149,7 +4162,7 @@ function sanitizeMojibakeCollections() {
   return changed;
 }
 
-$('analyzeSelected').addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok 分析互粉倾向…'); await submitBatchToGrok(null, analysisStatus); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
+$('analyzeSelected')?.addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok 分析互粉倾向…'); await submitBatchToGrok(null, analysisStatus); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
 async function ensureCompleteModule(moduleName, key, assign) {
   if (!recordPaging || !recordPages || recordPages.isComplete(key)) return;
   const records = await recordPages.loadComplete(moduleName, key);
@@ -4345,10 +4358,10 @@ document.querySelectorAll('[data-load-retry]').forEach(button => {
 });
 
 async function bootRecordDashboard() {
-  const host = $('recordMigration');
   recordPages = createPanelPages({
     request: message => chrome.runtime.sendMessage({cmd: 'recordData', ...message}),
     onProgress(status) {
+      const host = $('recordMigration');
       if (!host || !status) return;
       host.hidden = false;
       paintMigrationProgress(host, {stage: status.label || migrationStageLabel(status), completed: Number(status.completed) || 0, total: Number(status.total) || 0});
@@ -4405,13 +4418,16 @@ try {
 }
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
-chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.8.3';
-  if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_8_0') !== '1') {
-    sessionStorage.setItem('x_bg_reloaded_1_8_0', '1');
-    chrome.runtime.reload();
-  }
-}).catch(() => {});
+try {
+  chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}, res => {
+    if (chrome.runtime.lastError) return;
+    const expectedVersion = '1.8.4';
+    if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_8_4') !== '1') {
+      sessionStorage.setItem('x_bg_reloaded_1_8_4', '1');
+      chrome.runtime.reload();
+    }
+  });
+} catch {}
 
 
 
@@ -6118,14 +6134,13 @@ $('unreciprocatedSelectAll')?.addEventListener('change', () => {
   renderUnreciprocatedUI();
 });
 
-document.addEventListener('open-execution-logs', () => openLogsModal('autoFollow'));
 $('openFollowLogs')?.addEventListener('click', () => openLogsModal('fans'));
 
 async function renderGrokVerificationNotice() {
   const {grokVerification:notice,grokVerificationSelfMessage:delivery}=await chrome.storage.local.get(['grokVerification','grokVerificationSelfMessage']);
   let banner=document.getElementById('grokVerificationNotice');
   if(!notice){banner?.remove();return;}
-  if(!banner){banner=document.createElement('div');banner.id='grokVerificationNotice';banner.setAttribute('role','alert');document.querySelector('main > header').after(banner);}
+  if(!banner){banner=document.createElement('div');banner.id='grokVerificationNotice';banner.setAttribute('role','alert');(document.querySelector('main .vue-panel-header') || document.getElementById('panel-vue-root'))?.after(banner);}
   banner.replaceChildren();
   const message=document.createElement('span');message.textContent='Grok 需要手动安全验证，任务已结束等待。完成验证后请重试。';
   const open=document.createElement('button');open.type='button';open.textContent='打开验证窗口';

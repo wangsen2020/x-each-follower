@@ -4,6 +4,7 @@ import { logsModalController } from './composables/useExecutionLogs.js';
 import { profileDrawerController } from './composables/useProfileDrawer.js';
 import { settingsDrawerController } from './composables/useSettingsDrawer.js';
 import { unreciprocatedSettingsController } from './composables/useUnreciprocatedSettings.js';
+import { panelNavigationController } from './composables/usePanelNavigation.js';
 
 /**
  * Panel Vue 3 Entrypoint.
@@ -27,6 +28,8 @@ function initPanelVueApp() {
   window.__profileDrawerController = profileDrawerController;
   window.__settingsDrawerController = settingsDrawerController;
   window.__unreciprocatedSettingsController = unreciprocatedSettingsController;
+  window.__panelNavigationController = panelNavigationController;
+  document.dispatchEvent(new CustomEvent('panel-vue-ready'));
 
   // Listen to open-execution-logs custom event from follow queue panel or other components
   document.addEventListener('open-execution-logs', (evt) => {
@@ -66,5 +69,6 @@ export {
   logsModalController,
   profileDrawerController,
   settingsDrawerController,
-  unreciprocatedSettingsController
+  unreciprocatedSettingsController,
+  panelNavigationController
 };

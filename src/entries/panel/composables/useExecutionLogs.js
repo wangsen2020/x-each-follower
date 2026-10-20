@@ -9,7 +9,7 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../../execution-log-store.j
 export function useExecutionLogs() {
   const isOpen = ref(false);
   const currentScope = ref('autoFollow');
-  const fansSubTab = ref('scan'); // 'scan' | 'followBack' | 'all'
+  const fansSubTab = ref('scan'); // 'scan' | 'followBack'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
   const entries = ref([]);
@@ -21,8 +21,14 @@ export function useExecutionLogs() {
 
   const isFansScope = computed(() => currentScope.value === 'fans' || currentScope.value === 'monitor');
 
-  function setFansSubTab(tab) {
+  async function setFansSubTab(tab) {
+    if (tab !== 'scan' && tab !== 'followBack') return;
+    if (fansSubTab.value === tab) return;
     fansSubTab.value = tab;
+    if (isOpen.value) {
+      logPager.reset();
+      await loadPage();
+    }
   }
 
   const title = computed(() => {
@@ -45,14 +51,14 @@ export function useExecutionLogs() {
       return entries.value.filter(e => e.scope === 'fans' || e.scope === 'monitor' || e.origin === 'monitorLogs' || e.scope === 'verification');
     }
     if (fansSubTab.value === 'followBack') {
-      return entries.value.filter(e => e.scope === 'queue' || e.scope === 'verification');
+      return entries.value.filter(e => e.scope === 'verification' || (e.scope === 'queue' && e.sources?.some(source => source.module === 'fans')));
     }
     return entries.value;
   });
 
   const totalBadgeText = computed(() => {
-    if (isFansScope.value && fansSubTab.value !== 'all') {
-      return `${displayedEntries.value.length} 条记录`;
+    if (isFansScope.value && fansSubTab.value === 'followBack') {
+      return `本页 ${displayedEntries.value.length} 条记录`;
     }
     return `${total.value} 条记录`;
   });
@@ -99,9 +105,13 @@ export function useExecutionLogs() {
     let saved;
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        let queryScope = currentScope.value;
+        if (isFansScope.value && fansSubTab.value === 'followBack') {
+          queryScope = 'autoFollow';
+        }
         saved = await chrome.runtime.sendMessage({
           cmd: 'queryExecutionLogs',
-          scope: currentScope.value,
+          scope: queryScope,
           limit: LOG_PAGE_SIZE,
           cursor: logPager.cursor()
         });
@@ -163,8 +173,15 @@ export function useExecutionLogs() {
 
   async function clearLogs() {
     const scope = currentScope.value;
+    if (isFansScope.value && fansSubTab.value === 'followBack') {
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('队列回关记录由关注队列统一管理，如需清空请前往“关注队列”面板。');
+      }
+      return;
+    }
+
     const label = scope === 'fans' || scope === 'monitor'
-      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : fansSubTab.value === 'followBack' ? '队列回关日志' : '粉丝管理全部日志')
+      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝管理全部日志')
       : scope === 'unreciprocated'
         ? '回关监测执行日志'
         : '当前范围的执行日志';
