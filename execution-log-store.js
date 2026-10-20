@@ -428,8 +428,47 @@ export function createExecutionLogStore(options = {}) {
     legacyDone = true;
   }
 
+  async function cleanupQueueFromFansScopes() {
+    const db = await database();
+    const marker = await readMeta(db, 'fansQueueDisentangled');
+    if (marker?.done) return;
+    const read = db.transaction(['logs', 'scopeRows'], 'readonly');
+    const scopeRowsStore = read.objectStore('scopeRows');
+    const logsStore = read.objectStore('logs');
+    const rowsToDelete = [];
+    const logsToUpdate = [];
+    for (const scope of ['fans', 'monitor']) {
+      const rows = await requestToPromise(scopeRowsStore.getAll(scopeBound(scope, null)));
+      for (const row of rows) {
+        const record = await requestToPromise(logsStore.get(row.logId));
+        if (record && record.scope === 'queue') {
+          rowsToDelete.push(row);
+          if (!logsToUpdate.some(l => l.id === record.id)) {
+            const membership = (record.membership || []).filter(m => m !== 'fans' && m !== 'monitor');
+            logsToUpdate.push({...record, membership});
+          }
+        }
+      }
+    }
+    await transactionDone(read);
+    if (rowsToDelete.length || logsToUpdate.length) {
+      const tx = db.transaction(['logs', 'scopeRows'], 'readwrite');
+      const sStore = tx.objectStore('scopeRows');
+      const lStore = tx.objectStore('logs');
+      for (const r of rowsToDelete) {
+        sStore.delete([r.scope, r.at, r.id]);
+      }
+      for (const l of logsToUpdate) {
+        lStore.put(l);
+      }
+      await transactionDone(tx);
+    }
+    await writeMeta(db, {key: 'fansQueueDisentangled', done: true, at: new Date().toISOString()});
+  }
+
   async function ensureRecovered() {
     await ensureLegacy();
+    await cleanupQueueFromFansScopes();
     if (recovered) return;
     await initHead();
     await replayJournal();
@@ -513,7 +552,10 @@ export function createExecutionLogStore(options = {}) {
         const entries = [];
         for (const row of page) {
           const record = await requestToPromise(read.objectStore('logs').get(row.logId));
-          if (record) entries.push(record);
+          if (record) {
+            if ((scope === 'fans' || scope === 'monitor') && record.scope === 'queue') continue;
+            entries.push(record);
+          }
         }
         await transactionDone(read);
         const last = page[page.length - 1];
