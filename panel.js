@@ -1208,6 +1208,9 @@ function closeProfileDrawer() {
 }
 
 function closeSettingsDrawer() {
+  if (window.__settingsDrawerController) {
+    window.__settingsDrawerController.close();
+  }
   if ($('settingsDrawer')) $('settingsDrawer').hidden = true;
   syncDrawerMask();
 }
@@ -1226,6 +1229,9 @@ function closeCommentAutoFollowDrawer() {
 
 function closeUnreciprocatedDrawer() {
   saveUnreciprocatedTracker().catch(() => {});
+  if (window.__unreciprocatedSettingsController) {
+    window.__unreciprocatedSettingsController.close();
+  }
   if ($('unreciprocatedSettingsDrawer')) $('unreciprocatedSettingsDrawer').hidden = true;
   syncDrawerMask();
 }
@@ -1266,6 +1272,10 @@ function openSettingsDrawer() {
   closeMutualSettingsDrawer();
   closeCommentAutoFollowDrawer();
   closeUnreciprocatedDrawer();
+  if (window.__settingsDrawerController) {
+    window.__settingsDrawerController.open(monitor);
+    return;
+  }
   renderSettingsDrawer();
   if ($('settingsDrawer')) $('settingsDrawer').hidden = false;
   syncDrawerMask();
@@ -4396,7 +4406,7 @@ try {
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}).then(res => {
-  const expectedVersion = '1.8.2';
+  const expectedVersion = '1.8.3';
   if (res?.version !== expectedVersion && sessionStorage.getItem('x_bg_reloaded_1_8_0') !== '1') {
     sessionStorage.setItem('x_bg_reloaded_1_8_0', '1');
     chrome.runtime.reload();
@@ -5978,6 +5988,10 @@ function openUnreciprocatedDrawer() {
   closeSettingsDrawer();
   closeMutualSettingsDrawer();
   closeCommentAutoFollowDrawer();
+  if (window.__unreciprocatedSettingsController) {
+    window.__unreciprocatedSettingsController.open(unreciprocatedTracker.config);
+    return;
+  }
   const drawer = $('unreciprocatedSettingsDrawer');
   if (drawer) drawer.hidden = false;
   syncDrawerMask();
@@ -6132,4 +6146,48 @@ if (window.__profileDrawerController) {
       window.__profileDrawerController.setRefreshHandler(() => refreshDrawerProfile());
     }
   });
+}
+
+// Settings drawers Vue controller bridges
+function registerSettingsBridges() {
+  if (window.__settingsDrawerController) {
+    window.__settingsDrawerController.setSaveHandler(async (cfg) => {
+      monitor = { ...monitor, ...cfg };
+      recordScalarBaseline.monitor = {
+        enabled: monitor.enabled,
+        every: monitor.every,
+        jitter: monitor.jitter,
+        autoEnqueue: monitor.autoEnqueue,
+        filterDanger: monitor.filterDanger
+      };
+      await writeLocal({ monitor });
+      persist('monitor', monitor);
+      await chrome.alarms.clear('x-followers-scan');
+      if (monitor.enabled) {
+        const delay = randomizedInteger(monitor.every, monitor.jitter, 10, 1440);
+        await chrome.alarms.create('x-followers-scan', { delayInMinutes: delay });
+      }
+    });
+    window.__settingsDrawerController.setRunHandler(async () => {
+      await scanFollowersForMonitor();
+    });
+  }
+
+  if (window.__unreciprocatedSettingsController) {
+    window.__unreciprocatedSettingsController.setSaveHandler(async (cfg) => {
+      unreciprocatedTracker.config = cfg;
+      await saveUnreciprocatedTracker();
+      chrome.runtime.sendMessage({ cmd: 'configureUnreciprocatedTracker', config: cfg }).catch(() => {});
+      renderUnreciprocatedUI();
+    });
+    window.__unreciprocatedSettingsController.setRunHandler(async () => {
+      await runUnreciprocatedCheckCycle('manual');
+    });
+  }
+}
+
+if (window.__settingsDrawerController || window.__unreciprocatedSettingsController) {
+  registerSettingsBridges();
+} else {
+  window.addEventListener('DOMContentLoaded', registerSettingsBridges);
 }

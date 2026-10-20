@@ -2,11 +2,14 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import { logsModalController } from './composables/useExecutionLogs.js';
 import { profileDrawerController } from './composables/useProfileDrawer.js';
+import { settingsDrawerController } from './composables/useSettingsDrawer.js';
+import { unreciprocatedSettingsController } from './composables/useUnreciprocatedSettings.js';
 
 /**
  * Panel Vue 3 Entrypoint.
- * Mounts the App root containing ExecutionLogsModal and ProfileDrawer,
- * establishes single DOM ownership, and registers controller bridges for panel.js callers.
+ * Mounts the App root containing ExecutionLogsModal, ProfileDrawer,
+ * SettingsDrawer and UnreciprocatedSettingsDrawer.
+ * Establishes single DOM ownership and registers controller bridges for panel.js callers.
  */
 function initPanelVueApp() {
   let container = document.getElementById('panel-vue-root') || document.getElementById('logs-modal-app');
@@ -22,6 +25,8 @@ function initPanelVueApp() {
   // Expose controllers for legacy panel.js and external callers
   window.__executionLogsModalController = logsModalController;
   window.__profileDrawerController = profileDrawerController;
+  window.__settingsDrawerController = settingsDrawerController;
+  window.__unreciprocatedSettingsController = unreciprocatedSettingsController;
 
   // Listen to open-execution-logs custom event from follow queue panel or other components
   document.addEventListener('open-execution-logs', (evt) => {
@@ -37,6 +42,18 @@ function initPanelVueApp() {
       profileDrawerController.open(user, mode);
     }
   });
+
+  // Listen to open-settings-drawer custom event
+  document.addEventListener('open-settings-drawer', (evt) => {
+    const config = evt?.detail?.config;
+    settingsDrawerController.open(config);
+  });
+
+  // Listen to open-unreciprocated-settings custom event
+  document.addEventListener('open-unreciprocated-settings', (evt) => {
+    const config = evt?.detail?.config;
+    unreciprocatedSettingsController.open(config);
+  });
 }
 
 if (document.readyState === 'loading') {
@@ -45,4 +62,9 @@ if (document.readyState === 'loading') {
   initPanelVueApp();
 }
 
-export { logsModalController, profileDrawerController };
+export {
+  logsModalController,
+  profileDrawerController,
+  settingsDrawerController,
+  unreciprocatedSettingsController
+};
