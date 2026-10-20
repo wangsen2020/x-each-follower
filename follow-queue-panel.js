@@ -1797,7 +1797,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         el('h4', { className: 'fq-setting-section-title' }, '🛡️ 筛选过滤与意向门槛'),
         createNumberGroup('fq_minFollowers', '最低粉丝数门槛', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
         createNumberGroup('fq_ratioThreshold', '回关比例门槛（关注/粉丝）', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
-        createSwitchGroup('fq_onlyRecommended', '仅关注推荐/互粉意向账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended')
+        createSwitchGroup('fq_onlyRecommended', '仅关注推荐/互粉意向账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
+        createSwitchGroup('fq_skipRiskContent', '安全门禁：跳过涉政/涉军/涉宗教/暴力/色情敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),

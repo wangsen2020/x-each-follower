@@ -1,0 +1,79 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as rules from '../relationship-rules.js';
+import * as panelData from '../panel-data.js';
+
+const monitor = {
+  queue: [{handle: 'Queued', status: 'followed'}, {status: 'pending'}],
+  users: [
+    {handle: 'Fan', relationship: {followedBy: true}},
+    {handle: 'Both', state: 'following', relationship: {followedBy: true}},
+    {handle: 'OneWay', relationship: {following: true, followedBy: false}}
+  ],
+  followingUsers: [
+    {handle: 'Kept', relationship: {followedBy: false}},
+    {handle: 'Open'}
+  ]
+};
+
+test('panel data re-exports the same relationship functions', () => {
+  for (const name of [
+    'buildRelationshipIndex', 'monitorUserStatus', 'commentRelationshipLabel',
+    'applyRelationshipSnapshot', 'snapshotMutualUsers', 'deriveNotMutualUsers', 'deriveTrackerUsers'
+  ]) {
+    assert.equal(panelData[name], rules[name]);
+  }
+});
+
+test('not-mutual derivation keeps monitor rows ahead of later duplicates', () => {
+  const rows = rules.deriveNotMutualUsers({
+    monitor,
+    mutualNetwork: {users: [
+      {handle: 'Kept', relationship: {following: true, followedBy: false}},
+      {handle: 'Later', relationship: {following: true, followedBy: false}},
+      {handle: 'MutualFan', relationship: {following: true, followedBy: true}}
+    ]}
+  });
+  assert.deepEqual(rows.map(row => row.handle), ['kept', 'open', 'oneway', 'later']);
+  assert.deepEqual(rows[0].sourcePath, ['monitor', 'followingUsers', 0]);
+  assert.equal(rows[0].payload.relationship.followedBy, false);
+  assert.deepEqual(rows[2].sourcePath, ['monitor', 'users', 2]);
+  assert.deepEqual(rows[3].sourcePath, ['mutualNetwork', 'users', 1]);
+});
+
+test('tracker derivation preserves stored rows and skips unfollowed users', () => {
+  const rows = rules.deriveTrackerUsers({
+    monitor: {followingUsers: [{handle: 'New', name: 'New Name', relationship: {followedBy: false}}]},
+    mutualNetwork: {users: [{handle: 'FromMutual', followedAt: '2026-01-01', relationship: {followedBy: true}}]},
+    commentTracking: {users: [{handle: 'Commented', state: 'saved'}]},
+    unreciprocatedTracker: {users: [
+      {handle: 'Stored', status: 'pending', relationship: {following: true, followedBy: false}},
+      {handle: 'Gone', status: 'unfollowed'},
+      {handle: 'New', status: 'pending', name: 'Stored Name'}
+    ]}
+  });
+  assert.deepEqual(rows.map(row => row.handle), ['stored', 'new', 'frommutual']);
+  assert.equal(rows[0].derived, false);
+  assert.equal(rows[0].payload.name, undefined);
+  assert.equal(rows[1].derived, false);
+  assert.equal(rows[1].payload.name, 'Stored Name');
+  const created = rows[2];
+  assert.equal(created.derived, true);
+  assert.equal(created.payload.status, 'mutual');
+  assert.deepEqual(created.payload.relationship, {following: true, followedBy: true});
+  assert.deepEqual(created.originPath, ['mutualNetwork', 'users', 0]);
+  assert.deepEqual(created.sourcePath, ['unreciprocatedTracker', 'synthetic', 'frommutual']);
+});
+
+test('relationship index still classifies queue, following, and empty handles', () => {
+  const index = rules.buildRelationshipIndex(monitor);
+  assert.equal(rules.monitorUserStatus({handle: 'Queued'}, index), 'followed');
+  assert.equal(rules.monitorUserStatus({}, index), 'pending');
+  assert.equal(rules.commentRelationshipLabel({handle: 'Both'}, index), '互相关注');
+  assert.equal(rules.commentRelationshipLabel({handle: 'Kept'}, index), '未互关');
+  const snapped = rules.applyRelationshipSnapshot({handle: 'Kept', relationship: {followedBy: false}}, index);
+  assert.equal(snapped.relationship.following, true);
+  assert.equal(snapped.relationship.followedBy, false);
+  assert.equal(snapped.relationshipKnown, true);
+  assert.equal(rules.snapshotMutualUsers([{handle: 'Nope'}], index)[0].relationship.following, false);
+});

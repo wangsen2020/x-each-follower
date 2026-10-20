@@ -5,7 +5,8 @@ import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {networkFetch, networkFollow, parseNetworkUsers, mergeRecentPosts} from './network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from './page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from './scoring.js';
-import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from './grok-comment.js';
+import {requestGrokComment, requestGrokText, postQuoteOnTab, resolveCommentLanguage} from './grok-comment.js';
+import {evaluateProfileGrokRisk} from './content-risk.js';
 import {randomizedSeconds, randomizedInteger} from './timing.js';
 import {appendExecutionLog, normalizeQueueExecutionLog} from './execution-log.js';
 import {readAutoFollowAttempts} from './auto-follow-history.js';
@@ -15,10 +16,18 @@ const BINDING_KEY = 'followQueueBinding';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const canonical = value => String(value || '').replace(/^@/, '').toLowerCase();
 
+export function quotePublicationState(result) {
+  if (result?.riskBlocked) return 'skipped';
+  return result?.stage === 'composer' ? 'failed' : 'uncertain';
+}
+
 export function assessQueueProfile(profile, settings) {
   const followers = parseCount(String(profile.followersText ?? ''));
   const following = parseCount(String(profile.followingText ?? ''));
-  if (riskAssess(profile).level === 'danger') return '命中高风险内容规则';
+  const risk = riskAssess(profile);
+  if (settings.skipRiskContent !== false && risk.level === 'danger') {
+    return `命中高风险内容门禁（${risk.hits.slice(0, 2).join('、')}）`;
+  }
   if (followers === null || following === null) return '未读全粉丝与关注数';
   if (followers < settings.minFollowers) return `粉丝数低于 ${settings.minFollowers}`;
   if (followers > 0 && following / followers < settings.ratioThreshold) return `关注/粉丝比例低于 ${Math.round(settings.ratioThreshold * 100)}%`;
@@ -433,12 +442,30 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         audit.scrollRounds = round + 1;
         await sleep(dwell * 1000 / settings.scrollRounds);
       }
-      const fresh = await script(tab.id,readProfileBundle,[job.handle,5]);
+      const fresh = await script(tab.id,readProfileBundle,[job.handle,10]);
       if (fresh && !fresh.pending) profile = {...profile,...fresh};
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],dwellSeconds:dwell});
       await saveProfile(job.handle, profile);
       const reason = assessQueueProfile({...profile,...target,bio:profile.bio || target.bio},settings);
       if (reason) return {state:'skipped',reason};
+      if (settings.skipRiskContent !== false && (settings.grokEnabled || settings.grokProfileAssessment !== false)) {
+        const grokAssessment = await evaluateProfileGrokRisk(profile, {
+          sleep,
+          runner: prompt => requestGrokText(prompt, { sleep, timeoutMs: 60000 })
+        });
+        if (grokAssessment.evaluated) {
+          profile.grokRiskAssessment = grokAssessment;
+          profile.grokAssessedAt = grokAssessment.at;
+          if (Array.isArray(grokAssessment.tags) && grokAssessment.tags.length) {
+            profile.tags = [...new Set([...(profile.tags || []), ...grokAssessment.tags])];
+          }
+          await saveProfile(job.handle, profile);
+          if (!grokAssessment.safe) {
+            const labels = grokAssessment.labels?.length ? grokAssessment.labels.join('、') : '高危敏感内容';
+            return {state:'skipped', reason:`命中 Grok 风险标签门禁（${labels}）`};
+          }
+        }
+      }
       await guard();
       await control.checkpoint({stage:'following',followResult:{attemptedAt:Date.now(),targetUserId:target.id}});
       attemptedFollow = true;
@@ -470,7 +497,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       evaluation.language = generated.language || 'und';
       evaluation.text = appendQuoteTags(evaluation.baseText, settings, evaluation.language);
       evaluation.channel = generated.channel || '';
-      evaluation.status = generated.ok ? 'draft' : 'failed';
+      evaluation.status = generated.ok ? 'draft' : (generated.riskBlocked ? 'skipped' : 'failed');
+      evaluation.riskBlocked = Boolean(generated.riskBlocked);
       evaluation.reason = generated.reason || '';
       await control.checkpoint({stage:'evaluated',followResult,evaluations});
       const live = await store.getSettings(job.accountId);
@@ -480,14 +508,14 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const submittedAt = Date.now();
       await control.checkpoint({stage:'publishing',followResult,evaluations});
       const published = await postQuoteOnTab(tab.id,post,evaluation.text,publishQuotePostOnPage,sleep,{beforePublish:guard});
-      evaluation.status = 'uncertain';
+      evaluation.status = quotePublicationState(published);
       evaluation.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
         const binding = await readBinding();
         const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
           originalId:originalPostId,text:evaluation.text,after:submittedAt,canContinue:()=>!control.signal.aborted});
         if (proof) Object.assign(evaluation,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
-      } else if (published.stage === 'composer') evaluation.status = 'failed';
+      }
       return {state:'followed',followResult,evaluations};
     } catch (error) {
       return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,reason:String(error?.message || error)};
@@ -706,6 +734,16 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         }) || post;
       }
       if (!post?.url) throw new Error('未找到可引用评价的原帖');
+      const safetyProfile = {
+        name: cachedProfile.name || job.profile?.name || '',
+        bio: cachedProfile.bio || job.profile?.bio || '',
+        posts: [...cachedPosts, post],
+        grokRiskAssessment: cachedProfile.grokRiskAssessment || job.profile?.grokRiskAssessment
+      };
+      const safetyRisk = riskAssess(safetyProfile);
+      if (safetyRisk.level === 'danger') {
+        throw new Error(`目标账号命中高风险内容门禁：${safetyRisk.hits.slice(0, 2).join('、')}`);
+      }
       const originalPostId = ev?.originalPostId || post.url.match(/\/status\/(\d+)/)?.[1] || '';
       if (!originalPostId) throw new Error('原帖链接缺少有效推文 ID');
       const prevAttempts = Array.isArray(ev?.attempts) ? ev.attempts.length : (Number(ev?.attempts) || 0);
@@ -733,7 +771,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         ev.text = generated.reply || '';
         ev.language = generated.language || 'und';
         ev.channel = generated.channel || ev.channel || '';
-        ev.status = generated.ok ? 'draft' : 'failed';
+        ev.status = generated.ok ? 'draft' : (generated.riskBlocked ? 'skipped' : 'failed');
+        ev.riskBlocked = Boolean(generated.riskBlocked);
         ev.reason = generated.reason || '';
         if (!generated.ok) {
           const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
@@ -753,14 +792,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       const submittedAt = Date.now();
       const published = await postQuoteOnTab(tab.id,post,ev.text,publishQuotePostOnPage,sleep);
-      ev.status = 'uncertain';
+      ev.status = quotePublicationState(published);
       ev.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
         const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
           originalId:originalPostId,text:ev.text,after:submittedAt});
         if (proof) Object.assign(ev,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
-      } else if (published.stage === 'composer') {
-        ev.status = 'failed';
       }
       const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
       await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:ev.status,detail:ev.status === 'posted' ? `已发布 @${job.handle} 的引用评价` : (ev.reason || '引用评价重试结束')});

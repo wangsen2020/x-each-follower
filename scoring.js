@@ -1,3 +1,4 @@
+import { RISK_DEFINITIONS, detectContentRisks, isPostSafeForComment } from './content-risk.js';
 export function parseCount(value) {
   if (!value) return null;
   const text = value.replace(/[\u200e\u200f\u202a-\u202e\u00a0\u202f]/g, '').trim();
@@ -95,7 +96,9 @@ export const TAG_DEFINITIONS = {
   'activity:dormant': { namespace: 'activity', key: 'dormant', label: '💤 沉睡低频', colorClass: 'tag-active-dormant', desc: '长时间未更新推文（超过30天无动态）' },
 
   'custom:starred': { namespace: 'custom', key: 'starred', label: '⭐ 重点', colorClass: 'tag-custom-star', desc: '用户标星重点跟进' },
-  'custom:whitelist': { namespace: 'custom', key: 'whitelist', label: '🛡️ 白名单', colorClass: 'tag-custom-white', desc: '白名单受保护账号（免取关）' }
+  'custom:whitelist': { namespace: 'custom', key: 'whitelist', label: '🛡️ 白名单', colorClass: 'tag-custom-white', desc: '白名单受保护账号（免取关）' },
+
+  ...RISK_DEFINITIONS
 };
 
 export function computeMultiDimensionTags(profile = {}) {
@@ -207,6 +210,23 @@ export function computeMultiDimensionTags(profile = {}) {
   }
   if (profile.whitelist || profile.isWhitelist || profile.exempt) {
     addTag('custom:whitelist');
+  }
+
+  // 6. 风险主题维度 (risk)
+  const riskDetection = detectContentRisks(combinedText);
+  for (const match of riskDetection.evidence) {
+    addTag(match.tagId, `检测到${match.label}风险内容（“${match.matchedWord}”）`);
+  }
+  if (profile.grokRiskAssessment?.riskTags) {
+    for (const tagId of profile.grokRiskAssessment.riskTags) {
+      addTag(tagId, `Grok深度语义判定存在${TAG_DEFINITIONS[tagId]?.label || '高危'}风险`);
+    }
+  }
+  const extraTags = Array.isArray(profile.tags) ? profile.tags : (profile.grokRiskAssessment?.tags || []);
+  for (const tagId of extraTags) {
+    if (typeof tagId === 'string' && TAG_DEFINITIONS[tagId]) {
+      addTag(tagId, '由 Grok 深度语义识别并打标');
+    }
   }
 
   return {
@@ -402,7 +422,25 @@ export function riskAssess(profile) {
     [/t\.me\/|加微|加v信|私聊看|付费解锁|订阅解锁|低价代充|博彩|赌场|赌球|返利群/i, '导流、付费或高风险外链'],
   ];
   for (const [pattern, label] of rules) if (pattern.test(text)) hits.push(label);
-  return {level:hits.length ? 'danger' : 'normal', hits:[...new Set(hits)]};
+  const contentRisks = detectContentRisks(text);
+  for (const reason of contentRisks.reasons) {
+    hits.push(reason);
+  }
+  if (profile?.grokRiskAssessment && profile.grokRiskAssessment.safe === false) {
+    const reasons = profile.grokRiskAssessment.reasons || [];
+    if (!reasons.length) hits.push('Grok判定：账号存在高风险内容');
+    for (const reason of reasons) {
+      hits.push(`Grok判定：${reason}`);
+    }
+  }
+  const grokCategories = profile?.grokRiskAssessment?.categories || [];
+  const grokTagIds = profile?.grokRiskAssessment?.riskTags || [];
+  return {
+    level: hits.length ? 'danger' : 'normal',
+    hits: [...new Set(hits)],
+    riskCategories: [...new Set([...contentRisks.categories, ...grokCategories])],
+    riskTagIds: [...new Set([...contentRisks.tagIds, ...grokTagIds])]
+  };
 }
 
 export function csv(rows) {
@@ -468,6 +506,12 @@ export function filterMutualTrackingUsers(users = [], keyword = '', profileCache
       // 特殊排除项：排除骗关风险
       if (tagSet.has('exclude:bait_risk') && userTagIds.has('reputation:bait_risk')) {
         return false;
+      }
+
+      // 特殊排除项：排除高危风险（涉政、涉军、涉宗教、暴力、色情、擦边、猎奇）
+      if (tagSet.has('exclude:risk')) {
+        const hasRiskTag = [...userTagIds].some(t => t.startsWith('risk:'));
+        if (hasRiskTag) return false;
       }
 
       // 常规标签匹配：如果选了除排除项之外的标签，必须命中选中的任一常规标签 (OR 语义)
@@ -578,3 +622,5 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
+
+export { RISK_DEFINITIONS, detectContentRisks, isPostSafeForComment };

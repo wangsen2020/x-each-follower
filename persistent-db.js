@@ -9,6 +9,125 @@ const dbPage = async (operation, key, value) => {
     if (stored === undefined) return JSON.stringify({found: false});
     return JSON.stringify({found: true, v: stored});
   }
+  if (operation === 'keys') {
+    const keyRange = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange : (globalThis.IDBKeyRange || (typeof self !== 'undefined' ? self.IDBKeyRange : undefined));
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction('records', 'readonly');
+      const store = tx.objectStore('records');
+      const range = key && keyRange ? keyRange.bound(key, key + '\uffff') : null;
+      const r = store.getAllKeys(range);
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    });
+    return JSON.stringify({found: true, v: keys});
+  }
+  if (operation === 'appendIncremental') {
+    const keyRange = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange : (globalThis.IDBKeyRange || (typeof self !== 'undefined' ? self.IDBKeyRange : undefined));
+    const entry = JSON.parse(value);
+    const result = await new Promise((resolve, reject) => {
+      const tx = db.transaction('records', 'readwrite');
+      const store = tx.objectStore('records');
+      const seqPrefix = 'recordIncremental:v1:seq:';
+      const headKey = 'recordIncremental:v1:head';
+      const opPrefix = 'recordIncremental:v1:op:';
+
+      const headReq = store.get(headKey);
+      headReq.onerror = () => reject(headReq.error);
+      headReq.onsuccess = () => {
+        const head = headReq.result || {seq: 0};
+        const headSeq = head.seq || 0;
+
+        const seqRange = keyRange ? keyRange.bound(seqPrefix, seqPrefix + '\uffff') : null;
+        const keysReq = store.getAllKeys(seqRange);
+        keysReq.onerror = () => reject(keysReq.error);
+        keysReq.onsuccess = () => {
+          const allSeqKeys = keysReq.result || [];
+          let maxContinuousSeq = 0;
+          for (let i = 0; i < allSeqKeys.length; i++) {
+            const num = parseInt(allSeqKeys[i].slice(seqPrefix.length), 10);
+            if (num === maxContinuousSeq + 1) {
+              maxContinuousSeq = num;
+            } else if (num > maxContinuousSeq + 1) {
+              tx.abort();
+              return reject(new Error('incremental sequence gap detected: expected ' + (maxContinuousSeq + 1) + ', found ' + num));
+            }
+          }
+
+          const opIndexKey = entry.operationId ? `${opPrefix}${entry.operationId}` : null;
+          const opReq = opIndexKey ? store.get(opIndexKey) : null;
+
+          const checkHistoricalIndex = () => {
+            if (opReq && opReq.result && opReq.result.seq) {
+              const matchedSeq = opReq.result.seq;
+              const matchedKey = seqPrefix + String(matchedSeq).padStart(8, '0');
+              const entryReq = store.get(matchedKey);
+              entryReq.onerror = () => reject(entryReq.error);
+              entryReq.onsuccess = () => {
+                const existing = entryReq.result;
+                if (existing) {
+                  if (maxContinuousSeq > headSeq) {
+                    store.put({seq: maxContinuousSeq, operationId: existing.operationId}, headKey);
+                  }
+                  tx.oncomplete = () => resolve({ok: true, entry: existing, duplicate: true});
+                  return;
+                }
+                // If index pointed to missing record, fallback to tail scan
+                scanTail();
+              };
+              return;
+            }
+            scanTail();
+          };
+
+          const scanTail = () => {
+            const checkStart = Math.max(1, maxContinuousSeq - 100);
+            const tailRange = (maxContinuousSeq > 0 && keyRange) ? keyRange.bound(seqPrefix + String(checkStart).padStart(8, '0'), seqPrefix + String(maxContinuousSeq).padStart(8, '0')) : null;
+            const tailReq = tailRange ? store.getAll(tailRange) : null;
+
+            const onTailReady = tailEntries => {
+              const existingMatch = tailEntries.find(item => item && item.operationId === entry.operationId);
+              if (existingMatch) {
+                if (maxContinuousSeq > headSeq) {
+                  store.put({seq: maxContinuousSeq, operationId: existingMatch.operationId}, headKey);
+                }
+                if (opIndexKey) {
+                  store.put({seq: existingMatch.seq, operationId: existingMatch.operationId}, opIndexKey);
+                }
+                tx.oncomplete = () => resolve({ok: true, entry: existingMatch, duplicate: true});
+                return;
+              }
+
+              const nextSeq = maxContinuousSeq + 1;
+              const nextKey = seqPrefix + String(nextSeq).padStart(8, '0');
+              const storedBody = {...entry, seq: nextSeq, status: 'stored'};
+              store.put(storedBody, nextKey);
+              if (opIndexKey) {
+                store.put({seq: nextSeq, operationId: entry.operationId}, opIndexKey);
+              }
+              store.put({seq: nextSeq, operationId: entry.operationId}, headKey);
+              tx.oncomplete = () => resolve({ok: true, entry: storedBody, duplicate: false});
+            };
+
+            if (tailReq) {
+              tailReq.onerror = () => reject(tailReq.error);
+              tailReq.onsuccess = () => onTailReady(tailReq.result || []);
+            } else {
+              onTailReady([]);
+            }
+          };
+
+          if (opReq) {
+            opReq.onerror = () => scanTail();
+            opReq.onsuccess = () => checkHistoricalIndex();
+          } else {
+            scanTail();
+          }
+        };
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+    return JSON.stringify({found: true, v: result});
+  }
   const parsed = JSON.parse(value);
   await new Promise((resolve, reject) => { const tx=db.transaction('records','readwrite'); const r=tx.objectStore('records').put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
   return JSON.stringify({ok: true});
@@ -108,12 +227,16 @@ async function withStorageTab(operation) {
   return next;
 }
 
+export async function durableGetStrict(key) {
+  return withStorageTab(async tabId => {
+    const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
+    return decodeDurableResult(result?.[0]?.result);
+  });
+}
+
 export async function durableGet(key) {
   try {
-    return await withStorageTab(async tabId => {
-      const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
-      return decodeDurableResult(result?.[0]?.result);
-    });
+    return await durableGetStrict(key);
   } catch {
     return undefined;
   }
@@ -122,5 +245,31 @@ export async function durableGet(key) {
 export async function durableSet(key, value) {
   return withStorageTab(async tabId => {
     await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,JSON.stringify({v: value})]});
+  });
+}
+
+export async function durableKeysStrict(prefix = '') {
+  return withStorageTab(async tabId => {
+    const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['keys',prefix,null]});
+    const keys = decodeDurableResult(result?.[0]?.result);
+    if (!Array.isArray(keys)) throw new Error('durableKeysStrict 未返回有效数组');
+    return keys;
+  });
+}
+
+export async function durableKeys(prefix = '') {
+  try {
+    return await durableKeysStrict(prefix);
+  } catch {
+    return [];
+  }
+}
+
+export async function durableAppendIncremental(entry) {
+  return withStorageTab(async tabId => {
+    const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['appendIncremental',null,JSON.stringify(entry)]});
+    const res = decodeDurableResult(result?.[0]?.result);
+    if (!res || !res.ok) throw new Error(res?.error || '增量日志原子写入失败');
+    return res.entry;
   });
 }

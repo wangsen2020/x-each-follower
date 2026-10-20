@@ -1,7 +1,7 @@
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from './temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from './follow-queue-runtime.js';
 import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from './network-api.js';
-import { durableGet, durableSet } from './persistent-db.js';
+import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental } from './persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from './page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from './scoring.js';
 import { randomizedInteger, randomizedSeconds } from './timing.js';
@@ -27,6 +27,10 @@ const recordRuntimeService = createRecordRuntime({
   storage: chrome.storage,
   durableGet,
   durableSet,
+  durableKeys,
+  durableGetStrict,
+  durableKeysStrict,
+  durableAppendIncremental,
   queue: storageWriteQueue,
   extensionOrigin: chrome.runtime.getURL('')
 });
@@ -472,13 +476,31 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
   commentJobs.set(tweetId, run);
 }
 
-export const BACKGROUND_BUILD_VERSION = '1.6.7';
+export const BACKGROUND_BUILD_VERSION = '1.7.1';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.cmd === 'recordData') {
+  const cmd = message?.cmd || message?.action;
+
+  if (cmd === 'getBackgroundBuildVersion' || cmd === 'getBackgroundVersion') {
+    sendResponse({ok:true, version:BACKGROUND_BUILD_VERSION});
+    return false;
+  }
+  if (cmd === 'grokStreamAnswer') {
+    deliverGrokStream(message.text || '');
+    sendResponse({ok:true});
+    return false;
+  }
+  if (cmd === 'getNetworkTemplates') {
+    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
+    return true;
+  }
+  if (handleExecutionLogRequest(message, sender, sendResponse)) {
+    return true;
+  }
+  if (cmd === 'recordData') {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) {
       sendResponse({ok:false, error:'仅扩展内部可访问记录'});
-      return;
+      return false;
     }
     recordRuntimeService.handle(message, sender.url).then(
       result => sendResponse(result),
@@ -486,10 +508,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     );
     return true;
   }
-  if (message?.cmd === 'storageWrite') {
+  if (cmd === 'storageWrite') {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) {
       sendResponse({ok:false, error:'仅扩展内部可写本地数据'});
-      return;
+      return false;
     }
     storageWrites.perform(message).then(
       result => sendResponse(result),
@@ -497,48 +519,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     );
     return true;
   }
-  if (message?.cmd === 'grokSessionExecuteTask') {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可调用 Grok 会话'}); return; }
+  if (cmd === 'grokSessionExecuteTask') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可调用 Grok 会话'}); return false; }
     executeGrokComTask({
       prompt: message.prompt,
       nonce: message.nonce,
       taskType: message.taskType,
+      targetBot: message.targetBot,
       timeoutMs: message.timeoutMs
     }).then(
-      result => sendResponse(result.ok ? { ok: true, text: result.text, acceptedCount: result.acceptedCount } : { ok: false, error: result.reason, userActionRequired: result.userActionRequired }),
+      result => sendResponse(result.ok ? { ok: true, text: result.text, channel: result.channel, botName: result.botName, agentId: result.agentId, acceptedCount: result.acceptedCount } : { ok: false, error: result.reason, quotaExhausted: result.quotaExhausted, quotaUpdatedRetryAvailable: result.quotaUpdatedRetryAvailable, userActionRequired: result.userActionRequired }),
       error => sendResponse({ ok: false, error: String(error?.message || error), userActionRequired: Boolean(error?.userActionRequired) })
     );
     return true;
   }
-  if (message?.cmd === 'getGrokSessionState' || message?.cmd === 'grokSessionGetState') {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可查询 Grok 会话'}); return; }
+  if (cmd === 'getGrokSessionState' || cmd === 'grokSessionGetState') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可查询 Grok 会话'}); return false; }
     getGrokSessionState().then(state => sendResponse({ok:true, state}), error => sendResponse({ok:false, error:error.message}));
     return true;
   }
-  if (message?.cmd === 'grokSessionAction') {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可操作 Grok 会话'}); return; }
+  if (cmd === 'grokSessionAction') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可操作 Grok 会话'}); return false; }
     handleGrokSessionAction(message.action, message.payload).then(
       res => sendResponse({ ok: true, ...res }),
       error => sendResponse({ ok: false, error: error.message })
     );
     return true;
   }
-  if (message?.cmd === 'grokSessionProbe') {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可探测 Grok 会话'}); return; }
+  if (cmd === 'grokSessionProbe') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展内部可探测 Grok 会话'}); return false; }
     probeGrokSessionAvailability().then(
       result => sendResponse({ ok: true, result }),
       error => sendResponse({ ok: false, error: String(error?.message || error), userActionRequired: Boolean(error?.userActionRequired) })
     );
     return true;
   }
-  if (['showGrokVerificationAlert','focusGrokVerificationPage'].includes(message?.cmd)) {
-    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可操作验证提醒'});return;}
-    const operation=message.cmd==='showGrokVerificationAlert'?showVerificationAlert():focusVerificationPage();
+  if (['showGrokVerificationAlert','focusGrokVerificationPage'].includes(cmd)) {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可操作验证提醒'});return false;}
+    const operation=cmd==='showGrokVerificationAlert'?showVerificationAlert():focusVerificationPage();
     operation.then(value=>sendResponse({ok:true,...value}),error=>sendResponse({ok:false,error:error.message}));
     return true;
   }
-  if (message?.cmd === 'notifyGrokVerificationSelf') {
-    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可发送本人验证提醒'});return;}
+  if (cmd === 'notifyGrokVerificationSelf') {
+    if (sender.id !== chrome.runtime.id || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) {sendResponse({ok:false,error:'仅扩展内部可发送本人验证提醒'});return false;}
     (async()=>{
       const {grokVerification:notice}=await chrome.storage.local.get('grokVerification');
       if(!notice || notice.at!==message.at)return {ok:false,stale:true};
@@ -551,63 +574,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
-  if (message?.cmd === 'grokWindowPool') {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可管理 Grok 窗口'}); return; }
+  if (cmd === 'grokWindowPool') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可管理 Grok 窗口'}); return false; }
     handleGrokWindowPool(message).then(value=>sendResponse({ok:true,value}),error=>sendResponse({ok:false,error:error.message}));
     return true;
   }
-  if (message?.cmd?.startsWith('followQueue')) {
-    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return; }
+  if (cmd?.startsWith('followQueue')) {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return false; }
     followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
-  if (message?.cmd === 'getBackgroundBuildVersion') {
-    sendResponse({ok:true, version:BACKGROUND_BUILD_VERSION});
-    return;
-  }
-  if (message?.cmd === 'grokStreamAnswer') {
-    deliverGrokStream(message.text || '');
-    return;
-  }
-  if (message?.cmd === 'configureCommentAutoFollow') {
+  if (cmd === 'configureCommentAutoFollow') {
     scheduleCommentAutoFollow(message.config || {});
     sendResponse({ok:true});
-    return;
+    return false;
   }
-  if (message?.cmd === 'runCommentAutoFollowNow') {
+  if (cmd === 'runCommentAutoFollowNow') {
     runCommentAutoFollow('manual').then(sendResponse);
     return true;
   }
-  if (message?.cmd === 'trackTweetReplies') {
+  if (cmd === 'trackTweetReplies') {
     const tweetId = String(message.tweetId || '');
     const url = String(message.url || '');
     const match = url.match(/^https:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/i);
     if (!match || match[2] !== tweetId || !sender.tab?.id) {
       sendResponse({ok:false, error:'帖子链接或页面来源无效。'});
-      return;
+      return false;
     }
     sendResponse({ok:true, queued:true});
     collectTweetReplies(tweetId, `https://x.com/${match[1]}/status/${tweetId}`, match[1], sender.tab).catch(() => {});
-    return;
+    return false;
   }
-  if (message?.cmd !== 'networkTemplate' || !message.payload?.op) return;
-  const payload = message.payload;
-  networkTemplateWrite = networkTemplateWrite.then(async () => {
-    const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
-    networkTemplates[payload.op] = {...networkTemplates[payload.op], ...payload, json:undefined};
-    await writeLocal({networkTemplates});
-    sendResponse({ok:true, op:payload.op});
-  }).catch(error => { sendResponse({ok:false, error:String(error?.message || error)}); });
-  return true;
-});
+  if (cmd === 'networkTemplate' && message.payload?.op) {
+    const payload = message.payload;
+    networkTemplateWrite = networkTemplateWrite.then(async () => {
+      const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
+      networkTemplates[payload.op] = {...networkTemplates[payload.op], ...payload, json:undefined};
+      await writeLocal({networkTemplates});
+      sendResponse({ok:true, op:payload.op});
+    }).catch(error => { sendResponse({ok:false, error:String(error?.message || error)}); });
+    return true;
+  }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.cmd !== 'getNetworkTemplates') return;
-  chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
-  return true;
+  sendResponse({ok:false, unhandled:true, cmd});
+  return false;
 });
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => handleExecutionLogRequest(message, sender, sendResponse));
 
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }

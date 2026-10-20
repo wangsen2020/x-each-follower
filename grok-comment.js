@@ -1,9 +1,13 @@
+import { isPostSafeForComment, detectContentRisks } from './content-risk.js';
 import {waitForGrokVerification, grokTaskNow, assertPendingGrokVerificationClear, executeGrokScript} from './grok-verification.js';
 import {createTemporaryWindow, closeTemporaryWindow, acquireGrokWindow, releaseGrokWindow} from './temporary-windows.js';
 import {requestGrokComPersistentSession} from './grok-session-manager.js';
 // Grok 生成引用评价 + 发布引用帖的共用模块。面板与评论追踪后台任务都调用这里。
 // 带 "in-page" 标记的函数会经 chrome.scripting.executeScript 序列化注入页面，必须自包含。
 import { openQuoteComposerOnPage, inspectQuoteComposerOnPage, dismissQuoteComposerOnPage, setQuoteFrameFallbackOnPage } from './page-reader.js';
+import {tweetWeight, resolveCommentLanguage} from './quote-text.js';
+
+export {tweetWeight, resolveCommentLanguage, isPostSafeForComment, detectContentRisks};
 
 export const START = '【引用评价开始】';
 export const END = '【引用评价结束】';
@@ -146,13 +150,6 @@ export function submitGrokPromptAndWaitForCopyIconOnPage(prompt, timeoutMs = 750
   });
 }
 
-/** X 的字数权重：CJK 等宽字符计 2，其余计 1。 */
-export function tweetWeight(text) {
-  let n = 0;
-  for (const ch of String(text || '')) n += /[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? 2 : 1;
-  return n;
-}
-
 export function makeNonce() {
   return `任务编号${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -198,6 +195,9 @@ export function buildGrokCommentPrompt({ handle, name, postText, nonce }) {
     '2. 抓原帖一个具体细节，从反常识、隐性代价或矛盾切入，开头就亮出鲜明判断，写得尖锐、有情绪张力，让人想赞同或反驳；无争议就别硬造。',
     '3. 可以用夸张比喻放大感受，但不能夸大事实、数字或编造动机；不奉承、不复述、不向作者提问，不加标签或链接。',
     `4. 只输出这一句，用 ${START} 和 ${END} 包住正文；随后单独输出【评价语言:xx】，xx 必须是评价正文的 ISO 639-1 语言代码（如 zh、en、es、pt），不能按作者所在地猜测。`,
+    '5. 安全与审核边界（精准拦截高危违规，严禁误杀正常生活与社会现象观察）：',
+    '   - 坚决拦截（直接返回空白拒绝生成）：明确号召或鼓动针对政府的非法对抗行动、煽动推翻政权、分裂国家、敏感历史极端事件恶毒攻击、恐怖主义（terrorism）、暴力虐杀、色情淫秽、低俗约炮。',
+    '   - 正常放行（允许撰写中性共情、幽默自嘲或客观视角的短评）：个人生活自嘲、求职与失业吐槽、房贷生活压力、结婚生育观点、年轻人躺平摆烂、消费降级、行业内卷现状、公开社会财经数据探讨等普通社会观察。只要属于第一人称或客观生活描述，且无号召非法对抗意图，一律属于安全日常内容，必须正常生成，不得借故拒答。',
     '',
     '推文正文：',
     String(postText || '').slice(0, 500),
@@ -221,22 +221,6 @@ export function extractGrokComment(raw) {
   return body;
 }
 
-/** Prefer explicit model metadata; legacy drafts only infer scripts with high confidence. */
-export function resolveCommentLanguage(text, declared = '') {
-  const code = String(declared).trim().toLowerCase().split('-')[0];
-  const body = String(text || '').replace(/#[\p{L}\p{M}\p{N}_]+/gu, '').replace(/有关必回|关注必回|互关必回/g, '');
-  const han = (body.match(/\p{Script=Han}/gu) || []).length;
-  const latin = (body.match(/[a-z]/gi) || []).length;
-  if (/^[a-z]{2}$/.test(code) && code !== 'un') {
-    // Reject an obviously contradictory Chinese label on an English body.
-    if (code === 'zh' && !han && latin > 3) return 'en';
-    return code;
-  }
-  if (han > 0 && han * 2 >= latin) return 'zh';
-  if (/\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(body)) return 'und';
-  if (latin > 3 && !/[^\x00-\x7f]/.test(body.replace(/[’‘“”—–…]/g, ''))) return 'en';
-  return 'und';
-}
 export function extractGrokCommentLanguage(raw) {
   const text = String(raw || '');
   const tail = text.slice(text.lastIndexOf(START));
@@ -457,7 +441,8 @@ export function readGrokPageAnswer(nonce) {
       /^(?:Copy|复制|Regenerate|重新生成|Good response|Bad response|回答不错|回答不好)$/i.test(label(button)) ||
       Boolean(button.querySelector?.('svg[data-icon="icon-copy"], svg[data-icon="icon-regenerate"]')));
     const hasDelimiters = text.includes('【引用评价结束】') && !stillGenerating;
-    const failed = !stillGenerating && /Grok was unable to reply|Something went wrong, please refresh|操作过于频繁|无法回复/.test(text);
+    const bodyText = typeof document !== 'undefined' ? (document.body?.innerText || '') : '';
+    const failed = !stillGenerating && (/Grok was unable to reply|Something went wrong|操作过于频繁|无法回复|used up your.*credit|Limit reached/i.test(text) || /used up your.*credit|Something went wrong/i.test(bodyText));
     const done = Boolean(text && (answerActions || hasDelimiters) && !stillGenerating && !failed);
     return {text, done, failed, stillGenerating, source:'x-turn', turnId, network, contentSignature:String(contentHash >>> 0),
       answerActions, stopCount:stops.length, visibleStopCount:stops.filter(visible).length,
@@ -732,9 +717,9 @@ async function askOnGrokCom(prompt, nonce, sleep) {
       return { reply, language };
     }
   });
-  if (!res.ok) return { ok: false, reason: res.reason || 'grok.com 会话调用未成功' };
+  if (!res.ok) return { ok: false, quotaExhausted: Boolean(res.quotaExhausted), reason: res.reason || 'grok.com 会话调用未成功' };
   if (!res.reply) return { ok: false, reason: 'grok.com 未能在有效时间内给出符合格式的引用评价' };
-  return { ok: true, reply: res.reply, language: res.language, channel: 'grok.com' };
+  return { ok: true, reply: res.reply, language: res.language, channel: res.channel || 'grok.com' };
 }
 
 /**
@@ -744,6 +729,18 @@ async function askOnGrokCom(prompt, nonce, sleep) {
 export async function requestGrokComment(handle, post, authorName, { sleep, fix = s => s }) {
   const postText = String(post?.text || '').trim();
   if (!postText) return { ok: false, reason: '帖子没有正文' };
+
+  // 本地安全门禁校验：严禁对色情、暴力、涉政、涉军、涉宗教、猎奇、擦边等敏感推文生成评价
+  const safety = isPostSafeForComment(post, { handle, name: authorName });
+  if (!safety.safe) {
+    return {
+      ok: false,
+      riskBlocked: true,
+      riskCategories: safety.categories || [],
+      labels: safety.labels || [],
+      reason: safety.reason || '原帖包含高风险内容，已触发安全门禁自动跳过'
+    };
+  }
   const cleanHandle = String(handle || '').replace(/^@/, '');
   const nonce = makeNonce();
   const prompt = buildGrokCommentPrompt({ handle: cleanHandle, name: fix(authorName || cleanHandle), postText, nonce });
@@ -808,8 +805,8 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       timeoutMs,
       sleep
     });
-    if (!res.ok) return { ok: false, reason: res.reason || 'grok.com 协调会话生成失败' };
-    return { ok: true, text: res.text, channel: 'grok.com' };
+    if (!res.ok) return { ok: false, quotaExhausted: Boolean(res.quotaExhausted), reason: res.reason || 'grok.com 协调会话生成失败' };
+    return { ok: true, text: res.text, channel: res.channel || 'grok.com' };
   }
 
   for (const ask of [askTextOnX, askTextOnGrokCom]) {
@@ -885,6 +882,14 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
 }
 
 export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep, options = {}) {
+  const safety = isPostSafeForComment(post);
+  if (!safety.safe) {
+    return { ok: false, riskBlocked: true, reason: safety.reason || '原帖涉及高风险内容，已被安全门禁拦截发布' };
+  }
+  const replySafety = isPostSafeForComment(text);
+  if (!replySafety.safe) {
+    return { ok: false, riskBlocked: true, reason: `生成的引用评价涉及${replySafety.labels?.join('、') || '高风险内容'}，已被安全门禁拦截发布` };
+  }
   const url = String(post?.url || '');
   if (!/\/status\/\d+/.test(url)) return {ok:false, reason:'该帖没有可用的帖子链接'};
   // X sometimes navigates to an empty /compose/post shell. Retry only before
