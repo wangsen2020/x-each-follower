@@ -4660,6 +4660,10 @@ function logCardKind(log) {
 function renderLogsModal() {
   const modal = $('logsModal');
   if (!modal || modal.hidden) return;
+  if (window.__executionLogsModalController) {
+    // DOM is reactively owned by Vue 3 ExecutionLogsModal component
+    return;
+  }
   const isUnrecip = currentLogsScope === 'unreciprocated';
   const isFans = currentLogsScope === 'fans' || currentLogsScope === 'monitor';
   const logsData = logPageEntries;
@@ -5076,6 +5080,9 @@ async function loadLogBuffer(name) {
 }
 
 async function loadExecutionLogPage() {
+  if (window.__executionLogsModalController) {
+    return window.__executionLogsModalController.loadPage();
+  }
   const token = logPager.begin();
   logModalStatus = 'loading';
   logModalError = '';
@@ -5108,6 +5115,9 @@ async function loadExecutionLogPage() {
 
 async function openLogsModal(scope = 'autoFollow') {
   currentLogsScope = scope;
+  if (window.__executionLogsModalController) {
+    return window.__executionLogsModalController.open(scope);
+  }
   logPager.reset();
   logPageEntries = [];
   logPageTotal = 0;
@@ -5127,6 +5137,10 @@ async function openLogsModal(scope = 'autoFollow') {
 }
 
 function closeLogsModal() {
+  if (window.__executionLogsModalController) {
+    window.__executionLogsModalController.close();
+    return;
+  }
   const modal = $('logsModal');
   const mask = $('logsModalMask');
   if (modal) modal.hidden = true;
@@ -5134,6 +5148,9 @@ function closeLogsModal() {
 }
 
 async function clearAutoFollowLogs() {
+  if (window.__executionLogsModalController) {
+    return window.__executionLogsModalController.clearLogs();
+  }
   const label = currentLogsScope === 'fans' || currentLogsScope === 'monitor' ? '粉丝管理检测与回关入队日志'
     : currentLogsScope === 'unreciprocated' ? '回关监测执行日志' : '当前范围的执行日志';
   if (!confirm(`确定清空${label}吗？此操作不可撤销。`)) return;

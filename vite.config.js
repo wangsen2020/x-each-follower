@@ -4,12 +4,40 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const panelPath = resolve(__dirname, 'panel.js');
-const normPanelPath = panelPath.replace(/\\/g, '/').toLowerCase();
+const legacyPlaceholder = '<!-- __LEGACY_PANEL_SCRIPT_PLACEHOLDER__ -->';
+const legacyScript = '<script type="module" src="panel.js"></script>';
+
+/**
+ * Preserve legacy panel.js entry script in panel.html:
+ * 1. Pre-hook: hides panel.js tag from Rollup HTML parser so it is not externalized into bundled chunk.
+ * 2. Post-hook: restores panel.js script tag in final emitted dist/panel.html.
+ */
+function preserveLegacyPanelScript() {
+  return [
+    {
+      name: 'strip-legacy-panel-script',
+      enforce: 'pre',
+      transformIndexHtml(html) {
+        return html.replace(/<script\s+type=["']module["']\s+src=["'](?:\.\/)?panel\.js["']\s*><\/script>/g, legacyPlaceholder);
+      }
+    },
+    {
+      name: 'restore-legacy-panel-script',
+      enforce: 'post',
+      transformIndexHtml(html) {
+        if (html.includes(legacyPlaceholder)) {
+          return html.replace(legacyPlaceholder, legacyScript);
+        }
+        return html.replace('</body>', `  ${legacyScript}\n</body>`);
+      }
+    }
+  ];
+}
 
 export default defineConfig({
   base: './',
   plugins: [
+    ...preserveLegacyPanelScript(),
     vue()
   ],
   build: {
@@ -19,19 +47,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         panel: resolve(__dirname, 'panel.html')
-      },
-      external: (id) => {
-        // Externalize only the legacy panel.js entry (including resolved absolute exact path).
-        // Root runtime graph is copied verbatim during the single assembly stage.
-        // Future Vue code bundles normally.
-        if (id === 'panel.js' || id === './panel.js') return true;
-        try {
-          const norm = resolve(id).replace(/\\/g, '/').toLowerCase();
-          if (norm === normPanelPath) return true;
-          const normFromDir = resolve(__dirname, id).replace(/\\/g, '/').toLowerCase();
-          if (normFromDir === normPanelPath) return true;
-        } catch {}
-        return false;
       }
     }
   }

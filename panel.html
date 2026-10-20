@@ -398,33 +398,6 @@
     <div class="profile-drawer-actions"><button id="drawerRefreshProfile" class="secondary">采集资料</button><button id="drawerOpenX">在 X 打开</button></div>
   </aside>
 </main><script type="module" src="panel.js"></script>
-  <div id="logsModalMask" class="profile-drawer-mask logs-modal-mask" hidden></div>
-  <div id="logsModal" class="logs-modal" role="dialog" aria-modal="true" aria-labelledby="logsModalTitle" hidden>
-    <div class="logs-modal-head">
-      <div class="logs-modal-title-box">
-        <strong id="logsModalTitle">定时看帖关注 · 执行日志</strong>
-        <span id="logsTotalBadge" class="badge">0 条记录</span>
-      </div>
-      <div class="logs-modal-head-btns">
-        <button id="logsPrevBtn" class="secondary" type="button" style="margin-right:10px">上一页</button>
-        <button id="logsNextBtn" class="secondary" type="button" style="margin-right:10px">下一页</button>
-        <button id="clearLogsBtn" class="secondary danger-btn" type="button" title="清空当前范围的执行日志" style="margin-right:10px">清空日志</button>
-        <button id="closeLogsModal" class="icon-button secondary" type="button" title="关闭" aria-label="关闭">×</button>
-      </div>
-    </div>
-    <div class="logs-modal-body">
-      <div id="logsLoading" class="logs-empty" hidden><p><strong>正在加载执行日志…</strong></p></div>
-      <div id="logsError" class="logs-empty" hidden><p><strong>执行日志加载失败</strong></p><span id="logsErrorText"></span></div>
-      <div id="logsEmpty" class="logs-empty">
-        <p><strong>暂无执行日志记录</strong></p>
-        <span>开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。</span>
-      </div>
-      <div id="logsList" class="logs-list"></div>
-    </div>
-  </div>
+  <div id="logs-modal-app"></div>
+  <script type="module" src="./src/entries/panel/main.js"></script>
 </body></html>
-
-
-
-
-
