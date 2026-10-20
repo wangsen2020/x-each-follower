@@ -59,6 +59,37 @@
         </div>
       </div>
 
+      <!-- Sub-tabs for Fans Scope (Scan vs Queue Follow-back) -->
+      <div v-if="isFansScope" class="logs-modal-subtabs">
+        <button
+          id="subtabFansScan"
+          type="button"
+          class="subtab-btn"
+          :class="{ active: fansSubTab === 'scan' }"
+          @click="setFansSubTab('scan')"
+        >
+          📋 粉丝扫描日志
+        </button>
+        <button
+          id="subtabFansFollowBack"
+          type="button"
+          class="subtab-btn"
+          :class="{ active: fansSubTab === 'followBack' }"
+          @click="setFansSubTab('followBack')"
+        >
+          🤝 队列回关日志
+        </button>
+        <button
+          id="subtabFansAll"
+          type="button"
+          class="subtab-btn"
+          :class="{ active: fansSubTab === 'all' }"
+          @click="setFansSubTab('all')"
+        >
+          全部
+        </button>
+      </div>
+
       <!-- Body Section -->
       <div class="logs-modal-body">
         <!-- Loading State -->
@@ -111,7 +142,7 @@
               <div class="log-card-header">
                 <div class="log-card-meta">
                   <span class="log-time">{{ formatTime(rawLog) }}</span>
-                  <span class="log-scope-badge">粉丝管理</span>
+                  <span class="log-scope-badge">📋 粉丝扫描</span>
                   <span class="log-scope-badge">{{ rawLog.source === 'alarm' ? '定时检测' : '手动同步' }}</span>
                 </div>
                 <span
@@ -123,9 +154,10 @@
                 </span>
               </div>
               <div class="log-stats-bar">
+                <span>获取人数：<strong>{{ rawLog.scannedCount ?? 0 }}</strong></span>
                 <span>当前粉丝：<strong>{{ rawLog.totalFollowers ?? 0 }}</strong></span>
                 <span>当前关注：<strong>{{ rawLog.totalFollowing ?? 0 }}</strong></span>
-                <span>待回关：<strong style="color: #0284c7">{{ rawLog.followBackCount ?? 0 }}</strong></span>
+                <span>需要回关：<strong style="color: #0284c7">{{ rawLog.followBackCount ?? 0 }}</strong></span>
                 <span>未互关：<strong style="color: #64748b">{{ rawLog.notMutualCount ?? 0 }}</strong></span>
                 <span>本次新增：<strong style="color: #059669">{{ rawLog.newFollowersCount ?? 0 }}</strong></span>
                 <span>自动拉取入队：<strong style="color: #16a34a">{{ rawLog.enqueuedCount ?? 0 }}</strong></span>
@@ -298,6 +330,10 @@ import { normalizeQueueExecutionLog } from '../../../../execution-log.js';
 // Inject reactive state and actions from the controller
 const {
   isOpen,
+  currentScope,
+  fansSubTab,
+  isFansScope,
+  setFansSubTab,
   status,
   errorMessage,
   entries,
@@ -367,9 +403,16 @@ function standardLog(rawLog) {
 
 function standardScopeLabel(log) {
   if (log.scope === 'verification') return '安全验证';
-  if (log.scope === 'queue') return '关注队列';
+  if (log.scope === 'queue') {
+    if (log.sources?.some(s => s.module === 'fans')) return '🤝 队列回关';
+    if (log.sources?.some(s => s.module === 'comments')) return '💬 评论互动';
+    if (log.sources?.some(s => s.module === 'mutual')) return '👥 互关互动';
+    return '关注队列';
+  }
   if (log.scope === 'comment') return '评论追踪';
-  return '互关追踪';
+  if (log.scope === 'mutual') return '互关追踪';
+  if (log.scope === 'unreciprocated') return '回关监测';
+  return '系统日志';
 }
 
 function standardSourceLabel(log) {
@@ -499,6 +542,38 @@ async function copyText(text, event) {
 </script>
 
 <style scoped>
+.logs-modal-subtabs {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.subtab-btn {
+  height: 28px;
+  padding: 0 12px;
+  margin-right: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.subtab-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.subtab-btn.active {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+}
 .log-stats-bar {
   display: flex;
   gap: 12px;

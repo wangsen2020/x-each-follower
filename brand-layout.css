@@ -655,7 +655,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
   width: 100%;
   min-height: 34px;
   border-bottom: 1px solid #e4ece6;
-  padding: 0 0 6px 0;
+  padding: 0;
   margin: 0 0 4px 0;
   flex: 0 0 auto;
 }
@@ -664,6 +664,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
   align-items: center;
 
   flex-wrap: wrap;
+  row-gap: 10px;
 }
 .unreciprocated-title {
   display: flex;
@@ -962,7 +963,6 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 .comments-head-left > :not(:last-child){margin-bottom:16px}
 #unreciprocatedSection .unreciprocated-head > :not(:last-child){margin-right:12px}
 .unreciprocated-head-left > :not(:last-child){margin-right:10px}
-.unreciprocated-head-left > :not(:last-child){margin-bottom:10px}
 .unreciprocated-title > :not(:last-child){margin-right:8px}
 #unreciprocatedSection .unreciprocated-subbar > :not(:last-child){margin-right:10px}
 #unreciprocatedSection .unreciprocated-subbar .subbar-left > :not(:last-child){margin-right:8px}

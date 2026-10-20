@@ -3,11 +3,13 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../../execution-log-store.j
 
 /**
  * Composable for managing execution logs modal state, reactive pagination,
+ * sub-tab classification (Fans Scan Logs vs Queue Follow-Back Logs),
  * and background query/clear communication with multi-generation token safety.
  */
 export function useExecutionLogs() {
   const isOpen = ref(false);
   const currentScope = ref('autoFollow');
+  const fansSubTab = ref('scan'); // 'scan' | 'followBack' | 'all'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
   const entries = ref([]);
@@ -17,10 +19,18 @@ export function useExecutionLogs() {
 
   const logPager = createLogPager();
 
+  const isFansScope = computed(() => currentScope.value === 'fans' || currentScope.value === 'monitor');
+
+  function setFansSubTab(tab) {
+    fansSubTab.value = tab;
+  }
+
   const title = computed(() => {
     const scope = currentScope.value;
     if (scope === 'fans' || scope === 'monitor') {
-      return '粉丝管理 · 粉丝检测与回关入队日志';
+      if (fansSubTab.value === 'scan') return '粉丝管理 · 粉丝扫描日志';
+      if (fansSubTab.value === 'followBack') return '粉丝管理 · 队列回关日志';
+      return '粉丝管理 · 全部执行日志';
     }
     if (scope === 'unreciprocated') {
       return '回关监测 · 定时检测与取关日志';
@@ -29,11 +39,31 @@ export function useExecutionLogs() {
     return `${prefix} · 执行日志`;
   });
 
-  const totalBadgeText = computed(() => `${total.value} 条记录`);
+  const displayedEntries = computed(() => {
+    if (!isFansScope.value) return entries.value;
+    if (fansSubTab.value === 'scan') {
+      return entries.value.filter(e => e.scope === 'fans' || e.scope === 'monitor' || e.origin === 'monitorLogs' || e.scope === 'verification');
+    }
+    if (fansSubTab.value === 'followBack') {
+      return entries.value.filter(e => e.scope === 'queue' || e.scope === 'verification');
+    }
+    return entries.value;
+  });
+
+  const totalBadgeText = computed(() => {
+    if (isFansScope.value && fansSubTab.value !== 'all') {
+      return `${displayedEntries.value.length} 条记录`;
+    }
+    return `${total.value} 条记录`;
+  });
 
   const emptyTitle = computed(() => {
     const scope = currentScope.value;
-    if (scope === 'fans' || scope === 'monitor') return '暂无粉丝管理执行日志';
+    if (scope === 'fans' || scope === 'monitor') {
+      if (fansSubTab.value === 'scan') return '暂无粉丝扫描日志';
+      if (fansSubTab.value === 'followBack') return '暂无队列回关日志';
+      return '暂无粉丝管理执行日志';
+    }
     if (scope === 'unreciprocated') return '暂无回关监测日志';
     return '暂无执行日志记录';
   });
@@ -41,7 +71,13 @@ export function useExecutionLogs() {
   const emptyDescription = computed(() => {
     const scope = currentScope.value;
     if (scope === 'fans' || scope === 'monitor') {
-      return '点击“↻ 增量同步关注与粉丝数据”或开启定时检测后，检测记录、粉丝变动及自动拉取至关注队列的明细将显示在此。';
+      if (fansSubTab.value === 'scan') {
+        return '定时检测周期到达或点击右上角“↻”手动同步后，将记录扫描人数、获取粉丝、待回关及入队明细。';
+      }
+      if (fansSubTab.value === 'followBack') {
+        return '待回关粉丝加入关注队列并被执行回关时，将记录访问主页、回关结果与互动评价等明细。';
+      }
+      return '点击“↻ 增量同步关注与粉丝数据”或关注队列执行回关后，相关明细将显示在此。';
     }
     if (scope === 'unreciprocated') {
       return '点击“开始检测”或开启定时取关后，检测与取关记录将显示在此。';
@@ -99,6 +135,9 @@ export function useExecutionLogs() {
 
   async function open(scope = 'autoFollow') {
     currentScope.value = scope;
+    if (scope === 'fans' || scope === 'monitor') {
+      fansSubTab.value = 'scan';
+    }
     logPager.reset();
     entries.value = [];
     total.value = 0;
@@ -125,7 +164,7 @@ export function useExecutionLogs() {
   async function clearLogs() {
     const scope = currentScope.value;
     const label = scope === 'fans' || scope === 'monitor'
-      ? '粉丝管理检测与回关入队日志'
+      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : fansSubTab.value === 'followBack' ? '队列回关日志' : '粉丝管理全部日志')
       : scope === 'unreciprocated'
         ? '回关监测执行日志'
         : '当前范围的执行日志';
@@ -173,9 +212,13 @@ export function useExecutionLogs() {
   return {
     isOpen,
     currentScope,
+    fansSubTab,
+    isFansScope,
+    setFansSubTab,
     status,
     errorMessage,
-    entries,
+    entries: displayedEntries,
+    rawEntries: entries,
     total,
     canPrev,
     canNext,

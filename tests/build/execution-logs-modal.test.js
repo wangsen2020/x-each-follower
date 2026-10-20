@@ -14,15 +14,24 @@ test('useExecutionLogs initializes with robust default state and computed titles
   assert.equal(c.title.value, '关注队列 · 执行日志');
   assert.equal(c.emptyTitle.value, '暂无执行日志记录');
 
-  // Fans scope
+  // Fans scope (sub-tabs: scan, followBack, all)
   c.currentScope.value = 'fans';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝检测与回关入队日志');
+  c.fansSubTab.value = 'scan';
+  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
+  assert.equal(c.emptyTitle.value, '暂无粉丝扫描日志');
+
+  c.fansSubTab.value = 'followBack';
+  assert.equal(c.title.value, '粉丝管理 · 队列回关日志');
+  assert.equal(c.emptyTitle.value, '暂无队列回关日志');
+
+  c.fansSubTab.value = 'all';
+  assert.equal(c.title.value, '粉丝管理 · 全部执行日志');
   assert.equal(c.emptyTitle.value, '暂无粉丝管理执行日志');
 
   // Monitor scope
   c.currentScope.value = 'monitor';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝检测与回关入队日志');
-  assert.equal(c.emptyTitle.value, '暂无粉丝管理执行日志');
+  c.fansSubTab.value = 'scan';
+  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
 
   // Unreciprocated scope
   c.currentScope.value = 'unreciprocated';
@@ -118,4 +127,31 @@ test('useExecutionLogs refreshIfOpen respects target scope and open state', asyn
   } finally {
     globalThis.chrome = originalChrome;
   }
+});
+
+test('useExecutionLogs fansSubTab cleanly isolates scan logs from queue follow-back logs', () => {
+  const c = useExecutionLogs();
+  c.currentScope.value = 'fans';
+
+  c.rawEntries.value = [
+    { id: 'scan-1', scope: 'fans', origin: 'monitorLogs', summary: 'scanned 50' },
+    { id: 'queue-1', scope: 'queue', sources: [{ module: 'fans' }], detail: 'followed' },
+    { id: 'scan-2', scope: 'monitor', summary: 'scanned 30' },
+    { id: 'queue-2', scope: 'queue', sources: [{ module: 'fans' }], detail: 'skipped' },
+    { id: 'ver-1', scope: 'verification', detail: 'cf challenge' }
+  ];
+
+  // 1. scan tab: only scan and verification logs
+  c.setFansSubTab('scan');
+  assert.deepEqual(c.entries.value.map(e => e.id), ['scan-1', 'scan-2', 'ver-1']);
+  assert.equal(c.totalBadgeText.value, '3 条记录');
+
+  // 2. followBack tab: only queue and verification logs
+  c.setFansSubTab('followBack');
+  assert.deepEqual(c.entries.value.map(e => e.id), ['queue-1', 'queue-2', 'ver-1']);
+  assert.equal(c.totalBadgeText.value, '3 条记录');
+
+  // 3. all tab: all logs
+  c.setFansSubTab('all');
+  assert.deepEqual(c.entries.value.map(e => e.id), ['scan-1', 'queue-1', 'scan-2', 'queue-2', 'ver-1']);
 });

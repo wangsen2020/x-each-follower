@@ -46,7 +46,7 @@ test('a failed write does not block later logging',async()=>{
   const logs=await appendExecutionLog({scope:'comment',result:'started'},{get:async()=>({}),set:async()=>{}});
   assert.equal(logs[0].result,'started');
 });
-test('fans scope selects only fan-specific logs and excludes queue jobs', () => {
+test('fans scope selects fan scan logs and queue jobs with fans source', () => {
   const logs = [
     {id: 'fan-sync', scope: 'fans', at: '2026-10-18T10:00:00Z'},
     {id: 'fan-queue', scope: 'queue', sources: [{module: 'fans'}], at: '2026-10-18T11:00:00Z'},
@@ -54,8 +54,9 @@ test('fans scope selects only fan-specific logs and excludes queue jobs', () => 
     {id: 'comment-log', scope: 'comment', at: '2026-10-18T13:00:00Z'}
   ];
   const selected = selectExecutionLogs(logs, 'fans');
-  assert.equal(selected.length, 1);
-  assert.equal(selected[0].id, 'fan-sync');
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].id, 'fan-queue');
+  assert.equal(selected[1].id, 'fan-sync');
 });
 test('concurrent verification writers keep one episode through A/B/A',async()=>{
   let saved=[];
