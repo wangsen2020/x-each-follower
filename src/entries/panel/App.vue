@@ -6,6 +6,7 @@
     <MonitorSection />
     <CandidatesSection />
     <CommentsSection />
+    <PostTrackingSection />
     <UnreciprocatedSection />
     <ProfileDrawer />
     <SettingsDrawer />
@@ -25,5 +26,6 @@ import FollowQueueSection from './pages/FollowQueueSection.vue';
 import MonitorSection from './pages/MonitorSection.vue';
 import CandidatesSection from './pages/CandidatesSection.vue';
 import CommentsSection from './pages/CommentsSection.vue';
+import PostTrackingSection from './pages/PostTrackingSection.vue';
 import UnreciprocatedSection from './pages/UnreciprocatedSection.vue';
 </script>
