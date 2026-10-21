@@ -1,7 +1,7 @@
 import {APP_VERSION} from '../../shared/version.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
-import { networkFetch, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
+import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
 import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental } from '../../platform/persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from '../../features/relationships/scoring.js';
@@ -21,6 +21,7 @@ import { executeGrokComTask, getGrokSessionState, handleGrokSessionAction, probe
 import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {createStorageWriteAdapter} from '../../platform/storage-write-adapter.js';
 import {createRecordRuntime} from '../../features/records/record-runtime.js';
+import {createPostRuntime, POST_ALARM} from '../../features/post-tracking/post-runtime.js';
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
@@ -55,6 +56,7 @@ const backgroundRecords = createBackgroundRecords({
   extensionUrl: chrome.runtime.getURL('')
 });
 const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
+const postTrackingRuntime = createPostRuntime();
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -305,7 +307,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
           }
         }
         if (!followed && !rateLimited) {
-          const lookup = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+          const lookup = await networkGetUserProfile(tabId, handle);
           const target = lookup.status === 200 ? parseNetworkUsers(lookup.json).find(item => item.handle.toLowerCase() === handle.toLowerCase()) : null;
           if (target?.relationship?.following) followed = true;
           else if (target?.id) {
@@ -482,6 +484,14 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
 
+  if (cmd === 'ownPostTracking') {
+    if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
+      sendResponse({ok:false,error:'帖子操作仅允许从管理面板发起'});return false;
+    }
+    postTrackingRuntime.handle(message).then(result=>sendResponse({ok:true,...result})).catch(error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
+
   if (cmd === 'getBackgroundBuildVersion' || cmd === 'getBackgroundVersion') {
     sendResponse({ok:true, version:BACKGROUND_BUILD_VERSION});
     return false;
@@ -611,7 +621,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     networkTemplateWrite = networkTemplateWrite.then(async () => {
       const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
       networkTemplates[payload.op] = {...networkTemplates[payload.op], ...payload, json:undefined};
-      await writeLocal({networkTemplates});
+      const update={networkTemplates};
+      if(payload.op==='contentPageQuery'&&payload.bootstrapId&&payload.json&&sender.tab?.id){
+        let valid=false;try{const u=new URL(sender.url||sender.tab.url);valid=u.origin==='https://x.com'&&u.pathname==='/i/account_analytics/content'&&u.searchParams.get('xef_post_bootstrap')===payload.bootstrapId;}catch{}
+        if(valid)update.postAnalyticsBootstrap={id:payload.bootstrapId,tabId:sender.tab.id,json:payload.json,status:payload.httpStatus||200,retryAfterSeconds:payload.retryAfterSeconds||0,at:Date.now()};
+      }
+      await writeLocal(update);
       sendResponse({ok:true, op:payload.op});
     }).catch(error => { sendResponse({ok:false, error:String(error?.message || error)}); });
     return true;
@@ -638,6 +653,10 @@ function safeSendMessageToPanel(message) {
 }
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === POST_ALARM) {
+    await postTrackingRuntime.sync({background:true,days:(await chrome.storage.local.get('ownPostTracking')).ownPostTracking?.days || 14}).catch(error=>console.warn('帖子监控:',error.message));
+    return;
+  }
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
   if (alarm.name === QUEUE_ALARM) {
     const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
@@ -732,6 +751,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
+postTrackingRuntime.schedule().catch(error=>console.warn('恢复帖子监控失败:',error.message));
 
 let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {

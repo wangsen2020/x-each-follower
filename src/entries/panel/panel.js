@@ -8,7 +8,7 @@ import {normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {createLogPager, LOG_PAGE_SIZE} from '../../shared/execution-log-store.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
-import { networkFetch, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
 import { durableGet, durableSet } from '../../platform/persistent-db.js';
 import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
 import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
@@ -1760,7 +1760,7 @@ async function collectRelations(handle, perSideLimit = 500) {
   const tabId = await backgroundProfileTab(handle);
   try {
     await sleep(1200);
-    const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+    const profile = await networkGetUserProfile(tabId, handle);
     if (profile.status !== 200) throw new Error(profile.error || '未捕获 profile 网络模板，请先在 X 打开一次主页。');
     const owner = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
     if (!owner?.id) throw new Error('没有读取到该账号的用户 ID。');
@@ -2158,7 +2158,7 @@ async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
   const handle = String(user?.handle || '').replace(/^@/, '');
   if (!handle) throw new Error('无效账号');
   try {
-    const profileRes = await networkFetch(tabId, 'UserByScreenName', {screen_name: handle});
+    const profileRes = await networkGetUserProfile(tabId, handle);
     if (profileRes.status === 200 && profileRes.json) {
       const parsed = parseNetworkUsers(profileRes.json).find(u => u.handle.toLowerCase() === handle.toLowerCase());
       if (parsed) {
@@ -3106,7 +3106,7 @@ async function followViaNetwork(tabId, user) {
   if (interactionReason) return {ok:false,reason:'interaction_skipped',error:interactionReason};
   let targetId = user.id || '';
   let target = null;
-  const lookup = await networkFetch(tabId, 'UserByScreenName', {screen_name:user.handle});
+  const lookup = await networkGetUserProfile(tabId, user.handle);
   if (lookup.status === 200) {
     target = parseNetworkUsers(lookup.json).find(item => item.handle.toLowerCase() === user.handle.toLowerCase()) || null;
     if (target?.id) targetId = target.id;
@@ -3181,7 +3181,7 @@ async function followBackOne(user, button) {
 async function unfollowViaNetwork(tabId, user) {
   let userId = user.id;
   if (!userId) {
-    const lookup = await networkFetch(tabId, 'UserByScreenName', {screen_name:user.handle});
+    const lookup = await networkGetUserProfile(tabId, user.handle);
     if (lookup.status !== 200) return {ok:false, reason:'lookup_failed', error:lookup.error || `资料请求返回 ${lookup.status}`};
     const target = parseNetworkUsers(lookup.json).find(item => item.handle.toLowerCase() === user.handle.toLowerCase());
     if (!target?.id) return {ok:false, reason:'profile_unavailable', error:'未从 X 资料接口取得用户 ID'};
@@ -3477,7 +3477,7 @@ async function readOwnHandle(tabId) {
 }
 
 async function scanFollowingFromNetwork(tabId, target, limit) {
-  const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:target});
+  const profile = await networkGetUserProfile(tabId, target);
   if (profile.status !== 200) return null;
   const owner = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === target.toLowerCase());
   if (!owner?.id) return null;
@@ -3493,7 +3493,7 @@ async function scanFollowingFromNetwork(tabId, target, limit) {
 
 async function scanOwnFollowing(tabId, handle, pageLimit = 1000) {
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return null;
-  const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+  const profile = await networkGetUserProfile(tabId, handle);
   if (profile.status !== 200) return null;
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return null;
@@ -3539,7 +3539,7 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
   const handle = await readOwnHandle(tabId);
   if (!handle) return {fallbackReason:'无法从 X 页面识别当前登录账号'};
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return {fallbackReason:'用户资料接口模板未捕获'};
-  const profile = await networkFetch(tabId, 'UserByScreenName', {screen_name:handle});
+  const profile = await networkGetUserProfile(tabId, handle);
   if (profile.status !== 200) return {fallbackReason:profile.error || `用户资料请求失败（${profile.status}）`};
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return {fallbackReason:'用户资料接口没有返回当前账号 ID'};

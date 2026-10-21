@@ -1,3 +1,4 @@
+import {createXNetworkClient} from '../../platform/x/network-client.js';
 import { repairMojibake } from './scoring.js';
 
 function collectUsers(value, out = new Map()) {
@@ -39,130 +40,21 @@ function findCursor(value) {
   return '';
 }
 
-export function prepareNetworkHeaders(templateHeaders = {}, operation = '') {
-  const headers = {};
-  for (const [k, v] of Object.entries(templateHeaders || {})) {
-    if (v != null) headers[k.toLowerCase()] = v;
-  }
-  headers['content-type'] = 'application/json';
-  if (operation === 'Followers') {
-    for (const k of Object.keys(headers)) {
-      if (k.toLowerCase() === 'x-client-transaction-id') delete headers[k];
-    }
-  }
-  return headers;
-}
-
-export function prepareNetworkVariables(templateVariables, callVariables = {}) {
-  let base = {};
-  try {
-    base = typeof templateVariables === 'string' ? JSON.parse(templateVariables) : (templateVariables || {});
-  } catch {}
-  delete base.cursor;
-  return {...base, ...callVariables};
-}
-
-export async function networkFetch(tabId, op, variables) {
-  const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
-  const template = networkTemplates[op];
-  if (!template) return {status:0, error:`未捕获 ${op} 模板`};
-  if (op === 'Followers') {
-    try {
-      const [{result: signerState} = {}] = await chrome.scripting.executeScript({
-        target:{tabId},
-        world:'MAIN',
-        func:() => typeof window.__XEF_GENERATE_TRANSACTION_ID === 'function'
-      });
-      if (!signerState) {
-        await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', files:['transaction-id.bundle.js']});
-      }
-    } catch (error) {
-      return {status:0, error:`无法在 X 页面加载 Followers 请求签名器：${String(error?.message || error).slice(0, 160)}`};
-    }
-  }
-  const mergedVars = prepareNetworkVariables(template.variables, variables);
-  const reqHeaders = prepareNetworkHeaders(template.headers, op);
-  const result = await chrome.scripting.executeScript({
-    target:{tabId},
-    world:'MAIN',
-    func:async (operation, queryVars, headers, t) => {
-      if (!t) return {status:0, error:`未捕获 ${operation} 模板`};
-      const query = new URLSearchParams({
-        variables:JSON.stringify(queryVars),
-        ...(t.features ? {features:t.features} : {}),
-        ...(t.fieldToggles ? {fieldToggles:t.fieldToggles} : {})
-      });
-      const url = `${t.origin}/i/api/graphql/${t.queryId}/${operation}?${query}`;
-      if (operation === 'Followers') {
-        const generateTransactionId = window.__XEF_GENERATE_TRANSACTION_ID;
-        if (typeof generateTransactionId !== 'function') return {status:0, error:'Followers 请求签名器尚未加载，请刷新 X 页面后重试。'};
-        try { headers['x-client-transaction-id'] = await generateTransactionId('GET', new URL(url).pathname); }
-        catch (error) { return {status:0, error:`无法生成 Followers 请求签名：${String(error?.message || error).slice(0, 160)}`}; }
-      }
-      const init = {credentials:'include', headers};
-      Object.defineProperty(init, '__xefInternal', {value:true});
-      const response = await fetch(url, init);
-      const text = await response.text();
-      let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
-      return {status:response.status, json, error:response.ok ? '' : (json?.errors?.map(item => item.message).filter(Boolean).join('；') || text.slice(0, 240))};
-    },
-    args:[op, mergedVars, reqHeaders, template]
-  });
-  return result?.[0]?.result || {status:0, error:'页面没有返回网络结果'};
-}
-
-export async function networkFollow(tabId, userId) {
-  const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
-  const template = networkTemplates.UserByScreenName || Object.values(networkTemplates).find(t => t?.origin && t?.headers?.authorization && t?.headers?.['x-csrf-token']);
-  if (!template?.origin || !template?.headers?.authorization || !template?.headers?.['x-csrf-token']) {
-    return {status:0, error:'未捕获 X 网络请求模板；请先打开 X 或扫描一次粉丝列表。'};
-  }
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (target, t) => {
-    const id = typeof target === 'object' ? (target?.id || target?.userId) : target;
-    const screenName = typeof target === 'object' ? (target?.handle || target?.screen_name) : '';
-    const params = {skip_status:'true'};
-    if (id) params.user_id = String(id);
-    if (screenName) params.screen_name = String(screenName).replace(/^@/, '');
-    const body = new URLSearchParams(params).toString();
-    const response = await fetch(`${t.origin}/i/api/1.1/friendships/create.json`, {
-      method:'POST',
-      credentials:'include',
-      headers:{...(t.headers || {}), 'content-type':'application/x-www-form-urlencoded;charset=UTF-8'},
-      body
-    });
-    const text = await response.text();
-    let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
-    return {status:response.status, json, error:response.ok ? '' : (json?.errors?.map(item => item.message).join('；') || text.slice(0, 240))};
-  }, args:[userId, template]});
-  return result?.[0]?.result || {status:0, error:'X 页面没有返回关注结果'};
-}
-
-export async function networkUnfollow(tabId, userId) {
-  const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
-  const template = networkTemplates.UserByScreenName || Object.values(networkTemplates).find(t => t?.origin && t?.headers?.authorization && t?.headers?.['x-csrf-token']);
-  if (!template?.origin || !template?.headers?.authorization || !template?.headers?.['x-csrf-token']) {
-    return {status:0, error:'未捕获 X 网络请求模板；请先打开 X 或扫描一次粉丝列表。'};
-  }
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:async (target, t) => {
-    const id = typeof target === 'object' ? (target?.id || target?.userId) : target;
-    const screenName = typeof target === 'object' ? (target?.handle || target?.screen_name) : '';
-    const params = {skip_status:'true'};
-    if (id) params.user_id = String(id);
-    if (screenName) params.screen_name = String(screenName).replace(/^@/, '');
-    const body = new URLSearchParams(params).toString();
-    const response = await fetch(`${t.origin}/i/api/1.1/friendships/destroy.json`, {
-      method:'POST',
-      credentials:'include',
-      headers:{...(t.headers || {}), 'content-type':'application/x-www-form-urlencoded;charset=UTF-8'},
-      body
-    });
-    const text = await response.text();
-    let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
-    return {status:response.status, json, error:response.ok ? '' : (json?.errors?.map(item => item.message).join('；') || text.slice(0, 240))};
-  }, args:[userId, template]});
-  return result?.[0]?.result || {status:0, error:'X 页面没有返回取关结果'};
-}
-
+// Stable business facade. The platform client owns HTTP, auth, signatures and errors.
+export {prepareNetworkHeaders, prepareNetworkVariables} from '../../platform/x/network-client.js';
+export const networkFetch = (tabId, operation, variables) => createXNetworkClient().query(tabId, operation, variables);
+export const networkGetUserProfile = (tabId, handle) => createXNetworkClient().profile(tabId, handle);
+export const networkGetUserPosts = (tabId, userId, variables) => createXNetworkClient().userPosts(tabId, userId, variables);
+export const networkGetFollowers = (tabId, userId, variables) => createXNetworkClient().followers(tabId, userId, variables);
+export const networkGetFollowing = (tabId, userId, variables) => createXNetworkClient().following(tabId, userId, variables);
+export const networkGetTweetDetail = (tabId, variables) => createXNetworkClient().query(tabId, 'TweetDetail', variables);
+export const networkFollow = (tabId, target) => createXNetworkClient().follow(tabId, target);
+export const networkUnfollow = (tabId, target) => createXNetworkClient().unfollow(tabId, target);
+export const networkBlock = (tabId, target) => createXNetworkClient().block(tabId, target);
+export const networkUnblock = (tabId, target) => createXNetworkClient().unblock(tabId, target);
+export const networkFetchOwnPostAnalytics = (tabId, variables) => createXNetworkClient().ownAnalytics(tabId, variables);
+// Only call after the business coordinator consumes the user's specific approval.
+export const networkDeleteOwnPost = (tabId, postId) => createXNetworkClient().deleteOwnPost(tabId, postId);
 export function parseNetworkUsers(json) { return [...collectUsers(json).values()]; }
 
 export function parseTweetReplies(json, focalTweetId = '') {

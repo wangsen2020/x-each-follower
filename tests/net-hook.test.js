@@ -92,3 +92,27 @@ test('WebSocket response IDs survive reconnection and a stale socket close canno
  assert.equal(window.__xefGrokStream.status,'complete');
  socket.dispatchEvent(new Event('close'));assert.equal(window.__xefGrokStream.status,'complete');
 });
+
+function bootstrapFixture(enabled=true,status=200,limit=50){
+ class XHR{open(){}send(){}setRequestHeader(){}abort(){}}
+ const calls=[],messages=[];const to=Date.now()-1000,from=to-3600000;const u=new URL('https://x.com/i/account_analytics/content');if(enabled){for(const[k,v]of Object.entries({xef_post_bootstrap:'test-bootstrap-123',xef_limit:limit,xef_from:from,xef_to:to}))u.searchParams.set(k,String(v));}
+ const window={fetch:async(url)=>{calls.push(String(url));return new Response(JSON.stringify({data:{viewer:true}}),{status,headers:{'retry-after':'7200'}});},postMessage:m=>messages.push(m)};
+ vm.runInNewContext(source,{window,XMLHttpRequest:XHR,crypto,TextDecoder,URL,Request,location:{origin:u.origin,href:u.href}});return{window,calls,messages,from,to};
+}
+
+test('only extension bootstrap analytics queries are bounded, captured, and sent once',async()=>{
+ const f=bootstrapFixture();const url='https://x.com/i/api/graphql/id/contentPageQuery?variables='+encodeURIComponent(JSON.stringify({max_results:1000,query_page_size:100,from_time:'2020-01-01',to_time:'2026-12-31'}));
+ const one=await f.window.fetch(url,{headers:{'x-csrf-token':'fixture'}});assert.deepEqual(await one.json(),{data:{viewer:true}});const two=await f.window.fetch(url,{headers:{'x-csrf-token':'fixture'}});assert.deepEqual(await two.json(),{data:{viewer:true}});assert.equal(f.calls.length,1);const vars=JSON.parse(new URL(f.calls[0]).searchParams.get('variables'));assert.equal(vars.max_results,50);assert.equal(vars.query_page_size,50);assert.equal(Date.parse(vars.from_time),f.from);assert.equal(Date.parse(vars.to_time),f.to);await until(()=>f.messages.length>0);assert.equal(f.messages[0].payload.bootstrapId,'test-bootstrap-123');
+});
+
+test('ordinary analytics pages retain native requests and are never limited by bootstrap logic',async()=>{
+ const f=bootstrapFixture(false);const url='https://x.com/i/api/graphql/id/contentPageQuery?variables='+encodeURIComponent('{"max_results":1000}');await f.window.fetch(url);assert.equal(f.calls[0],url);await until(()=>f.messages.length>0);assert.equal(f.messages[0].payload.bootstrapId,undefined);
+});
+
+test('bootstrap HTTP failures relay status and cooldown instead of waiting for a nonexistent success',async()=>{
+ const f=bootstrapFixture(true,429);await f.window.fetch('https://x.com/i/api/graphql/id/contentPageQuery?variables=%7B%7D');await until(()=>f.messages.length>0);assert.equal(f.messages[0].payload.httpStatus,429);assert.equal(f.messages[0].payload.retryAfterSeconds,7200);
+});
+
+test('bootstrap honors the configured ceiling of 1000 and still sends only one query',async()=>{
+ const f=bootstrapFixture(true,200,1000),url='https://x.com/i/api/graphql/id/contentPageQuery?variables='+encodeURIComponent('{"max_results":50,"query_page_size":50}');await f.window.fetch(url);await f.window.fetch(url);assert.equal(f.calls.length,1);const vars=JSON.parse(new URL(f.calls[0]).searchParams.get('variables'));assert.equal(vars.max_results,1000);assert.equal(vars.query_page_size,1000);
+});

@@ -8,7 +8,8 @@ test('usePanelNavigation initializes with default tab and titles', () => {
   assert.equal(nav.activeTab.value, 'monitor');
   assert.equal(nav.currentTitle.value, '粉丝管理');
   assert.equal(nav.version.value, JSON.parse(readFileSync(new URL('../../src/manifest.json', import.meta.url))).version);
-  assert.equal(nav.tabs.length, 5);
+  assert.equal(nav.tabs.length, 6);
+  assert.equal(TAB_TITLES.postTracking, '帖子追踪');
 });
 
 test('TAB_TITLES maps all 5 panels correctly', () => {
