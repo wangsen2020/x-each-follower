@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment, buildGrokCommentPrompt, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../grok-comment.js';
-import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../page-reader.js';
+import {extractGrokComment, buildGrokCommentPrompt, quoteCandidates, parseGrokQuoteDecision, isGrokSkipResponse, requestGrokComment, SKIP, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../src/features/grok/grok-comment.js';
+import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../src/platform/x/page-reader.js';
 
 test('queue publication fence stops sending after composer is ready and closes owned popup',async()=>{
   const prior=globalThis.chrome, closed=[];
@@ -26,6 +26,26 @@ test('extractGrokComment takes the body between markers', () => {
   assert.equal(extractGrokComment(`好的\n${START}恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？${END}\n希望有帮助`), '恭喜达成 8k，一步一个脚印真扎实！你下一个目标是多少？');
 });
 
+test('quote publishing rejects over-budget text before sending', async () => {
+  const prior=globalThis.chrome, sent=[];
+  const url='https://x.com/alice/status/123';
+  const reply='A complete technical observation with concrete details. '.repeat(20).trim();
+  globalThis.chrome={storage:{session:{set:async()=>{},remove:async()=>{}}},
+    windows:{create:async()=>({id:8,tabs:[{id:80}]}),remove:async()=>{}},
+    tabs:{update:async()=>{},get:async()=>({status:'complete'})},
+    scripting:{executeScript:async({func,args})=>{
+      if(func===inspectQuoteComposerOnPage)return [{result:{ok:true,ready:true,originalUrl:url}}];
+      if(func===publishQuotePostOnPage){sent.push(args[1]);return [{result:{ok:true,mode:'quote'}}];}
+      return [];
+    }}};
+  try {
+    const result=await postQuoteOnTab(null,{url,text:'A new software release with detailed benchmarks.'},reply,publishQuotePostOnPage,async()=>{});
+    assert.equal(result.ok,false);
+    assert.match(result.reason,/280/);
+    assert.deepEqual(sent,[]);
+  } finally {globalThis.chrome=prior;}
+});
+
 test('extractGrokComment uses the last marked block and strips wrapping quotes', () => {
   assert.equal(extractGrokComment(`${START}旧的草稿内容很长很长${END} 修改后：${START}“新的评论内容在这里”${END}`), '新的评论内容在这里');
 });
@@ -44,21 +64,180 @@ test('the prompt echo (which contains the markers) is never mistaken for an answ
   const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', postText: '今天发布了新版本', nonce});
   // 页面里提示词原样出现时：说明里的标记之间没有评论正文，必须取不到
   assert.equal(extractGrokComment(prompt), '');
+  assert.equal(isGrokSkipResponse(prompt), false);
   assert.ok(prompt.includes(nonce));
 });
 
-test('quote prompt seeks a specific, debatable angle without fabricating facts', () => {
-  const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', postText: '今天发布了新版本', nonce: 'task-1'});
-  assert.match(prompt, /原帖一个具体细节/);
-  assert.match(prompt, /反常识、隐性代价或矛盾/);
-  assert.match(prompt, /鲜明判断.*尖锐、有情绪张力/);
-  assert.match(prompt, /不能夸大事实、数字或编造动机/);
-  assert.match(prompt, /无争议就别硬造/);
-  assert.match(prompt, /只写一句完整评价/);
+test('quote prompt asks Grok to choose one of five or abstain without a fixed template', () => {
+  const posts = Array.from({length:5}, (_,i) => ({text:`这是第 ${i+1} 条有细节的帖子` }));
+  const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', posts, nonce: 'task-1'});
+  assert.match(prompt, /帖子 5：/);
+  assert.match(prompt, /想纠正、看结果或翻车、辨真伪、给建议、代入自己、证明经验/);
+  assert.match(prompt, /【选择帖子:数字序号】/);
+  assert.match(prompt, /【跳过评价】/);
+  assert.match(prompt, /不要硬造争议/);
+  assert.match(prompt, /编造事实或动机/);
+  assert.match(prompt, /按内容需要自然发挥/);
+  assert.match(prompt,/280 加权字符/);
+  assert.doesNotMatch(prompt, /25~50|只写一句完整评价|170 字符|80 汉字/);
 });
 
-test('extractGrokComment rejects comments over the 280-weight X limit', () => {
-  assert.equal(extractGrokComment(`${START}${'好'.repeat(150)}${END}`), '');
+test('candidate selection only considers the first five owned safe distinct posts', () => {
+  const posts = [
+    {url:'https://x.com/alice/status/1',text:'正常分享一个具体的工作细节'},
+    {url:'https://x.com/bob/status/2',text:'其他作者的帖子不能代发引用'},
+    {url:'https://x.com/alice/status/1',text:'重复的第一条帖子不能重复挑选'},
+    {url:'https://x.com/alice/status/4',text:'最新 OnlyFans 裸露色情视频'},
+    {url:'https://x.com/alice/status/5',text:'第二条安全的原创帖子可供挑选'},
+    {url:'https://x.com/alice/status/6',text:'第六条不进入本次候选池'}
+  ];
+  const chosen = quoteCandidates('alice', posts, 'Alice');
+  assert.deepEqual(chosen.candidates.map(p => p.url),[posts[0].url,posts[4].url]);
+  assert.equal(chosen.inspected,5);
+  assert.equal(chosen.blocked.length,1);
+});
+
+test('an armed-group post in the first five blocks quotes for the whole account before Grok runs', async () => {
+  const posts = [
+    {url:'https://x.com/alice/status/11',text:'今天分享一个普通技术项目的具体进展'},
+    {url:'https://x.com/alice/status/12',text:'胡塞武装'},
+    {url:'https://x.com/alice/status/13',text:'另一条安全的日常生活观察'}
+  ];
+  const chosen = quoteCandidates('alice', posts, 'Alice');
+  assert.deepEqual(chosen.candidates, []);
+  assert.ok(chosen.blockingRisk?.categories.includes('armed_group'));
+  let calls = 0;
+  const result = await requestGrokComment('alice', posts, 'Alice', {
+    sleep:async()=>{},
+    askers:[async()=>{calls++;return {ok:true,reply:'不应生成'}}]
+  });
+  assert.equal(result.riskBlocked, true);
+  assert.equal(calls, 0);
+});
+
+test('Islam-related account or recent post skips Grok quote generation without a danger label', async () => {
+  const safePost={url:'https://x.com/muslim_dev/status/123',text:'今天发布一个普通开源项目'};
+  let calls=0;
+  const asker=async()=>{calls++;return {ok:true,reply:'不应执行'};};
+  const account=await requestGrokComment('muslim_dev',[safePost],'开发者',{
+    sleep:async()=>{},askers:[asker],profile:{bio:'我是一名穆斯林程序员'}
+  });
+  assert.equal(account.skipped,true);
+  assert.equal(account.riskBlocked,undefined);
+  const post=await requestGrokComment('alice',[{url:'https://x.com/alice/status/456',text:'今天记录开斋节的家庭晚餐'}],'Alice',{
+    sleep:async()=>{},askers:[asker]
+  });
+  assert.equal(post.skipped,true);
+  assert.equal(calls,0);
+});
+
+test('a religious post among the first five skips the entire account before Grok runs', async () => {
+  const posts=[
+    {url:'https://x.com/example/status/1',text:'今天发布一个普通开源项目'},
+    {url:'https://x.com/example/status/2',text:'今天介绍拜火教的经文和仪式'},
+    {url:'https://x.com/example/status/3',text:'另一个普通技术话题'}
+  ];
+  let calls=0;
+  const result=await requestGrokComment('example',posts,'山人',{
+    sleep:async()=>{},askers:[async()=>{calls++;return {ok:true,reply:'不应执行'};}]
+  });
+  assert.equal(result.skipped,true);
+  assert.equal(calls,0);
+});
+
+test('a playful 不信神 line does not exclude unrelated technical posts', () => {
+  const posts=[
+    {url:'https://x.com/example/status/1',text:'四川人不信神，因为自己就很神'},
+    {url:'https://x.com/example/status/2',text:'Claude 后端路由与云电脑规格已更新'}
+  ];
+  const chosen=quoteCandidates('example',posts,'山人');
+  assert.equal(Boolean(chosen.interactionReason),false);
+  assert.deepEqual(chosen.candidates,posts);
+});
+
+test('quote publisher skips a religion-related source before opening a window', async () => {
+  const post={url:'https://x.com/example/status/123',text:'记录斋月期间的日常生活'};
+  const result=await postQuoteOnTab(null,post,'一段普通引用评价',()=>{},async()=>{});
+  assert.equal(result.ok,false);
+  assert.equal(result.skipped,true);
+  assert.match(result.reason,/互动偏好跳过/);
+  const fromProfile=await postQuoteOnTab(null,
+    {url:'https://x.com/example/status/124',text:'今天分享一个普通技术项目'},
+    '一段普通引用评价',()=>{},async()=>{},
+    {profile:{bio:'分享穆斯林节日生活'}});
+  assert.equal(fromProfile.skipped,true);
+  const fromReply=await postQuoteOnTab(null,
+    {url:'https://x.com/example/status/125',text:'今天分享一个普通技术项目'},
+    '这个判断牵涉到拜火教的传统',()=>{},async()=>{});
+  assert.equal(fromReply.skipped,true);
+});
+
+test('Grok choice is bound to the chosen source post and skip consumes no fallback', async () => {
+  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,text:`这是第 ${id} 条有具体细节的帖子` }));
+  let calls=0;
+  const choose = async () => { calls++; return {ok:true,...parseGrokQuoteDecision(`【选择帖子:2】\n${START}第二条的判断值得单独讨论。${END}\n【评价语言:zh】`,2),channel:'mock'}; };
+  const result = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[choose]});
+  assert.equal(result.ok,true);
+  assert.equal(result.postUrl,posts[1].url);
+  assert.equal(result.post,posts[1]);
+  assert.equal(calls,1);
+  const skip = async () => { calls++; return {ok:true,...parseGrokQuoteDecision(SKIP,2),channel:'mock'}; };
+  const skipped = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[skip,choose]});
+  assert.equal(skipped.ok,false);
+  assert.equal(skipped.skipped,true);
+  assert.equal(calls,2);
+  assert.equal(parseGrokQuoteDecision(`【选择帖子:3】${START}不应选中${END}`,2).reply,'');
+});
+
+test('over-budget quote is rewritten once without changing the source post', async () => {
+  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,text:`这是第 ${id} 条有具体细节的帖子` }));
+  const longReply = 'This observation has a concrete detail. '.repeat(12);
+  const prompts = [];
+  const ask = async (prompt, nonce, sleep, count) => {
+    prompts.push({prompt, count});
+    if(prompts.length===2)return {ok:true,selectedIndex:1,reply:'The concrete detail matters more than the headline.',channel:'x.com'};
+    return {ok:true,...parseGrokQuoteDecision(`【选择帖子:2】${START}${longReply.trim()}${END}【评价语言:en】`,count),channel:'x.com'};
+  };
+  const result = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[ask]});
+  assert.equal(result.ok,true);
+  assert.equal(result.postUrl,posts[1].url);
+  assert.equal(prompts.length,2);
+  assert.equal(prompts[1].count,1);
+  assert.ok(tweetWeight(result.reply)<=280);
+  assert.match(prompts[0].prompt,/280 加权字符/);
+});
+
+test('still-over-budget Chinese rewrite fails without repeated model calls', async () => {
+  const post={url:'https://x.com/alice/status/1',text:'这是有具体细节的一条正常帖子'};
+  let calls=0;
+  const result=await requestGrokComment('alice',[post],'Alice',{sleep:async()=>{},askers:[async()=>{
+    calls++;
+    return {ok:true,...parseGrokQuoteDecision(`${START}${'这是一段完整的长评价。'.repeat(100)}${END}`,1)};
+  }]});
+  assert.equal(result.ok,false);
+  assert.match(result.reason,/280/);
+  assert.equal(calls,2);
+});
+
+test('a completed skip marker ends Grok polling without a publishable body', async () => {
+  const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');
+  const gate=createGrokAnswerGate(2,3);
+  const state={text:SKIP,done:true,stillGenerating:false};
+  assert.equal(gate(state,SKIP),'');
+  assert.equal(gate(state,SKIP),'end-marker');
+  assert.equal(extractGrokComment(SKIP),'');
+  assert.equal(parseGrokQuoteDecision(SKIP,5).skipped,true);
+  assert.equal(isGrokSkipResponse(`${SKIP}\n复制`),true);
+  const invalidChoice=`【选择帖子:9】\n${START}这一段已完成但目标序号无效。${END}\n【评价语言:zh】`;
+  const invalidGate=createGrokAnswerGate(2,3);
+  const invalidState={text:invalidChoice,done:true,stillGenerating:false};
+  assert.equal(invalidGate(invalidState,extractGrokComment(invalidChoice)),'');
+  assert.equal(invalidGate(invalidState,extractGrokComment(invalidChoice)),'end-marker');
+  assert.equal(parseGrokQuoteDecision(invalidChoice,5).reply,'');
+});
+
+test('extractGrokComment preserves comments beyond the old 280-weight limit', () => {
+  assert.equal(extractGrokComment(`${START}${'好'.repeat(150)}${END}`), '好'.repeat(150));
   assert.ok(extractGrokComment(`${START}${'好'.repeat(100)}${END}`));
 });
 
@@ -614,11 +793,11 @@ test('appendFollowBackSuffix avoids duplicate suffix if already present', () => 
   assert.equal(appendFollowBackSuffix(''), '');
 });
 
-test('appendFollowBackSuffix trims base to keep result within X character weight limit', () => {
+test('appendFollowBackSuffix preserves the full long body', () => {
   const longText = '这是超长内容'.repeat(50);
   const result = appendFollowBackSuffix(longText);
-  assert.ok(result.endsWith('有关必回'));
-  assert.ok(tweetWeight(result) <= 280);
+  assert.equal(result,longText);
+  assert.ok(result.startsWith(longText));
 });
 
 test('readGrokPageAnswer reliably detects completion when prompt has nested elements/tags and response has Regenerate/Copy action buttons', () => {
@@ -658,25 +837,45 @@ test('readGrokPageAnswer reliably detects completion when prompt has nested elem
 });
 
 
-test('Grok preparation error retains popup with idle lease and records the actual cause', async () => {
- const {openMinimized} = await import('../grok-comment.js');
+test('Grok preparation error closes its popup and records the actual cause', async () => {
+ const {openMinimized} = await import('../src/features/grok/grok-comment.js');
  const previous = {chrome:globalThis.chrome,document:globalThis.document};
- const data={};let removed=0;
+ const data={};let removed=0;let win;
  delete globalThis.document;
  globalThis.chrome={
   storage:{local:{get:async()=>({}),set:async value=>Object.assign(data,value)},session:{
    get:async key=>key?{[key]:data[key]}:{...data},set:async value=>Object.assign(data,value),remove:async key=>delete data[key]}},
-  windows:{getAll:async()=>[],create:async()=>({id:501,type:'popup',tabs:[{id:502,url:'https://x.com/i/grok'}]}),remove:async()=>{removed++;}},
+  windows:{getAll:async()=>win?[win]:[],create:async()=>{win={id:501,type:'popup',tabs:[{id:502,url:'https://x.com/i/grok'}]};return win;},remove:async()=>{removed++;win=null;}},
   tabs:{get:async()=>{throw Error('No frame with id 0 in tab 502');}},
   scripting:{executeScript:async()=>[]}
  };
  try {
   await assert.rejects(openMinimized('https://x.com/i/grok'),/No frame with id 0/);
-  assert.equal(removed,0);
+  assert.equal(removed,1);
   assert.equal(data.xfGrokWindowPreparationError.windowId,501);
   assert.match(data.xfGrokWindowPreparationError.reason,/No frame with id 0/);
-  assert.equal(data['xfTemporaryWindow:501'].busyUntil,0);
-  assert.ok(data['xfTemporaryWindow:501'].expiresAt>Date.now());
+  assert.equal(data['xfTemporaryWindow:501'],undefined);
+ } finally {globalThis.chrome=previous.chrome;if(previous.document===undefined)delete globalThis.document;else globalThis.document=previous.document;}
+});
+
+test('automatic quote and profile analysis never open grok.com after X Grok fails', async () => {
+ const {requestGrokText}=await import('../src/features/grok/grok-comment.js');
+ const previous={chrome:globalThis.chrome,document:globalThis.document};
+ const data={};const windows=new Map();const urls=[];let next=600;
+ delete globalThis.document;
+ globalThis.chrome={
+  storage:{local:{get:async()=>({}),set:async value=>Object.assign(data,value)},session:{
+   get:async key=>key?{[key]:data[key]}:{...data},set:async value=>Object.assign(data,value),remove:async key=>delete data[key]}},
+  windows:{create:async options=>{urls.push(options.url);const win={id:++next,type:'popup',focused:false,tabs:[{id:next*10,url:options.url}]};windows.set(win.id,win);return win;},
+   getAll:async()=>[...windows.values()],remove:async id=>windows.delete(id)},
+  tabs:{get:async()=>{throw Error('X Grok unavailable');}},scripting:{executeScript:async()=>[]}
+ };
+ try {
+  const quote=await requestGrokComment('alice',[{url:'https://x.com/alice/status/123',text:'今天分享一个具体的产品更新进展'}],'Alice',{sleep:async()=>{}});
+  const profile=await requestGrokText('分析一个安全账号');
+  assert.equal(quote.ok,false);
+  assert.equal(profile.ok,false);
+  assert.deepEqual(urls,['https://x.com/i/grok','https://x.com/i/grok']);
  } finally {globalThis.chrome=previous.chrome;if(previous.document===undefined)delete globalThis.document;else globalThis.document=previous.document;}
 });
 
@@ -719,14 +918,14 @@ test('X transcript refuses another turn when the requested nonce is absent',()=>
 });
 
 test('X polling completes a stable answer without recommendations or toolbar actions',async()=>{
- const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(6,5);
+ const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');const gate=createGrokAnswerGate(6,5);
  const state={text:`${START}没有推荐问题也能正确读取完整回答${END}`,done:false,stillGenerating:false,contentSignature:'same-dom'};
  for(let i=0;i<4;i++)assert.equal(gate(state,extractGrokComment(state.text)),'');
  assert.equal(gate(state,extractGrokComment(state.text)),'stable-content');
 });
 
 test('X stable-content polling resets on DOM updates and never completes an active stream or malformed quote',async()=>{
- const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(6,5);
+ const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');const gate=createGrokAnswerGate(6,5);
  const state={text:`${START}仍然需要等待的完整评价正文${END}`,done:false,stillGenerating:false,contentSignature:'a'};
  const reply=extractGrokComment(state.text);
  for(let i=0;i<4;i++)assert.equal(gate(state,reply),'');
@@ -738,7 +937,7 @@ test('X stable-content polling resets on DOM updates and never completes an acti
 });
 
 test('correlated successful network EOF can finish despite a stale Stop, while network silence cannot',async()=>{
- const {createGrokAnswerGate}=await import('../grok-comment.js');
+ const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');
  let gate=createGrokAnswerGate();const state={text:'完整回答正文',done:false,stillGenerating:true,network:{status:'streaming',quietForMs:60000}};
  for(let i=0;i<10;i++)assert.equal(gate(state,state.text),'');
  gate=createGrokAnswerGate();
@@ -749,14 +948,14 @@ test('correlated successful network EOF can finish despite a stale Stop, while n
 });
 
 test('X uses the correlated WebSocket response.done as its completion method',async()=>{
- const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate();
+ const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');const gate=createGrokAnswerGate();
  const state={text:'完整回答正文',done:false,stillGenerating:true,network:{status:'complete',transport:'websocket'}};
  for(let i=0;i<3;i++)assert.equal(gate(state,state.text),'');
  assert.equal(gate(state,state.text),'network-response.done');
 });
 
 test('valid quote end marker completes without recommendations or action buttons',async()=>{
- const {createGrokAnswerGate}=await import('../grok-comment.js');const gate=createGrokAnswerGate(2,3);
+ const {createGrokAnswerGate}=await import('../src/features/grok/grok-comment.js');const gate=createGrokAnswerGate(2,3);
  const state={text:`${START}明确的结束标记足以确认这段完整评价已经生成完毕${END}`,done:false,stillGenerating:false};
  const answer=extractGrokComment(state.text);
  assert.equal(gate(state,answer),'');

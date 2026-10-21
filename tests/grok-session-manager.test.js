@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import vm from 'node:vm';
-import { readTemporaryWindowOwnerOnPage } from '../temporary-windows.js';
+import { readTemporaryWindowOwnerOnPage } from '../src/features/grok/temporary-windows.js';
 import {
   createDefaultSessionState,
   extractCanonicalGrokUrl,
@@ -28,8 +28,8 @@ import {
   probeGrokSessionAvailability,
   confirmGrokWindowOwnership,
   DEFAULT_GROK_SESSION_LIMIT
-} from '../grok-session-manager.js';
-import { createBackgroundGrokWindow } from '../grok-comment.js';
+} from '../src/features/grok/grok-session-manager.js';
+import { createBackgroundGrokWindow } from '../src/features/grok/grok-comment.js';
 
 test('createDefaultSessionState sets expected initial state and bounds', () => {
   const state = createDefaultSessionState();

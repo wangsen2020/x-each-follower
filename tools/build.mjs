@@ -23,7 +23,7 @@ export async function runBuild(options = {}) {
   console.log(`[build] 1/3 Building Panel HTML and CSS via Vite into ${distDir}...`);
   await build({
     configFile: resolve(rootDir, 'vite.config.js'),
-    root: rootDir,
+    root: resolve(rootDir, 'src'),
     build: {
       outDir: distDir,
       emptyOutDir: false

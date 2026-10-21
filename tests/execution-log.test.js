@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {appendExecutionLog,selectExecutionLogs,normalizeQueueExecutionLog} from '../execution-log.js';
+import {appendExecutionLog,selectExecutionLogs,normalizeQueueExecutionLog} from '../src/shared/execution-log.js';
 
 test('queue events distinguish task start and cycle completion from failure',()=>{
   assert.equal(normalizeQueueExecutionLog({type:'job-start'}).result,'started');
@@ -46,17 +46,17 @@ test('a failed write does not block later logging',async()=>{
   const logs=await appendExecutionLog({scope:'comment',result:'started'},{get:async()=>({}),set:async()=>{}});
   assert.equal(logs[0].result,'started');
 });
-test('fans scope selects fan-specific logs and queue jobs with fans source',()=>{
-  const logs=[
-    {id:'fan-sync',scope:'fans',at:'2026-10-18T10:00:00Z'},
-    {id:'fan-queue',scope:'queue',sources:[{module:'fans'}],at:'2026-10-18T11:00:00Z'},
-    {id:'mutual-queue',scope:'queue',sources:[{module:'mutual'}],at:'2026-10-18T12:00:00Z'},
-    {id:'comment-log',scope:'comment',at:'2026-10-18T13:00:00Z'}
+test('fans scope selects fan scan logs and queue jobs with fans source', () => {
+  const logs = [
+    {id: 'fan-sync', scope: 'fans', at: '2026-10-18T10:00:00Z'},
+    {id: 'fan-queue', scope: 'queue', sources: [{module: 'fans'}], at: '2026-10-18T11:00:00Z'},
+    {id: 'mutual-queue', scope: 'queue', sources: [{module: 'mutual'}], at: '2026-10-18T12:00:00Z'},
+    {id: 'comment-log', scope: 'comment', at: '2026-10-18T13:00:00Z'}
   ];
-  const selected=selectExecutionLogs(logs,'fans');
-  assert.equal(selected.length,2);
-  assert.equal(selected[0].id,'fan-queue');
-  assert.equal(selected[1].id,'fan-sync');
+  const selected = selectExecutionLogs(logs, 'fans');
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].id, 'fan-queue');
+  assert.equal(selected[1].id, 'fan-sync');
 });
 test('concurrent verification writers keep one episode through A/B/A',async()=>{
   let saved=[];

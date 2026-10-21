@@ -18,9 +18,9 @@ import {
   localStorageChangePlan,
   loadDurableLogBuffer,
   takeLogBufferTask
-} from '../panel-data.js';
+} from '../src/entries/panel/panel-data.js';
 
-const panelSource = readFileSync(new URL('../panel.js', import.meta.url), 'utf8');
+const panelSource = readFileSync(new URL('../src/entries/panel/panel.js', import.meta.url), 'utf8');
 
 test('relationship flags keep first queue status and follower or following membership', () => {
   const monitor = {

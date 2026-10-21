@@ -32,6 +32,8 @@ async function importClosure(entry) {
     seen.add(name);
     const text = await source(name);
     for (const spec of staticImports(text)) {
+      // A bundled pure text parser is permitted; all other external imports remain forbidden.
+      if (name === 'src/features/grok/quote-text.js' && spec === 'twitter-text/dist/parseTweet.js') continue;
       assert.ok(spec.startsWith('.'), `unexpected non-relative runtime import: ${name} -> ${spec}`);
       const next = new URL(spec, new URL(name, root));
       assert.ok(next.href.startsWith(root.href), `import escapes repository: ${spec}`);
@@ -43,31 +45,31 @@ async function importClosure(entry) {
 }
 
 test('record runtime no longer imports panel data', async () => {
-  const runtime = await source('record-runtime.js');
-  assert.match(runtime, /from '\.\/relationship-rules\.js'/);
+  const runtime = await source('src/features/records/record-runtime.js');
+  assert.match(runtime, /from '\.\.\/relationships\/relationship-rules\.js'/);
   assert.doesNotMatch(runtime, /panel-data\.js/);
-  const closure = await importClosure('record-runtime.js');
+  const closure = await importClosure('src/features/records/record-runtime.js');
   assert.equal(closure.has('panel-data.js'), false);
   assert.equal(closure.has('panel.js'), false);
 });
 
 test('quote tags no longer import the Grok workflow', async () => {
-  const tags = await source('quote-tags.js');
+  const tags = await source('src/features/grok/quote-tags.js');
   assert.match(tags, /from '\.\/quote-text\.js'/);
   assert.doesNotMatch(tags, /grok-comment\.js/);
-  for (const entry of ['quote-tags.js', 'follow-queue-store.js']) {
+  for (const entry of ['src/features/grok/quote-tags.js', 'src/features/follow-queue/follow-queue-store.js']) {
     const closure = await importClosure(entry);
-    assert.equal(closure.has('grok-comment.js'), false, entry);
-    assert.equal(closure.has('grok-session-manager.js'), false, entry);
-    assert.equal(closure.has('grok-verification.js'), false, entry);
+    for (const forbidden of ['grok-comment.js','grok-session-manager.js','grok-verification.js']) {
+      assert.equal([...closure].some(path => path === forbidden || path.endsWith('/'+forbidden)), false, entry);
+    }
   }
 });
 
-test('extracted modules stay pure and at the repository root', async () => {
-  for (const name of ['relationship-rules.js', 'quote-text.js']) {
+test('pure domain modules live under src/features without browser dependencies', async () => {
+  for (const name of ['src/features/relationships/relationship-rules.js', 'src/features/grok/quote-text.js']) {
     const text = await source(name);
-    assert.equal(staticImports(text).length, 0, name);
+    assert.deepEqual(staticImports(text), name.endsWith('/quote-text.js') ? ['twitter-text/dist/parseTweet.js'] : [], name);
     assert.doesNotMatch(text, /\b(chrome|indexedDB|document|window|fetch|localStorage)\b/);
-    assert.equal(new URL(name, root).pathname.includes('/features/'), false);
+    assert.equal(new URL(name, root).pathname.includes('/features/'), true);
   }
 });

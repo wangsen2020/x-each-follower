@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {indexedDB, IDBKeyRange} from 'fake-indexeddb';
-import {createRecordRepository} from '../record-repository.js';
-import {createRecordMigration, flattenLegacySnapshot, hashCanonical, reconstructLegacySnapshot} from '../record-migration.js';
+import {createRecordRepository} from '../src/features/records/record-repository.js';
+import {createRecordMigration, flattenLegacySnapshot, hashCanonical, reconstructLegacySnapshot} from '../src/features/records/record-migration.js';
 
 function repository(name) {
   return createRecordRepository({indexedDB, IDBKeyRange, dbName: name, now: () => 1000});

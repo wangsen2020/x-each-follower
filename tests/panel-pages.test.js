@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createPanelPages, assertRecordWritesOpen, createSelectionMemory} from '../panel-pages.js';
+import {createPanelPages, assertRecordWritesOpen, createSelectionMemory} from '../src/entries/panel/panel-pages.js';
 
 function fakeRequest() {
   const ops = [];

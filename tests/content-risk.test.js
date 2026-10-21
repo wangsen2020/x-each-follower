@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectContentRisks,
+  interactionSkipReason,
   isPostSafeForComment,
   RISK_DEFINITIONS,
   buildGrokProfileAssessmentPrompt,
   parseGrokProfileAssessment,
   evaluateProfileGrokRisk
-} from '../content-risk.js';
-import { computeMultiDimensionTags, TAG_DEFINITIONS, filterMutualTrackingUsers, riskAssess } from '../scoring.js';
-import { buildGrokCommentPrompt, requestGrokComment, postQuoteOnTab } from '../grok-comment.js';
+} from '../src/features/relationships/content-risk.js';
+import { computeMultiDimensionTags, TAG_DEFINITIONS, filterMutualTrackingUsers, riskAssess } from '../src/features/relationships/scoring.js';
+import { buildGrokCommentPrompt, requestGrokComment, postQuoteOnTab } from '../src/features/grok/grok-comment.js';
 
 test('detectContentRisks accurately identifies politics, military, religion, violence, porn, suggestive, sensational', () => {
   // 1. 涉政 (Politics)
@@ -98,6 +99,38 @@ test('social hardship with collective resistance is blocked while ordinary unemp
   assert.equal(detectContentRisks('今年失业了，吃挂面、找工作，顺便学 Vue3。').hasRisk, false);
 });
 
+test('armed-group and terrorism labels block the topic without treating Muslim identity as a risk', () => {
+  const houthiZh = detectContentRisks('转发一条关于胡塞武装的动态');
+  assert.ok(houthiZh.tagIds.includes('risk:armed_group'));
+  const houthiEn = detectContentRisks('Following updates about the Houthis in Yemen');
+  assert.ok(houthiEn.categories.includes('armed_group'));
+  const extremist = detectContentRisks('这个账号发布恐怖组织宣传与圣战动员内容');
+  assert.ok(extremist.tagIds.includes('risk:terrorism'));
+  assert.equal(extremist.isSevere, true);
+
+  for (const ordinary of [
+    '我是一名穆斯林程序员，今天分享开源项目',
+    '伊斯兰教徒一家庆祝开斋节，记录家常晚餐',
+    '介绍几个伊斯兰国家的普通民俗和节日',
+    'Muslim developer sharing a family dinner after Ramadan'
+  ]) {
+    assert.equal(detectContentRisks(ordinary).hasRisk, false, ordinary);
+  }
+  assert.equal(isPostSafeForComment({text:'今天分享一个开源项目'}, {handle:'houthi_updates'}).safe, false);
+  assert.equal(isPostSafeForComment({text:'今天分享一个开源项目'}, {handle:'muslim_dev',bio:'穆斯林程序员'}).safe, true);
+  assert.match(interactionSkipReason({handle:'muslim_dev',bio:'穆斯林程序员'}), /互动偏好跳过/);
+  assert.match(interactionSkipReason({handle:'tech_writer',posts:[{text:'今天记录开斋节的家庭晚餐'}]}), /互动偏好跳过/);
+  assert.match(interactionSkipReason({name:'Sunni community',bio:'Sharing software notes'}), /互动偏好跳过/);
+  assert.equal(interactionSkipReason({posts:[{text:'四川人不信神，因为自己就很神'}]}),'');
+  assert.equal(interactionSkipReason({posts:[{text:'今天用上帝视角看地图'}]}),'');
+  assert.match(interactionSkipReason({bio:'分享拜火教和祆教历史'}), /互动偏好跳过/);
+  assert.match(interactionSkipReason({posts:[{text:'今天参加佛教寺院法会'}]}), /互动偏好跳过/);
+  assert.match(interactionSkipReason({name:'Zoroastrian notes'}), /互动偏好跳过/);
+  assert.equal(interactionSkipReason({handle:'normal_dev',name:'普通开发者',bio:'分享开源项目'}), '');
+  assert.equal(detectContentRisks('我是一名普通穆斯林程序员').hasRisk,false);
+  assert.ok(detectContentRisks('有人发布点名追杀令，号召围攻不信教的人').categories.includes('violence'));
+});
+
 test('quote publication also blocks a risky generated reply before opening a window', async () => {
   const post = {url:'https://x.com/example/status/123',text:'今天分享一个普通技术教程'};
   const reply = '失业者在当前社会该如何反抗？';
@@ -129,9 +162,11 @@ test('isPostSafeForComment prevents Grok commenting on sensitive posts', () => {
 });
 
 test('scoring.js integrates risk tags into TAG_DEFINITIONS and computeMultiDimensionTags', () => {
-  // TAG_DEFINITIONS contains all 7 risk tags
+  // TAG_DEFINITIONS contains the existing risk tags and the armed-group additions.
   assert.ok(TAG_DEFINITIONS['risk:politics']);
   assert.ok(TAG_DEFINITIONS['risk:military']);
+  assert.ok(TAG_DEFINITIONS['risk:armed_group']);
+  assert.ok(TAG_DEFINITIONS['risk:terrorism']);
   assert.ok(TAG_DEFINITIONS['risk:religion']);
   assert.ok(TAG_DEFINITIONS['risk:violence']);
   assert.ok(TAG_DEFINITIONS['risk:pornography']);
@@ -140,6 +175,8 @@ test('scoring.js integrates risk tags into TAG_DEFINITIONS and computeMultiDimen
 
   assert.equal(TAG_DEFINITIONS['risk:politics'].label, '🏛️ 涉政');
   assert.equal(TAG_DEFINITIONS['risk:military'].label, '⚔️ 涉军');
+  assert.equal(TAG_DEFINITIONS['risk:armed_group'].label, '🪖 武装组织');
+  assert.equal(TAG_DEFINITIONS['risk:terrorism'].label, '🚫 恐怖极端');
   assert.equal(TAG_DEFINITIONS['risk:religion'].label, '🕊️ 涉宗教');
   assert.equal(TAG_DEFINITIONS['risk:violence'].label, '🚫 暴力');
   assert.equal(TAG_DEFINITIONS['risk:pornography'].label, '🔞 色情');
@@ -159,26 +196,31 @@ test('scoring.js integrates risk tags into TAG_DEFINITIONS and computeMultiDimen
   const assessment = riskAssess(riskyProfile);
   assert.equal(assessment.level, 'danger');
   assert.ok(assessment.riskCategories?.includes('politics'));
+  const armedProfile = {handle:'houthi_updates',name:'普通昵称',bio:'分享动态'};
+  assert.ok(computeMultiDimensionTags(armedProfile).tagIds.includes('risk:armed_group'));
+  assert.ok(riskAssess(armedProfile).riskCategories.includes('armed_group'));
 });
 
 test('filterMutualTrackingUsers supports exclude:risk to filter out sensitive accounts', () => {
   const users = [
     { handle: 'tech_dev', name: '前端老张', bio: 'AI 独立开发，Python 与 React' },
     { handle: 'war_channel', name: '战报速递', bio: '俄乌冲突前线导弹战事直播' },
-    { handle: 'porn_bot', name: '成人影院', bio: 'OnlyFans 露点做爱福利视频' }
+    { handle: 'porn_bot', name: '成人影院', bio: 'OnlyFans 露点做爱福利视频' },
+    { handle: 'houthi_updates', name: '普通昵称', bio: '分享动态' }
   ];
 
   const profileCache = {
     tech_dev: { bio: 'AI 独立开发，Python 与 React', followers: 1000, following: 950 },
     war_channel: { bio: '俄乌冲突前线导弹战事直播', followers: 2000, following: 1800 },
-    porn_bot: { bio: 'OnlyFans 露点做爱福利视频', followers: 500, following: 450 }
+    porn_bot: { bio: 'OnlyFans 露点做爱福利视频', followers: 500, following: 450 },
+    houthi_updates: { bio: '分享动态', followers: 300, following: 280 }
   };
 
-  // 没有过滤时，3人都在
+  // 没有过滤时，4人都在
   const allUsers = filterMutualTrackingUsers(users, '', profileCache, []);
-  assert.equal(allUsers.length, 3);
+  assert.equal(allUsers.length, 4);
 
-  // 勾选 exclude:risk 后，只剩下 tech_dev，涉军和色情被排除
+  // 勾选 exclude:risk 后，只剩下 tech_dev，涉军、色情和武装组织被排除
   const filtered = filterMutualTrackingUsers(users, '', profileCache, ['exclude:risk']);
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0].handle, 'tech_dev');
@@ -187,7 +229,7 @@ test('filterMutualTrackingUsers supports exclude:risk to filter out sensitive ac
 test('requestGrokComment rejects risk post pre-flight without network consumption', async () => {
   const riskPost = {
     text: '突发：中东地区发生自杀式爆炸恐怖袭击，斩首与流血冲突加剧',
-    url: 'https://x.com/news/status/999999'
+    url: 'https://x.com/terror_news/status/999999'
   };
 
   // requestGrokComment should return riskBlocked: true immediately
@@ -197,7 +239,8 @@ test('requestGrokComment rejects risk post pre-flight without network consumptio
 
   assert.equal(res.ok, false);
   assert.equal(res.riskBlocked, true);
-  assert.ok(res.reason.includes('暴力'));
+  assert.ok(res.riskCategories.includes('terrorism'));
+  assert.ok(res.reason.includes('恐怖极端'));
 });
 
 test('postQuoteOnTab rejects risk post pre-flight before opening windows', async () => {
@@ -217,15 +260,17 @@ test('buildGrokCommentPrompt includes calibrated safety instructions distinguish
     handle: 'nice_user',
     name: '好青年',
     postText: '今天分享开源代码',
-    nonce: 'nonce123'
+    nonce: 'nonce123',
+    profile: {bio:'关注技术和阅读'}
   });
 
-  assert.ok(prompt.includes('安全与审核边界'));
-  assert.ok(prompt.includes('坚决拦截'));
-  assert.ok(prompt.includes('正常放行'));
-  assert.ok(prompt.includes('躺平'));
-  assert.ok(prompt.includes('失业'));
-  assert.ok(prompt.includes('恐怖主义'));
+  assert.ok(prompt.includes('色情低俗、暴力、政治、军事、武装组织、恐怖极端、恶心猎奇'));
+  assert.ok(prompt.includes('伊斯兰教、穆斯林、清真、斋月、拜火教、祆教、巴哈伊'));
+  assert.ok(prompt.includes('任一候选帖明确命中就跳过整个账号'));
+  assert.ok(prompt.includes('不要凭姓名、地区，或“不信神”“上帝视角”等玩笑比喻推断宗教关联'));
+  assert.ok(prompt.includes('点名追杀、死亡威胁'));
+  assert.ok(prompt.includes('宗教身份不等于危险标签'));
+  assert.ok(prompt.includes('账号简介：关注技术和阅读'));
 });
 
 test('detectContentRisks catches English plural and geopolitical conflict variants (e.g. Terrorists, failed state)', () => {

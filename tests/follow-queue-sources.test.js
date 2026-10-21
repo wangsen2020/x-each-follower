@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectFollowQueueCandidates} from '../follow-queue-sources.js';
+import {collectFollowQueueCandidates} from '../src/features/follow-queue/follow-queue-sources.js';
 
 test('candidates merge handles, keep comment urls, and enable only explicit sources', () => {
   const rows = collectFollowQueueCandidates({

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, computeMultiDimensionTags, TAG_DEFINITIONS, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../scoring.js';
+import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, computeMultiDimensionTags, TAG_DEFINITIONS, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../src/features/relationships/scoring.js';
 
 test('formatPageSummary formats exact pagination summary', () => {
   assert.equal(formatPageSummary(1, 3, 42), '1 / 3 · 42');

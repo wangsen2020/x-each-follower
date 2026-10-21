@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../follow-queue-runtime.js';
+import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
 
 test('queue eligibility uses configured ratio instead of the legacy 80 percent veto',()=>{
   const profile={handle:'example',bio:'分享技术',followersText:'100',followingText:'70'};
@@ -8,6 +8,13 @@ test('queue eligibility uses configured ratio instead of the legacy 80 percent v
   assert.equal(assessQueueProfile(profile,settings),'');
   assert.match(assessQueueProfile(profile,{...settings,ratioThreshold:.8}),/80%/);
   assert.match(assessQueueProfile({...profile,followersText:''},settings),/未读全/);
+});
+
+test('armed-group profiles are skipped even when optional broad risk filtering is disabled',()=>{
+  const settings={minFollowers:1,ratioThreshold:.1,onlyRecommended:false,skipRiskContent:false};
+  const profile={handle:'houthi_updates',name:'资讯账号',bio:'分享动态',followersText:'100',followingText:'100'};
+  assert.match(assessQueueProfile(profile,settings),/武装组织/);
+  assert.match(assessQueueProfile({...profile,handle:'muslim_dev',name:'穆斯林开发者'},settings),/互动偏好跳过/);
 });
 
 test('worker recovery preserves queued alarm deadline and clears only old follow schedules',async()=>{
@@ -160,7 +167,7 @@ test('followQueueRetryEvaluation refuses a risky account before generating or pu
 });
 
 test('quote publication risk block is a skipped result, not an uncertain external effect', async () => {
-  const {quotePublicationState}=await import('../follow-queue-runtime.js');
+  const {quotePublicationState}=await import('../src/features/follow-queue/follow-queue-runtime.js');
   assert.equal(quotePublicationState({ok:false,riskBlocked:true,reason:'生成的引用评价涉政'}),'skipped');
   assert.equal(quotePublicationState({ok:false,stage:'composer'}),'failed');
   assert.equal(quotePublicationState({ok:false,reason:'网络响应不明'}),'uncertain');
@@ -231,7 +238,7 @@ test('identity progress reports preparation and failure without requiring activa
 });
 
 test('queue quote confirmation waits for profile load and refreshes a stale timeline without publishing twice',async()=>{
- const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0,checks=0,prepared=0;
+ const {confirmPublishedQueueQuote}=await import('../src/features/follow-queue/follow-queue-runtime.js');let clock=0,reloads=0,checks=0,prepared=0;
  const api={tabs:{update:async()=>{},get:async()=>({status:clock<2100?'loading':'complete'}),reload:async()=>{reloads++;}},
   scripting:{executeScript:async({func})=>{if(func.name==='setQuoteFrameFallbackOnPage'){prepared++;return [];}checks++;return [{result:reloads?{id:'posted',url:'https://x.com/viewer/status/posted'}:null}];}}};
  const proof=await confirmPublishedQueueQuote({api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock});
@@ -239,7 +246,7 @@ test('queue quote confirmation waits for profile load and refreshes a stale time
 });
 
 test('queue quote confirmation keeps an unverified result uncertain and honours cancellation',async()=>{
- const {confirmPublishedQueueQuote}=await import('../follow-queue-runtime.js');let clock=0,reloads=0;
+ const {confirmPublishedQueueQuote}=await import('../src/features/follow-queue/follow-queue-runtime.js');let clock=0,reloads=0;
  const api={tabs:{update:async()=>{},get:async()=>({status:'complete'}),reload:async()=>{reloads++;}},scripting:{executeScript:async()=>[]}};
  const args={api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock};
  assert.equal(await confirmPublishedQueueQuote({...args,timeoutMs:20000}),null);assert.equal(reloads,1);

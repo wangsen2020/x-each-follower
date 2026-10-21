@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {setQuoteFrameFallbackOnPage} from '../page-reader.js';
+import {setQuoteFrameFallbackOnPage} from '../src/platform/x/page-reader.js';
 
 test('hidden quote frames progress once, support cancellation and restore native functions', t => {
   t.mock.timers.enable({apis:['setTimeout']});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
-import {createRecordRepository, RecordCursorInvalidError, RECORD_PAGE_MAX} from '../record-repository.js';
+import {createRecordRepository, RecordCursorInvalidError, RECORD_PAGE_MAX} from '../src/features/records/record-repository.js';
 
 function repo(name) {
   return createRecordRepository({indexedDB, IDBKeyRange, dbName: name, now: () => 1000});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as rules from '../relationship-rules.js';
-import * as panelData from '../panel-data.js';
+import * as rules from '../src/features/relationships/relationship-rules.js';
+import * as panelData from '../src/entries/panel/panel-data.js';
 
 const monitor = {
   queue: [{handle: 'Queued', status: 'followed'}, {status: 'pending'}],
@@ -76,4 +76,24 @@ test('relationship index still classifies queue, following, and empty handles', 
   assert.equal(snapped.relationship.followedBy, false);
   assert.equal(snapped.relationshipKnown, true);
   assert.equal(rules.snapshotMutualUsers([{handle: 'Nope'}], index)[0].relationship.following, false);
+});
+test('applyRelationshipSnapshot safely handles numeric index from array map or missing index', () => {
+  const users = [{handle: 'QQ20C'}, {handle: 'OtherUser', relationship: {followedBy: true}}];
+
+  // Directly passed as array.map callback (where index is 0, 1, ...)
+  const mapped = users.map(rules.applyRelationshipSnapshot);
+  assert.equal(mapped.length, 2);
+  assert.equal(mapped[0].handle, 'QQ20C');
+  assert.equal(mapped[0].relationship.following, false);
+  assert.equal(mapped[1].relationship.followedBy, true);
+
+  // Explicitly called with number or undefined
+  assert.doesNotThrow(() => rules.applyRelationshipSnapshot({handle: 'Test'}, 0));
+  assert.doesNotThrow(() => rules.applyRelationshipSnapshot({handle: 'Test'}, null));
+  assert.doesNotThrow(() => rules.applyRelationshipSnapshot({handle: 'Test'}, undefined));
+  assert.doesNotThrow(() => rules.applyRelationshipSnapshot({handle: 'Test'}, {}));
+
+  // commentRelationshipLabel and monitorUserStatus with invalid index
+  assert.doesNotThrow(() => rules.commentRelationshipLabel({handle: 'Test'}, 0));
+  assert.doesNotThrow(() => rules.monitorUserStatus({handle: 'Test'}, 0));
 });

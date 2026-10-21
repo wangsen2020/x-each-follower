@@ -2,8 +2,8 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {appendExecutionLog} from '../execution-log.js';
-import {createExecutionLogStore, createLogPager, getDefaultExecutionLogStore, handleExecutionLogRequest, isExecutionLogSender, resetDefaultExecutionLogStore} from '../execution-log-store.js';
+import {appendExecutionLog} from '../src/shared/execution-log.js';
+import {createExecutionLogStore, createLogPager, getDefaultExecutionLogStore, handleExecutionLogRequest, isExecutionLogSender, resetDefaultExecutionLogStore} from '../src/shared/execution-log-store.js';
 
 function memoryDurable() {
   const saved = new Map();
@@ -394,7 +394,7 @@ test('malformed legacy timestamps stay imported and offset timestamps order as U
 });
 
 test('worker log modules do not use dynamic import', () => {
-  for (const name of ['execution-log.js', 'execution-log-store.js', 'execution-log-select.js', 'persistent-db.js']) {
+  for (const name of ['src/shared/execution-log.js', 'src/shared/execution-log-store.js', 'src/shared/execution-log-select.js', 'src/platform/persistent-db.js']) {
     const text = fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
     assert.equal(/import\s*\(/.test(text), false, name);
   }

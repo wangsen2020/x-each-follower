@@ -1,4 +1,4 @@
-# XFollower · 粉丝管理 · v1.7.1
+# XFollower · 粉丝管理 · v2.0.0
 
 ## AI 协作与开发规范（开始前必读）
 
@@ -36,9 +36,34 @@
 - 被分配实现任务的代理应报告改动文件、行为变化、验证结果和未完成事项；不要宣称未运行的测试或未观察到的浏览器结果。
 - 向 Antigravity 或 Grok 分配 UI 工作时，提示中必须重复本节的布局规则（flex、谨慎使用 `gap`、行间距约 `10px` 且通常不超过 `20px`、按钮同高、禁止 `!important`）及真实页面验收要求。
 
-## 1.7.1 验收说明
+## 2.0.0 源码与构建约定
 
-本版包含 Panel 工程化构建、历史数据恢复、Grok 额度与 Bot 后备、内容风险门禁。428 项功能测试、19 项构建测试、语法检查与 dist 完整性检查通过。现有登录浏览器中的 1.7.1 dist 扩展可读取历史记录主库 12,177 条、投影 6,440 行；真实队列完成关注和引用发布，已公开帖子在 X 页面得到核验。实机复验发现并修复“失业/人口 + 如何反抗”语境漏拦截，修复后通过 CDP 验证原帖、生成文案均被阻断。Grok.com 当前遇到 Cloudflare 整页挑战，50/51 次轮换与挑战通过后的恢复仍待自然环境验证；详见[实机复验记录](docs/架构与工程化/7.%20前端工程化改造与Vue3响应式架构评估方案_20261020_0045_wangsen.md#14-171-实机复验与发布阻断修复2026-10-20)。
+运行源码全部集中于 src，根目录不再保留业务 JS、CSS、HTML、图片或一行兼容转发模块。Chrome 只加载 dist；src/manifest.json 内填写的是产物路径。
+
+```text
+src/
+  entries/             # background、panel、content、main-world、verification 入口
+    panel/styles/      # 面板样式
+  features/            # relationships、follow-queue、records、grok 业务
+  platform/            # Chrome 存储及 X 页面读取适配
+  shared/              # 通用规则、日志、统一版本
+  assets/              # 图标、提醒页图片
+  vendor/              # 第三方预构建签名脚本
+  manifest.json        # 扩展清单与应用版本来源
+  panel.html           # Vite HTML 入口
+```
+
+工具与测试继续位于 tools/、tests/；文档位于 docs/。tools/runtime-resources.mjs 明确源码与独立运行文件的对应关系，注入脚本逐字复制并校验；其余业务模块由 Vite 打包。升级版本运行 `npm run version:set -- 2.0.1`，同步 Manifest、package 和锁文件；后台、面板握手、导航及重载标记统一读取 src/shared/version.js，不再手写多份版本号。
+
+此版本完成目录与构建归整，不代表旧列表控制器已全部改写为 Vue 行渲染。尚未提交或正式发行。
+
+## 1.12.4 历史发布准备
+
+本地候选版包含 Vue 页面外壳、领域目录归整、历史数据恢复、仅使用 X 内置 Grok 的五帖择一评价，以及 280 加权字符和标签预算检查。手动实测与自动队列共用账号标签配置；完整正文优先，标签放不下则省略。列表行仍由兼容控制器渲染，不能宣称全量 Vue 响应式迁移已经完成。最新核查与剩余项见架构方案第 22 节；1.8.0 及以下内容是历史记录，不代表当前通道配置。
+
+## 1.8.0 历史验收说明
+
+本版包含 Panel 工程化构建、历史数据恢复、Grok 额度与 Bot 后备、内容风险门禁。428 项功能测试、19 项构建测试、语法检查与 dist 完整性检查通过。现有登录浏览器中的 1.8.0 dist 扩展可读取历史记录主库 12,177 条、投影 6,440 行；真实队列完成关注和引用发布，已公开帖子在 X 页面得到核验。实机复验发现并修复“失业/人口 + 如何反抗”语境漏拦截，修复后通过 CDP 验证原帖、生成文案均被阻断。Grok.com 当前遇到 Cloudflare 整页挑战，50/51 次轮换与挑战通过后的恢复仍待自然环境验证；详见[实机复验记录](docs/架构与工程化/7.%20前端工程化改造与Vue3响应式架构评估方案_20261020_0045_wangsen.md#14-171-实机复验与发布阻断修复2026-10-20)。
 
 ## 1.6.7 历史发行说明
 
@@ -65,7 +90,7 @@
 
 界面采用左侧导航、右侧工作区的管理后台布局。默认“粉丝管理”把“粉丝”和“待回关”放在同一个列表页的两个 tab；列表支持按账号、名称或简介搜索，并以 20、50、100 条分页展示，便于累积管理大量历史数据。说明放在感叹号 hover 提示中。
 
-当前版本：`1.7.1`。在 `chrome://extensions` 中重新加载扩展后，可通过版本号确认已载入新版本。
+当前本地候选版本：`2.0.0`（尚未发行）。在 `chrome://extensions` 中重新加载扩展后，可通过版本号确认已载入新版本。
 
 Grok 针对候选用户近期帖子生成的互动评价以 X 的“引用”形式发布，保留原帖卡片并出现在自己的帖子时间线上。发送前会校验引用编辑器确实嵌入目标原帖；X 文章卡片没有直接状态链接时，会结合目标帖子页、作者和文章标题识别，目标不匹配则停止发布。
 
@@ -99,8 +124,8 @@ Chrome / Edge Manifest V3 插件。从指定用户的 following 列表收集账�
 
 ## 安装与使用
 
-1. 下载此仓库并解压，或克隆仓库。
-2. 打开 Chrome 的 `chrome://extensions` 或 Edge 的 `edge://extensions`，打开开发者模式，点击“加载已解压的扩展程序”，选择包含 `manifest.json` 的目录。
+1. 使用发行 ZIP 时完整解压；使用源码时先运行 `npm ci`、`npm run build`、`npm run build:check`。
+2. 打开 Chrome 的 `chrome://extensions` 或 Edge 的 `edge://extensions`，打开开发者模式，点击“加载已解压的扩展程序”，发行 ZIP 选择解压后包含 `manifest.json` 的目录；源码构建选择 `dist`，不要直接加载源码根目录。
 3. 在同一个浏览器中登录 X，然后点击插件图标，打开工具页。
 4. 输入目标用户名（例如 `@username`）或 profile 链接。目标可以是你关注的某个用户，但插件不会验证你是否已关注此人。
 5. 设置检查数量、人数比例、最低人数、访问间隔，点击“开始查看资料”。插件会打开检查标签页；请保持工具页开启，并避免手动导航检查标签页。
@@ -125,17 +150,17 @@ Chrome / Edge Manifest V3 插件。从指定用户的 following 列表收集账�
 - following 列表会自动滚动，最多检查 500 个账号；连续 8 轮未出现新账号或最多 150 轮滚动后结束收集。只代表本轮可见账号，不保证是完整列表。
 - 默认每个 profile 完成后等待 5 秒，可调范围 3–60 秒。连续 3 个 profile 无法读取时停止，不绕过登录、验证码、访问限制或私密账号限制。
 - X 可能调整页面 DOM；选择器基于 `primaryColumn`、`UserCell`、`UserName`、`UserDescription` 和 profile 人数链接。页面变化可能需要修改 `page-reader.js`。
-- 此版本通过本地逻辑及模拟 DOM 检查；尚未在用户已登录的真实 X 会话中完成端到端验证。
+- X 内置 Grok 生成及公开引用发布已有实机证据；不同版本、入口和设置的验收范围分别记录，不能将单条发帖成功视为所有自动任务均已验收。
 
 ## 数据与权限
 
-仅请求 `scripting`、`storage`，以及 `https://x.com/*`、`https://twitter.com/*` 的网站权限。`scripting` 用于读取已加载页面，`storage.local` 保存最近一轮结果和设置。插件通过浏览器已有的登录会话访问页面，不读取或导出 cookie、密码、令牌；代码无外部上传请求。点击“清空记录”删除本地结果，设置仍保留；卸载插件可移除扩展存储。CSV 由用户手动导出，需自行保管。
+Manifest 当前请求 scripting、storage、alarms、notifications、tabs、windows、clipboardWrite，以及 x.com、twitter.com、grok.com 域权限。grok.com 权限保留用于旧功能兼容，当前自动评价只使用 X 内置 Grok。采集资料与队列状态保存在扩展及 X 站点本地存储；启用 Grok 时会把选中的公开资料和帖子发送给 Grok，启用自动发布时会向 X 发布引用帖。卸载扩展不会清除 X 站点下的备份；不要将卸载理解为全部数据已删除。CSV 由用户手动导出并保管。
 
 Chrome 官方文档：[scripting API](https://developer.chrome.com/docs/extensions/reference/api/scripting)。X 官方帮助：[following 常见问题](https://help.x.com/en/using-x/common-following-issues)。
 
 ## 开发
 
-无需构建或第三方运行依赖。Node.js 22 或更新版本：
+需要 Node.js 22 或更新版本和构建依赖；字符权重使用 twitter-text，构建后随产物打包，无需远程加载脚本：
 
 ```sh
 npm test

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createFollowQueueStore} from '../follow-queue-store.js';
+import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
 
 function storeFor(name, clock = {t: 5_000}) {
   return createFollowQueueStore({

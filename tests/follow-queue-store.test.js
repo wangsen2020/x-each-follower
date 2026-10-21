@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBKeyRange } from 'fake-indexeddb';
-import {createFollowQueueStore, FOLLOW_QUEUE_DEFAULT_SETTINGS} from '../follow-queue-store.js';
+import {createFollowQueueStore, FOLLOW_QUEUE_DEFAULT_SETTINGS} from '../src/features/follow-queue/follow-queue-store.js';
 
 function installKeyRange() {
   globalThis.IDBKeyRange = IDBKeyRange;

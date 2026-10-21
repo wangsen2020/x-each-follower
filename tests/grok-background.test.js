@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {setGrokFrameFallbackOnPage} from '../grok-comment.js';
+import {setGrokFrameFallbackOnPage} from '../src/features/grok/grok-comment.js';
 function harness(){
  let seq=0;const frames=new Map(),timers=new Map();
  const window={requestAnimationFrame:fn=>{const id=++seq;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id)};
