@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {detectGrokVerificationOnPage,assertGrokVerificationClear,assertPendingGrokVerificationClear,executeGrokScript,waitForGrokVerification,isGrokInputReadyOnPage} from '../grok-verification.js';
+import {detectGrokVerificationOnPage,assertGrokVerificationClear,assertPendingGrokVerificationClear,executeGrokScript,waitForGrokVerification,isGrokInputReadyOnPage} from '../src/features/grok/grok-verification.js';
 
 test('challenge detection does not flag normal Grok discussion about Cloudflare',()=>{
   const previous={document:globalThis.document,location:globalThis.location};
@@ -238,7 +238,7 @@ test('concurrent detections log and alert once',async()=>{
 });
 
 test('resume restores the owned window to its pool and refreshes its execution lease',async()=>{
- const {resumeTemporaryWindowAfterVerification}=await import('../temporary-windows.js');
+ const {resumeTemporaryWindowAfterVerification}=await import('../src/features/grok/temporary-windows.js');
  const prior=globalThis.chrome;const key='xfTemporaryWindow:7';const data={[key]:{windowId:7,tabId:8,kind:'verification',previousKind:'grok-pool',busyUntil:0}};
  globalThis.chrome={storage:{session:{get:async()=>data,set:async d=>Object.assign(data,d)},local:{set:async()=>{}}}};
  try {

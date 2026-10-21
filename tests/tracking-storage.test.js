@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {loadCommentTracking} from '../tracking-storage.js';
-import {createStorageTab, closeStorageTab} from '../persistent-db.js';
+import {loadCommentTracking} from '../src/platform/tracking-storage.js';
+import {createStorageTab, closeStorageTab} from '../src/platform/persistent-db.js';
 
 test('X storage fallback creates an inactive tab in the existing browser window', async () => {
   const calls = [];

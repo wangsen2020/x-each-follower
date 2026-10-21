@@ -1,6 +1,6 @@
 {
   "name": "x-each-follower",
-  "version": "1.8.4",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build:check": "node tools/verify-dist.mjs",
     "test": "node --test tests/*.test.js",
     "test:build": "node --test tests/build/*.test.js",
-    "check": "node --check panel.js && node --check network-api.js && node --check page-reader.js && node --check scoring.js && node --check background.js && node --check tracking-storage.js && node --check persistent-db.js && node --check panel-data.js && node --check grok-comment.js && node --check grok-verification.js && node --check verification-self-message.js && node --check verification-alert-window.js && node --check verification-alert.js && node --check timing.js && node --check tweet-comment-button.js && node --check follow-queue-store.js && node --check follow-queue-sources.js && node --check follow-queue-scheduler.js && node --check follow-queue-runtime.js && node --check follow-queue-panel.js && node --check follow-queue-entry.js && node --check quote-tags.js && node --check follow-queue-profiles.js && node --check temporary-windows.js && node --check grok-session-manager.js && node --check record-repository.js && node --check record-migration.js && node --check storage-write-queue.js && node --check storage-write-adapter.js && node --check storage-write-client.js && node --check dashboard-load-ui.js && node --check record-runtime.js && node --check record-projection.js && node --check panel-pages.js && node --check content-risk.js && node --check src/entries/panel/main.js && node --check src/entries/panel/composables/useExecutionLogs.js && node --check src/entries/panel/composables/usePanelNavigation.js"
+    "check": "node tools/check-source.mjs",
+    "version:set": "node tools/set-version.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.10",
@@ -16,5 +17,8 @@
     "fake-indexeddb": "6.2.5",
     "vite": "8.3.4",
     "vue": "3.5.44"
+  },
+  "dependencies": {
+    "twitter-text": "^3.1.0"
   }
 }

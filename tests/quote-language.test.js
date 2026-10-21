@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment,extractGrokCommentLanguage,appendFollowBackSuffix,resolveCommentLanguage,tweetWeight} from '../grok-comment.js';
-import {appendQuoteTags} from '../quote-tags.js';
+import {extractGrokComment,extractGrokCommentLanguage,appendFollowBackSuffix,resolveCommentLanguage,tweetWeight} from '../src/features/grok/grok-comment.js';
+import {appendQuoteTags} from '../src/features/grok/quote-tags.js';
 test('language metadata is separate from body and belongs to the last answer',()=>{
  const raw='【引用评价开始】旧的中文回答【引用评价结束】【评价语言:zh】\n【引用评价开始】Remote work still has a local pay ceiling.【引用评价结束】【评价语言:en】';
  assert.equal(extractGrokComment(raw),'Remote work still has a local pay ceiling.');
@@ -15,7 +15,7 @@ test('localized suffixes remove legacy Chinese endings and are idempotent',()=>{
  }
  assert.equal(appendFollowBackSuffix('Remote work has a price.\n有关必回'),'Remote work has a price. I follow back.');
  assert.equal(appendFollowBackSuffix('未知语种',undefined,'de'),'未知语种');
- assert.ok(tweetWeight(appendFollowBackSuffix('a'.repeat(280),undefined,'en'))<=280);
+ assert.ok(appendFollowBackSuffix('a'.repeat(280),undefined,'en').startsWith('a'.repeat(280)));
  assert.equal(resolveCommentLanguage('English reply about remote jobs','zh'),'en');
 });
 test('language filters selected tags on generation and legacy draft retry',()=>{

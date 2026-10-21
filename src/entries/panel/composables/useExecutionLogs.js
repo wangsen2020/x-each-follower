@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { createLogPager, LOG_PAGE_SIZE } from '../../../../execution-log-store.js';
+import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-store.js';
 
 /**
  * Composable for managing execution logs modal state, reactive pagination,

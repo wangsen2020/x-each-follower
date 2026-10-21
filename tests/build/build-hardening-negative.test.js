@@ -39,6 +39,14 @@ test('verifyDist rejects missing hashed CSS in HTML', async () => {
   );
 });
 
+test('verifyDist rejects Chrome-reserved underscore filenames before extension reload', async () => {
+  const testDir = createTempDist('neg-reserved-underscore');
+  writeFileSync(join(testDir, '__grok_test__.js'), 'export const temporary = true;\n');
+  const res = await verifyDist(testDir, { rootDir: ROOT_DIR });
+  assert.equal(res.ok, false);
+  assert.ok(res.errors.some(error => error.includes('Forbidden file') && error.includes('__grok_test__.js')));
+});
+
 test('verifyDist rejects missing image in HTML', async () => {
   const testDir = createTempDist('neg-missing-img');
   const panelHtmlPath = join(testDir, 'panel.html');

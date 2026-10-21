@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {recoverAutomationAlarms, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../automation-recovery.js';
+import {recoverAutomationAlarms, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../src/shared/automation-recovery.js';
 
 test('unified queue takeover prevents stale local or synced schedules from returning',async()=>{
   const cleared=[], created=[];

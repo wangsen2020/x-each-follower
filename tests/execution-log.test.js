@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {appendExecutionLog,selectExecutionLogs,normalizeQueueExecutionLog} from '../execution-log.js';
+import {appendExecutionLog,selectExecutionLogs,normalizeQueueExecutionLog} from '../src/shared/execution-log.js';
 
 test('queue events distinguish task start and cycle completion from failure',()=>{
   assert.equal(normalizeQueueExecutionLog({type:'job-start'}).result,'started');

@@ -1,3 +1,4 @@
+import {RUNTIME_RESOURCES} from '../../tools/runtime-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
@@ -19,7 +20,7 @@ test('manifest referenced resources and byte equality are verified in fresh buil
   const manifestPath = join(TEST_DIST_DIR, 'manifest.json');
   assert.ok(existsSync(manifestPath), 'manifest.json must exist in dist');
 
-  const rootManifestPath = join(ROOT_DIR, 'manifest.json');
+  const rootManifestPath = join(ROOT_DIR, RUNTIME_RESOURCES['manifest.json']);
   const rootBuf = readFileSync(rootManifestPath);
   const distBuf = readFileSync(manifestPath);
   assert.equal(Buffer.compare(rootBuf, distBuf), 0, 'dist/manifest.json must match root manifest.json byte-for-byte');
@@ -58,7 +59,7 @@ test('dynamic transaction-id.bundle.js is preserved byte-for-byte and references
   const bundlePath = join(TEST_DIST_DIR, 'transaction-id.bundle.js');
   assert.ok(existsSync(bundlePath), 'transaction-id.bundle.js must exist in dist');
 
-  const srcBundle = readFileSync(join(ROOT_DIR, 'transaction-id.bundle.js'));
+  const srcBundle = readFileSync(join(ROOT_DIR, RUNTIME_RESOURCES['transaction-id.bundle.js']));
   const distBundle = readFileSync(bundlePath);
   assert.equal(Buffer.compare(srcBundle, distBundle), 0, 'transaction-id.bundle.js must match source byte-for-byte');
 
@@ -72,7 +73,7 @@ test('dynamic transaction-id.bundle.js is preserved byte-for-byte and references
 
 test('standalone runtime scripts are byte-identical to source', () => {
   for (const file of ['page-reader.js', 'bridge.js', 'tweet-comment-button.js', 'net-hook.js', 'verification-alert.js', 'verification-alert-window.js']) {
-    const srcBuf = readFileSync(join(ROOT_DIR, file));
+    const srcBuf = readFileSync(join(ROOT_DIR, RUNTIME_RESOURCES[file]));
     const distBuf = readFileSync(join(TEST_DIST_DIR, file));
     assert.equal(Buffer.compare(srcBuf, distBuf), 0, `${file} must be byte-for-byte identical to source`);
   }

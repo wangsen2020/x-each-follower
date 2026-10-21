@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {centeredAlertBounds,showVerificationAlert,markVerificationAlertClosed,focusVerificationPage,closeVerificationAlert} from '../verification-alert-window.js';
+import {centeredAlertBounds,showVerificationAlert,markVerificationAlertClosed,focusVerificationPage,closeVerificationAlert} from '../src/entries/verification/verification-alert-window.js';
 
 test('alert centers on its monitor including negative coordinates and small work areas',()=>{
   assert.deepEqual(centeredAlertBounds({left:0,top:0,width:1920,height:1040}),{left:670,top:150,width:580,height:740});

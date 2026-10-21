@@ -1,3 +1,4 @@
+import {RUNTIME_RESOURCES} from './runtime-resources.mjs';
 import { readdirSync, copyFileSync, existsSync, mkdirSync, lstatSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,23 +39,7 @@ const FORBIDDEN_FILES = new Set([
  * follow-queue-*.js, grok-*.js, etc.) are compiled and bundled by Vite
  * into dist/background.js and dist/assets/.
  */
-const STANDALONE_COPY_FILES = new Set([
-  'manifest.json',
-  'bridge.js',
-  'tweet-comment-button.js',
-  'tweet-comment-button.css',
-  'net-hook.js',
-  'transaction-id.bundle.js',
-  'page-reader.js',
-  'verification-alert.html',
-  'verification-alert.js',
-  'verification-alert-window.js',
-  'verification-alert.css',
-  'verification-help-generated.webp',
-  'verification-help.svg',
-  'icon128.png',
-  'icon128.svg'
-]);
+const STANDALONE_COPY_FILES = Object.keys(RUNTIME_RESOURCES);
 
 /**
  * Assembles standalone resources into dist/.
@@ -85,8 +70,8 @@ export async function assembleDist(options = {}) {
   let assembledCount = 0;
 
   for (const name of STANDALONE_COPY_FILES) {
-    const srcPath = join(rootDir, name);
-    if (!existsSync(srcPath)) continue;
+    const srcPath = join(rootDir, RUNTIME_RESOURCES[name]);
+    if (!existsSync(srcPath)) throw new Error('Missing runtime source: '+srcPath);
 
     assertNoReparsePoint(srcPath);
 

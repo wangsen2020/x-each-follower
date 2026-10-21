@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createStorageWriteQueue} from '../storage-write-queue.js';
-import {createStorageWriteAdapter} from '../storage-write-adapter.js';
+import {createStorageWriteQueue} from '../src/platform/storage-write-queue.js';
+import {createStorageWriteAdapter} from '../src/platform/storage-write-adapter.js';
 
 test('a failed storage task rejects its caller and the next task still runs', async () => {
   const errors = [];

@@ -8,15 +8,19 @@ import {
   applyModuleView,
   migrationProgressView,
   paintMigrationProgress,
+  hideMigrationProgress,
   recoveryModuleForKey,
   modulesAwaitingRecovery,
   preserveReadError,
   settleRecoveredModule
-} from '../dashboard-load-ui.js';
+} from '../src/entries/panel/dashboard-load-ui.js';
 
-const panelHtml = readFileSync(new URL('../panel.html', import.meta.url), 'utf8');
-const panelSource = readFileSync(new URL('../panel.js', import.meta.url), 'utf8');
-const loadCss = readFileSync(new URL('../dashboard-load.css', import.meta.url), 'utf8');
+const panelHtml = readFileSync(new URL('../src/panel.html', import.meta.url), 'utf8');
+const pageMarkup = ['MonitorSection', 'CandidatesSection', 'CommentsSection', 'FollowQueueSection', 'UnreciprocatedSection']
+  .map(name => readFileSync(new URL(`../src/entries/panel/pages/${name}.vue`, import.meta.url), 'utf8')).join('\n');
+const vueEntry = readFileSync(new URL('../src/entries/panel/main.js', import.meta.url), 'utf8');
+const panelSource = readFileSync(new URL('../src/entries/panel/panel.js', import.meta.url), 'utf8');
+const loadCss = readFileSync(new URL('../src/entries/panel/styles/dashboard-load.css', import.meta.url), 'utf8');
 
 function element(id) {
   const attrs = new Map();
@@ -141,38 +145,46 @@ test('migration progress uses the supplied stage and counts and never a percent'
   assert.throws(() => migrationProgressView({stage: '搬移记录', completed: 1}), /together/);
 });
 
-test('initial html shows loading chrome before module script awaits', () => {
-  const scriptAt = panelHtml.indexOf('<script type="module" src="panel.js">');
-  const skeletonAt = panelHtml.indexOf('id="monitorLoad"');
-  assert.ok(skeletonAt > 0 && skeletonAt < scriptAt);
+test('completed record migration hides its progress host even when the host is absent', () => {
+  const host = {hidden: false};
+  hideMigrationProgress({getElementById: id => id === 'recordMigration' ? host : null});
+  assert.equal(host.hidden, true);
+  assert.doesNotThrow(() => hideMigrationProgress({getElementById: () => null}));
+});
+
+test('Vue page templates expose loading state before the business controller starts', () => {
+  assert.ok(panelHtml.includes('id="panel-vue-root"'));
+  assert.ok(vueEntry.indexOf('app.mount(container)') < vueEntry.search(/import\(['"]\.\/panel\.js['"]\)/));
+  const skeletonAt = pageMarkup.indexOf('id="monitorLoad"');
+  assert.ok(skeletonAt > 0);
   for (const id of ['mutualLoad', 'commentsLoad', 'followQueueLoad', 'unreciprocatedLoad']) {
-    assert.ok(panelHtml.indexOf(`id="${id}"`) < scriptAt);
+    assert.ok(pageMarkup.includes(`id="${id}"`));
   }
   assert.match(panelHtml, /id="queueCount"[^>]*nav-count-loading/);
   assert.doesNotMatch(panelHtml, /id="queueCount"[^>]*>\s*0\s*</);
   assert.doesNotMatch(panelHtml, /id="mutualNetworkCount"[^>]*>\s*0\s*</);
   assert.doesNotMatch(panelHtml, /id="commentTrackingCount"[^>]*>\s*0\s*</);
   assert.doesNotMatch(panelHtml, /id="unreciprocatedCount"[^>]*>\s*0\s*</);
-  assert.match(panelHtml, /id="monitorEmpty"[^>]*hidden/);
-  assert.match(panelHtml, /id="mutualEmpty"[^>]*hidden/);
-  assert.match(panelHtml, /id="commentUsersEmpty"[^>]*hidden/);
+  assert.match(pageMarkup, /id="monitorEmpty"[^>]*hidden/);
+  assert.match(pageMarkup, /id="mutualEmpty"[^>]*hidden/);
+  assert.match(pageMarkup, /id="commentUsersEmpty"[^>]*hidden/);
   assert.match(loadCss, /display:\s*flex/);
   assert.match(loadCss, /margin:\s*10px/);
   assert.match(loadCss, /#245b45/);
   assert.match(loadCss, /prefers-reduced-motion:\s*reduce/);
   assert.match(loadCss, /\.nav-tab\.active \.nav-count \.dash-spinner[\s\S]*#e9f2e9/);
   assert.equal(loadCss.includes('#102b22'), false);
-  assert.ok(panelHtml.indexOf('id="openFollowLogs"') < panelHtml.indexOf('id="monitorLoad"'));
-  assert.ok(panelHtml.indexOf('id="selectionBar"') < panelHtml.indexOf('id="monitorLoad"'));
-  assert.ok(panelHtml.indexOf('id="openMutualLogs"') < panelHtml.indexOf('id="mutualLoad"'));
-  assert.ok(panelHtml.indexOf('class="mutual-subbar"') < panelHtml.indexOf('id="mutualLoad"'));
-  assert.ok(panelHtml.indexOf('id="openCommentLogs"') < panelHtml.indexOf('id="commentsLoad"'));
-  assert.ok(panelHtml.indexOf('class="comments-toolbar"') < panelHtml.indexOf('id="commentsLoad"'));
-  assert.ok(panelHtml.indexOf('id="openUnreciprocatedLogs"') < panelHtml.indexOf('id="unreciprocatedLoad"'));
-  assert.match(panelHtml, /id="followingCount"[^>]*>…</);
-  assert.match(panelHtml, /id="followBackCount"[^>]*>…</);
-  assert.match(panelHtml, /id="notMutualCount"[^>]*>…</);
-  assert.doesNotMatch(panelHtml, /id="followingCount"[^>]*>0</);
+  assert.ok(pageMarkup.indexOf('id="openFollowLogs"') < pageMarkup.indexOf('id="monitorLoad"'));
+  assert.ok(pageMarkup.indexOf('id="selectionBar"') < pageMarkup.indexOf('id="monitorLoad"'));
+  assert.ok(pageMarkup.indexOf('id="openMutualLogs"') < pageMarkup.indexOf('id="mutualLoad"'));
+  assert.ok(pageMarkup.indexOf('class="mutual-subbar"') < pageMarkup.indexOf('id="mutualLoad"'));
+  assert.ok(pageMarkup.indexOf('id="openCommentLogs"') < pageMarkup.indexOf('id="commentsLoad"'));
+  assert.ok(pageMarkup.indexOf('class="comments-toolbar"') < pageMarkup.indexOf('id="commentsLoad"'));
+  assert.ok(pageMarkup.indexOf('id="openUnreciprocatedLogs"') < pageMarkup.indexOf('id="unreciprocatedLoad"'));
+  assert.match(pageMarkup, /id="followingCount"[^>]*>…</);
+  assert.match(pageMarkup, /id="followBackCount"[^>]*>…</);
+  assert.match(pageMarkup, /id="notMutualCount"[^>]*>…</);
+  assert.doesNotMatch(pageMarkup, /id="followingCount"[^>]*>0</);
 });
 
 test('startup keeps the tab the user selected while reads are still running', () => {

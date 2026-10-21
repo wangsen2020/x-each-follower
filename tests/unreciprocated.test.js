@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeUnreciprocatedConfig } from '../scoring.js';
+import { normalizeUnreciprocatedConfig } from '../src/features/relationships/scoring.js';
 
 test('normalizeUnreciprocatedConfig sets robust default parameters for followback tracking', () => {
   const cfg = normalizeUnreciprocatedConfig();

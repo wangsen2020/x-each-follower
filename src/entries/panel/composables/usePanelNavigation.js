@@ -1,3 +1,4 @@
+import {APP_VERSION} from '../../../shared/version.js';
 import { ref, computed, reactive } from 'vue';
 
 export const TAB_TITLES = {
@@ -21,7 +22,7 @@ export function usePanelNavigation() {
   const version = ref(
     typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version
       ? chrome.runtime.getManifest().version
-      : '1.8.4'
+      : APP_VERSION
   );
 
   const badges = reactive({

@@ -316,8 +316,8 @@
 
 <script setup>
 import { logsModalController } from '../composables/useExecutionLogs.js';
-import { repairMojibake } from '../../../../scoring.js';
-import { normalizeQueueExecutionLog } from '../../../../execution-log.js';
+import { repairMojibake } from '../../../features/relationships/scoring.js';
+import { normalizeQueueExecutionLog } from '../../../shared/execution-log.js';
 
 // Inject reactive state and actions from the controller
 const {

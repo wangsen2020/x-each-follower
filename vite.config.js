@@ -6,18 +6,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
+  root: resolve(__dirname, 'src'),
   base: './',
   plugins: [
     vue()
   ],
   build: {
-    outDir: 'dist',
+    outDir: resolve(__dirname, 'dist'),
     emptyOutDir: false,
     modulePreload: false,
     rollupOptions: {
       input: {
-        panel: resolve(__dirname, 'panel.html'),
-        background: resolve(__dirname, 'background.js')
+        panel: resolve(__dirname, 'src/panel.html'),
+        background: resolve(__dirname, 'src/entries/background/background.js')
       },
       output: {
         entryFileNames: (chunkInfo) => {

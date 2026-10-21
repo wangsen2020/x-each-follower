@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {enrichQueueProfiles} from '../follow-queue-profiles.js';
+import {enrichQueueProfiles} from '../src/features/follow-queue/follow-queue-profiles.js';
 test('queue joins existing sources and cache without changing identity or state',()=>{
  const job={handle:'Example',targetUserId:'123',state:'pending'};
  const [result]=enrichQueueProfiles([job],{monitor:{users:[{handle:'example',name:'Name',bio:'Writer',isBlueVerified:true,followersText:0}]},profileCache:{example:{bio:'',followingText:'42'}}});
@@ -14,7 +14,7 @@ test('blue badge requires explicit data and newer false overrides true',()=>{
 });
 
 test('network user parser retains explicit blue verification for queue display',async()=>{
- const {parseNetworkUsers}=await import('../network-api.js');
+ const {parseNetworkUsers}=await import('../src/features/relationships/network-api.js');
  const [user]=parseNetworkUsers({rest_id:'123',is_blue_verified:true,legacy:{screen_name:'person',name:'Person',verified:false}});
  assert.equal(user.is_blue_verified,true);assert.equal(user.verified,false);
 });

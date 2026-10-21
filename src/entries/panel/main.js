@@ -12,7 +12,7 @@ import { panelNavigationController } from './composables/usePanelNavigation.js';
  * SettingsDrawer and UnreciprocatedSettingsDrawer.
  * Establishes single DOM ownership and registers controller bridges for panel.js callers.
  */
-function initPanelVueApp() {
+async function initPanelVueApp() {
   let container = document.getElementById('panel-vue-root') || document.getElementById('logs-modal-app');
   if (!container) {
     container = document.createElement('div');
@@ -57,6 +57,10 @@ function initPanelVueApp() {
     const config = evt?.detail?.config;
     unreciprocatedSettingsController.open(config);
   });
+
+  // The business controller binds listeners to page roots at module evaluation
+  // time. Mount Vue and register bridges before loading that controller.
+  await import("./panel.js");
 }
 
 if (document.readyState === 'loading') {

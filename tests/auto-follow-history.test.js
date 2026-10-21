@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../auto-follow-history.js';
-import {selectValuableMutualTargets} from '../scoring.js';
+import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../src/shared/auto-follow-history.js';
+import {selectValuableMutualTargets} from '../src/features/relationships/scoring.js';
 
 test('a skipped account is excluded in both queues after reloading storage; new accounts remain eligible', async () => {
   const data = {};

@@ -7,8 +7,8 @@ import {
   readGrokComTurnAnswerOnPage,
   createDefaultSessionState,
   executeGrokComTask
-} from '../grok-session-manager.js';
-import { detectGrokVerificationOnPage } from '../grok-verification.js';
+} from '../src/features/grok/grok-session-manager.js';
+import { detectGrokVerificationOnPage } from '../src/features/grok/grok-verification.js';
 
 test('inspectGrokComUsageOnPage parses SuperGrok and Grok Bot limits and triggers <= 2% circuit breaker', async () => {
   const prevDoc = globalThis.document;

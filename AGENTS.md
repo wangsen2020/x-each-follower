@@ -54,3 +54,11 @@
 
 - 统一使用 Git Flow：新功能分支必须通过 `git flow feature start <名称>` 创建，禁止新建 `codex/*` 分支。已有功能在对应 `feature/*` 分支继续迭代；发布前先确认实际分支状态。此约定替代旧的默认 `codex/` 前缀规则。
 - 本次 1.7.1 为发行准备：完成测试和实机验收后，按用户指令执行 feature finish、release start/finish 和推送；准备版本号不等于已发布。
+
+
+## 源码与版本入口（2.0.0 起）
+
+- 业务代码、页面、样式、图片、清单集中在 `src/`，禁止在根目录新增运行源码或兼容转发文件。根目录只保留项目配置、开发规范和许可说明。
+- Chrome 只加载 `dist/`；`src/manifest.json` 的路径是构建产物路径。独立注入资源由 `tools/runtime-resources.mjs` 映射，新增资源同步维护构建与校验。
+- 版本使用 `npm run version:set -- x.y.z` 同步，应用代码从 `src/shared/version.js` 取值；本条替代旧的逐文件手改版本号流程。
+- 更新根目录兼容入口的旧指导已失效，导入应直接指向 `src` 的实际实现。

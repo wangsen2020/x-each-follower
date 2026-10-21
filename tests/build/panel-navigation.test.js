@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import { usePanelNavigation, TAB_TITLES, NAV_TABS } from '../../src/entries/panel/composables/usePanelNavigation.js';
 
 test('usePanelNavigation initializes with default tab and titles', () => {
   const nav = usePanelNavigation();
   assert.equal(nav.activeTab.value, 'monitor');
   assert.equal(nav.currentTitle.value, '粉丝管理');
-  assert.equal(nav.version.value, '1.8.4');
+  assert.equal(nav.version.value, JSON.parse(readFileSync(new URL('../../src/manifest.json', import.meta.url))).version);
   assert.equal(nav.tabs.length, 5);
 });
 

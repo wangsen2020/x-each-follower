@@ -1,3 +1,4 @@
+import {RUNTIME_RESOURCES} from './runtime-resources.mjs';
 import { readFileSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { resolve, join, extname, dirname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +94,7 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
   // 1. Check forbidden artifacts recursively (directories and files)
   for (const dirPath of distDirs) {
     const dirName = dirPath.split(/[/\\]/).pop();
-    if (FORBIDDEN_EXACT.has(dirName) || dirName.startsWith('.')) {
+    if (FORBIDDEN_EXACT.has(dirName) || dirName.startsWith('.') || (dirName.startsWith('_') && dirName !== '_locales')) {
       errors.push(`Forbidden directory found in dist: ${relative(distDir, dirPath)}`);
     }
   }
@@ -101,7 +102,7 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
   for (const filePath of distFiles) {
     const fileName = filePath.split(/[/\\]/).pop();
     const relFile = relative(distDir, filePath);
-    if (FORBIDDEN_EXACT.has(fileName)) {
+    if (FORBIDDEN_EXACT.has(fileName) || fileName.startsWith('_')) {
       errors.push(`Forbidden file found in dist: ${relFile}`);
     } else if (fileName.endsWith('.log') || fileName.endsWith('.zip')) {
       errors.push(`Forbidden file format found in dist: ${relFile}`);
@@ -122,7 +123,7 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
 
   // 2. Validate Manifest referenced resources and byte-for-byte equality with root
   const manifestPath = join(distDir, 'manifest.json');
-  const rootManifestPath = join(rootDir, 'manifest.json');
+  const rootManifestPath = join(rootDir, RUNTIME_RESOURCES['manifest.json']);
 
   if (!existsSync(manifestPath)) {
     errors.push('manifest.json is missing in dist');
@@ -209,7 +210,7 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
   ];
   let jsMismatchFound = false;
   for (const name of STANDALONE_SCRIPTS) {
-    const srcPath = join(rootDir, name);
+    const srcPath = join(rootDir, RUNTIME_RESOURCES[name]);
     const distPath = join(distDir, name);
     if (!existsSync(distPath)) {
       errors.push(`Required standalone runtime JS "${name}" is missing in dist`);

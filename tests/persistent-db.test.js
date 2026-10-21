@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {indexedDB, IDBKeyRange} from 'fake-indexeddb';
-import {durableGet, durableSet, durableKeys, durableAppendIncremental} from '../persistent-db.js';
+import {durableGet, durableSet, durableKeys, durableAppendIncremental} from '../src/platform/persistent-db.js';
 
 function dropNullFields(value) {
   if (Array.isArray(value)) return value.map(dropNullFields);

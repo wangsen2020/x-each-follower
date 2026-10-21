@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { evaluateMutualProfile, repairMojibake } from '../../../../scoring.js';
+import { evaluateMutualProfile, repairMojibake } from '../../../features/relationships/scoring.js';
 
 /**
  * Checks whether an account has a verified badge (Blue V).
