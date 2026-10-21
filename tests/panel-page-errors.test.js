@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createLoadRegistry, applyModuleView} from '../dashboard-load-ui.js';
+import {createLoadRegistry, applyModuleView} from '../src/entries/panel/dashboard-load-ui.js';
 
-const panelSource = readFileSync(new URL('../panel.js', import.meta.url), 'utf8');
+const panelSource = readFileSync(new URL('../src/entries/panel/panel.js', import.meta.url), 'utf8');
 
 function loadPageAction() {
   const start = panelSource.indexOf('async function runRecordPageAction');

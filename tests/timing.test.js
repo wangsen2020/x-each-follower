@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomizedInteger, randomizedSeconds } from '../timing.js';
+import { randomizedInteger, randomizedSeconds } from '../src/shared/timing.js';
 
 test('randomizedSeconds preserves its anchor when jitter is zero', () => {
   assert.equal(randomizedSeconds(15, 0), 15);

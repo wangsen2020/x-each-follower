@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../network-api.js';
+import {parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../src/features/relationships/network-api.js';
 
 test('follower page accumulation deduplicates accounts and never exceeds the per-scan cap', () => {
   const found = new Map();

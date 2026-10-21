@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {indexedDB, IDBKeyRange} from 'fake-indexeddb';
-import {createRecordRuntime, LEGACY_RECORD_KEYS} from '../record-runtime.js';
-import {hashCanonical} from '../record-migration.js';
+import {createRecordRuntime, LEGACY_RECORD_KEYS} from '../src/features/records/record-runtime.js';
+import {hashCanonical} from '../src/features/records/record-migration.js';
 
 function memoryStorage(data = {}) {
   const calls = [];
@@ -399,8 +399,8 @@ function readDashboardState(name) {
 }
 
 test('background wires strict durable reads into recovery and still keeps forgiving wrappers', () => {
-  const source = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
-  assert.match(source, /import\s*\{[^}]*\bdurableGet\b[^}]*\bdurableGetStrict\b[^}]*\bdurableKeysStrict\b[^}]*\}\s*from\s*'\.\/persistent-db\.js'/);
+  const source = readFileSync(new URL('../src/entries/background/background.js', import.meta.url), 'utf8');
+  assert.match(source, /import\s*\{[^}]*\bdurableGet\b[^}]*\bdurableGetStrict\b[^}]*\bdurableKeysStrict\b[^}]*\}\s*from\s*'\.\.\/\.\.\/platform\/persistent-db\.js'/);
   assert.match(source, /createRecordRuntime\(\{[\s\S]*?\bdurableGet\b[\s\S]*?\bdurableKeys\b[\s\S]*?\bdurableGetStrict\b[\s\S]*?\bdurableKeysStrict\b[\s\S]*?\}\)/);
 });
 

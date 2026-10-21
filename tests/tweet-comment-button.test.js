@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('../tweet-comment-button.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../src/entries/content/tweet-comment-button.js', import.meta.url), 'utf8');
 
 function createHarness({sendMessage, retryCount = 0} = {}) {
   const values = new Map();

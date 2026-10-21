@@ -9,7 +9,7 @@ import {
   safeHandleUrl,
   normalizeSettings,
   mountFollowQueuePanel
-} from '../follow-queue-panel.js';
+} from '../src/entries/panel/follow-queue-panel.js';
 
 test('automatic schedule switch enables scheduling when toggled on', async () => {
   const root=createMockElement('div'), calls=[];

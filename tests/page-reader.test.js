@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectVisible, readProfile, readProfileBundle, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../page-reader.js';
+import {collectVisible, readProfile, readProfileBundle, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
 
 const link = (path, text) => ({href:`https://x.com${path}`,innerText:text});
 test('own follower scan reuses only the logged-in account followers route', () => {

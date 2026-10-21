@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRecordProjection} from '../record-projection.js';
+import {createRecordProjection} from '../src/features/records/record-projection.js';
 
 function createLifecycleDb() {
   const stores = new Map();

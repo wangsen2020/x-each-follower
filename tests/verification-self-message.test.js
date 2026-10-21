@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildVerificationSelfMessage,operateSelfMessageOnPage,sendVerificationSelfMessage} from '../verification-self-message.js';
+import {buildVerificationSelfMessage,operateSelfMessageOnPage,sendVerificationSelfMessage} from '../src/features/grok/verification-self-message.js';
 
 const identity={accountId:'123',handle:'alice'};
 const notice={url:'https://grok.com/',at:'2026-10-18T10:00:00Z',windowId:99};

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createFollowQueueStore} from '../follow-queue-store.js';
-import {createFollowQueueScheduler} from '../follow-queue-scheduler.js';
+import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
+import {createFollowQueueScheduler} from '../src/features/follow-queue/follow-queue-scheduler.js';
 
 function installKeyRange() {
   if (globalThis.IDBKeyRange) return;

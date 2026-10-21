@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
-const source=fs.readFileSync(new URL('../net-hook.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../src/entries/main-world/net-hook.js',import.meta.url),'utf8');
 function fixture(response){
  class XHR {open(){}send(){}setRequestHeader(){}}
  const messages=[];

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {indexedDB, IDBKeyRange} from 'fake-indexeddb';
-import {createRecordRuntime, LEGACY_RECORD_KEYS} from '../record-runtime.js';
+import {createRecordRuntime, LEGACY_RECORD_KEYS} from '../src/features/records/record-runtime.js';
 
 function memoryStorage(data) {
   const calls = [];
@@ -91,11 +91,11 @@ function comments(count, extra = {}) {
 }
 
 test('service workers and the runtime use static imports', () => {
-  const background = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
-  const source = readFileSync(new URL('../record-runtime.js', import.meta.url), 'utf8');
+  const background = readFileSync(new URL('../src/entries/background/background.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/features/records/record-runtime.js', import.meta.url), 'utf8');
   assert.equal(background.includes('import('), false);
   assert.equal(source.includes('import('), false);
-  assert.equal(background.includes("from './record-runtime.js'"), true);
+  assert.equal(background.includes("from '../../features/records/record-runtime.js'"), true);
 });
 
 test('migration progress is real, resumable, and keeps the immutable backup', async () => {

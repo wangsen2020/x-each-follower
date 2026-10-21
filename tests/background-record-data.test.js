@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createBackgroundRecords, isWholeModuleRead, mergeCollectedReplies, selectCommentCandidates} from '../background-record-data.js';
-import {mergeCommentTracking} from '../network-api.js';
-import {loadCommentTracking} from '../tracking-storage.js';
-import {createFollowQueueRuntime} from '../follow-queue-runtime.js';
+import {createBackgroundRecords, isWholeModuleRead, mergeCollectedReplies, selectCommentCandidates} from '../src/features/records/background-record-data.js';
+import {mergeCommentTracking} from '../src/features/relationships/network-api.js';
+import {loadCommentTracking} from '../src/platform/tracking-storage.js';
+import {createFollowQueueRuntime} from '../src/features/follow-queue/follow-queue-runtime.js';
 
 function readyService(handler) {
   return {async handle(message) {
