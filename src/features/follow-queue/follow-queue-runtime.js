@@ -2,7 +2,7 @@ import {appendQuoteTags} from '../grok/quote-tags.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
-import {networkFetch, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
+import {networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from '../../platform/x/page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from '../relationships/scoring.js';
 import {requestGrokComment, requestGrokText, postQuoteOnTab, resolveCommentLanguage} from '../grok/grok-comment.js';
@@ -413,7 +413,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await control.checkpoint({profile: storedProfile});
       await guard();
       // Resolve authoritative User Rest ID from a user operation, never a tweet's ID.
-      const lookup = await networkFetch(tab.id,'UserByScreenName',{screen_name:job.handle});
+      const lookup = await networkGetUserProfile(tab.id, job.handle);
       await guard();
       const target = lookup.status === 200 && parseNetworkUsers(lookup.json).find(u => canonical(u.handle) === canonical(job.handle));
       if (!target?.id) return {state:'retry',reason:'无法解析目标用户 ID'};
@@ -499,7 +499,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!eligiblePosts.length) return {state:'followed',followResult,evaluations,reason:'最近 5 条帖子均已有引用评价记录'};
       await guard();
       await control.checkpoint({stage:'evaluating',followResult,evaluations});
-      const generated = await requestGrokComment(job.handle,eligiblePosts,profile.name,{sleep,profile});
+      const generated = await requestGrokComment(job.handle,eligiblePosts,profile.name,{sleep,profile,writerAccountId:job.accountId});
       if (!generated.ok) {
         await control.checkpoint({stage:'evaluated',followResult,evaluations});
         return {state:'followed',followResult,evaluations,reason:generated.reason || 'Grok 未选出值得评价的帖子'};
@@ -640,7 +640,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const target = typeof fetchUser === 'function'
         ? await fetchUser(tab.id, job.handle)
         : await (async () => {
-            const lookup = await networkFetch(tab.id,'UserByScreenName',{screen_name:job.handle});
+            const lookup = await networkGetUserProfile(tab.id, job.handle);
             return lookup.status === 200 && parseNetworkUsers(lookup.json).find(u => canonical(u.handle) === canonical(job.handle));
           })();
       if (!target?.id) throw new Error(`无法读取 @${job.handle} 的最新关注关系，请稍后重试`);
@@ -792,7 +792,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       // Reuse existing draft text if available; only call Grok when draft text is empty
       if (!ev.text) {
-        const generated = await requestGrokComment(job.handle,hadPinnedEvaluation ? post : cachedPosts.slice(0, 5),job.handle,{sleep,profile:safetyProfile});
+        const generated = await requestGrokComment(job.handle,hadPinnedEvaluation ? post : cachedPosts.slice(0, 5),job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId});
         ev.text = generated.reply || '';
         ev.language = generated.language || 'und';
         ev.channel = generated.channel || ev.channel || '';

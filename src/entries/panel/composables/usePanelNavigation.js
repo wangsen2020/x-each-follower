@@ -5,6 +5,7 @@ export const TAB_TITLES = {
   monitor: '粉丝管理',
   candidates: '互关追踪',
   comments: '评论追踪',
+  postTracking: '帖子追踪',
   followQueue: '关注队列',
   unreciprocated: '回关监测'
 };
@@ -13,6 +14,7 @@ export const NAV_TABS = [
   { key: 'monitor', label: '粉丝管理', badgeId: 'queueCount', hasBadge: true },
   { key: 'candidates', label: '互关追踪', badgeId: 'mutualNetworkCount', hasBadge: true },
   { key: 'comments', label: '评论追踪', badgeId: 'commentTrackingCount', hasBadge: true },
+  { key: 'postTracking', label: '帖子追踪', badgeId: null, hasBadge: false },
   { key: 'followQueue', label: '关注队列', badgeId: null, hasBadge: false },
   { key: 'unreciprocated', label: '回关监测', badgeId: 'unreciprocatedCount', hasBadge: true }
 ];
