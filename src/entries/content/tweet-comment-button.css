@@ -34,6 +34,57 @@ html body [data-testid="tweet"] [data-xef-comment-tracker][data-state="loading"]
   color: #1d9bf0;
 }
 
+/* X Leaderboard Member Button */
+html body [data-testid="tweet"] [data-xef-leaderboard-btn] {
+  width: 32px;
+  height: 47px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  margin: 0 0 0 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #71767b;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn]:hover,
+html body [data-testid="tweet"] [data-xef-leaderboard-btn]:focus-visible {
+  background: rgba(113, 118, 123, 0.15);
+  color: #536471;
+  outline: none;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn][data-member="true"] {
+  color: #e5a919;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn][data-member="true"]:hover,
+html body [data-testid="tweet"] [data-xef-leaderboard-btn][data-member="true"]:focus-visible {
+  background: rgba(229, 169, 25, 0.18);
+  color: #d49514;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn] svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn][data-state="loading"] {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+html body [data-testid="tweet"] [data-xef-leaderboard-btn][data-state="unverified"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 html body [data-xef-comment-toast] {
   position: fixed;
   z-index: 2147483647;

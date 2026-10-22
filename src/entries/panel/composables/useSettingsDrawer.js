@@ -6,8 +6,10 @@ import { ref, computed } from 'vue';
 export function useSettingsDrawer() {
   const isOpen = ref(false);
   const enabled = ref(false);
-  const every = ref(60);
-  const jitter = ref(15);
+  const every = ref(10);
+  const jitter = ref(0);
+  const followerBatch = ref(1000);
+  const followingBatch = ref(1000);
   const autoEnqueue = ref(true);
   const filterDanger = ref(true);
   const checkpointHandle = ref('');
@@ -33,8 +35,10 @@ export function useSettingsDrawer() {
     errorMessage.value = '';
     successMessage.value = '';
     enabled.value = Boolean(currentConfig.enabled);
-    every.value = Number(currentConfig.every) || 60;
-    jitter.value = currentConfig.jitter != null ? Number(currentConfig.jitter) : 15;
+    every.value = Number(currentConfig.every) || 10;
+    jitter.value = currentConfig.jitter != null ? Number(currentConfig.jitter) : 0;
+    followerBatch.value = Number(currentConfig.followerBatch) || 1000;
+    followingBatch.value = Number(currentConfig.followingBatch) || 1000;
     autoEnqueue.value = currentConfig.autoEnqueue !== false;
     filterDanger.value = currentConfig.filterDanger !== false;
     checkpointHandle.value = currentConfig.checkpointHandle || '';
@@ -69,13 +73,20 @@ export function useSettingsDrawer() {
     if (!Number.isFinite(e) || e < 10) {
       throw new Error('基准检索间隔至少 10 分钟。');
     }
-    if (!Number.isFinite(j) || j < 1 || j >= e) {
-      throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
+    if (!Number.isFinite(j) || j < 0 || j >= e) {
+      throw new Error('随机浮动须在 0 到周期以下；0 表示固定间隔。');
+    }
+    const f = Number(followerBatch.value);
+    const g = Number(followingBatch.value);
+    if (!Number.isInteger(f) || f < 100 || f > 1000 || f % 20 || !Number.isInteger(g) || g < 100 || g > 1000 || g % 20) {
+      throw new Error('每轮粉丝数和关注数须分别在 100–1000 人之间，并为 20 的倍数。');
     }
     return {
       enabled: Boolean(enabled.value),
       every: e,
       jitter: j,
+      followerBatch: f,
+      followingBatch: g,
       autoEnqueue: Boolean(autoEnqueue.value),
       filterDanger: Boolean(filterDanger.value)
     };
@@ -141,6 +152,8 @@ export function useSettingsDrawer() {
     enabled,
     every,
     jitter,
+    followerBatch,
+    followingBatch,
     autoEnqueue,
     filterDanger,
     checkpointHandle,

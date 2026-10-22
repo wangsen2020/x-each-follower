@@ -1,14 +1,16 @@
+import {acquireProfileTab,createProfileTab,updateProfileTab,readProfileOnTab,assertProfileAvailable,profileUnavailableError} from '../../platform/x/profile-access.js';
 import {APP_VERSION, BACKGROUND_RELOAD_KEY} from '../../shared/version.js';
 import {executeGrokScript, assertGrokVerificationClear} from '../../features/grok/grok-verification.js';
 import {releaseGrokWindow} from '../../features/grok/temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from '../../features/relationships/scoring.js';
-import { restoreMissingLocalSetting } from '../../shared/automation-recovery.js';
+import { followerScanDue, restoreMissingLocalSetting } from '../../shared/automation-recovery.js';
 import {normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {createLogPager, LOG_PAGE_SIZE} from '../../shared/execution-log-store.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
-import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, nextUserListPage, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import {acceptRollingPage, changedFollowBackRows} from '../../features/relationships/rolling-scan.js';
 import { durableGet, durableSet } from '../../platform/persistent-db.js';
 import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
 import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
@@ -24,6 +26,7 @@ import {preparePanelQuoteText} from '../../features/grok/panel-quote-text.js';
 
 let recordPaging = false;
 let recordPages = null;
+let recordBootPromise = null;
 let recordBootAttempted = false;
 const recordScalarBaseline = {};
 const installedPageSignature = new Map();
@@ -41,7 +44,7 @@ if (versionFooter) versionFooter.textContent = 'v' + panelVersion + ' · 本地�
 
 let rows = [];
 let inspectionTab;
-let monitor = {enabled:false, every:60, jitter:15, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
+let monitor = {enabled:false, every:10, jitter:0, followerBatch:1000, followingBatch:1000, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
 let analysisRows = [];
 let profileCache = {};
 let followerScanRunning = false;
@@ -209,7 +212,7 @@ let commentPage = 1;
 let commentPageSize = 20;
 let commentSearch = '';
 const selectedCommentHandles = new Set();
-const MAX_FOLLOWER_SCAN = 3000;
+const MAX_FOLLOWER_SCAN = 1000;
 let mutualNetworkRunning = false;
 const followBackBusy = new Set();
 const unfollowBusy = new Set();
@@ -1264,8 +1267,10 @@ window.closeUnreciprocatedDrawer = closeUnreciprocatedDrawer;
 function renderSettingsDrawer() {
   if (!$('settingsDrawer')) return;
   if ($('monitorEnabled')) $('monitorEnabled').checked = !!monitor.enabled;
-  if ($('monitorEvery')) $('monitorEvery').value = monitor.every || 60;
-  if ($('monitorJitter')) $('monitorJitter').value = monitor.jitter ?? 15;
+  if ($('monitorEvery')) $('monitorEvery').value = monitor.every || 10;
+  if ($('monitorJitter')) $('monitorJitter').value = monitor.jitter ?? 0;
+  if ($('monitorFollowerBatch')) $('monitorFollowerBatch').value = monitor.followerBatch || 1000;
+  if ($('monitorFollowingBatch')) $('monitorFollowingBatch').value = monitor.followingBatch || 1000;
   if ($('monitorAutoEnqueue')) $('monitorAutoEnqueue').checked = monitor.autoEnqueue !== false;
   if ($('monitorFilterDanger')) $('monitorFilterDanger').checked = monitor.filterDanger !== false;
   const handleEl = $('monitorCheckpointHandle');
@@ -1527,8 +1532,8 @@ function openCommentRecentPostsDrawer(user) {
   if (!user.recentPosts?.length || !Number.isFinite(fetchedAt) || Date.now() - fetchedAt >= 7 * 86400000) refreshDrawerProfile();
 }
 
-async function readProfileBundleInBackground(user, recentLimit = 10) {
-  const tab = await chrome.tabs.create({url:`https://x.com/${user.handle}`, active:false});
+async function readProfileBundleInBackground(user, recentLimit = 10, reuseTabId = null) {
+  const {tab,owned}=await acquireProfileTab(chrome,user.handle,'profile-detail',reuseTabId);
   if (!tab?.id) throw new Error('后台资料标签页创建失败');
   try {
     const deadline = Date.now() + 25000;
@@ -1536,17 +1541,23 @@ async function readProfileBundleInBackground(user, recentLimit = 10) {
     while (Date.now() < deadline && data.pending) {
       const current = await chrome.tabs.get(tab.id).catch(() => null);
       if (!current) break;
-      if (current.status === 'complete') data = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, recentLimit]}))[0]?.result || data;
+      if (current.status === 'complete') data = await readProfileOnTab(chrome,tab.id,user.handle,recentLimit,'profile-detail') || data;
       if (data.pending) await sleep(700);
     }
     if (data.pending) throw new Error('公开资料未能在限定时间内读取');
+    if (['not_found','suspended'].includes(data.status)) {
+      const row = {...user,...data,profileCachedAt:new Date().toISOString()};
+      profileCache[user.handle.toLowerCase()] = row;
+      await writeLocal({profileCache}); persist('profileCache',profileCache);
+      return row;
+    }
     if ((data.posts || []).length < 5) {
       await sleep(650);
-      const more = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, recentLimit]}).catch(() => []))?.[0]?.result;
+      const more = await readProfileOnTab(chrome,tab.id,user.handle,recentLimit,'profile-detail').catch(()=>null);
       if (more && !more.pending && (more.posts || []).length > (data.posts || []).length) data = more;
     }
     return {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || [], risk:riskAssess({...user, ...data}), profileCachedAt:new Date().toISOString()};
-  } finally { await chrome.tabs.remove(tab.id).catch(() => {}); }
+  } finally { if(owned)await chrome.tabs.remove(tab.id).catch(() => {}); }
 }
 
 async function refreshDrawerProfile() {
@@ -1637,8 +1648,8 @@ async function refreshFollowerProfile(user) {
     }
   }
 }
-async function backgroundProfileTab(handle) {
-  const tab = await chrome.tabs.create({url:`https://x.com/${handle}`, active:false});
+async function backgroundProfileTab(handle, source='profile-template') {
+  const tab = await createProfileTab(chrome,{url:`https://x.com/${handle}`, active:false},source);
   if (!tab?.id) throw new Error('后台标签页创建失败');
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -1702,12 +1713,14 @@ async function ensureNetworkTemplate(handle, operation, force = false) {
   if (suffix === undefined) return false;
   const minCapturedAt = force ? Date.now() : 0;
   networkStatus(`正在静默准备 ${operation} 接口模板…`);
-  const tab = await chrome.tabs.create({url:`https://x.com/${handle}${suffix ? `/${suffix}` : ''}`, active:false});
+  const tab = await createProfileTab(chrome,{url:`https://x.com/${handle}${suffix ? `/${suffix}` : ''}`, active:false},'network-template:'+operation);
   if (!tab?.id) return false;
   try {
     const deadline = Date.now() + 20000;
     let elapsed = 0;
     while (Date.now() < deadline) {
+      const availability=await readProfileOnTab(chrome,tab.id,handle,0,'network-template:'+operation).catch(()=>null);
+      if(['not_found','suspended'].includes(availability?.status))throw profileUnavailableError({...availability,handle});
       const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
       const template = networkTemplates[operation];
       if (isUsableNetworkTemplate(operation, template) && (!force || Number(template.at || 0) >= minCapturedAt)) return true;
@@ -1773,8 +1786,9 @@ async function collectRelations(handle, perSideLimit = 500) {
           if (page > 0 && found.size > 0) break;
           throw new Error(response.error || `${operation} 网络请求失败（${response.status}）`);
         }
-        for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
-        const next=findCursor(response.json); if (!next || next === cursor) break; cursor=next;
+        const pageUsers=parseNetworkUsers(response.json);
+        for (const user of pageUsers) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
+        const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
       }
       return [...found.values()].slice(0, perSideLimit);
     };
@@ -2128,7 +2142,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
     if (!current) return [];
     const targetUrl = `https://x.com/${handle}`;
     if (!new RegExp(`^https://(?:x|twitter)\\.com/${handle}(?:[/?#]|$)`, 'i').test(current.url || '')) {
-      await chrome.tabs.update(tabId, {url: targetUrl});
+      await updateProfileTab(chrome,tabId,{url: targetUrl},'profile-posts');
     }
     const deadline = Date.now() + maxWaitMs;
     let bestPosts = [];
@@ -2136,11 +2150,8 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
       const tabState = await chrome.tabs.get(tabId).catch(() => null);
       if (!tabState) break;
       if (tabState.status === 'complete') {
-        const data = (await chrome.scripting.executeScript({
-          target: {tabId},
-          func: readProfileBundle,
-          args: [handle, recentLimit]
-        }).catch(() => []))?.[0]?.result;
+        const data = await readProfileOnTab(chrome,tabId,handle,recentLimit,'profile-posts').catch(()=>null);
+        if (['not_found','suspended'].includes(data?.status)) break;
         if (data && !data.pending && Array.isArray(data.posts)) {
           bestPosts = data.posts;
           if (bestPosts.length >= 5) break;
@@ -2157,6 +2168,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
 async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
   const handle = String(user?.handle || '').replace(/^@/, '');
   if (!handle) throw new Error('无效账号');
+  await assertProfileAvailable(chrome,handle,'profile-network-fallback');
   try {
     const profileRes = await networkGetUserProfile(tabId, handle);
     if (profileRes.status === 200 && profileRes.json) {
@@ -2180,8 +2192,9 @@ async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
         return updated;
       }
     }
-  } catch {}
-  const bundle = await readProfileBundleInBackground({handle}, 10);
+  } catch (error) { if(error.code==='X_PROFILE_UNAVAILABLE')throw error; }
+  const bundle = await readProfileBundleInBackground({handle}, 10, tabId);
+  if (['not_found','suspended'].includes(bundle.status)) return bundle;
   return {
     name: repairMojibake(bundle.name || user.name || handle),
     bio: repairMojibake(bundle.bio || user.bio || ''),
@@ -2199,7 +2212,7 @@ async function refreshMutualUser(user) {
   networkStatus(`正在更新 @${user.handle} 的公开资料与首页前 5–10 条帖子…`);
   let tabId;
   try {
-    tabId = await backgroundProfileTab(user.handle);
+    tabId = await backgroundProfileTab(user.handle,'mutual-refresh');
     const updated = await fetchUserProfileNetwork(user, tabId, true);
     Object.assign(user, updated);
     applyProfileToMonitor(Object.assign({handle: user.handle}, updated));
@@ -2262,7 +2275,7 @@ async function batchRefreshMutualNetwork() {
 
   let tabId;
   try {
-    tabId = await backgroundProfileTab(mutualNetwork.anchor || targetUsers[0].handle);
+    tabId = await backgroundProfileTab(mutualNetwork.anchor || targetUsers[0].handle,'mutual-batch-refresh');
     let updatedCount = 0;
     for (let i = 0; i < targetUsers.length; i++) {
       if (!batchRefreshRunning) break;
@@ -2511,7 +2524,7 @@ async function checkGrokAvailability(force = false) {
 async function visitScrollAndFollowCandidate(user, cfg) {
   const handle = String(user?.handle || '').replace(/^@/, '');
   const key = handle.toLowerCase();
-  const tab = await chrome.tabs.create({url: `https://x.com/${handle}`, active: false});
+  let tab;try{tab=await createProfileTab(chrome,{url: `https://x.com/${handle}`, active: false},'mutual-auto-follow');}catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')return {status:'skipped',reason:error.message};throw error;}
   if (!tab?.id) throw new Error('无法创建主页标签页');
   const tabId = tab.id;
   try {
@@ -2521,15 +2534,12 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       const t = await chrome.tabs.get(tabId).catch(() => null);
       if (!t) throw new Error('主页标签页已关闭');
       if (t.status === 'complete') {
-        bundle = (await chrome.scripting.executeScript({
-          target: {tabId},
-          func: readProfileBundle,
-          args: [handle, 10]
-        }).catch(() => []))?.[0]?.result || bundle;
+        bundle = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null) || bundle;
       }
       if (bundle.pending) await sleep(650);
     }
 
+    if (['not_found','suspended'].includes(bundle.status)) return {status:'skipped',reason:bundle.reason};
     const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
     const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
     const totalDwellMs = dwellSeconds * 1000;
@@ -2548,11 +2558,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       remainingDwellMs -= currentStepDelay;
     }
 
-    const afterScroll = (await chrome.scripting.executeScript({
-      target: {tabId},
-      func: readProfileBundle,
-      args: [handle, 10]
-    }).catch(() => []))?.[0]?.result;
+    const afterScroll = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null);
     if (afterScroll && !afterScroll.pending) {
       bundle = afterScroll;
     }
@@ -2943,10 +2949,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.cmd === 'runFollowersScanTick') {
-    sendResponse({ok: true, handledByPanel: true});
-    if (!followerScanRunning) {
-      scanFollowerList('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
-    }
+    chrome.tabs.getCurrent().then(tab => {
+      if (message.targetPanelTabId && tab?.id !== message.targetPanelTabId) return;
+      sendResponse({ok: true, handledByPanel: true});
+      startFollowerScan('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
+    }).catch(() => {});
     return true;
   }
 });
@@ -3079,7 +3086,7 @@ async function backgroundXActionTab() {
     win = windows.find(item => item.focused) || windows[0];
   }
   if (!win?.id) throw new Error('没有可用的浏览器窗口，无法创建 X 后台标签页');
-  const tab = await chrome.tabs.create({windowId:win.id, url:'https://x.com/home', active:false});
+  const tab = await createProfileTab(chrome,{windowId:win.id, url:'https://x.com/home', active:false},'panel');
   if (!tab.id) throw new Error('无法创建 X 后台标签页');
   temporaryBackgroundXTabs.add(tab.id);
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -3398,13 +3405,14 @@ async function followCandidate(row, button) {
 }
 
 async function invoke(func, args) {
+  if(func===readProfileBundle)return readProfileOnTab(chrome,inspectionTab,args[0],args[1],'grok-profile-batch');
   const results = await chrome.scripting.executeScript({ target: { tabId: inspectionTab }, func, args });
   if (!results[0]) throw new Error('无法读取页面。请检查 X 登录状态和扩展的网站访问权限。');
   return results[0].result;
 }
 
 async function navigate(url) {
-  await chrome.tabs.update(inspectionTab, { url });
+  await updateProfileTab(chrome,inspectionTab,{ url },'grok-profile-batch');
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(inspectionTab);
@@ -3417,14 +3425,17 @@ async function navigate(url) {
 async function saveMonitorSettings() {
   const next = {
     enabled: $('monitorEnabled') ? $('monitorEnabled').checked : !!monitor.enabled,
-    every: Number($('monitorEvery')?.value || monitor.every || 60),
-    jitter: Math.max(1, Number($('monitorJitter')?.value || monitor.jitter || 15)),
+    every: Number($('monitorEvery')?.value || monitor.every || 10),
+    jitter: Number($('monitorJitter')?.value ?? monitor.jitter ?? 0),
+    followerBatch: Number($('monitorFollowerBatch')?.value || monitor.followerBatch || 1000),
+    followingBatch: Number($('monitorFollowingBatch')?.value || monitor.followingBatch || 1000),
     autoEnqueue: $('monitorAutoEnqueue') ? $('monitorAutoEnqueue').checked : monitor.autoEnqueue !== false,
     filterDanger: $('monitorFilterDanger') ? $('monitorFilterDanger').checked : monitor.filterDanger !== false
   };
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
-  if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
-  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
+  if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动须在 0 到周期以下。');
+  if (![next.followerBatch, next.followingBatch].every(value => Number.isInteger(value) && value >= 100 && value <= 1000 && value % 20 === 0)) throw new Error('每轮人数须分别在 100–1000 人之间，并为 20 的倍数。');
+  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, followerBatch: monitor.followerBatch, followingBatch: monitor.followingBatch, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
   monitor = {...monitor, ...next};
   await writeLocal({monitor});
   persist('monitor', monitor);
@@ -3441,7 +3452,7 @@ async function followerTab() {
   let identityTab = tabs.find(tab => tab.status === 'complete') || tabs[0];
   let createdIdentityTab = false;
   if (!identityTab) {
-    identityTab = await chrome.tabs.create({url:'https://x.com/home', active:false});
+    identityTab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'panel');
     createdIdentityTab = true;
   }
   let handle = await readOwnHandle(identityTab.id).catch(() => '');
@@ -3458,8 +3469,8 @@ async function followerTab() {
 
   const targetId = createdIdentityTab ? identityTab.id : null;
   const tab = targetId
-    ? await chrome.tabs.update(targetId, {url:`https://x.com/${handle}/followers`})
-    : await chrome.tabs.create({url:`https://x.com/${handle}/followers`, active:false});
+    ? await updateProfileTab(chrome,targetId,{url:`https://x.com/${handle}/followers`},'panel')
+    : await createProfileTab(chrome,{url:`https://x.com/${handle}/followers`, active:false},'panel');
   const tabId = tab.id;
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -3485,57 +3496,73 @@ async function scanFollowingFromNetwork(tabId, target, limit) {
   for (let page=0; page<10 && found.size<limit; page++) {
     const response = await networkFetchWithRecovery(tabId, target, 'Following', {userId:owner.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return null;
-    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== target.toLowerCase()) found.set(user.handle.toLowerCase(), user.handle);
-    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+    const pageUsers=parseNetworkUsers(response.json);
+    for (const user of pageUsers) if (user.handle.toLowerCase() !== target.toLowerCase()) found.set(user.handle.toLowerCase(), user.handle);
+    const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
   }
   return [...found.values()].slice(0, limit);
 }
 
-async function scanOwnFollowing(tabId, handle, pageLimit = 1000) {
+async function scanOwnFollowing(tabId, handle, maxUsers = 1000, startCursor = '') {
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return null;
   const profile = await networkGetUserProfile(tabId, handle);
   if (profile.status !== 200) return null;
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return null;
   if (!await ensureNetworkTemplate(handle, 'Following')) return null;
-  const found = new Map(); let cursor = ''; let complete = false;
-  for (let page=0; page<pageLimit; page++) {
+  const found = new Map(); let cursor = startCursor; let complete = false;
+  let readCount = 0;
+  for (let page=0; page<Math.ceil(maxUsers / 20) && readCount<maxUsers; page++) {
     const response = await networkFetchWithRecovery(tabId, handle, 'Following', {userId:me.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return {users:[...found.values()], complete:false, error:response.error || `Following 请求失败（${response.status}）`};
-    for (const user of parseNetworkUsers(response.json)) {
+    const pageUsers = parseNetworkUsers(response.json);
+    const budget = acceptRollingPage(pageUsers, readCount, maxUsers);
+    if (budget.state === 'empty') return {users:[...found.values()], complete:false, error:'Following 返回空页，已停止无效分页'};
+    if (budget.state !== 'accept') {
+      if (budget.state === 'oversize') return {users:[], complete:false, error:'Following 单页人数超过每轮上限，请提高上限'};
+      break;
+    }
+    readCount = budget.consumed;
+    for (const user of pageUsers) {
       if (user.handle.toLowerCase() !== handle.toLowerCase()) {
         found.set(user.handle.toLowerCase(), {...user, relationship:{...(user.relationship || {}), following:true}});
       }
     }
-    const next = findCursor(response.json);
-    if (!next) { complete=true; break; }
-    if (next === cursor) return {users:[...found.values()], complete:false, error:'Following 分页游标未前进'};
-    cursor = next;
+    const progress=nextUserListPage(response.json,cursor,pageUsers);
+    if (!progress.next) {
+      if (progress.complete) complete=true;
+      else return {users:[...found.values()],complete:false,error:progress.reason==='empty'?'Following 返回空页，已停止无效分页':'Following 分页游标未前进'};
+      break;
+    }
+    cursor = progress.next;
   }
-  return {users:[...found.values()], complete};
+  return {users:[...found.values()], complete, nextCursor:complete ? null : cursor};
 }
 
 async function syncOwnFollowingList(tabId, handle) {
   try {
-    const result = await scanOwnFollowing(tabId, handle);
+    const followingBatch = Math.min(1000, Math.max(100, Math.floor((Number(monitor.followingBatch) || 1000) / 20) * 20));
+    const result = await scanOwnFollowing(tabId, handle, followingBatch, monitor.followingCursor || '');
     if (result?.users?.length) {
       const previous = new Map((monitor.followingUsers || []).map(u => [u.handle.toLowerCase(), u]));
       for (const user of result.users) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
       monitor.followingUsers = [...previous.values()];
-      if (result.complete) monitor.followingListComplete = true;
+      monitor.followingCursor = result.nextCursor || null;
+      monitor.followingListComplete = result.complete;
       const followingHandles = ownFollowingHandles(buildRelationshipIndex(monitor));
       const apply = user => {
         if (!user?.handle) return;
         if (followingHandles.has(user.handle.toLowerCase())) user.relationship = {...(user.relationship || {}), following:true};
-        else if (typeof user.relationship?.following !== 'boolean') user.relationship = {...(user.relationship || {}), following:false};
         user.relationshipKnown = typeof user.relationship.followedBy === 'boolean';
       };
       for (const user of [...(monitor.users || []), ...(monitor.queue || []), ...(mutualNetwork.users || [])]) apply(user);
+      return result.users;
     }
   } catch {}
+  return [];
 }
 
-async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpointHandle = null, operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
+async function scanFollowersFromNetwork(tabId, startCursor = '', operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
   const handle = await readOwnHandle(tabId);
   if (!handle) return {fallbackReason:'无法从 X 页面识别当前登录账号'};
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return {fallbackReason:'用户资料接口模板未捕获'};
@@ -3544,10 +3571,11 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return {fallbackReason:'用户资料接口没有返回当前账号 ID'};
   if (!await ensureNetworkTemplate(handle, operation)) return {fallbackReason:`${operation} 接口模板未捕获`};
-  const found = new Map(); let cursor = '';
-  let reachedCheckpoint = false;
+  const found = new Map(); let cursor = startCursor;
+  let complete = false;
+  let readCount = 0;
   let topFollower = null;
-  for (let page=0; page<Math.ceil(maxUsers / 20) && found.size<maxUsers; page++) {
+  for (let page=0; page<Math.ceil(maxUsers / 20) && readCount<maxUsers; page++) {
     const response = await networkFetchWithRecovery(tabId, handle, operation, {userId:me.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) {
       return {
@@ -3557,28 +3585,29 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
       };
     }
     const pageUsers = parseNetworkUsers(response.json);
-    let pageHasNew = false;
-    for (const user of pageUsers) {
-      if (user.handle.toLowerCase() === handle.toLowerCase()) continue;
-      if (!topFollower) topFollower = user;
-      if (checkpointHandle && user.handle.toLowerCase() === checkpointHandle.toLowerCase()) {
-        reachedCheckpoint = true;
-        break;
-      }
-      if (!knownHandles.has(user.handle.toLowerCase())) pageHasNew = true;
-    }
-    addUniqueUsersUpTo(found, pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase()), maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
-    if (reachedCheckpoint) break;
-    if (knownHandles.size && page > 0 && !pageHasNew) {
-      reachedCheckpoint = true;
+    const budget = acceptRollingPage(pageUsers, readCount, maxUsers);
+    if (budget.state === 'empty') return {fallbackReason:`${operation} 返回空页，无法确认已到列表末尾`,partialUsers:[...found.values()],operation};
+    if (budget.state !== 'accept') {
+      if (budget.state === 'oversize') return {fallbackReason:`${operation} 单页人数超过每轮上限，请提高上限`,partialUsers:[],operation};
       break;
     }
-    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+    readCount = budget.consumed;
+    const selected = pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase());
+    if (!startCursor && !topFollower) topFollower = selected[0] || null;
+    addUniqueUsersUpTo(found, selected, maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
+    const progress=nextUserListPage(response.json,cursor,pageUsers);
+    if (!progress.next) {
+      if (!progress.complete) return {fallbackReason:`${operation} 分页游标未前进`,partialUsers:[...found.values()],operation};
+      complete = true; cursor = ''; break;
+    }
+    cursor=progress.next;
   }
-  return {users:[...found.values()], topFollower, reachedCheckpoint, limited:found.size>=maxUsers && !reachedCheckpoint, operation};
+  return {users:[...found.values()], topFollower, complete, nextCursor:complete ? null : cursor, readCount, operation};
 }
 
 async function scanFollowerList(scanSource = 'manual') {
+  if (recordBootPromise) await recordBootPromise;
+  if (!recordPaging || !recordPages) throw new Error('粉丝档案尚未完成加载，无法开始扫描');
   await ensureCompleteModule('fans', 'monitor', records => {
     const users = [];
     const queue = [];
@@ -3596,16 +3625,19 @@ async function scanFollowerList(scanSource = 'manual') {
   try {
     const knownHandles = new Set((monitor.users || []).map(user => user.handle.toLowerCase()));
     const checkpointHandle = monitor.checkpointHandle || null;
-    monitorStatus(checkpointHandle ? `正在按位点 @${checkpointHandle} 增量检索最新粉丝…` : '正在准备粉丝接口并建立初始粉丝基准…');
-    let networkResult = await scanFollowersFromNetwork(tabId, knownHandles, checkpointHandle, 'Followers', MAX_FOLLOWER_SCAN).catch(error => ({fallbackReason:error.message}));
+    const followerBatch = Math.min(MAX_FOLLOWER_SCAN, Math.max(100, Math.floor((Number(monitor.followerBatch) || MAX_FOLLOWER_SCAN) / 20) * 20));
+    const startCursor = monitor.followerCursor || '';
+    monitorStatus(startCursor ? '正在接续上一轮粉丝分页…' : '正在从最新粉丝开始新一轮扫描…');
+    let networkResult = await scanFollowersFromNetwork(tabId, startCursor, 'Followers', followerBatch).catch(error => ({fallbackReason:error.message}));
     if (networkResult && !networkResult.fallbackReason) {
-      const {users:networkUsers, topFollower, reachedCheckpoint, limited, operation:sourceOperation} = networkResult;
+      const {users:networkUsers, topFollower, complete, nextCursor, readCount, operation:sourceOperation} = networkResult;
       const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
       const foundAt = new Date().toISOString();
       for (const user of networkUsers) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
       const users = [...previous.values()];
-      await syncOwnFollowingList(tabId, handle);
+      const followingScanned = await syncOwnFollowingList(tabId, handle);
       const queue = reconcileFollowBackQueue(monitor.queue, users, riskAssess);
+      const queueChanges = changedFollowBackRows(monitor.queue, queue);
       queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
       const filterDanger = monitor.filterDanger !== false;
@@ -3639,10 +3671,10 @@ async function scanFollowerList(scanSource = 'manual') {
         }
       }
 
-      const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || networkUsers[0]?.handle || null;
+      const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || null;
       const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
       const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
-      const cpText = reachedCheckpoint ? '已到达上次记录位点（已自动停止拉取历史数据）' : (limited ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限` : '已同步至最新位点');
+      const cpText = complete ? '本圈已到末页，下轮从最新粉丝重新开始' : `本轮读取 ${readCount} 人，下轮从保存的游标接续`;
       const notMutualCount = getNotMutualUsers().length;
       const pendingCount = queue.filter(user => user.status === 'pending').length;
       const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
@@ -3655,10 +3687,12 @@ async function scanFollowerList(scanSource = 'manual') {
         lastScan: new Date().toISOString(),
         lastSummary: summary,
         checkpointHandle: newCheckpointHandle,
-        checkpointAt: new Date().toISOString(),
+        checkpointAt: topFollower ? new Date().toISOString() : monitor.checkpointAt,
+        followerCursor: nextCursor || null,
         source: sourceOperation === 'BlueVerifiedFollowers' ? 'verified_followers_network' : 'followers_network'
       };
-      await writeLocal({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
+      await writeLocal({monitor:{...monitor,users:networkUsers.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
+      persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
 
       await recordMonitorLog({
         source: scanSource,
@@ -3684,7 +3718,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const found = new Map((networkResult?.partialUsers || []).map(user => [user.handle.toLowerCase(), user])); let idle = 0;
     let topFollowerDom = null;
     let reachedCheckpointDom = false;
-    for (let i=0; i<300 && idle<8 && found.size<MAX_FOLLOWER_SCAN; i++) {
+    for (let i=0; i<300 && idle<8 && found.size<followerBatch; i++) {
       const result = (await chrome.scripting.executeScript({target:{tabId}, func:scanFollowers}))[0]?.result;
       if (!result?.ready) {
         await sleep(1200);
@@ -3697,7 +3731,7 @@ async function scanFollowerList(scanSource = 'manual') {
           reachedCheckpointDom = true;
           break;
         }
-        if (found.size < MAX_FOLLOWER_SCAN) found.set(user.handle.toLowerCase(), user);
+        if (found.size < followerBatch) found.set(user.handle.toLowerCase(), user);
       }
       if (reachedCheckpointDom) break;
       idle = before === found.size ? idle + 1 : 0;
@@ -3708,8 +3742,9 @@ async function scanFollowerList(scanSource = 'manual') {
     const foundAt = new Date().toISOString();
     for (const user of users) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
     const allUsers = [...previous.values()];
-    await syncOwnFollowingList(tabId, handle);
+    const followingScanned = await syncOwnFollowingList(tabId, handle);
     const queue = reconcileFollowBackQueue(monitor.queue, allUsers, riskAssess);
+    const queueChanges = changedFollowBackRows(monitor.queue, queue);
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
     const filterDanger = monitor.filterDanger !== false;
@@ -3743,12 +3778,15 @@ async function scanFollowerList(scanSource = 'manual') {
       }
     }
 
-    const newCheckpointHandle = topFollowerDom?.handle || monitor.checkpointHandle || users[0]?.handle || null;
+    // DOM scrolling can stop on a temporarily empty virtualized viewport. Do
+    // not advance the durable checkpoint unless it reached the old one.
+    const newCheckpointHandle = reachedCheckpointDom ? topFollowerDom?.handle || monitor.checkpointHandle || null : monitor.checkpointHandle || null;
     const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
     const notMutualCount = getNotMutualUsers().length;
     const pendingCount = queue.filter(user => user.status === 'pending').length;
-    const capText = users.length >= MAX_FOLLOWER_SCAN ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限；` : '';
-    const summary = `从页面读取完成：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}最新位点 @${newCheckpointHandle}；当前粉丝 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+    const capText = users.length >= followerBatch ? `本次达到 ${followerBatch} 个上限；` : '';
+    const coverageText = reachedCheckpointDom ? `已到达旧位点，新位点 @${newCheckpointHandle}` : '尚未到达旧位点，本次仅为部分结果；下轮继续补齐';
+    const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
 
     monitor = {
       ...monitor,
@@ -3759,9 +3797,10 @@ async function scanFollowerList(scanSource = 'manual') {
       lastSummary: summary,
       checkpointHandle: newCheckpointHandle,
       checkpointAt: new Date().toISOString(),
+      followerCursor: null,
       source: 'followers_dom'
     };
-    await writeLocal({monitor});
+    await writeLocal({monitor:{...monitor,users:users.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
     persist('monitor', monitor);
     renderQueue();
     renderSettingsDrawer();
@@ -3802,26 +3841,26 @@ async function scanFollowerList(scanSource = 'manual') {
       result: 'error'
     }).catch(() => {});
   } finally {
-    if (temporary) await chrome.tabs.remove(tabId).catch(() => {});
+    if (temporary) await Promise.race([chrome.tabs.remove(tabId).catch(() => {}), sleep(3000)]);
   }
 }
 
 
 
 
-async function startFollowerScan() {
+async function startFollowerScan(source = 'manual') {
   if (followerScanRunning) return;
   followerScanRunning = true;
   if ($('scanFollowers')) $('scanFollowers').disabled = true; if ($('initialFollowers')) $('initialFollowers').disabled = true;
   monitorStatus(monitor.users?.length ? '正在增量扫描新粉丝…' : '正在获取初始粉丝列表…');
-  try { await scanFollowerList(); }
+  try { await scanFollowerList(typeof source === 'string' ? source : 'manual'); }
   catch (error) { monitorStatus(`扫描失败：${error.message}`); }
   finally { followerScanRunning = false; if ($('scanFollowers')) $('scanFollowers').disabled = false; if ($('initialFollowers')) $('initialFollowers').disabled = false; renderMonitorList(); }
 }
 $('scanFollowers')?.addEventListener('click', startFollowerScan);
 $('initialFollowers')?.addEventListener('click', startFollowerScan);
 $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
-for (const id of ['monitorEvery','monitorJitter','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+for (const id of ['monitorEvery','monitorJitter','monitorFollowerBatch','monitorFollowingBatch','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 $('runMonitorScanNow')?.addEventListener('click', async () => {
   const btn = $('runMonitorScanNow');
   const oldText = btn?.textContent;
@@ -4052,10 +4091,11 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
         collected.push({...user, ...cached});
         continue;
       }
-      if (!tabId) { const tab = await chrome.tabs.create({url:'https://x.com/home', active:false}); tabId = tab.id; inspectionTab = tabId; }
+      if (!tabId) { const tab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'panel'); tabId = tab.id; inspectionTab = tabId; }
       reportStatus(`正在读取 @${user.handle} 的资料（${collected.length + 1}/${candidates.length}）…`);
       let netData = {};
-      try { netData = await fetchUserProfileNetwork(user, tabId); } catch {}
+      try { netData = await fetchUserProfileNetwork(user, tabId); } catch(error) { if(error.code==='X_PROFILE_UNAVAILABLE'){reportStatus(`@${user.handle}：${error.message}，已跳过`);continue;} }
+      if (['not_found','suspended'].includes(netData.status)) { reportStatus(`@${user.handle}：${netData.reason}，已跳过`); continue; }
       await navigate(`https://x.com/${user.handle}`);
       let data = {pending:true}; const deadline = Date.now() + 18000;
       while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, 5]); if (data.pending) await sleep(700); }
@@ -4151,7 +4191,18 @@ function sanitizeMojibakeCollections() {
 $('analyzeSelected')?.addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok 分析互粉倾向…'); await submitBatchToGrok(null, analysisStatus); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
 async function ensureCompleteModule(moduleName, key, assign) {
   if (!recordPaging || !recordPages || recordPages.isComplete(key)) return;
-  const records = await recordPages.loadComplete(moduleName, key);
+  let records;
+  if (key === 'monitor') {
+    records = [];
+    let cursor = null;
+    do {
+      const result = await chrome.runtime.sendMessage({cmd:'recordData',op:'sourcePage',sourceKey:key,limit:100,...(cursor ? {cursor} : {})});
+      if (!result?.ok) throw new Error(result?.error || '粉丝档案读取失败');
+      records.push(...(result.page?.records || []));
+      cursor = result.page?.nextCursor || null;
+    } while (cursor);
+    recordPages.markComplete(key);
+  } else records = await recordPages.loadComplete(moduleName, key);
   assign(records.filter(record => record.sourcePath?.[1] !== 'synthetic' && !String(record.userKey || '').startsWith('not-mutual/') && !String(record.userKey || '').startsWith('derived-tracker/')).map(record => ({
     ...record,
     payload: {...(record.payload || {}), __userKey: record.userKey, __expectedHandle: record.handle, __sourceBucket: record.sourcePath?.[1] === 'synthetic' ? 'synthetic' : (record.sourcePath?.[1] || 'users'), __sourceKey: record.sourcePath?.[1] === 'synthetic' ? 'unreciprocatedTracker' : (record.sourcePath?.[0] || '')}
@@ -4393,11 +4444,20 @@ async function bootRecordDashboard() {
   loadRegistry.succeed(panelId);
   refreshSidebarBadges();
   renderSettledModule(panelId);
+  const scheduledToken = new URLSearchParams(location.search).get('scheduledFollowers');
+  if (scheduledToken) setTimeout(async () => {
+    try { if (monitor.enabled) await startFollowerScan('alarm'); }
+    finally { chrome.runtime.sendMessage({cmd:'scheduledFollowersDone',token:scheduledToken}).catch(() => {}); }
+  }, 1000);
+  else if (followerScanDue(monitor)) setTimeout(() => {
+    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan('alarm');
+  }, 1000);
 }
 
 try {
   recordBootAttempted = true;
-  await bootRecordDashboard();
+  recordBootPromise = bootRecordDashboard();
+  await recordBootPromise;
 } catch (error) {
   recordPaging = false;
   monitorStatus(`记录迁移失败：${error.message}`);
@@ -5083,6 +5143,7 @@ function renderLogsModal() {
     if (log.scope === 'queue') {
       const addText = text => { const row=document.createElement('p'); row.className='log-detail-text'; row.textContent=text; card.append(row); };
       const addLink = (text,url) => { try { const parsed=new URL(url); if(parsed.protocol!=='https:' || !['x.com','twitter.com'].includes(parsed.hostname)) return; const a=document.createElement('a'); a.href=parsed.href; a.textContent=text; a.target='_blank'; a.rel='noopener noreferrer'; const row=document.createElement('p'); row.className='log-detail-text'; row.append(a); card.append(row); } catch {} };
+      if(log.diagnostic){const d=log.diagnostic;addText('诊断编号：'+d.id+' · 阶段：'+d.stageLabel+' · 累计：'+(d.repeatCount||1)+' 次');addText('版本：'+d.version+' · 错误类型：'+d.code+' · 标签页：'+(d.tabId??'未记录')+' / '+d.tabStatus);addLink('失败请求：'+d.requestedUrl,d.requestedUrl);if(d.actualUrl&&d.actualUrl!==d.requestedUrl)addLink('实际页面：'+d.actualUrl,d.actualUrl);addText('原始错误：'+d.rawError);addText('步骤轨迹：'+d.recentStages.map(s=>s.stage+' '+s.at).join(' → '));const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='完整脱敏排查上下文';pre.textContent=JSON.stringify(d,null,2);pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';details.append(summary,pre);card.append(details);}
       if (log.runId || log.jobId) addText('执行批次：'+(log.runId || '未记录')+' · 任务：'+(log.jobId || '批次汇总'));
       if (log.sources?.length) addText('候选来源：'+[...new Set(log.sources.map(s=>({fans:'粉丝管理',mutual:'互关追踪',comments:'评论追踪'}[s.module] || s.module)))].join('、'));
       if (log.startedAt) addText('实际用时：'+Math.max(0,Math.round((Date.parse(log.finishedAt || log.at)-Date.parse(log.startedAt))/1000))+' 秒 · 已滚动 '+(log.scrollRounds || 0)+' / '+log.plannedScrollRounds+' 轮'+(log.dwellSeconds ? ' · 目标停留 '+log.dwellSeconds+' 秒' : ''));
@@ -5258,7 +5319,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
       const finalReply = await preparePanelQuoteText(testRes.reply, testRes.language, followBackEnabled);
       if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${finalReply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
         if (handleEl) handleEl.textContent = `正在引用 @${testHandle} 的原帖发布评价…`;
-        const postTab = await chrome.tabs.create({ url: 'about:blank', active: false });
+        const postTab = await createProfileTab(chrome,{ url: 'about:blank', active: false },'panel');
         try {
           const pub = await postQuoteOnTab(postTab.id, testPost, finalReply, publishQuotePostOnPage, sleep);
           isPublished = Boolean(pub.ok);
@@ -6147,7 +6208,7 @@ async function renderGrokVerificationNotice() {
   banner.replaceChildren();
   const message=document.createElement('span');message.textContent='Grok 需要手动安全验证，任务已结束等待。完成验证后请重试。';
   const open=document.createElement('button');open.type='button';open.textContent='打开验证窗口';
-  open.addEventListener('click',async()=>{try{const tab=await chrome.tabs.get(notice.tabId);if(!/^https:\/\/(x\.com|twitter\.com|grok\.com)\//.test(tab.url || ''))throw Error('验证页已关闭');await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});await chrome.tabs.update(tab.id,{active:true});}catch{message.textContent='验证页已关闭，请重新执行任务。';}});
+  open.addEventListener('click',async()=>{try{const tab=await chrome.tabs.get(notice.tabId);if(!/^https:\/\/(x\.com|twitter\.com|grok\.com)\//.test(tab.url || ''))throw Error('验证页已关闭');await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});await updateProfileTab(chrome,tab.id,{active:true},'panel');}catch{message.textContent='验证页已关闭，请重新执行任务。';}});
   const check=document.createElement('button');check.type='button';check.textContent='我已完成验证';
   check.addEventListener('click',async()=>{try{await assertGrokVerificationClear(notice.tabId);message.textContent='验证已解除，请重试原任务。';}catch(error){message.textContent=error.userActionRequired?'验证尚未完成，请先处理验证页面。':'验证页已关闭，请重新执行任务。';}});
   const phone=document.createElement('span');phone.textContent='手机私信提醒：'+({sending:'发送中',sent:'已发送至本人会话',uncertain:'发送结果待确认',failed:'发送失败'}[delivery?.status] || '准备发送')+(delivery?.reason?' · '+delivery.reason:'');banner.append(message,open,check,phone);
@@ -6170,14 +6231,16 @@ if (window.__profileDrawerController) {
 function registerSettingsBridges() {
   if (window.__settingsDrawerController) {
     window.__settingsDrawerController.setSaveHandler(async (cfg) => {
-      monitor = { ...monitor, ...cfg };
       recordScalarBaseline.monitor = {
         enabled: monitor.enabled,
         every: monitor.every,
         jitter: monitor.jitter,
+        followerBatch: monitor.followerBatch,
+        followingBatch: monitor.followingBatch,
         autoEnqueue: monitor.autoEnqueue,
         filterDanger: monitor.filterDanger
       };
+      monitor = { ...monitor, ...cfg };
       await writeLocal({ monitor });
       persist('monitor', monitor);
       await chrome.alarms.clear('x-followers-scan');
@@ -6187,7 +6250,7 @@ function registerSettingsBridges() {
       }
     });
     window.__settingsDrawerController.setRunHandler(async () => {
-      await scanFollowersForMonitor();
+      await startFollowerScan('manual-drawer');
     });
   }
 

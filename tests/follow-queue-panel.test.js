@@ -1079,6 +1079,7 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   const jobsData = [
     {
       id: 'job-uncertain',
+      createdAt: 1,
       accountId: 'WatsonTaylor23',
       targetUserId: '101',
       handle: 'UncertainUser',
@@ -1088,6 +1089,7 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
     },
     {
       id: 'job-eval-retry',
+      createdAt: 2,
       accountId: 'WatsonTaylor23',
       targetUserId: '102',
       handle: 'FollowedDraftUser',
@@ -1457,3 +1459,21 @@ test('queue refresh keeps the current row while the loading bool is on', async (
   handle.destroy();
 });
 
+
+test('weight column defaults descending and toggle requests ascending from the first page', async () => {
+  const root=createMockElement('div'), calls=[];
+  const panel=mountFollowQueuePanel(root,{accountId:'123',request:async payload=>{
+    calls.push(payload);
+    if(payload.cmd==='followQueueSettings') return {ok:true,settings:DEFAULT_SETTINGS};
+    return {ok:true,paged:true,jobs:[],total:0,totalKnown:true};
+  }});
+  await new Promise(r=>setTimeout(r,20));
+  assert.equal(calls.find(c=>c.cmd==='followQueueList').order,'desc');
+  assert.equal(root.querySelector('.fq-col-priority').getAttribute('aria-sort'),'descending');
+  root.querySelector('.fq-priority-sort').dispatchEvent({type:'click'});
+  await new Promise(r=>setTimeout(r,20));
+  const latest=calls.filter(c=>c.cmd==='followQueueList').at(-1);
+  assert.equal(latest.order,'asc'); assert.equal(latest.cursor,null);
+  assert.equal(root.querySelector('.fq-col-priority').getAttribute('aria-sort'),'ascending');
+  panel.destroy();
+});

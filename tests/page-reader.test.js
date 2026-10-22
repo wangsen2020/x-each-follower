@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectVisible, readProfile, readProfileBundle, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
+import {collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
 
 const link = (path, text) => ({href:`https://x.com${path}`,innerText:text});
 test('own follower scan reuses only the logged-in account followers route', () => {
@@ -9,6 +9,14 @@ test('own follower scan reuses only the logged-in account followers route', () =
   assert.equal(isOwnFollowersRoute('https://x.com/owner/verified_followers', 'owner'), false);
   assert.equal(isOwnFollowersRoute('https://x.com/someone_else/followers', 'owner'), false);
   assert.equal(isOwnFollowersRoute('https://x.com/followers', 'owner'), false);
+});
+test('DOM follower fallback records confirmed follow-back relationship for the archive', () => {
+  globalThis.location={pathname:'/owner/followers',origin:'https://x.com'};
+  globalThis.window={innerHeight:800,scrollBy:()=>{}};
+  const cell=(handle,label)=>({innerText:`${handle}\n@${handle}`,querySelectorAll:selector=>selector==='a[href]'?[link(`/${handle}`,handle)]:[{innerText:label,getAttribute:()=>'',dataset:{}}]});
+  globalThis.document={querySelector:()=>({querySelectorAll:()=>[cell('alice','Follow back'),cell('bob','Following')]})};
+  const result=scanFollowers();
+  assert.deepEqual(result.users.map(user=>user.relationship),[{followedBy:true,following:false},{followedBy:true,following:true}]);
 });
 test('collection uses only following user cells, deduplicates and checks target route', () => {
   globalThis.location = {pathname:'/owner/following',origin:'https://x.com'};
@@ -129,4 +137,16 @@ test('profile bundle reads the target account follow button and user ID, not ano
   assert.equal(readProfileBundle('pnsin1',0).relationship.following,false);
   buttons=[button('Following @pnsin12','999-unfollow')];
   assert.deepEqual(readProfileBundle('pnsin1',0).relationship,{});
+});
+
+test('profile empty state is terminal; ordinary text, loading and other routes are not',()=>{
+  globalThis.location={pathname:'/missing',origin:'https://x.com'};
+  let empty='此账号不存在\n尝试搜索另一个。';
+  globalThis.document={querySelector:()=>({querySelector:s=>s==='[data-testid="emptyState"]'?{innerText:empty}:null,querySelectorAll:()=>[]})};
+  for(const reader of [readProfile,readProfileBundle]){
+    for(const text of ['此账号不存在\n尝试搜索另一个。',"This account doesn’t exist\nTry searching for another."]){empty=text;assert.equal(reader('missing').status,'not_found');assert.equal(reader('missing').pending,false);}
+    empty='Something went wrong. Try again.';assert.equal(reader('missing').pending,true);
+    empty='';assert.equal(reader('missing').pending,true);
+    empty='此账号不存在';assert.equal(reader('another').pending,true);
+  }
 });

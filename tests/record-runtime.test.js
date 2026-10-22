@@ -195,7 +195,7 @@ test('unassigned pages use the index, restart without a full read, and mirror me
         {handle: 'oneway', relationship: {following: true, followedBy: false}}
       ],
       followingUsers: [{handle: 'oneway', relationship: {following: true, followedBy: false}}],
-      queue: [{handle: 'queued', status: 'pending'}]
+      queue: [{handle: 'queued', status: 'pending', relationship:{followedBy:true,following:false}}]
     },
     mutualNetwork: {
       users: [
@@ -266,6 +266,16 @@ test('unassigned pages use the index, restart without a full read, and mirror me
   assert.equal(gone.records.length, 0);
   const summary = await service.summary({module: 'comments'});
   assert.equal(summary.total, 119);
+});
+
+test('DOM follow-back queue rows without relationship flags remain visible', async () => {
+  const storage=memoryStorage({monitor:{users:[{handle:'domfan',state:'follow_back'}],queue:[{handle:'domfan',status:'pending',state:'follow_back'}]}});
+  const service=runtime('dom-follow-back-index',storage,memoryDurable());
+  await service.migrate();
+  const fans=await service.summary({module:'fans'});
+  assert.equal(fans.tabs.pendingQueue,1);
+  const page=await service.query({module:'fans',filter:{tab:'pendingQueue'},limit:10});
+  assert.equal(page.records[0]?.payload.handle,'domfan');
 });
 
 test('derived tracker paths keep original indexes and patches upsert the tracker', async () => {
@@ -378,7 +388,7 @@ test('derived tracker paths keep original indexes and patches upsert the tracker
 test('profile and off-page user writes merge unknown fields without a second copy', async () => {
   const storage = memoryStorage({
     profileCache: {ada: {handle: 'ada', bio: 'old', secret: 1}},
-    monitor: {enabled: true, every: 15, users: [{handle: 'ada', bio: 'fan', extra: 'keep'}], queue: [{handle: 'q', status: 'pending', note: 'stay'}]}
+    monitor: {enabled: true, every: 15, users: [{handle: 'ada', bio: 'fan', extra: 'keep'}], queue: [{handle: 'q', status: 'pending', note: 'stay', relationship:{followedBy:true,following:false}}]}
   });
   const durable = memoryDurable();
   const service = runtime('runtime-merge', storage, durable);

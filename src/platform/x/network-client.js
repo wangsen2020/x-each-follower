@@ -1,5 +1,6 @@
+import {assertProfileAvailable,observeProfile,unavailableFromProfileResponse,profileUnavailableError} from './profile-access.js';
 // Transport owns session mechanics; confirmation, scheduling and retries belong to callers.
-export const X_QUERY_OPERATIONS=Object.freeze(['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','contentPageQuery']);
+export const X_QUERY_OPERATIONS=Object.freeze(['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery']);
 const FORMS=Object.freeze({Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'});
 const SESSION_HEADERS=['authorization','x-csrf-token','x-twitter-auth-type','x-twitter-active-user','x-twitter-client-language'];
 
@@ -52,7 +53,7 @@ export async function executeXRequestOnPage(request) {
   };
   try {
     if(!['https://x.com','https://twitter.com'].includes(location.origin)||location.origin!==request.origin)throw new Error('X 请求页面来源不匹配');
-    const allowedQueries=['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','contentPageQuery'];
+    const allowedQueries=['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
     const allowedForms={Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'};
     if(request.kind==='query') {
       const match=/^\/i\/api\/graphql\/[\w-]+\/([\w]+)\?/.exec(request.path||'');
@@ -99,6 +100,8 @@ export async function executeXRequestOnPage(request) {
 export function createXNetworkClient(api=globalThis.chrome) {
   async function request(tabId,operation,variables={}) {
     let template,dispatched=false;
+    const handle=operation==='UserByScreenName'?variables.screen_name:null;
+    if(handle)await assertProfileAvailable(api,handle,'profile-network');
     try {
       const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
@@ -109,13 +112,17 @@ export function createXNetworkClient(api=globalThis.chrome) {
       if(!loaded)await api.scripting.executeScript({target:{tabId},world:'MAIN',files:['transaction-id.bundle.js']});
       dispatched=true;
       const results=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:executeXRequestOnPage,args:[prepared]});
-      return results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
-    }catch(error){return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
+      const response=results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
+      if(handle){const state=unavailableFromProfileResponse(response);if(state){await observeProfile(api,handle,state,'profile-network');if(state.status!=='ok')throw profileUnavailableError({...state,handle});}}
+      return response;
+    }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
   }
   return {
     query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
     profile:(tabId,handle)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')}),
     userPosts:(tabId,userId,variables={})=>request(tabId,'UserTweets',{...variables,userId}),
+    userOriginals:(tabId,userId,variables={})=>request(tabId,'UserOriginalsTimeline',{...variables,userId}),
+    userReplies:(tabId,userId,variables={})=>request(tabId,'UserRepliesTimeline',{...variables,userId}),
     followers:(tabId,userId,variables={})=>request(tabId,'Followers',{...variables,userId}),
     following:(tabId,userId,variables={})=>request(tabId,'Following',{...variables,userId}),
     follow:(tabId,target)=>request(tabId,'Follow',typeof target==='object'?target:{id:target}),

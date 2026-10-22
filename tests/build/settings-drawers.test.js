@@ -7,8 +7,10 @@ test('useSettingsDrawer initializes with clean default state and computed checkp
   const drawer = useSettingsDrawer();
   assert.equal(drawer.isOpen.value, false);
   assert.equal(drawer.enabled.value, false);
-  assert.equal(drawer.every.value, 60);
-  assert.equal(drawer.jitter.value, 15);
+  assert.equal(drawer.every.value, 10);
+  assert.equal(drawer.jitter.value, 0);
+  assert.equal(drawer.followerBatch.value, 1000);
+  assert.equal(drawer.followingBatch.value, 1000);
   assert.equal(drawer.autoEnqueue.value, true);
   assert.equal(drawer.filterDanger.value, true);
   assert.equal(drawer.checkpointDisplayText.value, '未记录位点（首次将建立增量基准）');
@@ -20,11 +22,14 @@ test('useSettingsDrawer validates intervals strictly', () => {
   drawer.open({ every: 5, jitter: 15 }); // every < 10
   assert.throws(() => drawer.validate(), /基准检索间隔至少 10 分钟/);
 
-  drawer.open({ every: 60, jitter: 0 }); // jitter < 1
-  assert.throws(() => drawer.validate(), /随机浮动必须至少 1 分钟/);
+  drawer.open({ every: 60, jitter: -1 });
+  assert.throws(() => drawer.validate(), /随机浮动/);
 
   drawer.open({ every: 60, jitter: 60 }); // jitter >= every
-  assert.throws(() => drawer.validate(), /小于基准间隔/);
+  assert.throws(() => drawer.validate(), /周期以下/);
+
+  drawer.open({every:10, jitter:0, followerBatch:1001, followingBatch:1000});
+  assert.throws(() => drawer.validate(), /100–1000/);
 
   drawer.open({ every: 60, jitter: 15, enabled: true });
   const valid = drawer.validate();
@@ -47,6 +52,8 @@ test('useSettingsDrawer save() invokes handler and sets success state', async ()
     enabled: true,
     every: 45,
     jitter: 10,
+    followerBatch: 1000,
+    followingBatch: 1000,
     autoEnqueue: true,
     filterDanger: true
   });

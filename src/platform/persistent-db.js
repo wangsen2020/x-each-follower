@@ -1,3 +1,4 @@
+import {isPageFailure,diagnosticUrl,diagnosticText} from './page-failure.js';
 // Stores durable extension data in the x.com origin. Unlike chrome.storage.local,
 // this database survives uninstall/reinstall of this extension (until x.com site data is cleared).
 const dbPage = async (operation, key, value) => {
@@ -146,10 +147,11 @@ let dbTabPromise;
 let dbTabCloseTimer;
 let dbOperationQueue = Promise.resolve();
 
+const rejectedStorageTabs=new Map();
 export async function createStorageTab(chromeApi) {
   if (!chromeApi?.tabs?.query) throw new Error('没有可用的标签页接口，无法创建 X 本地数据库标签页');
   const tabs = await chromeApi.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
-  const existing = tabs.find(tab => tab.id != null);
+  const existing = tabs.filter(tab=>tab.id!=null&&(!rejectedStorageTabs.has(tab.id)||rejectedStorageTabs.get(tab.id)<Date.now())&&!tab.discarded).sort((a,b)=>Number(b.status==='complete')-Number(a.status==='complete')||Number((b.url||'').endsWith('/home'))-Number((a.url||'').endsWith('/home')))[0];
   if (existing) return {id:existing.id, owned:false};
 
   let win = await chromeApi.windows.getLastFocused({windowTypes:['normal']}).catch(() => null);
@@ -215,23 +217,37 @@ function scheduleOwnedTabClose(tabId) {
   }, 500);
 }
 
-async function withStorageTab(operation) {
+async function withStorageTab(operation,context={}) {
   const next = dbOperationQueue.then(async () => {
-    clearTimeout(dbTabCloseTimer);
-    dbTabCloseTimer = undefined;
-    const tabId = await storageTab();
-    try { return await operation(tabId); }
-    finally { scheduleOwnedTabClose(tabId); }
+    for(let attempt=0;attempt<2;attempt++){
+      clearTimeout(dbTabCloseTimer);dbTabCloseTimer=undefined;
+      const tabId=await storageTab();
+      try{return await operation(tabId);}
+      catch(error){
+        const tab=await chrome.tabs.get(tabId).catch(()=>null);
+        error.pageContext={stage:'x-storage',operation:context.operation||'',tabId,requestedUrl:diagnosticUrl(tab?.url),...error.pageContext};
+        if(isPageFailure(error)){
+          try{if(chrome.storage?.local){const key='xStoragePageFailures',old=(await chrome.storage.local.get(key))[key]||[];await chrome.storage.local.set({[key]:[{...error.pageContext,at:new Date().toISOString(),rawError:diagnosticText(error.message),readRetry:attempt===0&&context.readOnly===true},...old].slice(0,20)});}}catch{}
+          // A browser error document is still status=complete. Forget this
+          // borrowed page; never reload or close a page owned by the user.
+          rejectedStorageTabs.set(tabId,Date.now()+5*60*1000);
+          if(rejectedStorageTabs.size>40)rejectedStorageTabs.delete(rejectedStorageTabs.keys().next().value);
+          const owned=dbTabOwned;dbTabId=undefined;dbTabOwned=false;
+          if(owned)await closeStorageTab(chrome,tabId);
+          if(attempt===0&&context.readOnly)continue;
+        }
+        throw error;
+      }finally{scheduleOwnedTabClose(tabId);}
+    }
   });
-  dbOperationQueue = next.catch(() => {});
-  return next;
+  dbOperationQueue=next.catch(()=>{});return next;
 }
 
 export async function durableGetStrict(key) {
   return withStorageTab(async tabId => {
     const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['get',key,null]});
     return decodeDurableResult(result?.[0]?.result);
-  });
+  },{operation:'read-backup',readOnly:true});
 }
 
 export async function durableGet(key) {
@@ -245,7 +261,7 @@ export async function durableGet(key) {
 export async function durableSet(key, value) {
   return withStorageTab(async tabId => {
     await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:dbPage, args:['set',key,JSON.stringify({v: value})]});
-  });
+  },{operation:'write-backup'});
 }
 
 export async function durableKeysStrict(prefix = '') {
@@ -254,7 +270,7 @@ export async function durableKeysStrict(prefix = '') {
     const keys = decodeDurableResult(result?.[0]?.result);
     if (!Array.isArray(keys)) throw new Error('durableKeysStrict 未返回有效数组');
     return keys;
-  });
+  },{operation:'list-backups',readOnly:true});
 }
 
 export async function durableKeys(prefix = '') {
@@ -271,5 +287,5 @@ export async function durableAppendIncremental(entry) {
     const res = decodeDurableResult(result?.[0]?.result);
     if (!res || !res.ok) throw new Error(res?.error || '增量日志原子写入失败');
     return res.entry;
-  });
+  },{operation:'append-backup'});
 }
