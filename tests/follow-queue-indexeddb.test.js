@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
+import {createFollowQueueScheduler} from '../src/features/follow-queue/follow-queue-scheduler.js';
+import {collectFollowQueueCandidates} from '../src/features/follow-queue/follow-queue-sources.js';
 
 function storeFor(name, clock = {t: 5_000}) {
   return createFollowQueueStore({
@@ -10,6 +12,69 @@ function storeFor(name, clock = {t: 5_000}) {
     now: () => clock.t
   });
 }
+
+test('scheduler dispatches a fan arriving mid-run before remaining older ordinary candidates', async () => {
+  const clock = {t: 1000};
+  const store = storeFor(`priority-mid-run-${Date.now()}`, clock);
+  const accountId = 'priority-mid-run';
+  const add = async (handle, module) => {
+    const bucket = module === 'fans' ? 'monitor' : module === 'comments' ? 'commentTracking' : 'mutualNetwork';
+    const [candidate] = collectFollowQueueCandidates({accountId, sourceEnabled:{fans:true, comments:true, mutual:true},
+      [bucket]:{users:[{handle, relationship:{following:false, followedBy:module === 'fans'}}]}});
+    return store.enqueue(candidate);
+  };
+  await add('comment_first', 'comments');
+  clock.t++;
+  await add('mutual_second', 'mutual');
+  const dispatched = [];
+  const scheduler = createFollowQueueScheduler({store, now:()=>clock.t, execute:async job => {
+    dispatched.push(job.handle);
+    if (job.handle === 'comment_first') {
+      clock.t++;
+      await add('new_fan', 'fans');
+    }
+    return {state:'skipped', reason:'dispatch order test'};
+  }});
+  const result = await scheduler.run({accountId, manual:true});
+  assert.equal(result.ok, true);
+  assert.deepEqual(dispatched, ['comment_first', 'new_fan', 'mutual_second']);
+});
+
+test('follow-back priority promotes existing candidates and due retries ahead of older ordinary jobs', async () => {
+  const clock = {t: 1000};
+  const store = storeFor(`priority-${Date.now()}`, clock);
+  const enqueue = (handle, module) => store.enqueue({accountId:'priority', handle, sources:[{module, enabled:true}]});
+  await enqueue('ordinary', 'comments');
+  clock.t++;
+  const fan = await enqueue('newfan', 'mutual');
+  await enqueue('newfan', 'fans');
+  const first = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(first.id, fan.id);
+  assert.equal(first.priority, 100);
+  assert.equal(await store.claim({accountId:'priority', owner:'other', leaseMs:1000}), null);
+  await store.settle({id:first.id, owner:'test', version:first.lease.version, state:'retry', patch:{nextEligibleAt:clock.t + 100}});
+  const ordinary = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(ordinary.handle, 'ordinary');
+  await store.settle({id:ordinary.id, owner:'test', version:ordinary.lease.version, state:'skipped'});
+  await enqueue('another', 'mutual');
+  clock.t += 100;
+  const retry = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(retry.id, fan.id);
+  await store.settle({id:retry.id, owner:'test', version:retry.lease.version, state:'followed'});
+  const last = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(last.handle, 'another');
+});
+
+test('disabled fan source cannot boost an ordinary candidate; equal weights remain FIFO', async () => {
+  const clock = {t: 5000};
+  const store = storeFor(`priority-disabled-${Date.now()}`, clock);
+  await store.enqueue({accountId:'priority', handle:'first', sources:[{module:'comments',enabled:true}]});
+  clock.t++;
+  await store.enqueue({accountId:'priority', handle:'second', sources:[{module:'mutual',enabled:true},{module:'fans',enabled:false}]});
+  const job = await store.claim({accountId:'priority',owner:'test',leaseMs:1000});
+  assert.equal(job.handle, 'first');
+  assert.equal(job.priority, 10);
+});
 
 async function seedVersion1(name) {
   const request = globalThis.indexedDB.open(name, 1);

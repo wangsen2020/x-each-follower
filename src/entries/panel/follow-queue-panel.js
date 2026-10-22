@@ -8,6 +8,7 @@ import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffi
  */
 
 import { FOLLOW_QUEUE_DEFAULT_SETTINGS } from '../../features/follow-queue/follow-queue-store.js';
+import {followQueuePriority} from '../../features/follow-queue/follow-queue-priority.js';
 
 export const DEFAULT_SETTINGS = FOLLOW_QUEUE_DEFAULT_SETTINGS || Object.freeze({
   enabled: false,
@@ -1148,6 +1149,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         });
 
         const sourcesCell = el('td', { className: 'fq-col-sources' }, [
+          el('small', { className: 'fq-stage-text', title: '权重越高越先执行；同权重按入队时间执行，仍遵守风险检查与关注上限' }, `权重 ${followQueuePriority(job)}${followQueuePriority(job) === 100 ? ' · 优先回关' : ''}`),
           el('div', { className: 'fq-tags-wrap' }, sourceTags.length > 0 ? sourceTags : [el('span', { className: 'fq-text-muted' }, '-')])
         ]);
 

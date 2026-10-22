@@ -1,4 +1,5 @@
 import {QUOTE_TAG_DEFAULTS, normalizeQuoteTags, validateQuoteTags} from '../grok/quote-tags.js';
+import {compareFollowQueuePriority, followQueuePriority} from './follow-queue-priority.js';
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
@@ -282,6 +283,7 @@ function postIndexKey(accountId, postId) {
 
 function projectJob(job) {
   if (!job || typeof job !== 'object' || !job.accountId) return job;
+  job.priority = followQueuePriority(job);
   if (!Number.isFinite(job.createdAt)) job.createdAt = 0;
   if (!Number.isFinite(job.nextEligibleAt)) job.nextEligibleAt = 0;
   if (typeof job.state !== 'string' || job.state === '') job.state = 'pending';
@@ -1066,21 +1068,30 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         // Enablement and migration pause are not enforced in this store.
         // follow-queue-runtime does not yet reject claims while a migration is in progress.
         let job = null;
-        for (const state of ['pending', 'retry']) {
+        // The fan index also covers pre-existing jobs; stop at the oldest ready fan.
+        await cursorWalk(jobs.index('sourceFans'), accountCreatedRange(account), cursor => {
+          const candidate = cursor.value;
+          if (candidate.accountId !== account || candidate.redirectTo) return;
+          if (!['pending', 'retry'].includes(candidate.state) || candidate.nextEligibleAt > seenAt) return;
+          if (followQueuePriority(candidate) !== 100) return;
+          job = candidate;
+          return 'stop';
+        });
+        for (const state of job ? [] : ['pending', 'retry']) {
           await cursorWalk(jobs.index('accountStateCreated'), stateCreatedRange(account, state), cursor => {
             const candidate = cursor.value;
             if (candidate.accountId !== account || candidate.redirectTo) return;
             if (candidate.state !== state || !sourceAuthorized(candidate)) return;
             if (candidate.nextEligibleAt > seenAt) return;
-            job = candidate;
+            if (!job || compareFollowQueuePriority(candidate, job) < 0) job = candidate;
             return 'stop';
           });
-          if (job) break;
         }
         if (!job) {
           if (changed) await bumpRevision(meta);
           return null;
         }
+        job.priority = followQueuePriority(job);
         job.state = 'running';
         job.stage = job.stage === 'queued' ? 'claimed' : job.stage;
         job.updatedAt = seenAt;
