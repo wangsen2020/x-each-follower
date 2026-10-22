@@ -26,6 +26,7 @@ import {createRecordRuntime} from '../../features/records/record-runtime.js';
 import {createPostRuntime, POST_ALARM} from '../../features/post-tracking/post-runtime.js';
 import {createLeaderboardRuntime, LEADERBOARD_ALARM} from '../../features/leaderboard/leaderboard-runtime.js';
 import {createLeaderboardStore} from '../../features/leaderboard/leaderboard-store.js';
+import {canUseLeaderboardAction} from '../../features/leaderboard/leaderboard-access.js';
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
@@ -513,10 +514,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
 
   if (cmd === 'xLeaderboard') {
-    const panel=sender.id===chrome.runtime.id&&sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL('panel.html');
-    const content=sender.id===chrome.runtime.id&&Number.isInteger(sender.tab?.id)&&/^https:\/\/(?:x\.com|twitter\.com)\//.test(sender.url||'');
-    const allowed=panel?['state','scan','analyze','report','membership','add','remove']:content?['membership','add','remove']:[];
-    if(!allowed.includes(message.action)){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
+    if(!canUseLeaderboardAction({runtimeId:chrome.runtime.id,panelUrl:chrome.runtime.getURL('panel.html'),sender,action:message.action})){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
     leaderboardRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message||error)}));
     return true;
   }

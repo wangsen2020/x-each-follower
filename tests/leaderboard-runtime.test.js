@@ -7,8 +7,9 @@ import {createLeaderboardRuntime} from '../src/features/leaderboard/leaderboard-
 const auth={queryId:'abc',headers:{authorization:'Bearer redacted','x-csrf-token':'redacted'}};
 function api(){
   let scheduledTime=null;
+  const local={networkTemplates:{UserByScreenName:auth,UserOriginalsTimeline:auth}};
   return {
-    storage:{local:{get:async key=>key==='networkTemplates'?{networkTemplates:{UserByScreenName:auth,UserOriginalsTimeline:auth}}:{},set:async()=>{}}},
+    storage:{local:{get:async key=>({[key]:local[key]}),set:async values=>Object.assign(local,values)}},
     tabs:{query:async()=>[{id:1,url:'https://x.com/home',status:'complete'}],get:async()=>({id:1,status:'complete'}),create:async()=>({id:2,status:'complete'}),remove:async()=>{}},
     alarms:{create:async(_name,info)=>{scheduledTime=info.when;},get:async()=>scheduledTime?{scheduledTime}:null,clear:async()=>{scheduledTime=null;}}
   };
@@ -56,4 +57,42 @@ test('yesterday growth uses yesterday and today snapshots, not the preceding day
   assert.equal(row.delta,5);
   assert.equal(row.deltaEvidence.after.followers,105);
   assert.equal((await runtime.handle({action:'report',date:'2026-10-21'})).report,null);
+});
+
+test('monitor settings persist per owner, reschedule, and pause automatic work',async()=>{
+  const store=createLeaderboardStore({indexedDB:new IDBFactory()});
+  await store.upsertMember({ownerId:'100',creatorId:'200',handle:'writer',active:true});
+  let accountId='100';
+  const browser=api(),now=Date.parse('2026-10-22T08:00:00+08:00');
+  let currentNow=now;
+  const runtime=createLeaderboardRuntime({api:browser,store,owner:async()=>({accountId}),now:()=>currentNow});
+  assert.deepEqual((await runtime.state()).config,{enabled:true,scanIntervalMinutes:60,scanBatchSize:3,autoAnalyze:true});
+  await runtime.schedule();
+  assert.equal((await browser.alarms.get()).scheduledTime,now+60*60_000);
+  currentNow+=5*60_000;
+  await runtime.schedule();
+  assert.equal((await browser.alarms.get()).scheduledTime,now+60*60_000);
+  currentNow=now;
+  const config={enabled:true,scanIntervalMinutes:30,scanBatchSize:2,autoAnalyze:false};
+  assert.deepEqual((await runtime.handle({action:'settings',config})).config,config);
+  assert.equal((await browser.alarms.get()).scheduledTime,now+30*60_000);
+  assert.deepEqual((await runtime.state()).config,config);
+  accountId='101';
+  assert.equal((await runtime.state()).config.scanIntervalMinutes,60);
+  accountId='100';
+  await runtime.handle({action:'settings',config:{...config,enabled:false}});
+  assert.equal(await browser.alarms.get(),null);
+  assert.deepEqual(await runtime.alarm(),{skipped:true,disabled:true});
+  await assert.rejects(runtime.handle({action:'settings',config:{...config,scanBatchSize:9}}),/每轮人数/);
+  assert.equal((await runtime.state()).config.scanBatchSize,2);
+});
+
+test('automatic scan respects configured batch size while manual scan remains available',async()=>{
+  const store=createLeaderboardStore({indexedDB:new IDBFactory()});
+  for(let index=0;index<4;index++)await store.upsertMember({ownerId:'100',creatorId:String(200+index),handle:`writer${index}`,active:true});
+  const browser=api();
+  const runtime=createLeaderboardRuntime({api:browser,store,owner:async()=>({accountId:'100'}),client:{profile:async()=>({status:200,json:profile})}});
+  await runtime.handle({action:'settings',config:{enabled:true,scanIntervalMinutes:60,scanBatchSize:2,autoAnalyze:false}});
+  assert.equal((await runtime.scan({automatic:true})).results.length,2);
+  assert.equal((await runtime.scan()).results.length,4);
 });

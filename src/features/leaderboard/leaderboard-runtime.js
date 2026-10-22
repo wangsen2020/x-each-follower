@@ -4,6 +4,7 @@ import {parsePublicProfile,parsePublicTimeline} from '../../platform/x/public-da
 import {shanghaiDay,previousDay,dayWindow,rankMembers,selectDigestPosts} from './leaderboard-model.js';
 import {splitDigestBatches,buildDigestBatchPrompt,parseDigestBatch,buildDigestSummaryPrompt,parseDigestSummary} from './leaderboard-digest.js';
 import {requestGrokText} from '../grok/grok-comment.js';
+import {LEADERBOARD_CONFIG_KEY,normalizeLeaderboardConfig,validateLeaderboardConfig} from './leaderboard-config.js';
 
 export const LEADERBOARD_ALARM='xef-leaderboard-scan';
 const HOUR=3600000,MINUTE=60000;
@@ -25,6 +26,19 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
     if((await currentOwner()).accountId!==accountId)throw new Error('X 登录账号已切换，已停止榜单写入');
   };
   const templates=async()=> (await api.storage.local.get('networkTemplates')).networkTemplates||{};
+  const configFor=async accountId=>{
+    const stored=(await api.storage.local.get(LEADERBOARD_CONFIG_KEY))[LEADERBOARD_CONFIG_KEY]||{};
+    return normalizeLeaderboardConfig(stored[accountId]);
+  };
+  async function saveConfig(config){
+    const {accountId}=await currentOwner();
+    const checked=validateLeaderboardConfig(config);
+    const stored=(await api.storage.local.get(LEADERBOARD_CONFIG_KEY))[LEADERBOARD_CONFIG_KEY]||{};
+    await confirmOwner(accountId);
+    await api.storage.local.set({[LEADERBOARD_CONFIG_KEY]:{...stored,[accountId]:checked}});
+    await schedule({reset:true});
+    return checked;
+  }
   async function withPage(handle,operation,fn){
     await assertProfileAvailable(api,handle,'leaderboard:'+operation);
     const existing=(await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']})).find(tab=>tab.status==='complete'&&/^https:\/\/x\.com\//.test(tab.url||''));
@@ -145,13 +159,13 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
       rows.push({...member,postCount:coverage?.originalComplete?original.length:null,replyCount:coverage?.repliesComplete?posts.filter(post=>post.kind==='reply').length:null,observedPostCount:original.length,observedReplyCount:posts.filter(post=>post.kind==='reply').length,viewsTotal:views.length?views.reduce((a,b)=>a+b,0):null,maxPost:maxPost7d,maxPost7d,postCoverage:coverage?coverage.originalComplete&&coverage.repliesComplete?'complete':'partial':'unknown'});
     }
     const reports=await store.listReports(accountId);
-    return {ownerId:accountId,ownerHandle,members:rows,reports,scanStatus:{nextAt:(await api.alarms.get(LEADERBOARD_ALARM))?.scheduledTime||null}};
+    return {ownerId:accountId,ownerHandle,members:rows,reports,config:await configFor(accountId),scanStatus:{nextAt:(await api.alarms.get(LEADERBOARD_ALARM))?.scheduledTime||null}};
   }
   async function scan({automatic=false}={}){return guard(async()=>{
     const cooldown=(await api.storage.local.get('xefLeaderboardCooldown')).xefLeaderboardCooldown||0;
     if(cooldown>now())throw new Error(`X 请求冷却至 ${new Date(cooldown).toLocaleString('zh-CN')}`);
     const {accountId}=await currentOwner(),members=(await store.listMembers(accountId)).filter(member=>member.active!==false).sort((a,b)=>(a.lastCapturedAt||0)-(b.lastCapturedAt||0));
-    const batch=automatic?members.slice(0,3):members.slice(0,10),results=[];
+    const batch=automatic?members.slice(0,(await configFor(accountId)).scanBatchSize):members.slice(0,10),results=[];
     for(const member of batch){
       try{results.push({ok:true,...await scanOne(accountId,member)});}catch(error){
         if(error.message==='X 登录账号已切换，已停止榜单写入')throw error;
@@ -159,7 +173,7 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
         if([401,403,429].includes(error.status)){await api.storage.local.set({xefLeaderboardCooldown:now()+Math.max(HOUR,(error.retryAfterSeconds||0)*1000)});break}
       }
     }
-    await schedule();return {results,scanned:results.filter(row=>row.ok).length};
+    await schedule({reset:true});return {results,scanned:results.filter(row=>row.ok).length};
   })}
   async function prepareDigest(accountId,date){
     const all=await store.listMembers(accountId),snapshots=new Map();
@@ -245,20 +259,26 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
     const valid=rankMembers(members,snapshots,shanghaiDay(dayWindow(date).to)).some(row=>row.deltaStatus==='valid');
     return {report:valid?null:{ownerId:accountId,date,status:'baseline_missing',members:[],samples:[],items:[],coverage:[]}};
   }
-  async function schedule(){
-    const {accountId}=await currentOwner(),members=(await store.listMembers(accountId)).filter(row=>row.active!==false);
-    if(!members.length){await api.alarms.clear(LEADERBOARD_ALARM);return}
+  async function schedule({reset=false}={}){
+    const {accountId}=await currentOwner(),members=(await store.listMembers(accountId)).filter(row=>row.active!==false),config=await configFor(accountId);
+    if(!members.length||!config.enabled){await api.alarms.clear(LEADERBOARD_ALARM);return}
     const date=previousDay(shanghaiDay(now())),job=await store.getJob(accountId,date),cooldown=(await api.storage.local.get('xefLeaderboardCooldown')).xefLeaderboardCooldown||0;
-    const due=job&&['collecting','running','partial'].includes(job.status)&&(job.status==='collecting'||job.batches?.some(batch=>batch.status==='pending')||!job.summaryAttempted)?now()+MINUTE:now()+HOUR;
-    await api.alarms.create(LEADERBOARD_ALARM,{when:Math.max(due,cooldown,now()+1000)});
+    const due=config.autoAnalyze&&job&&['collecting','running','partial'].includes(job.status)&&(job.status==='collecting'||job.batches?.some(batch=>batch.status==='pending')||!job.summaryAttempted)?now()+MINUTE:now()+config.scanIntervalMinutes*MINUTE;
+    const scheduledTime=Math.max(due,cooldown,now()+1000);
+    const existing=await api.alarms.get(LEADERBOARD_ALARM);
+    if(!reset&&existing?.scheduledTime>now()&&existing.scheduledTime<=scheduledTime)return;
+    await api.alarms.create(LEADERBOARD_ALARM,{when:scheduledTime});
   }
   async function alarm(){
+    const {accountId}=await currentOwner();
+    const config=await configFor(accountId);
+    if(!config.enabled){await api.alarms.clear(LEADERBOARD_ALARM);return {skipped:true,disabled:true}}
     const cooldown=(await api.storage.local.get('xefLeaderboardCooldown')).xefLeaderboardCooldown||0;
     if(cooldown>now()){await schedule();return {skipped:true,cooldown}}
     const result=await scan({automatic:true});
     const updatedCooldown=(await api.storage.local.get('xefLeaderboardCooldown')).xefLeaderboardCooldown||0;
     if(updatedCooldown>now())return {...result,cooldown:updatedCooldown};
-    try{await analyze()}catch(error){return {...result,analysisError:error.message}}
+    if(config.autoAnalyze)try{await analyze()}catch(error){return {...result,analysisError:error.message}}
     return result;
   }
   async function handle(message){
@@ -267,6 +287,7 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
       case 'add':return {ok:true,...await add(message)};
       case 'remove':return {ok:true,...await remove(message)};
       case 'state':return {ok:true,...await state()};
+      case 'settings':return {ok:true,config:await saveConfig(message.config)};
       case 'scan':return {ok:true,...await scan()};
       case 'analyze':return {ok:true,...await analyze()};
       case 'report':return {ok:true,...await report(message.date)};

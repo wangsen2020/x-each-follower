@@ -36,6 +36,19 @@
         <button
           type="button"
           class="secondary lb-icon-btn"
+          aria-label="榜单监控设置"
+          title="榜单监控设置"
+          :disabled="loading || savingSettings || !ownerId"
+          @click="openSettings"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/>
+            <path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="secondary lb-icon-btn"
           aria-label="立即扫描快照"
           title="立即扫描快照"
           :disabled="loading || busy"
@@ -361,6 +374,33 @@
       </div>
     </div>
 
+    <ActionSettingsDrawer ref="settingsDrawer" title="榜单监控设置">
+      <div class="lb-setting-card">
+        <label class="lb-setting-row">
+          <span class="lb-setting-copy"><strong>自动监控</strong><small>定时更新作者快照与帖子数据</small></span>
+          <input v-model="settingsDraft.enabled" type="checkbox" :disabled="savingSettings" aria-label="自动监控">
+        </label>
+        <label class="lb-setting-row">
+          <span class="lb-setting-copy"><strong>扫描间隔</strong><small>每次自动扫描之间的时间</small></span>
+          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings" aria-label="扫描间隔分钟">分钟</span>
+        </label>
+        <label class="lb-setting-row">
+          <span class="lb-setting-copy"><strong>每轮人数</strong><small>每轮最多扫描 1–5 位作者</small></span>
+          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="5" step="1" :disabled="savingSettings" aria-label="每轮扫描人数">位</span>
+        </label>
+        <label class="lb-setting-row">
+          <span class="lb-setting-copy"><strong>自动日报</strong><small>扫描后继续生成昨日 Grok 分析</small></span>
+          <input v-model="settingsDraft.autoAnalyze" type="checkbox" :disabled="savingSettings" aria-label="自动生成日报">
+        </label>
+      </div>
+      <p class="lb-setting-note">暂停后仍可手动扫描和分析；设置仅用于当前登录账号。</p>
+      <p v-if="settingsError" class="lb-alert lb-alert-error" role="alert">{{ settingsError }}</p>
+      <template #footer>
+        <button type="button" class="secondary" :disabled="savingSettings" @click="settingsDrawer?.close()">取消</button>
+        <button type="button" :disabled="savingSettings" @click="saveSettings">{{ savingSettings ? '保存中…' : '保存配置' }}</button>
+      </template>
+    </ActionSettingsDrawer>
+
     <ActionSettingsDrawer ref="memberDrawer" title="作者详情">
       <div v-if="selectedMember" class="lb-member-detail">
         <h3>{{ selectedMember.name || selectedMember.handle }} <small>@{{ selectedMember.handle }}</small></h3>
@@ -569,7 +609,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 
@@ -580,6 +620,11 @@ const reports = ref([]);
 const ownerId = ref('');
 const ownerHandle = ref('');
 const scanStatus = ref({});
+const config = ref({ enabled: true, scanIntervalMinutes: 60, scanBatchSize: 3, autoAnalyze: true });
+const settingsDrawer = ref(null);
+const settingsDraft = reactive({ ...config.value });
+const savingSettings = ref(false);
+const settingsError = ref('');
 
 const loading = ref(false);
 const busy = ref(false);
@@ -603,6 +648,7 @@ const activeAuthorFilter = ref('');
 // Scan status computed
 const scanStatusLabel = computed(() => {
   if (busy.value) return '操作中…';
+  if (!config.value.enabled) return '已暂停';
   if (scanStatus.value?.nextAt) {
     const diff = scanStatus.value.nextAt - Date.now();
     if (diff > 0 && diff < 60000) return '即将轮询';
@@ -612,10 +658,12 @@ const scanStatusLabel = computed(() => {
 
 const scanStatusClass = computed(() => {
   if (busy.value) return 'is-running';
+  if (!config.value.enabled) return 'is-paused';
   return 'is-idle';
 });
 
 const scanStatusTitle = computed(() => {
+  if (!config.value.enabled) return '自动监控已暂停，可手动扫描和分析';
   if (scanStatus.value?.nextAt) {
     return `下次计划扫描：${formatDate(scanStatus.value.nextAt)}`;
   }
@@ -725,6 +773,38 @@ const reportAuthorsList = computed(() => {
 });
 
 // Actions
+function openSettings() {
+  Object.assign(settingsDraft, config.value);
+  settingsError.value = '';
+  settingsDrawer.value?.open();
+}
+
+async function saveSettings() {
+  settingsError.value = '';
+  const values = { ...settingsDraft };
+  if (!Number.isInteger(values.scanIntervalMinutes) || values.scanIntervalMinutes < 15 || values.scanIntervalMinutes > 360) {
+    settingsError.value = '扫描间隔需为 15–360 分钟的整数';
+    return;
+  }
+  if (!Number.isInteger(values.scanBatchSize) || values.scanBatchSize < 1 || values.scanBatchSize > 5) {
+    settingsError.value = '每轮人数需为 1–5 的整数';
+    return;
+  }
+  savingSettings.value = true;
+  try {
+    const res = await chrome.runtime.sendMessage({ cmd: 'xLeaderboard', action: 'settings', config: values });
+    if (!res?.ok) throw new Error(res?.error || '保存榜单配置失败');
+    config.value = res.config;
+    await fetchState();
+    settingsDrawer.value?.close();
+    notice.value = '榜单监控配置已保存。';
+  } catch (err) {
+    settingsError.value = String(err?.message || err || '保存榜单配置失败');
+  } finally {
+    savingSettings.value = false;
+  }
+}
+
 async function fetchState() {
   if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
   loading.value = true;
@@ -737,6 +817,7 @@ async function fetchState() {
       ownerId.value = res.ownerId || '';
       ownerHandle.value = res.ownerHandle || '';
       scanStatus.value = res.scanStatus || {};
+      config.value = res.config || config.value;
       if (!selectedReportDate.value && availableReportDates.value.length > 0) {
         selectedReportDate.value = availableReportDates.value[0];
       }
@@ -1056,6 +1137,77 @@ onMounted(() => {
 
 .lb-status-badge.is-idle .lb-status-dot {
   background: #14744c;
+}
+
+.lb-status-badge.is-paused .lb-status-dot {
+  background: #89978e;
+}
+
+.lb-setting-card {
+  border: 1px solid var(--lb-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.lb-setting-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 66px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.lb-setting-row:not(:last-child) {
+  border-bottom: 1px solid #e7eee8;
+}
+
+.lb-setting-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-right: 10px;
+}
+
+.lb-setting-copy strong {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.lb-setting-copy small {
+  color: #63766a;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.lb-setting-number {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: #63766a;
+  font-size: 11px;
+}
+
+.lb-setting-number input {
+  width: 74px;
+  margin-right: 6px;
+  text-align: right;
+}
+
+.lb-setting-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #14744c;
+}
+
+.lb-setting-note {
+  margin: 10px 0;
+  color: #63766a;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 @keyframes lb-pulse {
