@@ -1528,6 +1528,8 @@ function openCommentRecentPostsDrawer(user) {
 }
 
 async function readProfileBundleInBackground(user, recentLimit = 10) {
+  const cached = profileCache[String(user.handle || '').toLowerCase()];
+  if (['not_found','suspended'].includes(cached?.status) && Date.now()-Date.parse(cached.profileCachedAt)<86400000) return cached;
   const tab = await chrome.tabs.create({url:`https://x.com/${user.handle}`, active:false});
   if (!tab?.id) throw new Error('后台资料标签页创建失败');
   try {
@@ -1540,6 +1542,12 @@ async function readProfileBundleInBackground(user, recentLimit = 10) {
       if (data.pending) await sleep(700);
     }
     if (data.pending) throw new Error('公开资料未能在限定时间内读取');
+    if (['not_found','suspended'].includes(data.status)) {
+      const row = {...user,...data,profileCachedAt:new Date().toISOString()};
+      profileCache[user.handle.toLowerCase()] = row;
+      await writeLocal({profileCache}); persist('profileCache',profileCache);
+      return row;
+    }
     if ((data.posts || []).length < 5) {
       await sleep(650);
       const more = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, recentLimit]}).catch(() => []))?.[0]?.result;
@@ -2141,6 +2149,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
           func: readProfileBundle,
           args: [handle, recentLimit]
         }).catch(() => []))?.[0]?.result;
+        if (['not_found','suspended'].includes(data?.status)) break;
         if (data && !data.pending && Array.isArray(data.posts)) {
           bestPosts = data.posts;
           if (bestPosts.length >= 5) break;
@@ -2182,6 +2191,7 @@ async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
     }
   } catch {}
   const bundle = await readProfileBundleInBackground({handle}, 10);
+  if (['not_found','suspended'].includes(bundle.status)) return bundle;
   return {
     name: repairMojibake(bundle.name || user.name || handle),
     bio: repairMojibake(bundle.bio || user.bio || ''),
@@ -2530,6 +2540,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       if (bundle.pending) await sleep(650);
     }
 
+    if (['not_found','suspended'].includes(bundle.status)) return {status:'skipped',reason:bundle.reason};
     const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
     const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
     const totalDwellMs = dwellSeconds * 1000;
@@ -4056,6 +4067,7 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
       reportStatus(`正在读取 @${user.handle} 的资料（${collected.length + 1}/${candidates.length}）…`);
       let netData = {};
       try { netData = await fetchUserProfileNetwork(user, tabId); } catch {}
+      if (['not_found','suspended'].includes(netData.status)) { reportStatus(`@${user.handle}：${netData.reason}，已跳过`); continue; }
       await navigate(`https://x.com/${user.handle}`);
       let data = {pending:true}; const deadline = Date.now() + 18000;
       while (Date.now() < deadline && data.pending) { data = await invoke(readProfileBundle, [user.handle, 5]); if (data.pending) await sleep(700); }

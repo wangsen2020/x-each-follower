@@ -412,6 +412,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await sleep(500);
       }
       if (!profile || profile.pending) throw lastReadError||new Error('主页资料读取超时');
+      if (['not_found','suspended'].includes(profile.status)) {
+        await guard();
+        return {state:'excluded',reason:profile.reason,followResult:{...followResult,reason:profile.reason,availability:profile.status,checkedAt:Date.now()}};
+      }
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],scanned:true});
       const storedProfile = {
         name: profile.name || '',

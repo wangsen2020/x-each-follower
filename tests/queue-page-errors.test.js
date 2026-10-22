@@ -52,3 +52,13 @@ test('publication verification exits on a browser error page and does not reload
  const api={tabs:{update:async()=>{},get:async()=>({status:'complete'}),reload:async()=>{reloads++;}},scripting:{executeScript:async()=>{throw new Error('Frame with ID 0 is showing error page')}}};
  await assert.rejects(confirmPublishedQueueQuote({api,tabId:1,handle:'viewer',originalId:'99',text:'sample',after:1,wait:async ms=>{clock+=ms},now:()=>clock}),/error page/);assert.equal(clock,700);assert.equal(reloads,0);
 });
+
+test('nonexistent profiles are excluded immediately and source resync never reopens them',async()=>{
+ const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{mutual:true}}};let opened=0,closed=0;
+ const api={storage:{local:local(values)},tabs:{query:async()=>[{id:1}],create:async()=>({id:++opened+1}),get:async()=>({status:'complete',url:'https://x.com/missing'}),remove:async()=>{closed++;}},alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},scripting:{executeScript:async({func})=>[{result:func.name==='readQueueViewerOnPage'?'viewer':{pending:false,status:'not_found',reason:'此账号不存在',posts:[]}}]}};
+ const store=createFollowQueueStore({indexedDB,dbName:'missing-'+crypto.randomUUID()});await store.saveSettings('1',{enabled:true,batchLimit:1,inspectLimit:1,grokEnabled:false});
+ const candidate={accountId:'1',handle:'missing',targetUserId:'20',sources:[{module:'mutual',enabled:true}]};await store.enqueue(candidate);
+ const runtime=createFollowQueueRuntime({api,store,records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookupAll:async()=>[]},fetchProfile:async()=>assert.fail('must not fetch or follow unavailable account')});
+ await runtime.run();const row=(await store.list({accountId:'1'}))[0];assert.equal(row.state,'excluded');assert.equal(row.followResult.availability,'not_found');assert.equal(opened,1);assert.equal(closed,1);
+ await store.enqueue(candidate);await runtime.run();assert.equal(opened,1);assert.equal((await store.list({accountId:'1'}))[0].state,'excluded');
+});

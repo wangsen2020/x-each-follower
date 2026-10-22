@@ -130,3 +130,15 @@ test('profile bundle reads the target account follow button and user ID, not ano
   buttons=[button('Following @pnsin12','999-unfollow')];
   assert.deepEqual(readProfileBundle('pnsin1',0).relationship,{});
 });
+
+test('profile empty state is terminal; ordinary text, loading and other routes are not',()=>{
+  globalThis.location={pathname:'/missing',origin:'https://x.com'};
+  let empty='此账号不存在\n尝试搜索另一个。';
+  globalThis.document={querySelector:()=>({querySelector:s=>s==='[data-testid="emptyState"]'?{innerText:empty}:null,querySelectorAll:()=>[]})};
+  for(const reader of [readProfile,readProfileBundle]){
+    for(const text of ['此账号不存在\n尝试搜索另一个。',"This account doesn’t exist\nTry searching for another."]){empty=text;assert.equal(reader('missing').status,'not_found');assert.equal(reader('missing').pending,false);}
+    empty='Something went wrong. Try again.';assert.equal(reader('missing').pending,true);
+    empty='';assert.equal(reader('missing').pending,true);
+    empty='此账号不存在';assert.equal(reader('another').pending,true);
+  }
+});

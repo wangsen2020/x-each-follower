@@ -18,6 +18,10 @@ export function readProfile(handle) {
   if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return { pending: true };
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return { pending: true };
+  // Only X's profile empty state is authoritative; never match bio or tweet text.
+  const emptyText = (root.querySelector('[data-testid="emptyState"]')?.innerText || '').trim();
+  if (/^(?:此[账帳]号不存在|此帳號不存在|这个账号不存在|This account doesn[’']t exist|This account does not exist)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'not_found',reason:'此账号不存在',posts:[]};
+  if (/^(?:账号已被冻结|帳戶已停用|Account suspended)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'suspended',reason:'账号已停用',posts:[]};
   const name = root.querySelector('[data-testid="UserName"]')?.innerText || '';
   const bio = root.querySelector('[data-testid="UserDescription"]')?.innerText || '';
   const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => {
@@ -36,6 +40,10 @@ export function readProfileBundle(handle, recentLimit = 8) {
   if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return {pending:true};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return {pending:true};
+  // Only X's profile empty state is authoritative; never match bio or tweet text.
+  const emptyText = (root.querySelector('[data-testid="emptyState"]')?.innerText || '').trim();
+  if (/^(?:此[账帳]号不存在|此帳號不存在|这个账号不存在|This account doesn[’']t exist|This account does not exist)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'not_found',reason:'此账号不存在',posts:[]};
+  if (/^(?:账号已被冻结|帳戶已停用|Account suspended)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'suspended',reason:'账号已停用',posts:[]};
   const name = root.querySelector('[data-testid="UserName"]')?.innerText || '';
   const bio = root.querySelector('[data-testid="UserDescription"]')?.innerText || '';
   const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => suffixes.some(suffix => new URL(link.href, location.origin).pathname.toLowerCase() === `/${handle.toLowerCase()}/${suffix}`));

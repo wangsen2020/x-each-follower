@@ -185,6 +185,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
+  if (['not_found','suspended'].includes(data.status)) return data;
   if (data.relationship?.following === true) return {...data, dwellSeconds:0};
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
   const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
@@ -256,6 +257,14 @@ async function executeCommentAutoFollow(source = 'alarm') {
       try {
         await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
+        if (['not_found','suspended'].includes(profile.status)) {
+          user.autoFollowState = 'skipped'; user.autoFollowReason = profile.reason;
+          user.autoFollowCheckedAt = new Date().toISOString();
+          await recordAutoFollowAttempt(handle, 'skipped', profile.reason, undefined);
+          await saveCommentTrackingData(tracking, handle);
+          await appendAutoFollowLog({scope:'comment', source, handle, result:'skipped', detail:profile.reason});
+          processedCount++; continue;
+        }
         actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
         delete profile.dwellSeconds;
         if (profile.relationship?.following === true) {
