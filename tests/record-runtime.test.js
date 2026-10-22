@@ -195,7 +195,7 @@ test('unassigned pages use the index, restart without a full read, and mirror me
         {handle: 'oneway', relationship: {following: true, followedBy: false}}
       ],
       followingUsers: [{handle: 'oneway', relationship: {following: true, followedBy: false}}],
-      queue: [{handle: 'queued', status: 'pending'}]
+      queue: [{handle: 'queued', status: 'pending', relationship:{followedBy:true,following:false}}]
     },
     mutualNetwork: {
       users: [
@@ -378,7 +378,7 @@ test('derived tracker paths keep original indexes and patches upsert the tracker
 test('profile and off-page user writes merge unknown fields without a second copy', async () => {
   const storage = memoryStorage({
     profileCache: {ada: {handle: 'ada', bio: 'old', secret: 1}},
-    monitor: {enabled: true, every: 15, users: [{handle: 'ada', bio: 'fan', extra: 'keep'}], queue: [{handle: 'q', status: 'pending', note: 'stay'}]}
+    monitor: {enabled: true, every: 15, users: [{handle: 'ada', bio: 'fan', extra: 'keep'}], queue: [{handle: 'q', status: 'pending', note: 'stay', relationship:{followedBy:true,following:false}}]}
   });
   const durable = memoryDurable();
   const service = runtime('runtime-merge', storage, durable);

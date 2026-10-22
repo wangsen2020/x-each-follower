@@ -21,7 +21,7 @@ export function quotePublicationState(result) {
   return result?.stage === 'composer' ? 'failed' : 'uncertain';
 }
 
-export function assessQueueProfile(profile, settings) {
+export function assessQueueProfile(profile, settings, confirmedFollowBack = false) {
   const interactionReason = interactionSkipReason(profile);
   if (interactionReason) return interactionReason;
   const followers = parseCount(String(profile.followersText ?? ''));
@@ -33,6 +33,9 @@ export function assessQueueProfile(profile, settings) {
   if (settings.skipRiskContent !== false && risk.level === 'danger') {
     return `命中高风险内容门禁（${risk.hits.slice(0, 2).join('、')}）`;
   }
+  // A verified follower already chose to follow us. Growth-candidate thresholds
+  // must not prevent reciprocation; safety checks above still apply.
+  if (confirmedFollowBack) return '';
   if (followers === null || following === null) return '未读全粉丝与关注数';
   if (followers < settings.minFollowers) return `粉丝数低于 ${settings.minFollowers}`;
   if (followers > 0 && following / followers < settings.ratioThreshold) return `关注/粉丝比例低于 ${Math.round(settings.ratioThreshold * 100)}%`;
@@ -451,7 +454,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (fresh && !fresh.pending) profile = {...profile,...fresh};
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],dwellSeconds:dwell});
       await saveProfile(job.handle, profile);
-      const reason = assessQueueProfile({...profile,...target,bio:profile.bio || target.bio},settings);
+      const confirmedFollowBack = job.sources?.some(source => source.module === 'fans' && source.enabled === true)
+        && target.relationship?.followedBy === true && target.relationship?.following === false;
+      const reason = assessQueueProfile({...profile,...target,bio:profile.bio || target.bio},settings,confirmedFollowBack);
       if (reason) return {state:'skipped',reason};
       if (settings.skipRiskContent !== false && (settings.grokEnabled || settings.grokProfileAssessment !== false)) {
         const grokAssessment = await evaluateProfileGrokRisk(profile, {
@@ -681,6 +686,62 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!reopened?.ok) throw new Error('恢复待关注状态失败');
       await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'pending',detail:`核实确认 @${job.handle} 未关注，已恢复为待关注`});
       return {ok:true,resolvedState:'pending',job:reopened.job,summary:`已核实 @${job.handle} 尚未关注，已恢复待关注`};
+    });
+  }
+  async function reconcileFan(binding, {handle} = {}) {
+    const key = canonical(handle);
+    if (!key || !/^[a-z0-9_]{1,15}$/.test(key)) throw new Error('无效粉丝账号');
+    if (binding.sources?.fans !== true) throw new Error('粉丝来源未启用');
+    if (!records) throw new Error('粉丝档案不可用');
+    const queueRows = await records.lookupAll({sourceKey:'monitor', bucket:'queue', handle:key});
+    if (!queueRows.length) throw new Error('粉丝待回关档案不存在');
+    return withVerifiedXTab(binding, async tab => {
+      const target = typeof fetchUser === 'function'
+        ? await fetchUser(tab.id, key)
+        : await (async () => {
+            const lookup = await networkGetUserProfile(tab.id, key);
+            return lookup.status === 200
+              ? parseNetworkUsers(lookup.json).find(user => canonical(user.handle) === key) : null;
+          })();
+      if (!target?.id || target.relationshipKnown !== true
+        || typeof target.relationship.followedBy !== 'boolean'
+        || typeof target.relationship.following !== 'boolean') {
+        throw new Error(`无法核实 @${key} 的完整关注关系`);
+      }
+      if (queueRows.some(row => row.payload?.id && String(row.payload.id) !== target.id)) {
+        await records.batch({sourceKey:'monitor',changes:queueRows.map(row=>({handle:key,sourceBucket:'queue',patch:{
+          status:'identity_mismatch',state:'identity_mismatch',relationshipKnown:false,
+          relationshipVerifiedAt:new Date().toISOString()
+        }}))});
+        return {ok:true,handle:key,jobState:'identity-mismatch'};
+      }
+      const job = await priorByHandle(binding.accountId, key);
+      if (job?.targetUserId && job.targetUserId !== target.id) throw new Error(`@${key} 的队列用户 ID 不一致`);
+      const following = target.relationship.following;
+      const followedBy = target.relationship.followedBy;
+      const stamp = Date.now();
+      let result = 'unchanged';
+      if (following && job && job.state !== 'followed') {
+        const resolved = await store.resolveJob({accountId:binding.accountId,id:job.id,state:'followed',stage:'followed',
+          followResult:{...(job.followResult || {}),succeeded:true,following:true,alreadyFollowing:true,targetUserId:target.id,verifiedAt:stamp,reason:'X 关系核实已关注'}});
+        if (!resolved?.ok) throw new Error(`更新 @${key} 队列状态失败`);
+        result = 'already-following';
+      } else if (followedBy && !following && job?.state === 'skipped'
+        && /^关注\/粉丝比例低于 \d+%$/.test(String(job.followResult?.reason || ''))) {
+        const resolved = await store.resolveJob({accountId:binding.accountId,id:job.id,state:'pending',stage:'queued',nextEligibleAt:stamp,
+          followResult:{targetUserId:target.id,verifiedAt:stamp,reason:'X 关系核实待回关，恢复比例门槛跳过任务'}});
+        if (!resolved?.ok) throw new Error(`恢复 @${key} 待回关任务失败`);
+        result = 'reopened';
+      }
+      const changes = queueRows.map(row => ({handle:key,sourceBucket:'queue',patch:{
+        relationship:{...(row.payload?.relationship || {}),following,followedBy},relationshipKnown:true,
+        status:following ? 'followed' : followedBy ? 'pending' : 'no_longer_following',
+        state:following ? 'following' : followedBy ? 'follow_back' : 'no_longer_following',
+        relationshipVerifiedAt:new Date(stamp).toISOString()
+      }}));
+      await records.batch({sourceKey:'monitor',changes});
+      if (following && job) await reflectFollowed(binding.accountId,[{...job,followResult:{...(job.followResult || {}),at:stamp},updatedAt:stamp}]);
+      return {ok:true,handle:key,relationship:{followedBy,following},jobState:result};
     });
   }
   async function retryEvaluation(binding, {jobId, taskId, publish = false} = {}) {
@@ -919,6 +980,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       case 'followQueuePause': await scheduler.pause(binding.accountId); await schedule(); return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueRun': return run(true);
       case 'followQueueVerify': return verifyUncertain(binding, message);
+      case 'followQueueReconcileFan': return reconcileFan(binding, message);
       case 'followQueueRetryEvaluation': return retryEvaluation(binding, message);
       case 'followQueueBackfillProfiles': return {ok: true, ...(await backfillProfiles(message))};
       case 'followQueueEnqueue': {
