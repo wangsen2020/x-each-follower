@@ -27,7 +27,7 @@
           </span>
         </div>
         <p class="lb-subtitle">
-          按昨日粉丝快照净增排序 · 监控优质作者并生成昨日优质帖子日报
+          按昨日净增排名 · 定时采集与日报分析
         </p>
       </div>
 
@@ -107,66 +107,77 @@
           <tr>
             <th class="th-rank">排名</th>
             <th class="th-account">作者</th>
-            <th class="th-metric th-sortable" @click="changeSort('followers')">
+            <th class="th-metric th-sortable th-followers" @click="changeSort('followers')">
               <button
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'followers' }"
                 :aria-label="`粉丝总数，点击${sortKey === 'followers' && sortDir === 'desc' ? '升序' : '降序'}`"
               >
-                <span>粉丝总数</span>
+                <span>粉丝</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'followers' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'followers' && sortDir === 'desc'}" />
                 </svg>
               </button>
             </th>
-            <th class="th-metric th-sortable" @click="changeSort('netFollowers')">
+            <th class="th-metric th-sortable th-delta" @click="changeSort('netFollowers')">
               <button
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'netFollowers' }"
                 :aria-label="`昨日净增，点击${sortKey === 'netFollowers' && sortDir === 'desc' ? '升序' : '降序'}`"
               >
-                <span>昨日净增</span>
+                <span>净增</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'netFollowers' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'netFollowers' && sortDir === 'desc'}" />
                 </svg>
               </button>
             </th>
-            <th class="th-metric th-sortable" @click="changeSort('posts')">
+            <th class="th-metric th-sortable th-posts" @click="changeSort('posts')">
               <button
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'posts' }"
                 :aria-label="`昨日发帖，点击${sortKey === 'posts' && sortDir === 'desc' ? '升序' : '降序'}`"
               >
-                <span>昨日发帖</span>
+                <span>发帖</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'posts' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'posts' && sortDir === 'desc'}" />
                 </svg>
               </button>
             </th>
-            <th class="th-metric th-sortable" @click="changeSort('replies')">
+            <th class="th-metric th-sortable th-replies" @click="changeSort('replies')">
               <button
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'replies' }"
                 :aria-label="`昨日评论，点击${sortKey === 'replies' && sortDir === 'desc' ? '升序' : '降序'}`"
               >
-                <span>昨日评论</span>
+                <span>评论</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'replies' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'replies' && sortDir === 'desc'}" />
                 </svg>
               </button>
             </th>
-            <th class="th-metric" title="昨日采集帖子的公开累计浏览量样本合计，非昨日新增曝光">公开浏览样本</th>
-            <th class="th-top-post">7 天最高单帖</th>
-            <th class="th-freshness">新鲜度与状态</th>
-            <th class="th-actions">操作</th>
+            <th class="th-metric th-views" title="昨日采集帖子的公开累计浏览量样本合计，非昨日新增曝光">
+              <span>浏览</span>
+            </th>
+            <th class="th-metric th-top-post" title="7 天最高单帖公开浏览量">
+              <span>最高帖</span>
+            </th>
+            <th class="th-freshness" title="数据快照采集时间">
+              <span>采集</span>
+            </th>
+            <th class="th-status" title="数据同步与覆盖状态">
+              <span>状态</span>
+            </th>
+            <th class="th-actions">
+              <span>操作</span>
+            </th>
           </tr>
         </thead>
         <tbody v-if="sortedMembers.length > 0">
@@ -194,27 +205,22 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     class="lb-name-link"
-                    :title="`在 X 打开 @${member.handle}`"
+                    :title="`${member.name || member.handle} (@${member.handle})`"
                   >
                     <span class="lb-name">{{ member.name || member.handle }}</span>
                   </a>
-                  <span class="lb-handle">@{{ member.handle }}</span>
+                  <span class="lb-handle" :title="`@${member.handle}`">@{{ member.handle }}</span>
                 </div>
               </div>
             </td>
-            <!-- Followers Count & Freshness -->
-            <td class="td-metric">
+            <!-- Followers Count -->
+            <td class="td-metric td-followers">
               <div class="lb-metric-cell">
                 <span class="lb-metric-val">{{ formatNumber(member.followers ?? member.followersCount) }}</span>
-                <span
-                  v-if="member.followersState === 'stale' || member.followersFreshness === 'stale'"
-                  class="lb-badge lb-badge-warning"
-                  title="快照已过期，等待下轮采集"
-                >过期</span>
               </div>
             </td>
             <!-- Yesterday Net Growth (Snapshot difference) -->
-            <td class="td-metric">
+            <td class="td-metric td-delta">
               <div class="lb-metric-cell">
                 <template v-if="hasValidDelta(member)">
                   <span
@@ -223,7 +229,6 @@
                   >
                     {{ getDelta(member) >= 0 ? `+${formatNumber(getDelta(member))}` : formatNumber(getDelta(member)) }}
                   </span>
-                  <small class="lb-delta-tip">快照净增</small>
                 </template>
                 <template v-else-if="member.deltaStatus === 'interval_invalid'">
                   <span class="lb-badge lb-badge-warning" title="两次快照间隔异常（需在18-30小时之间）">间隔异常</span>
@@ -234,14 +239,13 @@
               </div>
             </td>
             <!-- Yesterday Posts -->
-            <td class="td-metric">
+            <td class="td-metric td-posts">
               <div class="lb-metric-cell">
                 <template v-if="member.postCount !== null && member.postCount !== undefined">
                   <span class="lb-metric-val">{{ formatNumber(member.postCount) }}</span>
                 </template>
                 <template v-else-if="member.observedPostCount > 0">
-                  <span class="lb-metric-val">{{ formatNumber(member.observedPostCount) }}</span>
-                  <span class="lb-badge lb-badge-warning" title="抓取未覆盖全天，仅代表已知至少发帖">至少</span>
+                  <span class="lb-metric-val" title="抓取未覆盖全天，仅代表已知至少发帖">≥{{ formatNumber(member.observedPostCount) }}</span>
                 </template>
                 <template v-else>
                   <span class="lb-dash">—</span>
@@ -249,14 +253,13 @@
               </div>
             </td>
             <!-- Yesterday Comments/Replies -->
-            <td class="td-metric">
+            <td class="td-metric td-replies">
               <div class="lb-metric-cell">
                 <template v-if="member.replyCount !== null && member.replyCount !== undefined">
                   <span class="lb-metric-val">{{ formatNumber(member.replyCount) }}</span>
                 </template>
                 <template v-else-if="member.observedReplyCount > 0">
-                  <span class="lb-metric-val">{{ formatNumber(member.observedReplyCount) }}</span>
-                  <span class="lb-badge lb-badge-warning" title="抓取未覆盖全天，仅代表已知至少评论">至少</span>
+                  <span class="lb-metric-val" title="抓取未覆盖全天，仅代表已知至少评论">≥{{ formatNumber(member.observedReplyCount) }}</span>
                 </template>
                 <template v-else>
                   <span class="lb-dash">—</span>
@@ -264,31 +267,58 @@
               </div>
             </td>
             <!-- Yesterday Public Views -->
-            <td class="td-metric">
+            <td class="td-metric td-views">
               <div class="lb-metric-cell">
                 <template v-if="member.viewsTotal !== null && member.viewsTotal !== undefined">
                   <span class="lb-metric-val">{{ formatNumber(member.viewsTotal) }}</span>
                 </template>
                 <template v-else>
-                  <span class="lb-badge lb-badge-muted" title="第三方公开浏览量字段不可用或私有">不可用</span>
+                  <span class="lb-dash" title="第三方公开浏览量字段不可用或私有">—</span>
                 </template>
               </div>
             </td>
-            <td class="td-top-post"><span v-if="getTopPost(member)">{{ formatNumber(getTopPost(member).metrics?.views) }} 浏览</span><span v-else class="lb-dash">—</span></td>
-            <!-- Freshness & Partial State -->
+            <!-- 7d Top Post -->
+            <td class="td-metric td-top-post">
+              <div class="lb-metric-cell">
+                <a
+                  v-if="getTopPost(member)"
+                  :href="getTopPostUrl(member)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="lb-top-metric-link"
+                  :title="`在 X 打开原帖（${formatNumber(getTopPost(member).metrics?.views)} 浏览）`"
+                >
+                  <span class="lb-metric-val">{{ formatNumber(getTopPost(member).metrics?.views) }}</span>
+                </a>
+                <span v-else class="lb-dash">—</span>
+              </div>
+            </td>
+            <!-- Freshness -->
             <td class="td-freshness">
               <div class="lb-freshness-cell">
-                <span class="lb-time">{{ formatTimeAgo(member.lastCapturedAt || member.updatedAt) }}</span>
+                <span class="lb-time" :title="formatDate(member.lastCapturedAt || member.updatedAt)">
+                  {{ formatTimeAgo(member.lastCapturedAt || member.updatedAt) }}
+                </span>
+              </div>
+            </td>
+            <!-- Status -->
+            <td class="td-status">
+              <div class="lb-status-cell">
                 <span
-                  v-if="member.postCoverage === 'partial'"
-                  class="lb-badge lb-badge-warning"
-                  title="部分覆盖：部分帖子或回复未完全分页"
-                >部分覆盖</span>
-                <span
-                  v-else-if="member.lastError"
+                  v-if="member.lastError"
                   class="lb-badge lb-badge-danger"
                   :title="member.lastError"
                 >异常</span>
+                <span
+                  v-else-if="member.followersState === 'stale' || member.followersFreshness === 'stale'"
+                  class="lb-badge lb-badge-warning"
+                  title="快照已过期，等待下轮采集"
+                >过期</span>
+                <span
+                  v-else-if="member.postCoverage === 'partial'"
+                  class="lb-badge lb-badge-warning"
+                  title="部分覆盖：部分帖子或回复未完全分页"
+                >部分</span>
                 <span
                   v-else-if="member.postCoverage === 'complete'"
                   class="lb-badge lb-badge-success"
@@ -298,10 +328,20 @@
                   v-else
                   class="lb-badge lb-badge-muted"
                   title="快照已记录，等待全量同步"
-                >已就绪</span>
+                >就绪</span>
               </div>
             </td>
-            <td class="td-actions"><button type="button" class="secondary lb-detail-btn" :aria-label="'查看 @'+member.handle+' 详情'" @click="openMemberDetails(member)">详情</button></td>
+            <!-- Actions -->
+            <td class="td-actions">
+              <div class="lb-actions-cell">
+                <button
+                  type="button"
+                  class="secondary lb-detail-btn"
+                  :aria-label="'查看 @' + member.handle + ' 详情'"
+                  @click="openMemberDetails(member)"
+                >详情</button>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -325,14 +365,17 @@
       <div v-if="selectedMember" class="lb-member-detail">
         <h3>{{ selectedMember.name || selectedMember.handle }} <small>@{{ selectedMember.handle }}</small></h3>
         <dl>
-          <dt>粉丝总数</dt><dd>{{ formatNumber(selectedMember.followers) }}</dd>
-          <dt>昨日快照净增</dt><dd>{{ hasValidDelta(selectedMember) ? formatNumber(getDelta(selectedMember)) : '基线不足或间隔异常' }}</dd>
+          <dt>粉丝总数</dt><dd>{{ formatNumber(selectedMember.followers ?? selectedMember.followersCount) }}</dd>
+          <dt>昨日快照净增</dt><dd>{{ hasValidDelta(selectedMember) ? (getDelta(selectedMember) >= 0 ? `+${formatNumber(getDelta(selectedMember))}` : formatNumber(getDelta(selectedMember))) : (selectedMember.deltaStatus === 'interval_invalid' ? '两次快照间隔异常' : '基线不足') }}</dd>
           <dt>昨日基线</dt><dd>{{ formatDate(selectedMember.deltaEvidence?.before?.at) }}</dd>
           <dt>今日基线</dt><dd>{{ formatDate(selectedMember.deltaEvidence?.after?.at) }}</dd>
-          <dt>昨日发帖 / 评论</dt><dd>{{ selectedMember.postCount == null ? '至少 ' : '' }}{{ formatNumber(selectedMember.postCount ?? selectedMember.observedPostCount) }} / {{ selectedMember.replyCount == null ? '至少 ' : '' }}{{ formatNumber(selectedMember.replyCount ?? selectedMember.observedReplyCount) }}</dd>
+          <dt>昨日发帖</dt><dd>{{ selectedMember.postCount == null ? (selectedMember.observedPostCount > 0 ? '至少 ' : '') : '' }}{{ formatNumber(selectedMember.postCount ?? selectedMember.observedPostCount) }}</dd>
+          <dt>昨日评论</dt><dd>{{ selectedMember.replyCount == null ? (selectedMember.observedReplyCount > 0 ? '至少 ' : '') : '' }}{{ formatNumber(selectedMember.replyCount ?? selectedMember.observedReplyCount) }}</dd>
           <dt>公开浏览样本</dt><dd>{{ formatNumber(selectedMember.viewsTotal) }}（采样时累计值）</dd>
-          <dt>最后采集</dt><dd>{{ formatDate(selectedMember.lastCapturedAt) }}</dd>
-          <dt>帖子覆盖</dt><dd>{{ selectedMember.postCoverage === 'complete' ? '完整' : '尚未覆盖完整窗口' }}</dd>
+          <dt>最后采集</dt><dd>{{ formatDate(selectedMember.lastCapturedAt || selectedMember.updatedAt) }}</dd>
+          <dt>同步与覆盖</dt><dd>{{ selectedMember.postCoverage === 'complete' ? '完整同步' : (selectedMember.postCoverage === 'partial' ? '部分覆盖' : '快照已记录') }}</dd>
+          <dt v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">快照状态</dt>
+          <dd v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">快照已过期，等待下轮采集</dd>
         </dl>
         <p v-if="selectedMember.lastError" class="lb-alert lb-alert-error">{{ selectedMember.lastError }}</p>
         <h4>7 天最高单帖样本</h4>
@@ -1166,7 +1209,8 @@ onMounted(() => {
 .lb-table-wrap {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #fff;
   border: 1px solid var(--lb-border);
   border-radius: 8px;
@@ -1190,7 +1234,7 @@ onMounted(() => {
   max-height: var(--lb-control-height);
   line-height: var(--lb-control-height);
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 0 8px;
   border-bottom: 0;
   box-shadow: inset 0 -1px 0 #e7eee8;
   background: #f0f5ef;
@@ -1199,26 +1243,31 @@ onMounted(() => {
   font-weight: 600;
   vertical-align: middle;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lb-table td {
-  padding: 0 10px;
+  padding: 0 8px;
   height: 38px;
   min-height: 38px;
   box-sizing: border-box;
   border-bottom: 1px solid #e7eee8;
   vertical-align: middle;
+  overflow: hidden;
 }
 
 .lb-table tbody tr:hover {
   background: #f8fbf8;
 }
 
-/* Column Alignments & Widths */
+/* Column Alignments & Stable Widths */
 .th-rank, .td-rank {
   width: 44px;
+  min-width: 44px;
+  max-width: 44px;
   text-align: center;
-  vertical-align: middle;
+  padding: 0 4px;
 }
 
 .lb-rank-num {
@@ -1226,7 +1275,6 @@ onMounted(() => {
   color: #63766a;
   line-height: var(--lb-control-height);
   display: inline-block;
-  vertical-align: middle;
 }
 
 .lb-rank-num.rank-1 { color: #d49514; font-size: 13px; }
@@ -1234,32 +1282,34 @@ onMounted(() => {
 .lb-rank-num.rank-3 { color: #cd7f32; font-size: 13px; }
 
 .th-account, .td-account {
-  width: 200px;
+  width: 24%;
+  min-width: 130px;
   text-align: left;
-  vertical-align: middle;
+  padding: 0 10px;
 }
 
 .lb-account-cell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
   height: 100%;
-  vertical-align: middle;
 }
 
-.lb-avatar {
+.lb-avatar, .lb-avatar-placeholder {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  object-fit: cover;
   flex-shrink: 0;
   display: block;
 }
 
+.lb-avatar {
+  object-fit: cover;
+}
+
 .lb-avatar-placeholder {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
   background: #e2e8e3;
   color: #4e6558;
   display: inline-flex;
@@ -1267,7 +1317,6 @@ onMounted(() => {
   justify-content: center;
   font-weight: 700;
   font-size: 11px;
-  flex-shrink: 0;
 }
 
 .lb-account-info {
@@ -1275,10 +1324,13 @@ onMounted(() => {
   flex-direction: column;
   justify-content: center;
   min-width: 0;
+  flex: 1;
+  overflow: hidden;
   line-height: 1.25;
 }
 
 .lb-name-link {
+  display: block;
   text-decoration: none;
   color: #18302e;
   font-weight: 600;
@@ -1292,12 +1344,23 @@ onMounted(() => {
   color: #245b45;
 }
 
-.lb-handle {
-  font-size: 11px;
-  color: #63766a;
+.lb-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Sortable Headers (垂直居中, 高度统一 30px) */
+.lb-handle {
+  display: block;
+  font-size: 11px;
+  color: #63766a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sortable Headers */
 .th-sortable {
   cursor: pointer;
   user-select: none;
@@ -1348,21 +1411,23 @@ onMounted(() => {
   opacity: 1;
 }
 
-/* Metric columns (数值列右对齐) */
+/* Metric columns (one metric per column, right aligned, stable widths) */
 .th-metric, .td-metric {
+  width: auto;
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   vertical-align: middle;
+  padding: 0 8px;
 }
 
 .lb-metric-cell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  width: 100%;
   height: 100%;
-  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .lb-metric-val {
@@ -1370,12 +1435,16 @@ onMounted(() => {
   font-weight: 500;
   color: #18302e;
   line-height: var(--lb-control-height);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lb-delta-val {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   line-height: var(--lb-control-height);
+  white-space: nowrap;
 }
 
 .lb-delta-val.is-positive {
@@ -1386,81 +1455,97 @@ onMounted(() => {
   color: #a52e3c;
 }
 
-.lb-delta-tip {
-  font-size: 10px;
-  color: #63766a;
+.lb-top-metric-link {
+  text-decoration: none;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.lb-top-metric-link:hover .lb-metric-val {
+  color: #245b45;
+  text-decoration: underline;
 }
 
 .lb-dash {
   color: #99a89e;
   line-height: var(--lb-control-height);
-}
-
-.th-top-post, .td-top-post {
-  max-width: 180px;
-  vertical-align: middle;
-}
-
-.lb-top-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  text-decoration: none;
-  font-size: 11px;
-  color: #245b45;
-  line-height: var(--lb-control-height);
-  vertical-align: middle;
-}
-
-.lb-top-link:hover .lb-top-text {
-  text-decoration: underline;
-}
-
-.lb-top-views {
-  font-weight: 600;
-  font-size: 10px;
-  color: #63766a;
-  flex-shrink: 0;
-}
-
-.lb-top-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  color: #18302e;
 }
 
+/* Freshness Column */
 .th-freshness, .td-freshness {
-  width: 140px;
+  width: 68px;
+  min-width: 68px;
+  max-width: 76px;
+  text-align: right;
+  padding: 0 8px;
   vertical-align: middle;
 }
 
 .lb-freshness-cell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  width: 100%;
   height: 100%;
-  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .lb-time {
   font-size: 11px;
   color: #63766a;
+  white-space: nowrap;
 }
 
-.th-actions, .td-actions {
-  width: 110px;
-  text-align: right;
+/* Status Column */
+.th-status, .td-status {
+  width: 60px;
+  min-width: 60px;
+  max-width: 66px;
+  text-align: center;
+  padding: 0 6px;
   vertical-align: middle;
 }
 
-.lb-row-actions {
-  display: inline-flex;
+.lb-status-cell {
+  display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
+  justify-content: center;
+  width: 100%;
   height: 100%;
+  white-space: nowrap;
+}
+
+/* Actions Column */
+.th-actions, .td-actions {
+  width: 56px;
+  min-width: 56px;
+  max-width: 60px;
+  text-align: center;
+  padding: 0 6px;
   vertical-align: middle;
+}
+
+.lb-actions-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  white-space: nowrap;
+}
+
+.lb-detail-btn {
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  line-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Badges */
@@ -1475,6 +1560,7 @@ onMounted(() => {
   font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
+  flex-shrink: 0;
   vertical-align: middle;
   box-sizing: border-box;
 }
@@ -1770,43 +1856,98 @@ onMounted(() => {
   border-radius: 4px;
 }
 
-@media (max-width: 768px) {
-  .leaderboard-panel { padding: 10px; }
-  .lb-table { min-width: 0; }
-  .th-metric:nth-child(n+5), .td-metric:nth-child(n+5), .th-top-post, .td-top-post { display: none; }
+/* Details Drawer */
+.lb-member-detail {
+  overflow-wrap: anywhere;
 }
 
-/* Bound every column; long content belongs in the details drawer. */
-.lb-table th, .lb-table td { overflow: hidden; text-overflow: ellipsis; }
-.lb-table .th-rank { width: 44px; }
-.lb-table .th-account { width: 17%; }
-.lb-table .th-metric { width: auto; }
-.lb-table .th-top-post { width: 100px; }
-.lb-table .th-freshness { width: 110px; }
-.lb-table .th-actions { width: 66px; }
-.lb-account-cell { display: flex; width: 100%; gap: 0; }
-.lb-avatar, .lb-avatar-placeholder { margin-right: 8px; }
-.lb-handle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lb-freshness-cell { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 0; }
-.lb-detail-btn { padding: 0 8px; }
-.lb-member-detail { overflow-wrap: anywhere; }
-.lb-member-detail h3 small { display: block; margin-top: 6px; font-weight: normal; }
-.lb-member-detail dl { display: grid; grid-template-columns: 110px minmax(0,1fr); }
-.lb-member-detail dt, .lb-member-detail dd { margin: 0; padding: 8px 0; }
-.lb-detail-post { white-space: pre-wrap; line-height: 1.7; }
-.lb-detail-actions { display: flex; margin-top: 16px; }
-.lb-detail-actions > :not(:last-child) { margin-right: 10px; }
-@media (max-width: 1100px) {
-  .lb-table th:nth-child(7), .lb-table td:nth-child(7), .th-top-post, .td-top-post { display: none; }
+.lb-member-detail h3 small {
+  display: block;
+  margin-top: 6px;
+  font-weight: normal;
 }
-@media (max-width: 768px) {
-  .lb-table .th-account { width: auto; }
-  .lb-table .th-metric { width: 80px; }
-  .th-freshness, .td-freshness { display: none; }
+
+.lb-member-detail dl {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 10px 0;
 }
+
+.lb-member-detail dt, .lb-member-detail dd {
+  margin: 0;
+  padding: 6px 0;
+}
+
+.lb-member-detail dt {
+  color: #63766a;
+  font-weight: 500;
+}
+
+.lb-member-detail dd {
+  color: #18302e;
+}
+
+.lb-detail-post {
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.lb-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Responsive column visibility without horizontal overflow */
+@media (max-width: 1060px) {
+  .th-top-post, .td-top-post,
+  .th-views, .td-views {
+    display: none !important;
+  }
+}
+
+@media (max-width: 880px) {
+  .th-top-post, .td-top-post,
+  .th-views, .td-views,
+  .th-replies, .td-replies {
+    display: none !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .th-top-post, .td-top-post,
+  .th-views, .td-views,
+  .th-replies, .td-replies,
+  .th-posts, .td-posts,
+  .th-freshness, .td-freshness {
+    display: none !important;
+  }
+}
+
 @media (max-width: 480px) {
-  .lb-table th:nth-child(3), .lb-table td:nth-child(3) { display: none; }
-  .lb-table .th-rank { width: 36px; }
-  .lb-table th, .lb-table td { padding: 0 5px; }
+  .th-top-post, .td-top-post,
+  .th-views, .td-views,
+  .th-replies, .td-replies,
+  .th-posts, .td-posts,
+  .th-freshness, .td-freshness,
+  .th-followers, .td-followers,
+  .th-status, .td-status {
+    display: none !important;
+  }
+
+  .th-rank, .td-rank {
+    width: 36px;
+    min-width: 36px;
+  }
+
+  .th-account, .td-account {
+    width: auto;
+  }
+
+  .lb-table th, .lb-table td {
+    padding: 0 4px;
+  }
 }
 </style>
