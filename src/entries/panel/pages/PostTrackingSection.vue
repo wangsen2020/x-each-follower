@@ -40,7 +40,11 @@
           <td><a :href="post.url" target="_blank" rel="noopener noreferrer" class="post-excerpt">{{ post.text }}</a><small>{{ date(post.createdAt) }} · {{ post.type==='reply'?'回复':'帖子' }} · 数据更新 {{ date(post.capturedAt) }}</small></td>
           <td>{{ metric(post,'impressions') }}</td><td>{{ metric(post,'likes') }}</td><td>{{ metric(post,'replies') }}</td><td>{{ metric(post,'reposts') }}</td>
           <td><span v-if="post.source" class="post-badge">自动引用</span><span v-if="post.monitored" class="post-badge">最近30条</span><span v-if="post.protected" class="post-badge">已保护</span><span v-if="post.retained" class="post-badge">已保留</span><span v-if="post.grokReview?.keep" class="post-badge positive">Grok建议保留</span><span v-if="post.evaluation.stagnant" class="post-badge">曝光停滞</span><span v-if="post.evaluation.performance==='high'" class="post-badge positive">表现突出</span><span v-if="post.evaluation.performance==='low'" class="post-badge">同龄低曝光</span><span v-if="post.deletion" class="post-badge danger">{{ post.deletion.status=== 'failed' ? '未发出删除请求' : '删除待对账' }}</span><small>{{ post.evaluation.reason }}</small></td>
-          <td><div class="post-row-actions"><button class="secondary" :disabled="loading" @click="open(post)">查看详情</button><button v-if="!post.deletion || post.deletion.status=== 'failed'" class="secondary" :disabled="busy || loading || post.protected" @click="prepare(post)">删除…</button><button v-else class="secondary" :disabled="busy || loading" @click="verify(post)">核验删除</button></div></td>
+          <td><div class="post-row-actions">
+            <button class="secondary post-action-icon" title="查看详情" aria-label="查看详情" :disabled="loading" @click="open(post)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            <button v-if="!post.deletion || post.deletion.status=== 'failed'" class="secondary post-action-icon" :title="post.protected?'已保护，无法删除':'删除帖子'" aria-label="删除帖子" :disabled="busy || loading || post.protected" @click="prepare(post)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg></button>
+            <button v-else class="secondary post-action-icon" title="核验删除结果" aria-label="核验删除结果" :disabled="busy || loading" @click="verify(post)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg></button>
+          </div></td>
         </tr>
       </tbody></table>
       <p v-if="loading && !data.rows?.length" class="post-empty" role="status">正在读取帖子…</p>
@@ -277,6 +281,8 @@ onUnmounted(()=>{clearInterval(timer);clearInterval(clockTimer);clearTimeout(not
 .post-row-actions { display: flex; align-items: center; }
 .post-row-actions > :not(:last-child) { margin-right: 10px; }
 .post-row-actions button { white-space: nowrap; }
+.post-row-actions .post-action-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; max-height: 30px; padding: 0; line-height: 30px; box-sizing: border-box; }
+.post-action-icon svg { display: block; flex: 0 0 16px; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .post-badge { display: inline-flex; align-items: center; height: 24px; padding: 0 6px; margin: 0 5px 5px 0; border-radius: 5px; background: #eef4ef; color: #476655; font-size: 12px; white-space: nowrap; }
 .positive { color: #14744c; background: #e7f5eb; }
 .danger { color: #a52e3c; background: #fff0f1; }

@@ -163,7 +163,7 @@ export function addUniqueUsersUpTo(found, users, limit, mapUser = user => user) 
   }
   return found;
 }
-export const GRAPHQL_OP_RE = new RegExp('/graphql/([^/?]+)/(UserByScreenName|Followers|BlueVerifiedFollowers|Following|TweetDetail)(?=[/?#]|$)');
+export const GRAPHQL_OP_RE = new RegExp('/graphql/([^/?]+)/(UserByScreenName|Followers|BlueVerifiedFollowers|Following|TweetDetail|UserOriginalsTimeline|UserRepliesTimeline)(?=[/?#]|$)');
 
 export function isUsableNetworkTemplate(operation, template) {
   if (!template?.queryId) return false;

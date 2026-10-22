@@ -1,3 +1,5 @@
+import {createQueueDiagnostics} from './queue-diagnostics.js';
+import {isPageFailure} from '../../platform/page-failure.js';
 import {appendQuoteTags} from '../grok/quote-tags.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
@@ -79,11 +81,11 @@ export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, o
     if (!tab) return null;
     if (tab.status !== 'complete') continue;
     if (!prepared) {
-      await api.scripting.executeScript({target:{tabId},world:'MAIN',func:setQuoteFrameFallbackOnPage,args:[true]}).catch(() => {});
+      await api.scripting.executeScript({target:{tabId},world:'MAIN',func:setQuoteFrameFallbackOnPage,args:[true]}).catch(error=>{if(isPageFailure(error))throw error;});
       prepared = true;
     }
     const proof = (await api.scripting.executeScript({target:{tabId},func:findPublishedQueueQuoteOnPage,
-      args:[handle,originalId,text,after]}).catch(() => []))?.[0]?.result;
+      args:[handle,originalId,text,after]}).catch(error=>{if(isPageFailure(error))throw error;return [];}))?.[0]?.result;
     if (proof?.id && proof?.url) return proof;
     // X can initially return the pre-publication profile timeline. Refresh only
     // this verification tab, never click Post again to compensate for stale data.
@@ -96,7 +98,7 @@ export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, o
   return null;
 }
 
-export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, wait = sleep, records = null} = {}) {
+export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, fetchProfile=networkGetUserProfile, wait = sleep, records = null} = {}) {
   if (!store) {
     let opened;
     store = new Proxy({}, {get(_target, key) { opened ||= createFollowQueueStore(); return opened[key]?.bind(opened); }});
@@ -104,7 +106,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   const writeLocal = payload => api.storage.local.set(payload);
   let syncing = Promise.resolve();
   const readBinding = async () => (await api.storage.local.get(BINDING_KEY))[BINDING_KEY];
-  const script = async (tabId, func, args = []) => (await api.scripting.executeScript({target:{tabId}, func, args}))?.[0]?.result;
+  const diagnostics=createQueueDiagnostics({api});
+  const failureNotice=f=>`异常账号 ${f.diagnostic.handle?'@'+f.diagnostic.handle:'批次级'}，阶段：${f.diagnostic.stageLabel}。详情见执行日志，诊断 ${f.diagnostic.id.slice(0,8)}。`;
+  const script = async (tabId, func, args = []) => {try{return (await api.scripting.executeScript({target:{tabId},func,args}))?.[0]?.result;}catch(error){error.pageContext={...error.pageContext,tabId,operation:func.name,callerStack:new Error('队列页面读取调用位置').stack};throw error;}};
   const safeLog = async entry => {
     if (typeof api?.storage?.local?.get === 'function' && typeof api?.storage?.local?.set === 'function') {
       await (async () => {
@@ -169,10 +173,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     const monitor = records ? await records.metadata('monitor') : ((await api.storage.local.get('monitor')).monitor || {});
     if (Date.parse(monitor.pausedUntil || '') > Date.now()) return false;
     const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+    let pageError;
     for (const tab of tabs) {
-      const handle = await viewer(tab.id).catch(() => '');
+      const handle = await viewer(tab.id).catch(error=>{if(isPageFailure(error))pageError={error,tab};return '';});
       if (handle) return handle === canonical(binding.handle);
     }
+    if(pageError){const failure=await diagnostics.record(pageError.error,{stage:'check-account',accountId,handle:binding.handle,tabId:pageError.tab.id,requestedUrl:pageError.tab.url});if(runFailures)runFailures.push(failure);}
     return false;
   }
   async function readJob(accountId, jobId) {
@@ -383,6 +389,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   const executionAudits = new Map();
   async function execute(job, settings, control) {
     const audit = {startedAt:new Date().toISOString(), posts:[], scanned:false, scrollRounds:0, plannedScrollRounds:settings.scrollRounds, grokEnabled:settings.grokEnabled, autoPublish:settings.autoPublish};
+    audit.recentStages=[];
+    const stage=name=>{audit.stage=name;audit.recentStages.push({stage:name,at:new Date().toISOString()});audit.recentStages=audit.recentStages.slice(-12);};
+    stage('open-profile');
     executionAudits.set(job.id,audit);
     let tab;
     let followResult = job.followResult || {};
@@ -396,13 +405,13 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     try {
       tab = await api.tabs.create({url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false});
       const end = Math.min(control.deadline, Date.now() + 30000);
-      let profile;
+      let profile,lastReadError;
       while (Date.now() < end && !control.signal.aborted) {
-        profile = await script(tab.id, readProfileBundle, [job.handle,5]).catch(() => null);
+        profile = await script(tab.id, readProfileBundle, [job.handle,5]).catch(error => {if(isPageFailure(error))throw error;lastReadError=error;return null;});
         if (profile && !profile.pending) break;
         await sleep(500);
       }
-      if (!profile || profile.pending) return {state:'retry', reason:'主页资料读取超时'};
+      if (!profile || profile.pending) throw lastReadError||new Error('主页资料读取超时');
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],scanned:true});
       const storedProfile = {
         name: profile.name || '',
@@ -416,7 +425,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await control.checkpoint({profile: storedProfile});
       await guard();
       // Resolve authoritative User Rest ID from a user operation, never a tweet's ID.
-      const lookup = await networkGetUserProfile(tab.id, job.handle);
+      stage('resolve-user');
+      const lookup = await fetchProfile(tab.id, job.handle);
       await guard();
       const target = lookup.status === 200 && parseNetworkUsers(lookup.json).find(u => canonical(u.handle) === canonical(job.handle));
       if (!target?.id) return {state:'retry',reason:'无法解析目标用户 ID'};
@@ -443,6 +453,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (target.relationship?.following || profile.relationship?.following || followResult.succeeded) {
         return {state:'followed',followResult:{...followResult,succeeded:true,alreadyFollowing:true,targetUserId:target.id,at:Date.now()},evaluations};
       }
+      stage('read-posts');
       const dwell = randomizedSeconds(settings.dwellSeconds, settings.dwellJitter, 2, 60);
       for (let round=0; round<settings.scrollRounds; round++) {
         await guard();
@@ -453,6 +464,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const fresh = await script(tab.id,readProfileBundle,[job.handle,10]);
       if (fresh && !fresh.pending) profile = {...profile,...fresh};
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],dwellSeconds:dwell});
+      stage('save-profile');
       await saveProfile(job.handle, profile);
       const confirmedFollowBack = job.sources?.some(source => source.module === 'fans' && source.enabled === true)
         && target.relationship?.followedBy === true && target.relationship?.following === false;
@@ -478,6 +490,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       await guard();
       await control.checkpoint({stage:'following',followResult:{attemptedAt:Date.now(),targetUserId:target.id}});
+      stage('following');
       attemptedFollow = true;
       const result = await networkFollow(tab.id,{id:target.id,handle:job.handle});
       if (!(result.status >= 200 && result.status < 300)) {
@@ -504,6 +517,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!eligiblePosts.length) return {state:'followed',followResult,evaluations,reason:'最近 5 条帖子均已有引用评价记录'};
       await guard();
       await control.checkpoint({stage:'evaluating',followResult,evaluations});
+      stage('evaluating');
       const generated = await requestGrokComment(job.handle,eligiblePosts,profile.name,{sleep,profile,writerAccountId:job.accountId});
       if (!generated.ok) {
         await control.checkpoint({stage:'evaluated',followResult,evaluations});
@@ -528,21 +542,26 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       evaluation.status = 'publishing';
       const submittedAt = Date.now();
       await control.checkpoint({stage:'publishing',followResult,evaluations});
+      stage('publishing');
       const published = await postQuoteOnTab(tab.id,post,evaluation.text,publishQuotePostOnPage,sleep,{beforePublish:guard});
       evaluation.status = quotePublicationState(published);
       evaluation.reason = published.reason || '等待主页确认引用发布';
       if (published.ok) {
         const binding = await readBinding();
+        stage('verify-publication');
         const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
           originalId:originalPostId,text:evaluation.text,after:submittedAt,canContinue:()=>!control.signal.aborted});
         if (proof) Object.assign(evaluation,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
       }
       return {state:'followed',followResult,evaluations};
     } catch (error) {
-      return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,reason:String(error?.message || error)};
+      const failure=await diagnostics.record(error,{stage:audit.stage,manual:control.manual,accountId:job.accountId,targetUserId:job.targetUserId,retryCount:job.followResult?.retryCount,settings,jobId:job.id,runId:control.runId,handle:job.handle,requestedUrl:`https://x.com/${encodeURIComponent(job.handle)}`,tabId:tab?.id,recentStages:audit.recentStages,followAttempted:attemptedFollow,followSucceeded:followResult.succeeded});
+      if(runFailures)runFailures.push(failure);
+      audit.diagnostic=failure.diagnostic;
+      return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,diagnostic:failure.diagnostic,reason:failure.message};
     } finally { audit.finishedAt = new Date().toISOString(); audit.evaluations = structuredClone(evaluations); if (tab) await api.tabs.remove(tab.id).catch(() => {}); }
   }
-  let reflectJobs = null;
+  let reflectJobs = null,runFailures=null,runPromise=null;
   const scheduler = createFollowQueueScheduler({store,execute,canRun,onEvent:async event => {
     const job = event.jobId ? await readJob(event.accountId, event.jobId) || {} : {};
     if (reflectJobs && (event.type === 'job-complete' || event.state === 'followed') && (event.state === 'followed' || event.followResult?.succeeded)) {
@@ -907,22 +926,33 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     await api.alarms.clear(QUEUE_ALARM);
     if (settings.enabled) await api.alarms.create(QUEUE_ALARM,{delayInMinutes:randomizedInteger(settings.every,settings.jitter,1,240)});
   }
-  async function run(manual = false) {
+  async function run(manual=false){
+    if(runPromise)return {ok:false,notify:false,summary:'队列正在执行，已跳过重复触发。'};
+    runPromise=runCycle(manual);try{return await runPromise;}finally{runPromise=null;}
+  }
+  async function runCycle(manual = false) {
     const binding = await readBinding();
     if (!binding?.activated) throw new Error('请先确认统一队列的数据归属和来源');
     // Create only one temporary tab if a scheduled task has no X tab available.
-    let bootstrap;
+    let bootstrap,runStage='bootstrap';
     try {
       if (!(await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']})).length) {
         bootstrap = await api.tabs.create({url:'https://x.com/home',active:false});
-        for(let i=0;i<30;i++) { if(await viewer(bootstrap.id).catch(()=>'')) break; await sleep(500); }
+        for(let i=0;i<30;i++) { if(await viewer(bootstrap.id).catch(error=>{if(isPageFailure(error))throw error;return '';})) break; await sleep(500); }
       }
-      reflectJobs = [];
-      await syncCandidates();
+      reflectJobs = [];runFailures=[];
+      runStage='sync-candidates';
+      try{await syncCandidates();}catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:binding.handle,requestedUrl:`https://x.com/${binding.handle}`});runFailures.push(failure);}
+      // A source/backup failure must not prevent already queued jobs from running.
+      // The scheduler still validates the live account before every job.
+      runStage='run-queue';
       const result = await scheduler.run({accountId:binding.accountId,manual});
-      await reflectFollowed(binding.accountId, reflectJobs);
+      runStage='reflect-results';
+      try{await reflectFollowed(binding.accountId, reflectJobs);}catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:reflectJobs?.at(-1)?.handle||'',runId:result.runId});return {...result,summary:result.summary+' 本地同步暂未完成。'+failureNotice(failure),notify:failure.notify};}
+      if(runFailures.length)return {...result,notify:runFailures.some(f=>f.notify),summary:result.summary+' '+failureNotice(runFailures[0])};
       return result;
-    } finally { reflectJobs = null; if(bootstrap) await api.tabs.remove(bootstrap.id).catch(()=>{}); await schedule(); }
+    } catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:binding.handle,runId:scheduler.status().runId,requestedUrl:`https://x.com/${binding.handle}`,tabId:bootstrap?.id});return {ok:false,error:failure.message,summary:failure.message+' '+failureNotice(failure),notify:failure.notify};}
+    finally { reflectJobs = null;runFailures=null; if(bootstrap) await api.tabs.remove(bootstrap.id).catch(()=>{}); await schedule().catch(async error=>{await diagnostics.record(error,{stage:'schedule-next',accountId:binding.accountId,handle:binding.handle});}); }
   }
   async function handle(message) {
     if (message.cmd === 'followQueueIdentityStatus') return {ok:true,stage:identityStage};

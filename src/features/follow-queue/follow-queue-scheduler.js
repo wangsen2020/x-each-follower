@@ -659,6 +659,8 @@ export function createFollowQueueScheduler({
       const execPromise = Promise.resolve().then(() =>
         execute(clone(currentJob), clone(settings), {
           checkpoint,
+          runId:runState.runId,
+          manual,
           canAct,
           deadline: jobDeadline,
           signal: abortController.signal
@@ -824,6 +826,7 @@ export function createFollowQueueScheduler({
 
     const patch = {
       stage: finalStage,
+      ...(outcome?.diagnostic?{lastDiagnostic:clone(outcome.diagnostic)}:{}),
       ...(Number.isFinite(nextEligibleAt) ? {nextEligibleAt} : {}),
       ...(latestFollowResult ? {followResult: latestFollowResult} : {}),
       ...(latestEvaluations.length ? {evaluations: latestEvaluations} : {})

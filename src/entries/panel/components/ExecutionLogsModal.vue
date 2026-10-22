@@ -274,6 +274,15 @@
 
               <!-- Queue Detail Rows -->
               <template v-if="standardLog(rawLog).scope === 'queue'">
+                <section v-if="rawLog.diagnostic" class="log-diagnostics">
+                  <p class="log-detail-text">异常账号：@{{ rawLog.diagnostic.handle || '未记录' }} · 阶段：{{ rawLog.diagnostic.stageLabel }} · 累计 {{ rawLog.diagnostic.repeatCount || 1 }} 次</p>
+                  <p class="log-detail-text">诊断编号：{{ rawLog.diagnostic.id }} · 版本：{{ rawLog.diagnostic.version }}</p>
+                  <p class="log-detail-text">失败网址：{{ rawLog.diagnostic.requestedUrl || rawLog.diagnostic.actualUrl || '未记录' }}</p>
+                  <details>
+                    <summary>完整脱敏排查上下文</summary>
+                    <pre style="white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0;">{{ JSON.stringify(rawLog.diagnostic, null, 2) }}</pre>
+                  </details>
+                </section>
                 <p v-if="standardLog(rawLog).runId || standardLog(rawLog).jobId" class="log-detail-text">
                   执行批次：{{ standardLog(rawLog).runId || '未记录' }} · 任务：{{ standardLog(rawLog).jobId || '批次汇总' }}
                 </p>

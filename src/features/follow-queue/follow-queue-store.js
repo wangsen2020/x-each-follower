@@ -1156,6 +1156,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           return {ok: false, reason: 'imported-hold', job: clone(job)};
         }
         if (typeof changes.stage === 'string') job.stage = changes.stage;
+        if(changes.lastDiagnostic&&typeof changes.lastDiagnostic==='object')job.lastDiagnostic=clone(changes.lastDiagnostic);
         if (Number.isFinite(changes.nextEligibleAt)) job.nextEligibleAt = changes.nextEligibleAt;
         if (changes.followResult && typeof changes.followResult === 'object') {
           job.followResult = clone(changes.followResult);

@@ -1,3 +1,4 @@
+import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
@@ -22,6 +23,8 @@ import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {createStorageWriteAdapter} from '../../platform/storage-write-adapter.js';
 import {createRecordRuntime} from '../../features/records/record-runtime.js';
 import {createPostRuntime, POST_ALARM} from '../../features/post-tracking/post-runtime.js';
+import {createLeaderboardRuntime, LEADERBOARD_ALARM} from '../../features/leaderboard/leaderboard-runtime.js';
+import {createLeaderboardStore} from '../../features/leaderboard/leaderboard-store.js';
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
@@ -57,6 +60,14 @@ const backgroundRecords = createBackgroundRecords({
 });
 const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
 const postTrackingRuntime = createPostRuntime();
+const leaderboardRuntime = createLeaderboardRuntime({
+  store:createLeaderboardStore(),
+  owner:async()=>{
+    const identity=await followQueueRuntime.handle({cmd:'followQueueIdentity'});
+    if(!identity?.ok||!identity.accountId)throw new Error('无法核实当前 X 登录账号');
+    return {accountId:identity.accountId,handle:identity.handle};
+  }
+});
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -484,6 +495,15 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
 
+  if (cmd === 'xLeaderboard') {
+    const panel=sender.id===chrome.runtime.id&&sender.url?.split(/[?#]/)[0]===chrome.runtime.getURL('panel.html');
+    const content=sender.id===chrome.runtime.id&&Number.isInteger(sender.tab?.id)&&/^https:\/\/(?:x\.com|twitter\.com)\//.test(sender.url||'');
+    const allowed=panel?['state','scan','analyze','report','membership','add','remove']:content?['membership','add','remove']:[];
+    if(!allowed.includes(message.action)){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
+    leaderboardRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message||error)}));
+    return true;
+  }
+
   if (cmd === 'ownPostTracking') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
       sendResponse({ok:false,error:'帖子操作仅允许从管理面板发起'});return false;
@@ -653,14 +673,18 @@ function safeSendMessageToPanel(message) {
 }
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === LEADERBOARD_ALARM) {
+    await leaderboardRuntime.alarm().catch(error=>console.warn('X 榜单监控:',error.message));
+    return;
+  }
   if (alarm.name === POST_ALARM) {
     await postTrackingRuntime.sync({background:true,days:(await chrome.storage.local.get('ownPostTracking')).ownPostTracking?.days || 14}).catch(error=>console.warn('帖子监控:',error.message));
     return;
   }
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
   if (alarm.name === QUEUE_ALARM) {
-    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
-    await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
+    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:pageFailureMessage(error)}));
+    if(result.notify!==false)await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
     return;
   }
   if (['x-mutual-auto-follow','x-comment-auto-follow'].includes(alarm.name) && (await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear(alarm.name); return; }
@@ -752,6 +776,7 @@ recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
 postTrackingRuntime.schedule().catch(error=>console.warn('恢复帖子监控失败:',error.message));
+leaderboardRuntime.schedule().catch(error=>console.warn('恢复 X 榜单监控失败:',error.message));
 
 let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {
