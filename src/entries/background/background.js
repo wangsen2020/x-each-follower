@@ -778,16 +778,18 @@ async function restoreSettingsFromSync() {
   await restoreMissingSyncedSettings().catch(() => {});
 }
 
+const recoverAlarms = () => recoverAutomationAlarms({monitorMetadata: () => backgroundRecords.metadata('monitor')});
+
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
-  await recoverAutomationAlarms();
+  await recoverAlarms();
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
-  await recoverAutomationAlarms();
+  await recoverAlarms();
 });
 
-recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
+recoverAlarms().catch(error => console.warn('恢复自动任务失败:', error));
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
 postTrackingRuntime.schedule().catch(error=>console.warn('恢复帖子监控失败:',error.message));

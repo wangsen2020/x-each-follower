@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectVisible, readProfile, readProfileBundle, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
+import {collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
 
 const link = (path, text) => ({href:`https://x.com${path}`,innerText:text});
 test('own follower scan reuses only the logged-in account followers route', () => {
@@ -9,6 +9,14 @@ test('own follower scan reuses only the logged-in account followers route', () =
   assert.equal(isOwnFollowersRoute('https://x.com/owner/verified_followers', 'owner'), false);
   assert.equal(isOwnFollowersRoute('https://x.com/someone_else/followers', 'owner'), false);
   assert.equal(isOwnFollowersRoute('https://x.com/followers', 'owner'), false);
+});
+test('DOM follower fallback records confirmed follow-back relationship for the archive', () => {
+  globalThis.location={pathname:'/owner/followers',origin:'https://x.com'};
+  globalThis.window={innerHeight:800,scrollBy:()=>{}};
+  const cell=(handle,label)=>({innerText:`${handle}\n@${handle}`,querySelectorAll:selector=>selector==='a[href]'?[link(`/${handle}`,handle)]:[{innerText:label,getAttribute:()=>'',dataset:{}}]});
+  globalThis.document={querySelector:()=>({querySelectorAll:()=>[cell('alice','Follow back'),cell('bob','Following')]})};
+  const result=scanFollowers();
+  assert.deepEqual(result.users.map(user=>user.relationship),[{followedBy:true,following:false},{followedBy:true,following:true}]);
 });
 test('collection uses only following user cells, deduplicates and checks target route', () => {
   globalThis.location = {pathname:'/owner/following',origin:'https://x.com'};

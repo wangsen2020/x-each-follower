@@ -2,6 +2,12 @@ import {randomizedInteger} from './timing.js';
 
 const settingsKeys = ['mutualAutoFollowSettings', 'commentAutoFollowSettings', 'unreciprocatedSettings'];
 
+export function followerScanDue(config, now = Date.now()) {
+  if (config?.enabled !== true) return false;
+  const last = Date.parse(config.lastScan || '');
+  return !Number.isFinite(last) || now - last >= Math.max(10, Number(config.every) || 60) * 60000;
+}
+
 export async function restoreMissingLocalSetting(storage, key, fallback) {
   const local = await storage.get(key);
   if (local[key] != null) return local[key];
@@ -23,14 +29,23 @@ export async function restoreMissingSyncedSettings(storage = chrome.storage) {
 
 // A service worker may restart with alarms missing after an extension update.
 // Reconcile without moving existing deadlines on every worker wake-up.
-export async function recoverAutomationAlarms({storage = chrome.storage.local, alarms = chrome.alarms} = {}) {
+export async function recoverAutomationAlarms({storage = chrome.storage.local, alarms = chrome.alarms, monitorMetadata} = {}) {
   const data = await storage.get([...settingsKeys, 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker', 'monitor', 'followQueueBinding']);
+  // After record migration the monitor switch lives in record metadata, while
+  // chrome.storage.local.monitor may be absent or an old snapshot.
+  let monitor = data.monitor;
+  if (monitorMetadata) {
+    try {
+      const current = await monitorMetadata();
+      if (typeof current?.enabled === 'boolean') monitor = current;
+    } catch { /* Keep legacy local settings available during migration. */ }
+  }
   const existing = new Set((await alarms.getAll()).map(alarm => alarm.name));
   const schedules = [
     ['x-mutual-auto-follow', data.mutualAutoFollowSettings ?? data.mutualNetwork?.autoFollow, 5, 5],
     ['x-comment-auto-follow', data.commentAutoFollowSettings ?? data.commentTracking?.autoFollow, 5, 5],
     ['x-unreciprocated-tracker', data.unreciprocatedSettings ?? data.unreciprocatedTracker?.config, 60, 5],
-    ['x-followers-scan', data.monitor, 60, 10]
+    ['x-followers-scan', monitor, 60, 10]
   ];
   const restored = [];
   for (const [name, config, fallback, minimum] of schedules) {

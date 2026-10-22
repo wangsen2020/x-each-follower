@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {recoverAutomationAlarms, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../src/shared/automation-recovery.js';
+import {recoverAutomationAlarms, followerScanDue, restoreMissingSyncedSettings, restoreMissingLocalSetting} from '../src/shared/automation-recovery.js';
+
+test('an enabled follower monitor catches up when an open panel finds a missed scan', () => {
+  const now=Date.parse('2026-10-22T06:00:00Z');
+  assert.equal(followerScanDue({enabled:true,every:60,lastScan:'2026-10-22T05:30:00Z'},now),false);
+  assert.equal(followerScanDue({enabled:true,every:60,lastScan:'2026-10-22T04:00:00Z'},now),true);
+  assert.equal(followerScanDue({enabled:true,every:60,lastScan:null},now),true);
+  assert.equal(followerScanDue({enabled:false,every:60,lastScan:null},now),false);
+});
 
 test('unified queue takeover prevents stale local or synced schedules from returning',async()=>{
   const cleared=[], created=[];
@@ -35,6 +43,17 @@ test('legacy tracking settings restore all enabled missing alarms with no page a
   const created=[];
   await recoverAutomationAlarms({storage:{get:async()=>saved},alarms:{getAll:async()=>[],create:async name=>created.push(name)}});
   assert.deepEqual(created,['x-mutual-auto-follow','x-comment-auto-follow','x-unreciprocated-tracker','x-followers-scan']);
+});
+
+test('follower alarm recovers from record metadata after local monitor migration', async () => {
+  const created=[];
+  const storage={get:async()=>({monitor:{enabled:false}})};
+  const alarms={getAll:async()=>[],create:async(name)=>created.push(name)};
+  await recoverAutomationAlarms({storage,alarms,monitorMetadata:async()=>({enabled:true,every:30,jitter:5})});
+  assert.deepEqual(created,['x-followers-scan']);
+  created.length=0;
+  await recoverAutomationAlarms({storage:{get:async()=>({monitor:{enabled:true}})},alarms,monitorMetadata:async()=>({enabled:false})});
+  assert.deepEqual(created,[]);
 });
 
 test('stale sync cannot disable locally enabled Grok or re-enable a disabled task', async () => {

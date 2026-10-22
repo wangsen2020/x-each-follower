@@ -268,6 +268,16 @@ test('unassigned pages use the index, restart without a full read, and mirror me
   assert.equal(summary.total, 119);
 });
 
+test('DOM follow-back queue rows without relationship flags remain visible', async () => {
+  const storage=memoryStorage({monitor:{users:[{handle:'domfan',state:'follow_back'}],queue:[{handle:'domfan',status:'pending',state:'follow_back'}]}});
+  const service=runtime('dom-follow-back-index',storage,memoryDurable());
+  await service.migrate();
+  const fans=await service.summary({module:'fans'});
+  assert.equal(fans.tabs.pendingQueue,1);
+  const page=await service.query({module:'fans',filter:{tab:'pendingQueue'},limit:10});
+  assert.equal(page.records[0]?.payload.handle,'domfan');
+});
+
 test('derived tracker paths keep original indexes and patches upsert the tracker', async () => {
   const storage = memoryStorage({
     monitor: {

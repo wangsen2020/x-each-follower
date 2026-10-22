@@ -93,7 +93,8 @@ export function scanFollowers() {
       if (/pending|等待回应|请求中/i.test(label)) { state = 'pending'; break; }
       if (/^follow$|^关注$/i.test(label) || testId.endsWith('-follow')) { state = 'follow_back'; break; }
     }
-    users.push({handle, name:(cell.innerText || '').split('\n')[0] || handle, bio:cell.innerText || '', state});
+    users.push({handle, name:(cell.innerText || '').split('\n')[0] || handle, bio:cell.innerText || '', state,
+      relationship:{followedBy:true, following:state === 'following' ? true : state === 'follow_back' ? false : null}});
   }
   window.scrollBy(0, Math.max(600, window.innerHeight * 0.8));
   return {users, ready:true};

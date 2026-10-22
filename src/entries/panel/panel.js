@@ -4,12 +4,12 @@ import {executeGrokScript, assertGrokVerificationClear} from '../../features/gro
 import {releaseGrokWindow} from '../../features/grok/temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake } from '../../features/relationships/scoring.js';
-import { restoreMissingLocalSetting } from '../../shared/automation-recovery.js';
+import { followerScanDue, restoreMissingLocalSetting } from '../../shared/automation-recovery.js';
 import {normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {createLogPager, LOG_PAGE_SIZE} from '../../shared/execution-log-store.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
-import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, findCursor, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, nextUserListPage, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
 import { durableGet, durableSet } from '../../platform/persistent-db.js';
 import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
 import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
@@ -1782,8 +1782,9 @@ async function collectRelations(handle, perSideLimit = 500) {
           if (page > 0 && found.size > 0) break;
           throw new Error(response.error || `${operation} 网络请求失败（${response.status}）`);
         }
-        for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
-        const next=findCursor(response.json); if (!next || next === cursor) break; cursor=next;
+        const pageUsers=parseNetworkUsers(response.json);
+        for (const user of pageUsers) if (user.handle.toLowerCase() !== handle.toLowerCase()) found.set(user.handle.toLowerCase(), user);
+        const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
       }
       return [...found.values()].slice(0, perSideLimit);
     };
@@ -3487,8 +3488,9 @@ async function scanFollowingFromNetwork(tabId, target, limit) {
   for (let page=0; page<10 && found.size<limit; page++) {
     const response = await networkFetchWithRecovery(tabId, target, 'Following', {userId:owner.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return null;
-    for (const user of parseNetworkUsers(response.json)) if (user.handle.toLowerCase() !== target.toLowerCase()) found.set(user.handle.toLowerCase(), user.handle);
-    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+    const pageUsers=parseNetworkUsers(response.json);
+    for (const user of pageUsers) if (user.handle.toLowerCase() !== target.toLowerCase()) found.set(user.handle.toLowerCase(), user.handle);
+    const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
   }
   return [...found.values()].slice(0, limit);
 }
@@ -3504,15 +3506,20 @@ async function scanOwnFollowing(tabId, handle, pageLimit = 1000) {
   for (let page=0; page<pageLimit; page++) {
     const response = await networkFetchWithRecovery(tabId, handle, 'Following', {userId:me.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return {users:[...found.values()], complete:false, error:response.error || `Following 请求失败（${response.status}）`};
-    for (const user of parseNetworkUsers(response.json)) {
+    const pageUsers = parseNetworkUsers(response.json);
+    if (!pageUsers.length) return {users:[...found.values()], complete:false, error:'Following 返回空页，已停止无效分页'};
+    for (const user of pageUsers) {
       if (user.handle.toLowerCase() !== handle.toLowerCase()) {
         found.set(user.handle.toLowerCase(), {...user, relationship:{...(user.relationship || {}), following:true}});
       }
     }
-    const next = findCursor(response.json);
-    if (!next) { complete=true; break; }
-    if (next === cursor) return {users:[...found.values()], complete:false, error:'Following 分页游标未前进'};
-    cursor = next;
+    const progress=nextUserListPage(response.json,cursor,pageUsers);
+    if (!progress.next) {
+      if (progress.complete) complete=true;
+      else return {users:[...found.values()],complete:false,error:progress.reason==='empty'?'Following 返回空页，已停止无效分页':'Following 分页游标未前进'};
+      break;
+    }
+    cursor = progress.next;
   }
   return {users:[...found.values()], complete};
 }
@@ -3537,7 +3544,7 @@ async function syncOwnFollowingList(tabId, handle) {
   } catch {}
 }
 
-async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpointHandle = null, operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
+async function scanFollowersFromNetwork(tabId, checkpointHandle = null, operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
   const handle = await readOwnHandle(tabId);
   if (!handle) return {fallbackReason:'无法从 X 页面识别当前登录账号'};
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return {fallbackReason:'用户资料接口模板未捕获'};
@@ -3559,7 +3566,7 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
       };
     }
     const pageUsers = parseNetworkUsers(response.json);
-    let pageHasNew = false;
+    if (!pageUsers.length) return {fallbackReason:`${operation} 返回空页，无法确认已到列表末尾`,partialUsers:[...found.values()],operation};
     for (const user of pageUsers) {
       if (user.handle.toLowerCase() === handle.toLowerCase()) continue;
       if (!topFollower) topFollower = user;
@@ -3567,15 +3574,10 @@ async function scanFollowersFromNetwork(tabId, knownHandles = new Set(), checkpo
         reachedCheckpoint = true;
         break;
       }
-      if (!knownHandles.has(user.handle.toLowerCase())) pageHasNew = true;
     }
     addUniqueUsersUpTo(found, pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase()), maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
     if (reachedCheckpoint) break;
-    if (knownHandles.size && page > 0 && !pageHasNew) {
-      reachedCheckpoint = true;
-      break;
-    }
-    const next = findCursor(response.json); if (!next || next === cursor) break; cursor = next;
+    const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
   }
   return {users:[...found.values()], topFollower, reachedCheckpoint, limited:found.size>=maxUsers && !reachedCheckpoint, operation};
 }
@@ -3599,7 +3601,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const knownHandles = new Set((monitor.users || []).map(user => user.handle.toLowerCase()));
     const checkpointHandle = monitor.checkpointHandle || null;
     monitorStatus(checkpointHandle ? `正在按位点 @${checkpointHandle} 增量检索最新粉丝…` : '正在准备粉丝接口并建立初始粉丝基准…');
-    let networkResult = await scanFollowersFromNetwork(tabId, knownHandles, checkpointHandle, 'Followers', MAX_FOLLOWER_SCAN).catch(error => ({fallbackReason:error.message}));
+    let networkResult = await scanFollowersFromNetwork(tabId, checkpointHandle, 'Followers', MAX_FOLLOWER_SCAN).catch(error => ({fallbackReason:error.message}));
     if (networkResult && !networkResult.fallbackReason) {
       const {users:networkUsers, topFollower, reachedCheckpoint, limited, operation:sourceOperation} = networkResult;
       const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
@@ -3641,7 +3643,7 @@ async function scanFollowerList(scanSource = 'manual') {
         }
       }
 
-      const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || networkUsers[0]?.handle || null;
+      const newCheckpointHandle = limited && !reachedCheckpoint ? monitor.checkpointHandle || null : topFollower?.handle || monitor.checkpointHandle || networkUsers[0]?.handle || null;
       const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
       const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
       const cpText = reachedCheckpoint ? '已到达上次记录位点（已自动停止拉取历史数据）' : (limited ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限` : '已同步至最新位点');
@@ -3745,12 +3747,15 @@ async function scanFollowerList(scanSource = 'manual') {
       }
     }
 
-    const newCheckpointHandle = topFollowerDom?.handle || monitor.checkpointHandle || users[0]?.handle || null;
+    // DOM scrolling can stop on a temporarily empty virtualized viewport. Do
+    // not advance the durable checkpoint unless it reached the old one.
+    const newCheckpointHandle = reachedCheckpointDom ? topFollowerDom?.handle || monitor.checkpointHandle || null : monitor.checkpointHandle || null;
     const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
     const notMutualCount = getNotMutualUsers().length;
     const pendingCount = queue.filter(user => user.status === 'pending').length;
     const capText = users.length >= MAX_FOLLOWER_SCAN ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限；` : '';
-    const summary = `从页面读取完成：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}最新位点 @${newCheckpointHandle}；当前粉丝 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+    const coverageText = reachedCheckpointDom ? `已到达旧位点，新位点 @${newCheckpointHandle}` : '尚未到达旧位点，本次仅为部分结果；下轮继续补齐';
+    const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
 
     monitor = {
       ...monitor,
@@ -4396,6 +4401,9 @@ async function bootRecordDashboard() {
   loadRegistry.succeed(panelId);
   refreshSidebarBadges();
   renderSettledModule(panelId);
+  if (followerScanDue(monitor)) setTimeout(() => {
+    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan();
+  }, 1000);
 }
 
 try {
