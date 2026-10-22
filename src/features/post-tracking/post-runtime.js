@@ -131,9 +131,11 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
   }
   async function page(options={}) {
     const cfg=await config();
-    if(!cfg.ownerId)return {rows:[],counts:{latest:0,low:0,high:0},total:0,page:1,pages:1,monitored:0,config:cfg,meta:{error:cfg.lastError||''}};
+    if(!cfg.ownerId)return {rows:[],counts:{latest:0,low:0,high:0},total:0,page:1,pages:1,monitored:0,selectedPostIds:[],config:cfg,meta:{error:cfg.lastError||''}};
     const posts=await store.list(cfg.ownerId);
-    return {...selectPostPage(posts,options,now(),cfg.lowRules),config:cfg,meta:await store.meta(cfg.ownerId),learning:await learning.state(cfg.ownerId)};
+    const requested=Array.isArray(options.selectedPostIds)?options.selectedPostIds:[];
+    const selectedPostIds=posts.filter(post=>requested.includes(post.postId)&&post.text&&!post.protected&&(!post.deletion||post.deletion.status==='failed')).map(post=>post.postId);
+    return {...selectPostPage(posts,options,now(),cfg.lowRules),selectedPostIds,config:cfg,meta:await store.meta(cfg.ownerId),learning:await learning.state(cfg.ownerId)};
   }
   async function getPost(postId) {
     const cfg=await config();if(!cfg.ownerId)throw new Error('请先同步帖子');
