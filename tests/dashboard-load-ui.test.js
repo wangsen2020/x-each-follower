@@ -235,8 +235,9 @@ test('backup recovery stays loading until the missing key resolves, including an
 });
 
 test('startup loads the visible module page and migration progress', () => {
-  const boot = panelSource.indexOf('await bootRecordDashboard()');
+  const boot = panelSource.indexOf('recordBootPromise = bootRecordDashboard()');
   assert.ok(boot > 0);
+  assert.match(panelSource.slice(boot), /await recordBootPromise/);
   assert.equal(panelSource.slice(boot).includes('await loadUnreciprocatedModule()'), false);
   assert.match(panelSource, /paintMigrationProgress/);
   assert.match(panelSource, /createPanelPages/);

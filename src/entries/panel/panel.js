@@ -10,6 +10,7 @@ import {createLogPager, LOG_PAGE_SIZE} from '../../shared/execution-log-store.js
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
 import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, nextUserListPage, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import {acceptRollingPage, changedFollowBackRows} from '../../features/relationships/rolling-scan.js';
 import { durableGet, durableSet } from '../../platform/persistent-db.js';
 import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
 import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
@@ -25,6 +26,7 @@ import {preparePanelQuoteText} from '../../features/grok/panel-quote-text.js';
 
 let recordPaging = false;
 let recordPages = null;
+let recordBootPromise = null;
 let recordBootAttempted = false;
 const recordScalarBaseline = {};
 const installedPageSignature = new Map();
@@ -42,7 +44,7 @@ if (versionFooter) versionFooter.textContent = 'v' + panelVersion + ' · 本地�
 
 let rows = [];
 let inspectionTab;
-let monitor = {enabled:false, every:60, jitter:15, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
+let monitor = {enabled:false, every:10, jitter:0, followerBatch:1000, followingBatch:1000, users:[], queue:[], followingUsers:[], followingListComplete:false, lastScan:null, checkpointHandle:null, checkpointAt:null};
 let analysisRows = [];
 let profileCache = {};
 let followerScanRunning = false;
@@ -210,7 +212,7 @@ let commentPage = 1;
 let commentPageSize = 20;
 let commentSearch = '';
 const selectedCommentHandles = new Set();
-const MAX_FOLLOWER_SCAN = 3000;
+const MAX_FOLLOWER_SCAN = 1000;
 let mutualNetworkRunning = false;
 const followBackBusy = new Set();
 const unfollowBusy = new Set();
@@ -1265,8 +1267,10 @@ window.closeUnreciprocatedDrawer = closeUnreciprocatedDrawer;
 function renderSettingsDrawer() {
   if (!$('settingsDrawer')) return;
   if ($('monitorEnabled')) $('monitorEnabled').checked = !!monitor.enabled;
-  if ($('monitorEvery')) $('monitorEvery').value = monitor.every || 60;
-  if ($('monitorJitter')) $('monitorJitter').value = monitor.jitter ?? 15;
+  if ($('monitorEvery')) $('monitorEvery').value = monitor.every || 10;
+  if ($('monitorJitter')) $('monitorJitter').value = monitor.jitter ?? 0;
+  if ($('monitorFollowerBatch')) $('monitorFollowerBatch').value = monitor.followerBatch || 1000;
+  if ($('monitorFollowingBatch')) $('monitorFollowingBatch').value = monitor.followingBatch || 1000;
   if ($('monitorAutoEnqueue')) $('monitorAutoEnqueue').checked = monitor.autoEnqueue !== false;
   if ($('monitorFilterDanger')) $('monitorFilterDanger').checked = monitor.filterDanger !== false;
   const handleEl = $('monitorCheckpointHandle');
@@ -2945,10 +2949,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.cmd === 'runFollowersScanTick') {
-    sendResponse({ok: true, handledByPanel: true});
-    if (!followerScanRunning) {
-      scanFollowerList('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
-    }
+    chrome.tabs.getCurrent().then(tab => {
+      if (message.targetPanelTabId && tab?.id !== message.targetPanelTabId) return;
+      sendResponse({ok: true, handledByPanel: true});
+      startFollowerScan('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
+    }).catch(() => {});
     return true;
   }
 });
@@ -3420,14 +3425,17 @@ async function navigate(url) {
 async function saveMonitorSettings() {
   const next = {
     enabled: $('monitorEnabled') ? $('monitorEnabled').checked : !!monitor.enabled,
-    every: Number($('monitorEvery')?.value || monitor.every || 60),
-    jitter: Math.max(1, Number($('monitorJitter')?.value || monitor.jitter || 15)),
+    every: Number($('monitorEvery')?.value || monitor.every || 10),
+    jitter: Number($('monitorJitter')?.value ?? monitor.jitter ?? 0),
+    followerBatch: Number($('monitorFollowerBatch')?.value || monitor.followerBatch || 1000),
+    followingBatch: Number($('monitorFollowingBatch')?.value || monitor.followingBatch || 1000),
     autoEnqueue: $('monitorAutoEnqueue') ? $('monitorAutoEnqueue').checked : monitor.autoEnqueue !== false,
     filterDanger: $('monitorFilterDanger') ? $('monitorFilterDanger').checked : monitor.filterDanger !== false
   };
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
-  if (!Number.isFinite(next.jitter) || next.jitter < 1 || next.jitter >= next.every) throw new Error('随机浮动必须至少 1 分钟且小于基准间隔。');
-  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
+  if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动须在 0 到周期以下。');
+  if (![next.followerBatch, next.followingBatch].every(value => Number.isInteger(value) && value >= 100 && value <= 1000 && value % 20 === 0)) throw new Error('每轮人数须分别在 100–1000 人之间，并为 20 的倍数。');
+  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, followerBatch: monitor.followerBatch, followingBatch: monitor.followingBatch, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
   monitor = {...monitor, ...next};
   await writeLocal({monitor});
   persist('monitor', monitor);
@@ -3495,19 +3503,26 @@ async function scanFollowingFromNetwork(tabId, target, limit) {
   return [...found.values()].slice(0, limit);
 }
 
-async function scanOwnFollowing(tabId, handle, pageLimit = 1000) {
+async function scanOwnFollowing(tabId, handle, maxUsers = 1000, startCursor = '') {
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return null;
   const profile = await networkGetUserProfile(tabId, handle);
   if (profile.status !== 200) return null;
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return null;
   if (!await ensureNetworkTemplate(handle, 'Following')) return null;
-  const found = new Map(); let cursor = ''; let complete = false;
-  for (let page=0; page<pageLimit; page++) {
+  const found = new Map(); let cursor = startCursor; let complete = false;
+  let readCount = 0;
+  for (let page=0; page<Math.ceil(maxUsers / 20) && readCount<maxUsers; page++) {
     const response = await networkFetchWithRecovery(tabId, handle, 'Following', {userId:me.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) return {users:[...found.values()], complete:false, error:response.error || `Following 请求失败（${response.status}）`};
     const pageUsers = parseNetworkUsers(response.json);
-    if (!pageUsers.length) return {users:[...found.values()], complete:false, error:'Following 返回空页，已停止无效分页'};
+    const budget = acceptRollingPage(pageUsers, readCount, maxUsers);
+    if (budget.state === 'empty') return {users:[...found.values()], complete:false, error:'Following 返回空页，已停止无效分页'};
+    if (budget.state !== 'accept') {
+      if (budget.state === 'oversize') return {users:[], complete:false, error:'Following 单页人数超过每轮上限，请提高上限'};
+      break;
+    }
+    readCount = budget.consumed;
     for (const user of pageUsers) {
       if (user.handle.toLowerCase() !== handle.toLowerCase()) {
         found.set(user.handle.toLowerCase(), {...user, relationship:{...(user.relationship || {}), following:true}});
@@ -3521,30 +3536,33 @@ async function scanOwnFollowing(tabId, handle, pageLimit = 1000) {
     }
     cursor = progress.next;
   }
-  return {users:[...found.values()], complete};
+  return {users:[...found.values()], complete, nextCursor:complete ? null : cursor};
 }
 
 async function syncOwnFollowingList(tabId, handle) {
   try {
-    const result = await scanOwnFollowing(tabId, handle);
+    const followingBatch = Math.min(1000, Math.max(100, Math.floor((Number(monitor.followingBatch) || 1000) / 20) * 20));
+    const result = await scanOwnFollowing(tabId, handle, followingBatch, monitor.followingCursor || '');
     if (result?.users?.length) {
       const previous = new Map((monitor.followingUsers || []).map(u => [u.handle.toLowerCase(), u]));
       for (const user of result.users) previous.set(user.handle.toLowerCase(), {...previous.get(user.handle.toLowerCase()), ...user});
       monitor.followingUsers = [...previous.values()];
-      if (result.complete) monitor.followingListComplete = true;
+      monitor.followingCursor = result.nextCursor || null;
+      monitor.followingListComplete = result.complete;
       const followingHandles = ownFollowingHandles(buildRelationshipIndex(monitor));
       const apply = user => {
         if (!user?.handle) return;
         if (followingHandles.has(user.handle.toLowerCase())) user.relationship = {...(user.relationship || {}), following:true};
-        else if (typeof user.relationship?.following !== 'boolean') user.relationship = {...(user.relationship || {}), following:false};
         user.relationshipKnown = typeof user.relationship.followedBy === 'boolean';
       };
       for (const user of [...(monitor.users || []), ...(monitor.queue || []), ...(mutualNetwork.users || [])]) apply(user);
+      return result.users;
     }
   } catch {}
+  return [];
 }
 
-async function scanFollowersFromNetwork(tabId, checkpointHandle = null, operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
+async function scanFollowersFromNetwork(tabId, startCursor = '', operation = 'Followers', maxUsers = MAX_FOLLOWER_SCAN) {
   const handle = await readOwnHandle(tabId);
   if (!handle) return {fallbackReason:'无法从 X 页面识别当前登录账号'};
   if (!await ensureNetworkTemplate(handle, 'UserByScreenName')) return {fallbackReason:'用户资料接口模板未捕获'};
@@ -3553,10 +3571,11 @@ async function scanFollowersFromNetwork(tabId, checkpointHandle = null, operatio
   const me = parseNetworkUsers(profile.json).find(user => user.handle.toLowerCase() === handle.toLowerCase());
   if (!me?.id) return {fallbackReason:'用户资料接口没有返回当前账号 ID'};
   if (!await ensureNetworkTemplate(handle, operation)) return {fallbackReason:`${operation} 接口模板未捕获`};
-  const found = new Map(); let cursor = '';
-  let reachedCheckpoint = false;
+  const found = new Map(); let cursor = startCursor;
+  let complete = false;
+  let readCount = 0;
   let topFollower = null;
-  for (let page=0; page<Math.ceil(maxUsers / 20) && found.size<maxUsers; page++) {
+  for (let page=0; page<Math.ceil(maxUsers / 20) && readCount<maxUsers; page++) {
     const response = await networkFetchWithRecovery(tabId, handle, operation, {userId:me.id, count:20, ...(cursor ? {cursor} : {})});
     if (response.status !== 200) {
       return {
@@ -3566,23 +3585,29 @@ async function scanFollowersFromNetwork(tabId, checkpointHandle = null, operatio
       };
     }
     const pageUsers = parseNetworkUsers(response.json);
-    if (!pageUsers.length) return {fallbackReason:`${operation} 返回空页，无法确认已到列表末尾`,partialUsers:[...found.values()],operation};
-    for (const user of pageUsers) {
-      if (user.handle.toLowerCase() === handle.toLowerCase()) continue;
-      if (!topFollower) topFollower = user;
-      if (checkpointHandle && user.handle.toLowerCase() === checkpointHandle.toLowerCase()) {
-        reachedCheckpoint = true;
-        break;
-      }
+    const budget = acceptRollingPage(pageUsers, readCount, maxUsers);
+    if (budget.state === 'empty') return {fallbackReason:`${operation} 返回空页，无法确认已到列表末尾`,partialUsers:[...found.values()],operation};
+    if (budget.state !== 'accept') {
+      if (budget.state === 'oversize') return {fallbackReason:`${operation} 单页人数超过每轮上限，请提高上限`,partialUsers:[],operation};
+      break;
     }
-    addUniqueUsersUpTo(found, pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase()), maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
-    if (reachedCheckpoint) break;
-    const progress=nextUserListPage(response.json,cursor,pageUsers); if (!progress.next) break; cursor=progress.next;
+    readCount = budget.consumed;
+    const selected = pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase());
+    if (!startCursor && !topFollower) topFollower = selected[0] || null;
+    addUniqueUsersUpTo(found, selected, maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
+    const progress=nextUserListPage(response.json,cursor,pageUsers);
+    if (!progress.next) {
+      if (!progress.complete) return {fallbackReason:`${operation} 分页游标未前进`,partialUsers:[...found.values()],operation};
+      complete = true; cursor = ''; break;
+    }
+    cursor=progress.next;
   }
-  return {users:[...found.values()], topFollower, reachedCheckpoint, limited:found.size>=maxUsers && !reachedCheckpoint, operation};
+  return {users:[...found.values()], topFollower, complete, nextCursor:complete ? null : cursor, readCount, operation};
 }
 
 async function scanFollowerList(scanSource = 'manual') {
+  if (recordBootPromise) await recordBootPromise;
+  if (!recordPaging || !recordPages) throw new Error('粉丝档案尚未完成加载，无法开始扫描');
   await ensureCompleteModule('fans', 'monitor', records => {
     const users = [];
     const queue = [];
@@ -3600,16 +3625,19 @@ async function scanFollowerList(scanSource = 'manual') {
   try {
     const knownHandles = new Set((monitor.users || []).map(user => user.handle.toLowerCase()));
     const checkpointHandle = monitor.checkpointHandle || null;
-    monitorStatus(checkpointHandle ? `正在按位点 @${checkpointHandle} 增量检索最新粉丝…` : '正在准备粉丝接口并建立初始粉丝基准…');
-    let networkResult = await scanFollowersFromNetwork(tabId, checkpointHandle, 'Followers', MAX_FOLLOWER_SCAN).catch(error => ({fallbackReason:error.message}));
+    const followerBatch = Math.min(MAX_FOLLOWER_SCAN, Math.max(100, Math.floor((Number(monitor.followerBatch) || MAX_FOLLOWER_SCAN) / 20) * 20));
+    const startCursor = monitor.followerCursor || '';
+    monitorStatus(startCursor ? '正在接续上一轮粉丝分页…' : '正在从最新粉丝开始新一轮扫描…');
+    let networkResult = await scanFollowersFromNetwork(tabId, startCursor, 'Followers', followerBatch).catch(error => ({fallbackReason:error.message}));
     if (networkResult && !networkResult.fallbackReason) {
-      const {users:networkUsers, topFollower, reachedCheckpoint, limited, operation:sourceOperation} = networkResult;
+      const {users:networkUsers, topFollower, complete, nextCursor, readCount, operation:sourceOperation} = networkResult;
       const previous = new Map((monitor.users || []).map(user => [user.handle.toLowerCase(), user]));
       const foundAt = new Date().toISOString();
       for (const user of networkUsers) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
       const users = [...previous.values()];
-      await syncOwnFollowingList(tabId, handle);
+      const followingScanned = await syncOwnFollowingList(tabId, handle);
       const queue = reconcileFollowBackQueue(monitor.queue, users, riskAssess);
+      const queueChanges = changedFollowBackRows(monitor.queue, queue);
       queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
       const filterDanger = monitor.filterDanger !== false;
@@ -3643,10 +3671,10 @@ async function scanFollowerList(scanSource = 'manual') {
         }
       }
 
-      const newCheckpointHandle = limited && !reachedCheckpoint ? monitor.checkpointHandle || null : topFollower?.handle || monitor.checkpointHandle || networkUsers[0]?.handle || null;
+      const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || null;
       const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
       const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
-      const cpText = reachedCheckpoint ? '已到达上次记录位点（已自动停止拉取历史数据）' : (limited ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限` : '已同步至最新位点');
+      const cpText = complete ? '本圈已到末页，下轮从最新粉丝重新开始' : `本轮读取 ${readCount} 人，下轮从保存的游标接续`;
       const notMutualCount = getNotMutualUsers().length;
       const pendingCount = queue.filter(user => user.status === 'pending').length;
       const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
@@ -3659,10 +3687,12 @@ async function scanFollowerList(scanSource = 'manual') {
         lastScan: new Date().toISOString(),
         lastSummary: summary,
         checkpointHandle: newCheckpointHandle,
-        checkpointAt: new Date().toISOString(),
+        checkpointAt: topFollower ? new Date().toISOString() : monitor.checkpointAt,
+        followerCursor: nextCursor || null,
         source: sourceOperation === 'BlueVerifiedFollowers' ? 'verified_followers_network' : 'followers_network'
       };
-      await writeLocal({monitor}); persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
+      await writeLocal({monitor:{...monitor,users:networkUsers.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
+      persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
 
       await recordMonitorLog({
         source: scanSource,
@@ -3688,7 +3718,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const found = new Map((networkResult?.partialUsers || []).map(user => [user.handle.toLowerCase(), user])); let idle = 0;
     let topFollowerDom = null;
     let reachedCheckpointDom = false;
-    for (let i=0; i<300 && idle<8 && found.size<MAX_FOLLOWER_SCAN; i++) {
+    for (let i=0; i<300 && idle<8 && found.size<followerBatch; i++) {
       const result = (await chrome.scripting.executeScript({target:{tabId}, func:scanFollowers}))[0]?.result;
       if (!result?.ready) {
         await sleep(1200);
@@ -3701,7 +3731,7 @@ async function scanFollowerList(scanSource = 'manual') {
           reachedCheckpointDom = true;
           break;
         }
-        if (found.size < MAX_FOLLOWER_SCAN) found.set(user.handle.toLowerCase(), user);
+        if (found.size < followerBatch) found.set(user.handle.toLowerCase(), user);
       }
       if (reachedCheckpointDom) break;
       idle = before === found.size ? idle + 1 : 0;
@@ -3712,8 +3742,9 @@ async function scanFollowerList(scanSource = 'manual') {
     const foundAt = new Date().toISOString();
     for (const user of users) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
     const allUsers = [...previous.values()];
-    await syncOwnFollowingList(tabId, handle);
+    const followingScanned = await syncOwnFollowingList(tabId, handle);
     const queue = reconcileFollowBackQueue(monitor.queue, allUsers, riskAssess);
+    const queueChanges = changedFollowBackRows(monitor.queue, queue);
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
     const filterDanger = monitor.filterDanger !== false;
@@ -3753,7 +3784,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
     const notMutualCount = getNotMutualUsers().length;
     const pendingCount = queue.filter(user => user.status === 'pending').length;
-    const capText = users.length >= MAX_FOLLOWER_SCAN ? `本次达到 ${MAX_FOLLOWER_SCAN} 个上限；` : '';
+    const capText = users.length >= followerBatch ? `本次达到 ${followerBatch} 个上限；` : '';
     const coverageText = reachedCheckpointDom ? `已到达旧位点，新位点 @${newCheckpointHandle}` : '尚未到达旧位点，本次仅为部分结果；下轮继续补齐';
     const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
 
@@ -3766,9 +3797,10 @@ async function scanFollowerList(scanSource = 'manual') {
       lastSummary: summary,
       checkpointHandle: newCheckpointHandle,
       checkpointAt: new Date().toISOString(),
+      followerCursor: null,
       source: 'followers_dom'
     };
-    await writeLocal({monitor});
+    await writeLocal({monitor:{...monitor,users:users.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
     persist('monitor', monitor);
     renderQueue();
     renderSettingsDrawer();
@@ -3809,26 +3841,26 @@ async function scanFollowerList(scanSource = 'manual') {
       result: 'error'
     }).catch(() => {});
   } finally {
-    if (temporary) await chrome.tabs.remove(tabId).catch(() => {});
+    if (temporary) await Promise.race([chrome.tabs.remove(tabId).catch(() => {}), sleep(3000)]);
   }
 }
 
 
 
 
-async function startFollowerScan() {
+async function startFollowerScan(source = 'manual') {
   if (followerScanRunning) return;
   followerScanRunning = true;
   if ($('scanFollowers')) $('scanFollowers').disabled = true; if ($('initialFollowers')) $('initialFollowers').disabled = true;
   monitorStatus(monitor.users?.length ? '正在增量扫描新粉丝…' : '正在获取初始粉丝列表…');
-  try { await scanFollowerList(); }
+  try { await scanFollowerList(typeof source === 'string' ? source : 'manual'); }
   catch (error) { monitorStatus(`扫描失败：${error.message}`); }
   finally { followerScanRunning = false; if ($('scanFollowers')) $('scanFollowers').disabled = false; if ($('initialFollowers')) $('initialFollowers').disabled = false; renderMonitorList(); }
 }
 $('scanFollowers')?.addEventListener('click', startFollowerScan);
 $('initialFollowers')?.addEventListener('click', startFollowerScan);
 $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
-for (const id of ['monitorEvery','monitorJitter','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+for (const id of ['monitorEvery','monitorJitter','monitorFollowerBatch','monitorFollowingBatch','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
 $('runMonitorScanNow')?.addEventListener('click', async () => {
   const btn = $('runMonitorScanNow');
   const oldText = btn?.textContent;
@@ -4159,7 +4191,18 @@ function sanitizeMojibakeCollections() {
 $('analyzeSelected')?.addEventListener('click', async () => { try { analysisStatus('正在读取资料并提交 Grok 分析互粉倾向…'); await submitBatchToGrok(null, analysisStatus); } catch (error) { analysisStatus(`Grok 分析失败：${error.message}`); } });
 async function ensureCompleteModule(moduleName, key, assign) {
   if (!recordPaging || !recordPages || recordPages.isComplete(key)) return;
-  const records = await recordPages.loadComplete(moduleName, key);
+  let records;
+  if (key === 'monitor') {
+    records = [];
+    let cursor = null;
+    do {
+      const result = await chrome.runtime.sendMessage({cmd:'recordData',op:'sourcePage',sourceKey:key,limit:100,...(cursor ? {cursor} : {})});
+      if (!result?.ok) throw new Error(result?.error || '粉丝档案读取失败');
+      records.push(...(result.page?.records || []));
+      cursor = result.page?.nextCursor || null;
+    } while (cursor);
+    recordPages.markComplete(key);
+  } else records = await recordPages.loadComplete(moduleName, key);
   assign(records.filter(record => record.sourcePath?.[1] !== 'synthetic' && !String(record.userKey || '').startsWith('not-mutual/') && !String(record.userKey || '').startsWith('derived-tracker/')).map(record => ({
     ...record,
     payload: {...(record.payload || {}), __userKey: record.userKey, __expectedHandle: record.handle, __sourceBucket: record.sourcePath?.[1] === 'synthetic' ? 'synthetic' : (record.sourcePath?.[1] || 'users'), __sourceKey: record.sourcePath?.[1] === 'synthetic' ? 'unreciprocatedTracker' : (record.sourcePath?.[0] || '')}
@@ -4401,14 +4444,20 @@ async function bootRecordDashboard() {
   loadRegistry.succeed(panelId);
   refreshSidebarBadges();
   renderSettledModule(panelId);
-  if (followerScanDue(monitor)) setTimeout(() => {
-    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan();
+  const scheduledToken = new URLSearchParams(location.search).get('scheduledFollowers');
+  if (scheduledToken) setTimeout(async () => {
+    try { if (monitor.enabled) await startFollowerScan('alarm'); }
+    finally { chrome.runtime.sendMessage({cmd:'scheduledFollowersDone',token:scheduledToken}).catch(() => {}); }
+  }, 1000);
+  else if (followerScanDue(monitor)) setTimeout(() => {
+    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan('alarm');
   }, 1000);
 }
 
 try {
   recordBootAttempted = true;
-  await bootRecordDashboard();
+  recordBootPromise = bootRecordDashboard();
+  await recordBootPromise;
 } catch (error) {
   recordPaging = false;
   monitorStatus(`记录迁移失败：${error.message}`);
@@ -6182,14 +6231,16 @@ if (window.__profileDrawerController) {
 function registerSettingsBridges() {
   if (window.__settingsDrawerController) {
     window.__settingsDrawerController.setSaveHandler(async (cfg) => {
-      monitor = { ...monitor, ...cfg };
       recordScalarBaseline.monitor = {
         enabled: monitor.enabled,
         every: monitor.every,
         jitter: monitor.jitter,
+        followerBatch: monitor.followerBatch,
+        followingBatch: monitor.followingBatch,
         autoEnqueue: monitor.autoEnqueue,
         filterDanger: monitor.filterDanger
       };
+      monitor = { ...monitor, ...cfg };
       await writeLocal({ monitor });
       persist('monitor', monitor);
       await chrome.alarms.clear('x-followers-scan');
@@ -6199,7 +6250,7 @@ function registerSettingsBridges() {
       }
     });
     window.__settingsDrawerController.setRunHandler(async () => {
-      await scanFollowersForMonitor();
+      await startFollowerScan('manual-drawer');
     });
   }
 

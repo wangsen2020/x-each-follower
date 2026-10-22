@@ -5,7 +5,7 @@ const settingsKeys = ['mutualAutoFollowSettings', 'commentAutoFollowSettings', '
 export function followerScanDue(config, now = Date.now()) {
   if (config?.enabled !== true) return false;
   const last = Date.parse(config.lastScan || '');
-  return !Number.isFinite(last) || now - last >= Math.max(10, Number(config.every) || 60) * 60000;
+  return !Number.isFinite(last) || now - last >= Math.max(10, Number(config.every) || 10) * 60000;
 }
 
 export async function restoreMissingLocalSetting(storage, key, fallback) {
@@ -45,13 +45,13 @@ export async function recoverAutomationAlarms({storage = chrome.storage.local, a
     ['x-mutual-auto-follow', data.mutualAutoFollowSettings ?? data.mutualNetwork?.autoFollow, 5, 5],
     ['x-comment-auto-follow', data.commentAutoFollowSettings ?? data.commentTracking?.autoFollow, 5, 5],
     ['x-unreciprocated-tracker', data.unreciprocatedSettings ?? data.unreciprocatedTracker?.config, 60, 5],
-    ['x-followers-scan', monitor, 60, 10]
+    ['x-followers-scan', monitor, 10, 10]
   ];
   const restored = [];
   for (const [name, config, fallback, minimum] of schedules) {
     if (data.followQueueBinding?.activated && ['x-mutual-auto-follow','x-comment-auto-follow'].includes(name)) { await alarms.clear(name); continue; }
     if (!config?.enabled || existing.has(name)) continue;
-    const delayInMinutes = randomizedInteger(Number(config.every) || fallback, Math.max(1, Number(config.jitter) || 1), minimum, 1440);
+    const delayInMinutes = randomizedInteger(Number(config.every) || fallback, name === 'x-followers-scan' ? Number(config.jitter) || 0 : Math.max(1, Number(config.jitter) || 1), minimum, 1440);
     await alarms.create(name, {delayInMinutes});
     restored.push(name);
   }

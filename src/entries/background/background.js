@@ -513,6 +513,19 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
 
+  if (cmd === 'scheduledFollowersDone') {
+    const tab = sender.tab;
+    const expectedUrl = chrome.runtime.getURL('panel.html');
+    if (sender.id !== chrome.runtime.id || !tab?.id || !tab.url?.startsWith(`${expectedUrl}?scheduledFollowers=`)) {
+      sendResponse({ok:false}); return false;
+    }
+    const token = new URL(tab.url).searchParams.get('scheduledFollowers');
+    if (token !== message.token) { sendResponse({ok:false}); return false; }
+    chrome.tabs.remove(tab.id).then(() => sendResponse({ok:true}), error => sendResponse({ok:false,error:String(error?.message || error)}));
+    return true;
+  }
+  if (cmd === 'runFollowersScanTick') return false;
+
   if (cmd === 'xLeaderboard') {
     if(!canUseLeaderboardAction({runtimeId:chrome.runtime.id,panelUrl:chrome.runtime.getURL('panel.html'),sender,action:message.action})){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
     leaderboardRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message||error)}));
@@ -719,19 +732,24 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     let monitor;
     try { monitor = await backgroundRecords.metadata('monitor'); } catch (error) { console.warn('粉丝定时配置不可用:', error?.message || error); return; }
     if (!monitor?.enabled) return;
-    const base = Number(monitor.every) || 60;
-    const jitter = Math.max(1, Number(monitor.jitter) || 1);
+    const base = Number(monitor.every) || 10;
+    const jitter = Math.max(0, Number(monitor.jitter) || 0);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    const res = await safeSendMessageToPanel({ cmd: 'runFollowersScanTick' });
-    const handledByPanel = Boolean(res?.ok);
-    if (!handledByPanel) {
-      await createNotification(`x-followers-${Date.now()}`, {
-        type: 'basic',
-        title: 'X 粉丝管理 · 定时检测提醒',
-        message: `增量检测周期已到（下次约 ${nextDelay} 分钟后），请打开管理面板以自动同步粉丝数据并拉取待回关用户。`
-      });
+    const panelUrl = chrome.runtime.getURL('panel.html');
+    const panelTabs = (await chrome.tabs.query({})).filter(tab => tab.url?.startsWith(panelUrl));
+    if (panelTabs.some(tab => tab.url?.includes('?scheduledFollowers='))) return;
+    if (panelTabs.length) {
+      const res = await Promise.race([
+        safeSendMessageToPanel({cmd:'runFollowersScanTick',targetPanelTabId:panelTabs[0].id}),
+        new Promise(resolve => setTimeout(() => resolve(null), 3000))
+      ]);
+      if (res?.ok) return;
+      console.warn('粉丝定时检测未能通知已打开的管理面板，本轮不重复创建扫描页');
+      return;
     }
+    const token = crypto.randomUUID();
+    await chrome.tabs.create({url:`${panelUrl}?scheduledFollowers=${token}`,active:false});
     return;
   }
 

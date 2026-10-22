@@ -69,7 +69,7 @@
             min="10"
             max="1440"
           />
-          <small class="drawer-setting-desc">定期检测自身粉丝与关注列表的基础时间间隔（至少 10 分钟）。</small>
+          <small class="drawer-setting-desc">默认每 10 分钟检测一轮。</small>
         </div>
 
         <!-- Jitter -->
@@ -82,10 +82,22 @@
             id="monitorJitter"
             v-model.number="settingsDrawerController.jitter.value"
             type="number"
-            min="1"
+            min="0"
             max="120"
           />
-          <small class="drawer-setting-desc">每次浮动至少 1 分钟，按基础周期动态调度。</small>
+          <small class="drawer-setting-desc">设为 0 时固定每 10 分钟检测。</small>
+        </div>
+
+        <div class="drawer-setting-group">
+          <label for="monitorFollowerBatch" class="drawer-setting-label">每轮粉丝数</label>
+          <input id="monitorFollowerBatch" v-model.number="settingsDrawerController.followerBatch.value" type="number" min="100" max="1000" step="20" />
+          <small class="drawer-setting-desc">最多 1,000 人；读到上限后，下轮接着读取。</small>
+        </div>
+
+        <div class="drawer-setting-group">
+          <label for="monitorFollowingBatch" class="drawer-setting-label">每轮关注数</label>
+          <input id="monitorFollowingBatch" v-model.number="settingsDrawerController.followingBatch.value" type="number" min="100" max="1000" step="20" />
+          <small class="drawer-setting-desc">最多 1,000 人；独立保存续扫位置。</small>
         </div>
 
         <!-- Auto Enqueue -->
