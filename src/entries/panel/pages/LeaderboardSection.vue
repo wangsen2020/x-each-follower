@@ -385,8 +385,8 @@
           <span class="lb-setting-number"><input v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings" aria-label="扫描间隔分钟">分钟</span>
         </label>
         <label class="lb-setting-row">
-          <span class="lb-setting-copy"><strong>每轮人数</strong><small>每轮最多扫描 1–5 位作者</small></span>
-          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="5" step="1" :disabled="savingSettings" aria-label="每轮扫描人数">位</span>
+          <span class="lb-setting-copy"><strong>每轮人数</strong><small>自动扫描每轮 1–50 位作者</small></span>
+          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="50" step="1" :disabled="savingSettings" aria-label="每轮扫描人数">位</span>
         </label>
         <label class="lb-setting-row">
           <span class="lb-setting-copy"><strong>自动日报</strong><small>扫描后继续生成昨日 Grok 分析</small></span>
@@ -786,8 +786,8 @@ async function saveSettings() {
     settingsError.value = '扫描间隔需为 15–360 分钟的整数';
     return;
   }
-  if (!Number.isInteger(values.scanBatchSize) || values.scanBatchSize < 1 || values.scanBatchSize > 5) {
-    settingsError.value = '每轮人数需为 1–5 的整数';
+  if (!Number.isInteger(values.scanBatchSize) || values.scanBatchSize < 1 || values.scanBatchSize > 50) {
+    settingsError.value = '每轮人数需为 1–50 的整数';
     return;
   }
   savingSettings.value = true;

@@ -83,8 +83,9 @@ test('monitor settings persist per owner, reschedule, and pause automatic work',
   await runtime.handle({action:'settings',config:{...config,enabled:false}});
   assert.equal(await browser.alarms.get(),null);
   assert.deepEqual(await runtime.alarm(),{skipped:true,disabled:true});
-  await assert.rejects(runtime.handle({action:'settings',config:{...config,scanBatchSize:9}}),/每轮人数/);
+  await assert.rejects(runtime.handle({action:'settings',config:{...config,scanBatchSize:51}}),/每轮人数/);
   assert.equal((await runtime.state()).config.scanBatchSize,2);
+  assert.equal((await runtime.handle({action:'settings',config:{...config,scanBatchSize:50}})).config.scanBatchSize,50);
 });
 
 test('automatic scan respects configured batch size while manual scan remains available',async()=>{
@@ -95,4 +96,7 @@ test('automatic scan respects configured batch size while manual scan remains av
   await runtime.handle({action:'settings',config:{enabled:true,scanIntervalMinutes:60,scanBatchSize:2,autoAnalyze:false}});
   assert.equal((await runtime.scan({automatic:true})).results.length,2);
   assert.equal((await runtime.scan()).results.length,4);
+  for(let index=4;index<51;index++)await store.upsertMember({ownerId:'100',creatorId:String(200+index),handle:`writer${index}`,active:true});
+  await runtime.handle({action:'settings',config:{enabled:true,scanIntervalMinutes:60,scanBatchSize:50,autoAnalyze:false}});
+  assert.equal((await runtime.scan({automatic:true})).results.length,50);
 });
