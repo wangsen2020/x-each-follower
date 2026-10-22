@@ -36,19 +36,6 @@
         <button
           type="button"
           class="secondary lb-icon-btn"
-          aria-label="榜单监控设置"
-          title="榜单监控设置"
-          :disabled="loading || savingSettings || !ownerId"
-          @click="openSettings"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/>
-            <path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="secondary lb-icon-btn"
           aria-label="立即扫描快照"
           title="立即扫描快照"
           :disabled="loading || busy"
@@ -81,6 +68,18 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="secondary lb-icon-btn settings-gear-btn lb-settings-trigger"
+          aria-label="榜单监控设置"
+          title="榜单监控设置"
+          @click="openSettings"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
       </div>
@@ -374,7 +373,7 @@
       </div>
     </div>
 
-    <ActionSettingsDrawer ref="settingsDrawer" title="榜单监控设置">
+    <ActionSettingsDrawer ref="settingsDrawer" title="榜单监控设置" @close="settingsError = ''">
       <div class="lb-setting-card">
         <label class="lb-setting-row">
           <span class="lb-setting-copy"><strong>自动监控</strong><small>定时更新作者快照与帖子数据</small></span>
@@ -774,14 +773,22 @@ const reportAuthorsList = computed(() => {
 
 // Actions
 function openSettings() {
-  Object.assign(settingsDraft, config.value);
+  settingsDraft.enabled = config.value?.enabled !== false;
+  settingsDraft.scanIntervalMinutes = Number(config.value?.scanIntervalMinutes) || 60;
+  settingsDraft.scanBatchSize = Number(config.value?.scanBatchSize) || 3;
+  settingsDraft.autoAnalyze = config.value?.autoAnalyze !== false;
   settingsError.value = '';
   settingsDrawer.value?.open();
 }
 
 async function saveSettings() {
   settingsError.value = '';
-  const values = { ...settingsDraft };
+  const values = {
+    enabled: Boolean(settingsDraft.enabled),
+    scanIntervalMinutes: Number(settingsDraft.scanIntervalMinutes),
+    scanBatchSize: Number(settingsDraft.scanBatchSize),
+    autoAnalyze: Boolean(settingsDraft.autoAnalyze)
+  };
   if (!Number.isInteger(values.scanIntervalMinutes) || values.scanIntervalMinutes < 15 || values.scanIntervalMinutes > 360) {
     settingsError.value = '扫描间隔需为 15–360 分钟的整数';
     return;
@@ -790,14 +797,19 @@ async function saveSettings() {
     settingsError.value = '每轮人数需为 1–50 的整数';
     return;
   }
+  if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+    settingsError.value = '扩展运行时不可用';
+    return;
+  }
   savingSettings.value = true;
   try {
     const res = await chrome.runtime.sendMessage({ cmd: 'xLeaderboard', action: 'settings', config: values });
     if (!res?.ok) throw new Error(res?.error || '保存榜单配置失败');
-    config.value = res.config;
+    config.value = res.config || values;
     await fetchState();
     settingsDrawer.value?.close();
     notice.value = '榜单监控配置已保存。';
+    setTimeout(() => { if (notice.value === '榜单监控配置已保存。') notice.value = ''; }, 3500);
   } catch (err) {
     settingsError.value = String(err?.message || err || '保存榜单配置失败');
   } finally {
@@ -998,7 +1010,13 @@ function reportStatusClass(status) {
 }
 
 watch(activeTab, tab => {
-  if (tab === 'leaderboard') fetchState();
+  if (tab === 'leaderboard') {
+    fetchState();
+  } else {
+    settingsDrawer.value?.close();
+    memberDrawer.value?.close();
+    reportDrawer.value?.close();
+  }
 });
 
 onMounted(() => {
@@ -1144,41 +1162,45 @@ onMounted(() => {
 }
 
 .lb-setting-card {
-  border: 1px solid var(--lb-border);
+  padding: 8px 10px;
+  border: 1px solid #e5ede7;
   border-radius: 8px;
-  overflow: hidden;
+  background: #f9fbf9;
 }
 
 .lb-setting-row {
   display: flex;
-  flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  min-height: 66px;
-  padding: 10px 12px;
+  min-height: 34px;
+  padding: 4px 0;
   box-sizing: border-box;
 }
 
 .lb-setting-row:not(:last-child) {
   border-bottom: 1px solid #e7eee8;
+  margin-bottom: 4px;
+  padding-bottom: 8px;
 }
 
 .lb-setting-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  margin-right: 10px;
+  flex: 1;
+  margin-right: 12px;
 }
 
 .lb-setting-copy strong {
   font-size: 12px;
   line-height: 18px;
+  color: #18302e;
 }
 
 .lb-setting-copy small {
   color: #63766a;
   font-size: 11px;
-  line-height: 16px;
+  line-height: 15px;
 }
 
 .lb-setting-number {
@@ -1186,11 +1208,12 @@ onMounted(() => {
   align-items: center;
   flex-shrink: 0;
   color: #63766a;
-  font-size: 11px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .lb-setting-number input {
-  width: 74px;
+  width: 72px;
   margin-right: 6px;
   text-align: right;
 }

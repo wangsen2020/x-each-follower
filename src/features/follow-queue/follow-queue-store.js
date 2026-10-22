@@ -3,7 +3,7 @@ import {compareFollowQueuePriority, followQueuePriority} from './follow-queue-pr
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const DEFAULT_DB_NAME = 'x-each-follower-follow-queue';
 const STORES = ['jobs', 'outcomes', 'settings', 'meta'];
 const PAGE_MAX = 100;
@@ -284,6 +284,7 @@ function postIndexKey(accountId, postId) {
 function projectJob(job) {
   if (!job || typeof job !== 'object' || !job.accountId) return job;
   job.priority = followQueuePriority(job);
+  job.priorityDescending = -job.priority;
   if (!Number.isFinite(job.createdAt)) job.createdAt = 0;
   if (!Number.isFinite(job.nextEligibleAt)) job.nextEligibleAt = 0;
   if (typeof job.state !== 'string' || job.state === '') job.state = 'pending';
@@ -527,6 +528,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         ensureIndex(jobs, 'accountId', 'accountId', {unique: false});
         ensureIndex(jobs, 'accountTarget', ['accountId', 'targetKey'], {unique: true});
         ensureIndex(jobs, 'byState', 'state', {unique: false});
+        ensureIndex(jobs, 'accountPriorityAsc', ['accountId', 'priority', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountPriorityDesc', ['accountId', 'priorityDescending', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountCreated', ['accountId', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountStateCreated', ['accountId', 'state', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountStateDue', ['accountId', 'state', 'nextEligibleAt', 'createdAt', 'id'], {unique: true});
@@ -883,7 +886,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       });
     },
 
-    async queryPage({accountId, state = 'all', source = 'all', q = '', cursor = null, page = 1, limit = 20, signal = null} = {}) {
+    async queryPage({accountId, state = 'all', source = 'all', q = '', order = null, cursor = null, page = 1, limit = 20, signal = null} = {}) {
       const account = requireAccountId(accountId);
       const status = state == null || state === '' ? 'all' : String(state);
       const moduleName = source == null || source === '' ? 'all' : String(source);
@@ -893,33 +896,36 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       if (!['all', 'fans', 'mutual', 'comments'].includes(moduleName)) throw new Error('invalid follow queue source');
       if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_MAX) throw new Error(`limit must be an integer from 1 to ${PAGE_MAX}`);
       if (page != null && page !== 1) throw new Error('follow queue pages use a cursor');
+      if (order != null && !['asc', 'desc'].includes(order)) throw new Error('invalid follow queue order');
       const parsed = decodeCursor(cursor);
       return withTransaction('readonly', async ({jobs, meta}) => {
         const revision = await revisionOf(meta);
         if (parsed) {
-          if (parsed.accountId !== account || parsed.state !== status || parsed.source !== moduleName || parsed.q !== query || parsed.revision !== revision) {
+          if (parsed.accountId !== account || parsed.state !== status || parsed.source !== moduleName || parsed.q !== query || parsed.revision !== revision || (parsed.order || null) !== order || (order && !Number.isFinite(parsed.priorityKey))) {
             throw new Error('invalid follow queue cursor');
           }
         }
         const sourceOnly = moduleName !== 'all';
-        const indexName = sourceOnly
+        const indexName = order ? (order === 'asc' ? 'accountPriorityAsc' : 'accountPriorityDesc') : sourceOnly
           ? SOURCE_INDEXES[moduleName]
           : (status === 'all' ? 'accountCreated' : 'accountStateCreated');
         const indexed = jobs.index(indexName);
-        const baseRange = sourceOnly
+        const baseRange = order ? accountCreatedRange(account) : sourceOnly
           ? accountCreatedRange(account)
           : (status === 'all' ? accountCreatedRange(account) : stateCreatedRange(account, status));
         let range = baseRange;
         if (parsed) {
-          const lower = sourceOnly || status === 'all'
+          const lower = order ? [account, parsed.priorityKey, parsed.createdAt, parsed.id] : sourceOnly || status === 'all'
             ? [account, parsed.createdAt, parsed.id]
             : [account, status, parsed.createdAt, parsed.id];
-          const upper = sourceOnly || status === 'all' ? [account, []] : [account, status, []];
+          const upper = order || sourceOnly || status === 'all' ? [account, []] : [account, status, []];
           range = keyRange().bound(lower, upper, true, true);
         }
-        const bounded = searching || (sourceOnly && status !== 'all');
-        const countable = !bounded;
-        const total = countable ? await requestResult(indexed.count(baseRange)) : null;
+        const bounded = searching || (sourceOnly && status !== 'all') || Boolean(order && (sourceOnly || status !== 'all'));
+        const countable = !searching && !(sourceOnly && status !== 'all');
+        const countIndex = jobs.index(sourceOnly ? SOURCE_INDEXES[moduleName] : status === 'all' ? 'accountCreated' : 'accountStateCreated');
+        const countRange = !sourceOnly && status !== 'all' ? stateCreatedRange(account, status) : accountCreatedRange(account);
+        const total = countable ? await requestResult(countIndex.count(countRange)) : null;
         const rows = [];
         let examined = 0;
         let lastSeen = null;
@@ -949,6 +955,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           state: status,
           source: moduleName,
           q: query,
+          order,
+          priorityKey: order === 'asc' ? anchor.priority : anchor.priorityDescending,
           revision,
           createdAt: anchor.createdAt,
           id: anchor.id
@@ -1092,6 +1100,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           return null;
         }
         job.priority = followQueuePriority(job);
+        job.priorityDescending = -job.priority;
         job.state = 'running';
         job.stage = job.stage === 'queued' ? 'claimed' : job.stage;
         job.updatedAt = seenAt;

@@ -134,6 +134,10 @@ test('version 1 upgrade keeps jobs, outcomes, and settings', async () => {
   assert.equal(jobs[0].id, 'keep-me');
   assert.equal(jobs[0].customNote, 'preserve-me');
   assert.equal(jobs[0].targetUserId, '42');
+  assert.equal(jobs[0].priority, 100);
+  assert.equal(jobs[0].priorityDescending, -100);
+  const sorted = await store.queryPage({accountId: 'acc-1', order: 'desc', limit: 20});
+  assert.deepEqual(sorted.jobs.map(job => job.id), ['keep-me']);
   const settings = await store.getSettings('acc-1');
   assert.equal(settings.enabled, true);
   assert.equal(settings.every, 9);
@@ -431,4 +435,25 @@ test('a blocked open closes the connection delivered by a late success', async (
   const store = createFollowQueueStore({indexedDB: fake, dbName: 'blocked-db'});
   await assert.rejects(store.getSettings('acc-1'), /blocked/);
   assert.equal(closed, true);
+});
+
+test('priority order spans pages, preserves FIFO ties and binds cursor to sort and filters', async () => {
+  const clock={t:1000}, store=storeFor(`priority-pages-${Date.now()}`,clock);
+  for (const [handle,module] of [['ordinary1','mutual'],['fan1','fans'],['ordinary2','comments'],['fan2','fans']]) {
+    await store.enqueue({accountId:'sort',handle,sources:[{module,enabled:true}]}); clock.t++;
+  }
+  const read=async order=>{
+    let cursor=null, handles=[];
+    do {const page=await store.queryPage({accountId:'sort',order,cursor,limit:1}); handles.push(...page.jobs.map(j=>j.handle));cursor=page.nextCursor;} while(cursor);
+    return handles;
+  };
+  assert.deepEqual(await read('desc'),['fan1','fan2','ordinary1','ordinary2']);
+  assert.deepEqual(await read('asc'),['ordinary1','ordinary2','fan1','fan2']);
+  const first=await store.queryPage({accountId:'sort',order:'desc',limit:1});
+  await assert.rejects(store.queryPage({accountId:'sort',order:'asc',cursor:first.nextCursor,limit:1}),/cursor/);
+  const filtered=await store.queryPage({accountId:'sort',order:'desc',source:'comments',limit:2});
+  assert.deepEqual(filtered.jobs.map(j=>j.handle),['ordinary2']);
+  assert.equal(filtered.total,1);
+  const search=await store.queryPage({accountId:'sort',order:'desc',q:'fan',limit:10});
+  assert.deepEqual(search.jobs.map(j=>j.handle),['fan1','fan2']);
 });

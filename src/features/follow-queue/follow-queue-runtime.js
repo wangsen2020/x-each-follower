@@ -983,6 +983,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           state: message.state || 'all',
           source: message.source || 'all',
           q: message.q || '',
+          order: message.order || null,
           cursor: message.cursor || null,
           limit: Number.isInteger(message.limit) ? message.limit : 20,
           signal: message.signal || null
