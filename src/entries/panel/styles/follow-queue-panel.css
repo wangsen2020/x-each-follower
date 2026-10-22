@@ -1043,3 +1043,16 @@
 .fq-grok-session-actions > :not(:last-child) {
   margin-right: 10px;
 }
+
+/* Queue columns share a top baseline and wrapping, fixed-height tags. */
+.fq-panel-root .fq-table td { vertical-align:top; padding:10px 12px; }
+.fq-panel-root .fq-table .fq-col-check { vertical-align:middle; }
+.fq-table .fq-col-priority { min-width:80px; width:90px; white-space:nowrap; }
+.fq-panel-root .fq-priority-sort { display:inline-flex; align-items:center; padding:0; margin:0; min-height:24px; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+.fq-priority-sort span { margin-left:6px; color:#245b45; }
+.fq-priority-sort:focus-visible { outline:2px solid #245b45; outline-offset:3px; }
+.fq-table .fq-tags-wrap { display:flex; flex-wrap:wrap; align-items:center; gap:0; }
+.fq-table .fq-tag { display:inline-flex; align-items:center; box-sizing:border-box; height:24px; padding:0 6px; margin:0 6px 6px 0; font-size:12px; line-height:22px; white-space:nowrap; }
+.fq-table .fq-source-link { display:inline-flex; }
+.fq-table .fq-stage-tag { color:#52685d; background:#f2f6f3; border:1px solid #dce3d9; }
+.fq-table .fq-priority-tag { color:#245b45; background:#eef6f1; border:1px solid #cbdacf; font-weight:600; }

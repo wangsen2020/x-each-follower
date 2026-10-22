@@ -8,6 +8,7 @@ import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffi
  */
 
 import { FOLLOW_QUEUE_DEFAULT_SETTINGS } from '../../features/follow-queue/follow-queue-store.js';
+import {followQueuePriority} from '../../features/follow-queue/follow-queue-priority.js';
 
 export const DEFAULT_SETTINGS = FOLLOW_QUEUE_DEFAULT_SETTINGS || Object.freeze({
   enabled: false,
@@ -200,6 +201,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let searchQuery = '';
   let currentPage = 1;
   let pageSize = 20;
+  let priorityOrder = 'desc';
   let serverPaging = false;
   let serverTotal = null;
   let totalKnown = false;
@@ -368,6 +370,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         state: stateFilter,
         source: moduleFilter,
         q: searchQuery,
+        order: priorityOrder,
         cursor,
         limit: asked
       });
@@ -627,7 +630,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         if (!handleMatch && !idMatch) return false;
       }
       return true;
-    });
+    }).sort((a, b) => (priorityOrder === 'desc' ? -1 : 1) * (followQueuePriority(a) - followQueuePriority(b)) || a.createdAt - b.createdAt || String(a.id).localeCompare(String(b.id)));
   }
 
   function computeStats() {
@@ -1050,6 +1053,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('tr', {}, [
         el('th', { className: 'fq-col-check' }, [headerCheckbox]),
         el('th', { className: 'fq-col-target' }, '目标账号'),
+        el('th', { className: 'fq-col-priority', 'aria-sort': priorityOrder === 'desc' ? 'descending' : 'ascending' }, [
+          el('button', {type:'button', className:'fq-priority-sort', title:priorityOrder === 'desc' ? '当前从大到小，点击从小到大排列' : '当前从小到大，点击从大到小排列', onClick:()=>{
+            priorityOrder = priorityOrder === 'desc' ? 'asc' : 'desc';
+            currentPage = 1; startCursors = [null]; selectedJobIds.clear(); fetchAll();
+          }}, ['权重 ', el('span', {'aria-hidden':'true'}, priorityOrder === 'desc' ? '↓' : '↑')])
+        ]),
         el('th', { className: 'fq-col-sources' }, '来源'),
         el('th', { className: 'fq-col-state' }, '状态 / 阶段'),
         el('th', { className: 'fq-col-result' }, '关注结果'),
@@ -1061,7 +1070,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     let tbodyContent;
     if (visibleJobs.length === 0 && loading) {
       tbodyContent = el('tr', {}, [
-        el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
+        el('td', { colSpan: 8, className: 'fq-empty-cell' }, [
           el('div', { className: 'dash-load fq-load', role: 'status', 'aria-live': 'polite', 'aria-busy': 'true' }, [
             el('span', { className: 'dash-spinner', 'aria-hidden': 'true' }),
             el('span', { className: 'dash-load-text' }, '正在加载关注队列…')
@@ -1070,7 +1079,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       ]);
     } else if (visibleJobs.length === 0 && (error || settingsFetchError)) {
       tbodyContent = el('tr', {}, [
-        el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
+        el('td', { colSpan: 8, className: 'fq-empty-cell' }, [
           el('div', { className: 'dash-load dash-load-error', role: 'alert' }, [
             el('span', { className: 'dash-load-text' }, '关注队列读取失败，尚未确认列表为空')
           ])
@@ -1082,7 +1091,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         ? (scanStatus || '正在继续检索…')
         : '粉丝管理、互关追踪或评论追踪发现候选后，将自动或手动投递至此处执行。';
       tbodyContent = el('tr', {}, [
-        el('td', { colSpan: 7, className: 'fq-empty-cell' }, [
+        el('td', { colSpan: 8, className: 'fq-empty-cell' }, [
           el('div', { className: 'fq-empty-wrap' }, [
             el('p', { className: 'fq-empty-title' }, emptyTitle),
             el('p', { className: 'fq-empty-desc fq-scan-status' }, emptyDesc)
@@ -1155,13 +1164,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         const stateClass = `fq-status-${job.state || 'pending'}`;
         const stateText = STATE_LABELS[job.state] || job.state || '待关注';
         const stateBadge = el('span', { className: `fq-tag ${stateClass}` }, stateText);
-        const stageText = job.stage ? el('small', { className: 'fq-stage-text' }, job.stage) : null;
-        const leaseBadge = job.lease?.owner ? el('small', { className: 'fq-lease-text' }, `租约: ${job.lease.owner}`) : null;
+        const stageText = job.stage ? el('span', { className: 'fq-tag fq-stage-tag' }, job.stage) : null;
+        const leaseBadge = job.lease?.owner ? el('span', { className: 'fq-tag fq-stage-tag' }, `租约: ${job.lease.owner}`) : null;
 
         const stateCell = el('td', { className: 'fq-col-state' }, [
-          stateBadge,
-          stageText,
-          leaseBadge
+          el('div', {className:'fq-tags-wrap'}, [stateBadge, stageText, leaseBadge])
         ]);
 
         // Follow result cell
@@ -1263,6 +1270,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         }, [
           el('td', { className: 'fq-col-check' }, [rowCheckbox]),
           targetCell,
+          el('td', {className:'fq-col-priority'}, [el('span', {className:'fq-tag fq-priority-tag', title:'权重越高越先执行；同权重按入队时间排列'}, String(followQueuePriority(job)))]),
           sourcesCell,
           stateCell,
           resultCell,

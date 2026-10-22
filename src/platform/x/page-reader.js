@@ -15,9 +15,14 @@ export function collectVisible(target) {
 }
 
 export function readProfile(handle) {
-  if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return { pending: true };
+  const route=location.pathname.split('/').filter(Boolean);
+  if(route[0]?.toLowerCase()!==handle.toLowerCase()||route.length>2||(route.length===2&&!['followers','following','verified_followers','with_replies'].includes(route[1])))return {pending:true};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return { pending: true };
+  // Only X's profile empty state is authoritative; never match bio or tweet text.
+  const emptyText = (root.querySelector('[data-testid="emptyState"]')?.innerText || '').trim();
+  if (/^(?:此[账帳]号不存在|此帳號不存在|这个账号不存在|This account doesn[’']t exist|This account does not exist)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'not_found',reason:'此账号不存在',posts:[]};
+  if (/^(?:账号已被冻结|帳戶已停用|Account suspended)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'suspended',reason:'账号已停用',posts:[]};
   const name = root.querySelector('[data-testid="UserName"]')?.innerText || '';
   const bio = root.querySelector('[data-testid="UserDescription"]')?.innerText || '';
   const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => {
@@ -33,9 +38,14 @@ export function readProfile(handle) {
 }
 
 export function readProfileBundle(handle, recentLimit = 8) {
-  if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return {pending:true};
+  const route=location.pathname.split('/').filter(Boolean);
+  if(route[0]?.toLowerCase()!==handle.toLowerCase()||route.length>2||(route.length===2&&!['followers','following','verified_followers','with_replies'].includes(route[1])))return {pending:true};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return {pending:true};
+  // Only X's profile empty state is authoritative; never match bio or tweet text.
+  const emptyText = (root.querySelector('[data-testid="emptyState"]')?.innerText || '').trim();
+  if (/^(?:此[账帳]号不存在|此帳號不存在|这个账号不存在|This account doesn[’']t exist|This account does not exist)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'not_found',reason:'此账号不存在',posts:[]};
+  if (/^(?:账号已被冻结|帳戶已停用|Account suspended)(?:[\s。.!]|$)/i.test(emptyText)) return {pending:false,status:'suspended',reason:'账号已停用',posts:[]};
   const name = root.querySelector('[data-testid="UserName"]')?.innerText || '';
   const bio = root.querySelector('[data-testid="UserDescription"]')?.innerText || '';
   const countLink = suffixes => [...root.querySelectorAll('a[href]')].find(link => suffixes.some(suffix => new URL(link.href, location.origin).pathname.toLowerCase() === `/${handle.toLowerCase()}/${suffix}`));
@@ -83,7 +93,8 @@ export function scanFollowers() {
       if (/pending|等待回应|请求中/i.test(label)) { state = 'pending'; break; }
       if (/^follow$|^关注$/i.test(label) || testId.endsWith('-follow')) { state = 'follow_back'; break; }
     }
-    users.push({handle, name:(cell.innerText || '').split('\n')[0] || handle, bio:cell.innerText || '', state});
+    users.push({handle, name:(cell.innerText || '').split('\n')[0] || handle, bio:cell.innerText || '', state,
+      relationship:{followedBy:true, following:state === 'following' ? true : state === 'follow_back' ? false : null}});
   }
   window.scrollBy(0, Math.max(600, window.innerHeight * 0.8));
   return {users, ready:true};

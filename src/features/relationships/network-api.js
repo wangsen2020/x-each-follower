@@ -147,12 +147,20 @@ export function mergeRecentPosts(history = [], incoming = [], limit = 100) {
 
 export function findBottomCursor(value) {
   if (!value || typeof value !== 'object') return '';
-  if (value.cursorType === 'Bottom' && typeof value.value === 'string') return value.value;
+  if (/^Bottom(?:Cursor)?$/.test(value.cursorType || '') && typeof value.value === 'string') return value.value;
   for (const child of Object.values(value)) {
     const found = findBottomCursor(child);
     if (found) return found;
   }
   return '';
+}
+
+export function nextUserListPage(json, currentCursor, users) {
+  if (!users?.length) return {next:'',complete:false,reason:'empty'};
+  const next=findBottomCursor(json);
+  if (!next) return {next:'',complete:true,reason:''};
+  if (next===currentCursor) return {next:'',complete:false,reason:'stalled'};
+  return {next,complete:false,reason:''};
 }
 
 export function addUniqueUsersUpTo(found, users, limit, mapUser = user => user) {
@@ -163,7 +171,7 @@ export function addUniqueUsersUpTo(found, users, limit, mapUser = user => user) 
   }
   return found;
 }
-export const GRAPHQL_OP_RE = new RegExp('/graphql/([^/?]+)/(UserByScreenName|Followers|BlueVerifiedFollowers|Following|TweetDetail)(?=[/?#]|$)');
+export const GRAPHQL_OP_RE = new RegExp('/graphql/([^/?]+)/(UserByScreenName|Followers|BlueVerifiedFollowers|Following|TweetDetail|UserOriginalsTimeline|UserRepliesTimeline)(?=[/?#]|$)');
 
 export function isUsableNetworkTemplate(operation, template) {
   if (!template?.queryId) return false;

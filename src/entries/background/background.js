@@ -1,3 +1,5 @@
+import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
+import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
@@ -22,6 +24,9 @@ import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {createStorageWriteAdapter} from '../../platform/storage-write-adapter.js';
 import {createRecordRuntime} from '../../features/records/record-runtime.js';
 import {createPostRuntime, POST_ALARM} from '../../features/post-tracking/post-runtime.js';
+import {createLeaderboardRuntime, LEADERBOARD_ALARM} from '../../features/leaderboard/leaderboard-runtime.js';
+import {createLeaderboardStore} from '../../features/leaderboard/leaderboard-store.js';
+import {canUseLeaderboardAction} from '../../features/leaderboard/leaderboard-access.js';
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
@@ -57,6 +62,14 @@ const backgroundRecords = createBackgroundRecords({
 });
 const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
 const postTrackingRuntime = createPostRuntime();
+const leaderboardRuntime = createLeaderboardRuntime({
+  store:createLeaderboardStore(),
+  owner:async()=>{
+    const identity=await followQueueRuntime.handle({cmd:'followQueueIdentity'});
+    if(!identity?.ok||!identity.accountId)throw new Error('无法核实当前 X 登录账号');
+    return {accountId:identity.accountId,handle:identity.handle};
+  }
+});
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -170,10 +183,11 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
   while (Date.now() < deadline && data.pending) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) throw new Error('主页标签页已关闭');
-    if (tab.status === 'complete') data = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result || data;
+    if (tab.status === 'complete') data = await readProfileOnTab(chrome,tabId,handle,recentLimit,'comment-auto-follow').catch(()=>null) || data;
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
+  if (['not_found','suspended'].includes(data.status)) return data;
   if (data.relationship?.following === true) return {...data, dwellSeconds:0};
   const rounds = Math.max(1, Math.min(8, Number(cfg.scrollRounds) || 5));
   const dwellSeconds = randomizedSeconds(cfg.dwellSeconds || 15, cfg.dwellJitterSeconds, 2, 60);
@@ -186,7 +200,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     await sleep(currentStepDelay);
     remainingDwellMs -= currentStepDelay;
   }
-  const afterScroll = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result;
+  const afterScroll = await readProfileOnTab(chrome,tabId,handle,recentLimit,'comment-auto-follow').catch(()=>null);
   if (afterScroll && !afterScroll.pending && (afterScroll.posts || []).length >= (data.posts || []).length) data = afterScroll;
   return {...data, dwellSeconds};
 }
@@ -227,7 +241,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
       tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
       return {ok:true, summary:cfg.lastSummary};
     }
-    const tab = await chrome.tabs.create({url:'https://x.com/home', active:false});
+    const tab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'comment-auto-follow');
     tabId = tab?.id;
     if (!tabId) throw new Error('无法创建 X 后台标签页');
     let rateLimited = false;
@@ -243,8 +257,16 @@ async function executeCommentAutoFollow(source = 'alarm') {
       let commentRes = {status:'off'};
       await recordAutoFollowAttempt(handle, 'processing', '', undefined);
       try {
-        await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
+        await updateProfileTab(chrome,tabId,{url:`https://x.com/${encodeURIComponent(handle)}`},'comment-auto-follow');
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
+        if (['not_found','suspended'].includes(profile.status)) {
+          user.autoFollowState = 'skipped'; user.autoFollowReason = profile.reason;
+          user.autoFollowCheckedAt = new Date().toISOString();
+          await recordAutoFollowAttempt(handle, 'skipped', profile.reason, undefined);
+          await saveCommentTrackingData(tracking, handle);
+          await appendAutoFollowLog({scope:'comment', source, handle, result:'skipped', detail:profile.reason});
+          processedCount++; continue;
+        }
         actualDwellSeconds = profile.dwellSeconds ?? actualDwellSeconds;
         delete profile.dwellSeconds;
         if (profile.relationship?.following === true) {
@@ -344,6 +366,13 @@ async function executeCommentAutoFollow(source = 'alarm') {
           }
         } else { user.followFailedAt = new Date().toISOString(); user.autoFollowState = 'failed'; }
       } catch (error) {
+        if(error.code==='X_PROFILE_UNAVAILABLE'){
+          user.autoFollowState='skipped';user.autoFollowReason=error.message;
+          await recordAutoFollowAttempt(handle,'skipped',error.message,undefined);
+          await saveCommentTrackingData(tracking,handle);
+          await appendAutoFollowLog({scope:'comment',source,handle,result:'skipped',detail:error.message});
+          processedCount++;continue;
+        }
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
@@ -409,7 +438,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
     const post = {tweetId, url, authorHandle, status:'collecting', replyUsers:0, replies:0, collectedAt:new Date().toISOString()};
     await updateCommentStatus({tweetId, url, state:'collecting', message:'正在后台读取帖子回复…', updatedAt:new Date().toISOString()});
     try {
-      const tab = await chrome.tabs.create({url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {})});
+      const tab = await createProfileTab(chrome,{url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {},'comment-auto-follow')});
       tabId = tab.id;
       await waitForTweetTemplate(tabId, tweetId);
       const replyUsers = new Map();
@@ -483,6 +512,25 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+
+  if (cmd === 'scheduledFollowersDone') {
+    const tab = sender.tab;
+    const expectedUrl = chrome.runtime.getURL('panel.html');
+    if (sender.id !== chrome.runtime.id || !tab?.id || !tab.url?.startsWith(`${expectedUrl}?scheduledFollowers=`)) {
+      sendResponse({ok:false}); return false;
+    }
+    const token = new URL(tab.url).searchParams.get('scheduledFollowers');
+    if (token !== message.token) { sendResponse({ok:false}); return false; }
+    chrome.tabs.remove(tab.id).then(() => sendResponse({ok:true}), error => sendResponse({ok:false,error:String(error?.message || error)}));
+    return true;
+  }
+  if (cmd === 'runFollowersScanTick') return false;
+
+  if (cmd === 'xLeaderboard') {
+    if(!canUseLeaderboardAction({runtimeId:chrome.runtime.id,panelUrl:chrome.runtime.getURL('panel.html'),sender,action:message.action})){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
+    leaderboardRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message||error)}));
+    return true;
+  }
 
   if (cmd === 'ownPostTracking') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
@@ -653,14 +701,18 @@ function safeSendMessageToPanel(message) {
 }
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === LEADERBOARD_ALARM) {
+    await leaderboardRuntime.alarm().catch(error=>console.warn('X 榜单监控:',error.message));
+    return;
+  }
   if (alarm.name === POST_ALARM) {
     await postTrackingRuntime.sync({background:true,days:(await chrome.storage.local.get('ownPostTracking')).ownPostTracking?.days || 14}).catch(error=>console.warn('帖子监控:',error.message));
     return;
   }
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
   if (alarm.name === QUEUE_ALARM) {
-    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:error.message}));
-    await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
+    const result = await followQueueRuntime.run().catch(error=>({ok:false,error:pageFailureMessage(error)}));
+    if(result.notify!==false)await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
     return;
   }
   if (['x-mutual-auto-follow','x-comment-auto-follow'].includes(alarm.name) && (await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.activated) { await chrome.alarms.clear(alarm.name); return; }
@@ -680,19 +732,24 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     let monitor;
     try { monitor = await backgroundRecords.metadata('monitor'); } catch (error) { console.warn('粉丝定时配置不可用:', error?.message || error); return; }
     if (!monitor?.enabled) return;
-    const base = Number(monitor.every) || 60;
-    const jitter = Math.max(1, Number(monitor.jitter) || 1);
+    const base = Number(monitor.every) || 10;
+    const jitter = Math.max(0, Number(monitor.jitter) || 0);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    const res = await safeSendMessageToPanel({ cmd: 'runFollowersScanTick' });
-    const handledByPanel = Boolean(res?.ok);
-    if (!handledByPanel) {
-      await createNotification(`x-followers-${Date.now()}`, {
-        type: 'basic',
-        title: 'X 粉丝管理 · 定时检测提醒',
-        message: `增量检测周期已到（下次约 ${nextDelay} 分钟后），请打开管理面板以自动同步粉丝数据并拉取待回关用户。`
-      });
+    const panelUrl = chrome.runtime.getURL('panel.html');
+    const panelTabs = (await chrome.tabs.query({})).filter(tab => tab.url?.startsWith(panelUrl));
+    if (panelTabs.some(tab => tab.url?.includes('?scheduledFollowers='))) return;
+    if (panelTabs.length) {
+      const res = await Promise.race([
+        safeSendMessageToPanel({cmd:'runFollowersScanTick',targetPanelTabId:panelTabs[0].id}),
+        new Promise(resolve => setTimeout(() => resolve(null), 3000))
+      ]);
+      if (res?.ok) return;
+      console.warn('粉丝定时检测未能通知已打开的管理面板，本轮不重复创建扫描页');
+      return;
     }
+    const token = crypto.randomUUID();
+    await chrome.tabs.create({url:`${panelUrl}?scheduledFollowers=${token}`,active:false});
     return;
   }
 
@@ -739,19 +796,22 @@ async function restoreSettingsFromSync() {
   await restoreMissingSyncedSettings().catch(() => {});
 }
 
+const recoverAlarms = () => recoverAutomationAlarms({monitorMetadata: () => backgroundRecords.metadata('monitor')});
+
 chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
-  await recoverAutomationAlarms();
+  await recoverAlarms();
 });
 chrome.runtime.onInstalled.addListener(async () => {
   await restoreSettingsFromSync();
-  await recoverAutomationAlarms();
+  await recoverAlarms();
 });
 
-recoverAutomationAlarms().catch(error => console.warn('恢复自动任务失败:', error));
+recoverAlarms().catch(error => console.warn('恢复自动任务失败:', error));
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
 postTrackingRuntime.schedule().catch(error=>console.warn('恢复帖子监控失败:',error.message));
+leaderboardRuntime.schedule().catch(error=>console.warn('恢复 X 榜单监控失败:',error.message));
 
 let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {

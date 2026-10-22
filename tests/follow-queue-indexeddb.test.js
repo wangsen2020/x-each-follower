@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
+import {createFollowQueueScheduler} from '../src/features/follow-queue/follow-queue-scheduler.js';
+import {collectFollowQueueCandidates} from '../src/features/follow-queue/follow-queue-sources.js';
 
 function storeFor(name, clock = {t: 5_000}) {
   return createFollowQueueStore({
@@ -10,6 +12,69 @@ function storeFor(name, clock = {t: 5_000}) {
     now: () => clock.t
   });
 }
+
+test('scheduler dispatches a fan arriving mid-run before remaining older ordinary candidates', async () => {
+  const clock = {t: 1000};
+  const store = storeFor(`priority-mid-run-${Date.now()}`, clock);
+  const accountId = 'priority-mid-run';
+  const add = async (handle, module) => {
+    const bucket = module === 'fans' ? 'monitor' : module === 'comments' ? 'commentTracking' : 'mutualNetwork';
+    const [candidate] = collectFollowQueueCandidates({accountId, sourceEnabled:{fans:true, comments:true, mutual:true},
+      [bucket]:{users:[{handle, relationship:{following:false, followedBy:module === 'fans'}}]}});
+    return store.enqueue(candidate);
+  };
+  await add('comment_first', 'comments');
+  clock.t++;
+  await add('mutual_second', 'mutual');
+  const dispatched = [];
+  const scheduler = createFollowQueueScheduler({store, now:()=>clock.t, execute:async job => {
+    dispatched.push(job.handle);
+    if (job.handle === 'comment_first') {
+      clock.t++;
+      await add('new_fan', 'fans');
+    }
+    return {state:'skipped', reason:'dispatch order test'};
+  }});
+  const result = await scheduler.run({accountId, manual:true});
+  assert.equal(result.ok, true);
+  assert.deepEqual(dispatched, ['comment_first', 'new_fan', 'mutual_second']);
+});
+
+test('follow-back priority promotes existing candidates and due retries ahead of older ordinary jobs', async () => {
+  const clock = {t: 1000};
+  const store = storeFor(`priority-${Date.now()}`, clock);
+  const enqueue = (handle, module) => store.enqueue({accountId:'priority', handle, sources:[{module, enabled:true}]});
+  await enqueue('ordinary', 'comments');
+  clock.t++;
+  const fan = await enqueue('newfan', 'mutual');
+  await enqueue('newfan', 'fans');
+  const first = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(first.id, fan.id);
+  assert.equal(first.priority, 100);
+  assert.equal(await store.claim({accountId:'priority', owner:'other', leaseMs:1000}), null);
+  await store.settle({id:first.id, owner:'test', version:first.lease.version, state:'retry', patch:{nextEligibleAt:clock.t + 100}});
+  const ordinary = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(ordinary.handle, 'ordinary');
+  await store.settle({id:ordinary.id, owner:'test', version:ordinary.lease.version, state:'skipped'});
+  await enqueue('another', 'mutual');
+  clock.t += 100;
+  const retry = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(retry.id, fan.id);
+  await store.settle({id:retry.id, owner:'test', version:retry.lease.version, state:'followed'});
+  const last = await store.claim({accountId:'priority', owner:'test', leaseMs:1000});
+  assert.equal(last.handle, 'another');
+});
+
+test('disabled fan source cannot boost an ordinary candidate; equal weights remain FIFO', async () => {
+  const clock = {t: 5000};
+  const store = storeFor(`priority-disabled-${Date.now()}`, clock);
+  await store.enqueue({accountId:'priority', handle:'first', sources:[{module:'comments',enabled:true}]});
+  clock.t++;
+  await store.enqueue({accountId:'priority', handle:'second', sources:[{module:'mutual',enabled:true},{module:'fans',enabled:false}]});
+  const job = await store.claim({accountId:'priority',owner:'test',leaseMs:1000});
+  assert.equal(job.handle, 'first');
+  assert.equal(job.priority, 10);
+});
 
 async function seedVersion1(name) {
   const request = globalThis.indexedDB.open(name, 1);
@@ -69,6 +134,10 @@ test('version 1 upgrade keeps jobs, outcomes, and settings', async () => {
   assert.equal(jobs[0].id, 'keep-me');
   assert.equal(jobs[0].customNote, 'preserve-me');
   assert.equal(jobs[0].targetUserId, '42');
+  assert.equal(jobs[0].priority, 100);
+  assert.equal(jobs[0].priorityDescending, -100);
+  const sorted = await store.queryPage({accountId: 'acc-1', order: 'desc', limit: 20});
+  assert.deepEqual(sorted.jobs.map(job => job.id), ['keep-me']);
   const settings = await store.getSettings('acc-1');
   assert.equal(settings.enabled, true);
   assert.equal(settings.every, 9);
@@ -366,4 +435,25 @@ test('a blocked open closes the connection delivered by a late success', async (
   const store = createFollowQueueStore({indexedDB: fake, dbName: 'blocked-db'});
   await assert.rejects(store.getSettings('acc-1'), /blocked/);
   assert.equal(closed, true);
+});
+
+test('priority order spans pages, preserves FIFO ties and binds cursor to sort and filters', async () => {
+  const clock={t:1000}, store=storeFor(`priority-pages-${Date.now()}`,clock);
+  for (const [handle,module] of [['ordinary1','mutual'],['fan1','fans'],['ordinary2','comments'],['fan2','fans']]) {
+    await store.enqueue({accountId:'sort',handle,sources:[{module,enabled:true}]}); clock.t++;
+  }
+  const read=async order=>{
+    let cursor=null, handles=[];
+    do {const page=await store.queryPage({accountId:'sort',order,cursor,limit:1}); handles.push(...page.jobs.map(j=>j.handle));cursor=page.nextCursor;} while(cursor);
+    return handles;
+  };
+  assert.deepEqual(await read('desc'),['fan1','fan2','ordinary1','ordinary2']);
+  assert.deepEqual(await read('asc'),['ordinary1','ordinary2','fan1','fan2']);
+  const first=await store.queryPage({accountId:'sort',order:'desc',limit:1});
+  await assert.rejects(store.queryPage({accountId:'sort',order:'asc',cursor:first.nextCursor,limit:1}),/cursor/);
+  const filtered=await store.queryPage({accountId:'sort',order:'desc',source:'comments',limit:2});
+  assert.deepEqual(filtered.jobs.map(j=>j.handle),['ordinary2']);
+  assert.equal(filtered.total,1);
+  const search=await store.queryPage({accountId:'sort',order:'desc',q:'fan',limit:10});
+  assert.deepEqual(search.jobs.map(j=>j.handle),['fan1','fan2']);
 });

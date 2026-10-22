@@ -1,7 +1,7 @@
 (function () {
   if (window.__XEF_NET_HOOKED) return;
   window.__XEF_NET_HOOKED = true;
-  const OPS = ['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','contentPageQuery'];
+  const OPS = ['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
   const RE = new RegExp('/graphql/([^/?]+)/(' + OPS.join('|') + ')(?=[/?#]|$)');
   const wanted = ['authorization','x-csrf-token','x-client-transaction-id','x-twitter-auth-type','x-twitter-active-user','x-twitter-client-language'];
   // Only the extension-owned initialization tab may bound X's native first query.

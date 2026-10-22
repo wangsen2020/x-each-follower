@@ -258,6 +258,17 @@ async function deleteBatchFixture(){
  f.setMutation({status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});f.setDetail({data:{entries:[id1,id2].map(id=>({entryId:`tweet-${id}`,content:{__typename:'TweetTombstone',text:'This Post was deleted'}}))}});
  return {...f,ids:[id1,id2]};
 }
+test('page reconciles batch selections across filters and removes protected or deleted posts',async()=>{
+ const f=await deleteBatchFixture();
+ const first=await f.runtime.handle({op:'page',options:{view:'low',selectedPostIds:f.ids}});
+ assert.deepEqual(first.selectedPostIds,f.ids);
+ const protectedPost=await f.store.get('123',f.ids[0]);protectedPost.protected=true;await f.store.put(protectedPost);
+ const deletedPost=await f.store.get('123',f.ids[1]);deletedPost.deletion={status:'verified'};await f.store.put(deletedPost);
+ const next=await f.runtime.handle({op:'page',options:{view:'low',selectedPostIds:f.ids}});
+ assert.deepEqual(next.selectedPostIds,[]);
+ assert.equal(next.total,0);
+ assert.equal(f.deletes(),0);
+});
 test('batch deletion binds exact approved posts, is serial and durable, and refuses replay',async()=>{
  const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});assert.equal(a.items.length,2);assert.equal(f.deletes(),0);assert.equal(a.owner.handle,'tester');
  await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId}),/用户确认/);assert.equal(f.deletes(),0);

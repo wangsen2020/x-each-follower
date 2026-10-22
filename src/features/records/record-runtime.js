@@ -95,7 +95,9 @@ function sourceKeyOf(path) {
 }
 
 function isFollowBack(payload, path) {
-  return path?.[1] === 'queue' && payload?.status !== 'followed' && payload?.state !== 'following' && payload?.relationship?.following !== true;
+  return path?.[1] === 'queue' && (payload?.relationship?.followedBy === true || (payload?.state === 'follow_back' && payload?.relationship?.followedBy !== false))
+    && !['followed','identity_mismatch','no_longer_following'].includes(payload?.status)
+    && payload?.state !== 'following' && payload?.relationship?.following !== true;
 }
 
 function isFollowingFan(payload, path) {
@@ -108,7 +110,7 @@ function tabsFor(moduleName, payload, path, index) {
     if (isFollowBack(payload, path)) tabs.push('followBack');
     if (isFollowingFan(payload, path)) tabs.push('following');
     if (path?.[0] === 'monitor' && path?.[1] === 'users') tabs.push('archive');
-    if (path?.[1] === 'queue' && payload?.status === 'pending' && payload?.state !== 'following' && payload?.relationship?.following !== true) tabs.push('pendingQueue');
+    if (isFollowBack(payload, path) && payload?.status === 'pending') tabs.push('pendingQueue');
     return tabs;
   }
   if (moduleName === 'mutual') return ['all', mutualUserCategory(applyRelationshipSnapshot(payload, index))];
@@ -230,7 +232,9 @@ function relationRecords(snapshot) {
 }
 
 function isFollowBackRow(payload) {
-  return payload?.status !== 'followed' && payload?.state !== 'following' && payload?.relationship?.following !== true;
+  return payload?.relationship?.followedBy === true && payload?.status !== 'followed'
+    && payload?.status !== 'identity_mismatch' && payload?.status !== 'no_longer_following'
+    && payload?.state !== 'following' && payload?.relationship?.following !== true;
 }
 
 function derivedRows(snapshot, index) {

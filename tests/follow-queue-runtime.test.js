@@ -8,6 +8,8 @@ test('queue eligibility uses configured ratio instead of the legacy 80 percent v
   assert.equal(assessQueueProfile(profile,settings),'');
   assert.match(assessQueueProfile(profile,{...settings,ratioThreshold:.8}),/80%/);
   assert.match(assessQueueProfile({...profile,followersText:''},settings),/未读全/);
+  assert.equal(assessQueueProfile(profile,{...settings,ratioThreshold:.8},true),'');
+  assert.match(assessQueueProfile({...profile,handle:'houthi_updates'},settings,true),/武装组织/);
 });
 
 test('armed-group profiles are skipped even when optional broad risk filtering is disabled',()=>{
@@ -99,6 +101,46 @@ test('followQueueVerify resolves uncertain job to followed or pending or exclude
   assert.equal(res3.ok,true);
   assert.equal(res3.resolvedState,'excluded');
   assert.equal(resolved[2].state,'excluded');
+});
+
+test('fan reconciliation reopens only a verified ratio skip and clears stale follower labels',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const queueRow={payload:{id:'42',handle:'target_user',status:'pending',relationship:{followedBy:true,following:false}}};
+  const job={id:'job-42',accountId:'123',targetUserId:'42',handle:'target_user',state:'skipped',
+    followResult:{reason:'关注/粉丝比例低于 80%'}};
+  const resolved=[], patches=[];
+  const store={lookup:async()=>job,resolveJob:async payload=>{resolved.push(payload);job.state=payload.state;return {ok:true,job:{...job,...payload}};}};
+  const records={lookupAll:async({sourceKey,bucket})=>sourceKey==='monitor'&&bucket==='queue'?[queueRow]:[],
+    batch:async payload=>patches.push(payload)};
+  let followedBy=true,following=false,remoteId='42';
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const runtime=createFollowQueueRuntime({api,store,records,fetchUser:async()=>({id:remoteId,handle:'target_user',
+    relationshipKnown:true,relationship:{followedBy,following}})});
+  const reopened=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
+  assert.equal(reopened.jobState,'reopened');
+  assert.equal(resolved[0].state,'pending');
+  assert.equal(patches[0].changes[0].patch.status,'pending');
+
+  job.state='skipped';job.followResult={reason:'命中高风险内容门禁'};
+  const unsafe=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
+  assert.equal(unsafe.jobState,'unchanged');
+  assert.equal(resolved.length,1);
+
+  followedBy=false;
+  const gone=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
+  assert.equal(gone.relationship.followedBy,false);
+  assert.equal(patches.at(-1).changes[0].patch.status,'no_longer_following');
+  assert.equal(resolved.length,1);
+
+  following=true;
+  const already=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
+  assert.equal(already.jobState,'already-following');
+  assert.equal(resolved.at(-1).state,'followed');
+  remoteId='43';
+  const mismatch=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
+  assert.equal(mismatch.jobState,'identity-mismatch');
+  assert.equal(patches.at(-1).changes[0].patch.status,'identity_mismatch');
 });
 
 test('followQueueRetryEvaluation verifies uncertain evaluation on profile before publishing and reuses draft without re-following',async()=>{

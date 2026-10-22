@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../src/features/relationships/network-api.js';
+import {parseNetworkUsers, parseTweetReplies, findBottomCursor, nextUserListPage, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../src/features/relationships/network-api.js';
 
 test('follower page accumulation deduplicates accounts and never exceeds the per-scan cap', () => {
   const found = new Map();
@@ -67,6 +67,14 @@ test('parses nested X GraphQL user nodes and relationship state', () => {
   assert.equal(users[0].handle, 'alice');
   assert.equal(users[0].state, 'follow_back');
   assert.equal(findCursor(json), 'next-cursor');
+});
+
+test('user list pagination takes Bottom instead of Top and stops on empty pages', () => {
+  const page={entries:[{cursorType:'Top',value:'top'},{cursorType:'Bottom',value:'bottom'}]};
+  assert.deepEqual(nextUserListPage(page,'',[{handle:'one'}]),{next:'bottom',complete:false,reason:''});
+  assert.deepEqual(nextUserListPage(page,'bottom',[{handle:'one'}]),{next:'',complete:false,reason:'stalled'});
+  assert.deepEqual(nextUserListPage(page,'',[]),{next:'',complete:false,reason:'empty'});
+  assert.deepEqual(nextUserListPage({entries:[{cursorType:'Top',value:'top'}]},'',[{handle:'one'}]),{next:'',complete:true,reason:''});
 });
 
 test('parses unique authors and reply text from TweetDetail timeline entries, excluding the original post', () => {
