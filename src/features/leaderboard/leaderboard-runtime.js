@@ -1,3 +1,4 @@
+import {createProfileTab,readProfileOnTab,assertProfileAvailable,profileUnavailableError} from '../../platform/x/profile-access.js';
 import {createXNetworkClient} from '../../platform/x/network-client.js';
 import {parsePublicProfile,parsePublicTimeline} from '../../platform/x/public-data.js';
 import {shanghaiDay,previousDay,dayWindow,rankMembers,selectDigestPosts} from './leaderboard-model.js';
@@ -25,15 +26,17 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
   };
   const templates=async()=> (await api.storage.local.get('networkTemplates')).networkTemplates||{};
   async function withPage(handle,operation,fn){
+    await assertProfileAvailable(api,handle,'leaderboard:'+operation);
     const existing=(await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']})).find(tab=>tab.status==='complete'&&/^https:\/\/x\.com\//.test(tab.url||''));
     const ready=(await templates())[operation];
     let tab=ready&&existing,owned=false;
-    if(!tab){tab=await api.tabs.create({url:`https://x.com/${encodeURIComponent(handle)}${operation==='UserRepliesTimeline'?'/with_replies':''}`,active:false});owned=true;}
+    if(!tab){tab=await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(handle)}${operation==='UserRepliesTimeline'?'/with_replies':''}`,active:false},'leaderboard');owned=true;}
     try{
       for(let i=0;i<30;i++){
         const current=await api.tabs.get(tab.id).catch(()=>null);
         const template=(await templates())[operation];
-        if(current?.status==='complete'&&template?.queryId&&template?.headers?.authorization&&template?.headers?.['x-csrf-token'])return fn(tab.id);
+        if(owned&&current?.status==='complete'){const page=await readProfileOnTab(api,tab.id,handle,0,'leaderboard:'+operation).catch(()=>null);if(['not_found','suspended'].includes(page?.status))throw profileUnavailableError({...page,handle});}
+        if(current?.status==='complete'&&template?.queryId&&template?.headers?.authorization&&template?.headers?.['x-csrf-token'])return await fn(tab.id);
         await sleep(500);
       }
       throw new Error(`尚未取得 ${operation} 的 X 请求模板`);

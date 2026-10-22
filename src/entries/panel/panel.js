@@ -1,3 +1,4 @@
+import {acquireProfileTab,createProfileTab,updateProfileTab,readProfileOnTab,assertProfileAvailable,profileUnavailableError} from '../../platform/x/profile-access.js';
 import {APP_VERSION, BACKGROUND_RELOAD_KEY} from '../../shared/version.js';
 import {executeGrokScript, assertGrokVerificationClear} from '../../features/grok/grok-verification.js';
 import {releaseGrokWindow} from '../../features/grok/temporary-windows.js';
@@ -1527,10 +1528,8 @@ function openCommentRecentPostsDrawer(user) {
   if (!user.recentPosts?.length || !Number.isFinite(fetchedAt) || Date.now() - fetchedAt >= 7 * 86400000) refreshDrawerProfile();
 }
 
-async function readProfileBundleInBackground(user, recentLimit = 10) {
-  const cached = profileCache[String(user.handle || '').toLowerCase()];
-  if (['not_found','suspended'].includes(cached?.status) && Date.now()-Date.parse(cached.profileCachedAt)<86400000) return cached;
-  const tab = await chrome.tabs.create({url:`https://x.com/${user.handle}`, active:false});
+async function readProfileBundleInBackground(user, recentLimit = 10, reuseTabId = null) {
+  const {tab,owned}=await acquireProfileTab(chrome,user.handle,'profile-detail',reuseTabId);
   if (!tab?.id) throw new Error('后台资料标签页创建失败');
   try {
     const deadline = Date.now() + 25000;
@@ -1538,7 +1537,7 @@ async function readProfileBundleInBackground(user, recentLimit = 10) {
     while (Date.now() < deadline && data.pending) {
       const current = await chrome.tabs.get(tab.id).catch(() => null);
       if (!current) break;
-      if (current.status === 'complete') data = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, recentLimit]}))[0]?.result || data;
+      if (current.status === 'complete') data = await readProfileOnTab(chrome,tab.id,user.handle,recentLimit,'profile-detail') || data;
       if (data.pending) await sleep(700);
     }
     if (data.pending) throw new Error('公开资料未能在限定时间内读取');
@@ -1550,11 +1549,11 @@ async function readProfileBundleInBackground(user, recentLimit = 10) {
     }
     if ((data.posts || []).length < 5) {
       await sleep(650);
-      const more = (await chrome.scripting.executeScript({target:{tabId:tab.id}, func:readProfileBundle, args:[user.handle, recentLimit]}).catch(() => []))?.[0]?.result;
+      const more = await readProfileOnTab(chrome,tab.id,user.handle,recentLimit,'profile-detail').catch(()=>null);
       if (more && !more.pending && (more.posts || []).length > (data.posts || []).length) data = more;
     }
     return {...user, ...data, handle:user.handle, url:`https://x.com/${user.handle}`, posts:data.posts || [], risk:riskAssess({...user, ...data}), profileCachedAt:new Date().toISOString()};
-  } finally { await chrome.tabs.remove(tab.id).catch(() => {}); }
+  } finally { if(owned)await chrome.tabs.remove(tab.id).catch(() => {}); }
 }
 
 async function refreshDrawerProfile() {
@@ -1645,8 +1644,8 @@ async function refreshFollowerProfile(user) {
     }
   }
 }
-async function backgroundProfileTab(handle) {
-  const tab = await chrome.tabs.create({url:`https://x.com/${handle}`, active:false});
+async function backgroundProfileTab(handle, source='profile-template') {
+  const tab = await createProfileTab(chrome,{url:`https://x.com/${handle}`, active:false},source);
   if (!tab?.id) throw new Error('后台标签页创建失败');
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -1710,12 +1709,14 @@ async function ensureNetworkTemplate(handle, operation, force = false) {
   if (suffix === undefined) return false;
   const minCapturedAt = force ? Date.now() : 0;
   networkStatus(`正在静默准备 ${operation} 接口模板…`);
-  const tab = await chrome.tabs.create({url:`https://x.com/${handle}${suffix ? `/${suffix}` : ''}`, active:false});
+  const tab = await createProfileTab(chrome,{url:`https://x.com/${handle}${suffix ? `/${suffix}` : ''}`, active:false},'network-template:'+operation);
   if (!tab?.id) return false;
   try {
     const deadline = Date.now() + 20000;
     let elapsed = 0;
     while (Date.now() < deadline) {
+      const availability=await readProfileOnTab(chrome,tab.id,handle,0,'network-template:'+operation).catch(()=>null);
+      if(['not_found','suspended'].includes(availability?.status))throw profileUnavailableError({...availability,handle});
       const {networkTemplates = {}} = await chrome.storage.local.get('networkTemplates');
       const template = networkTemplates[operation];
       if (isUsableNetworkTemplate(operation, template) && (!force || Number(template.at || 0) >= minCapturedAt)) return true;
@@ -2136,7 +2137,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
     if (!current) return [];
     const targetUrl = `https://x.com/${handle}`;
     if (!new RegExp(`^https://(?:x|twitter)\\.com/${handle}(?:[/?#]|$)`, 'i').test(current.url || '')) {
-      await chrome.tabs.update(tabId, {url: targetUrl});
+      await updateProfileTab(chrome,tabId,{url: targetUrl},'profile-posts');
     }
     const deadline = Date.now() + maxWaitMs;
     let bestPosts = [];
@@ -2144,11 +2145,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
       const tabState = await chrome.tabs.get(tabId).catch(() => null);
       if (!tabState) break;
       if (tabState.status === 'complete') {
-        const data = (await chrome.scripting.executeScript({
-          target: {tabId},
-          func: readProfileBundle,
-          args: [handle, recentLimit]
-        }).catch(() => []))?.[0]?.result;
+        const data = await readProfileOnTab(chrome,tabId,handle,recentLimit,'profile-posts').catch(()=>null);
         if (['not_found','suspended'].includes(data?.status)) break;
         if (data && !data.pending && Array.isArray(data.posts)) {
           bestPosts = data.posts;
@@ -2166,6 +2163,7 @@ async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitM
 async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
   const handle = String(user?.handle || '').replace(/^@/, '');
   if (!handle) throw new Error('无效账号');
+  await assertProfileAvailable(chrome,handle,'profile-network-fallback');
   try {
     const profileRes = await networkGetUserProfile(tabId, handle);
     if (profileRes.status === 200 && profileRes.json) {
@@ -2189,8 +2187,8 @@ async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
         return updated;
       }
     }
-  } catch {}
-  const bundle = await readProfileBundleInBackground({handle}, 10);
+  } catch (error) { if(error.code==='X_PROFILE_UNAVAILABLE')throw error; }
+  const bundle = await readProfileBundleInBackground({handle}, 10, tabId);
   if (['not_found','suspended'].includes(bundle.status)) return bundle;
   return {
     name: repairMojibake(bundle.name || user.name || handle),
@@ -2209,7 +2207,7 @@ async function refreshMutualUser(user) {
   networkStatus(`正在更新 @${user.handle} 的公开资料与首页前 5–10 条帖子…`);
   let tabId;
   try {
-    tabId = await backgroundProfileTab(user.handle);
+    tabId = await backgroundProfileTab(user.handle,'mutual-refresh');
     const updated = await fetchUserProfileNetwork(user, tabId, true);
     Object.assign(user, updated);
     applyProfileToMonitor(Object.assign({handle: user.handle}, updated));
@@ -2272,7 +2270,7 @@ async function batchRefreshMutualNetwork() {
 
   let tabId;
   try {
-    tabId = await backgroundProfileTab(mutualNetwork.anchor || targetUsers[0].handle);
+    tabId = await backgroundProfileTab(mutualNetwork.anchor || targetUsers[0].handle,'mutual-batch-refresh');
     let updatedCount = 0;
     for (let i = 0; i < targetUsers.length; i++) {
       if (!batchRefreshRunning) break;
@@ -2521,7 +2519,7 @@ async function checkGrokAvailability(force = false) {
 async function visitScrollAndFollowCandidate(user, cfg) {
   const handle = String(user?.handle || '').replace(/^@/, '');
   const key = handle.toLowerCase();
-  const tab = await chrome.tabs.create({url: `https://x.com/${handle}`, active: false});
+  let tab;try{tab=await createProfileTab(chrome,{url: `https://x.com/${handle}`, active: false},'mutual-auto-follow');}catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')return {status:'skipped',reason:error.message};throw error;}
   if (!tab?.id) throw new Error('无法创建主页标签页');
   const tabId = tab.id;
   try {
@@ -2531,11 +2529,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       const t = await chrome.tabs.get(tabId).catch(() => null);
       if (!t) throw new Error('主页标签页已关闭');
       if (t.status === 'complete') {
-        bundle = (await chrome.scripting.executeScript({
-          target: {tabId},
-          func: readProfileBundle,
-          args: [handle, 10]
-        }).catch(() => []))?.[0]?.result || bundle;
+        bundle = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null) || bundle;
       }
       if (bundle.pending) await sleep(650);
     }
@@ -2559,11 +2553,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       remainingDwellMs -= currentStepDelay;
     }
 
-    const afterScroll = (await chrome.scripting.executeScript({
-      target: {tabId},
-      func: readProfileBundle,
-      args: [handle, 10]
-    }).catch(() => []))?.[0]?.result;
+    const afterScroll = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null);
     if (afterScroll && !afterScroll.pending) {
       bundle = afterScroll;
     }
@@ -3090,7 +3080,7 @@ async function backgroundXActionTab() {
     win = windows.find(item => item.focused) || windows[0];
   }
   if (!win?.id) throw new Error('没有可用的浏览器窗口，无法创建 X 后台标签页');
-  const tab = await chrome.tabs.create({windowId:win.id, url:'https://x.com/home', active:false});
+  const tab = await createProfileTab(chrome,{windowId:win.id, url:'https://x.com/home', active:false},'panel');
   if (!tab.id) throw new Error('无法创建 X 后台标签页');
   temporaryBackgroundXTabs.add(tab.id);
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -3409,13 +3399,14 @@ async function followCandidate(row, button) {
 }
 
 async function invoke(func, args) {
+  if(func===readProfileBundle)return readProfileOnTab(chrome,inspectionTab,args[0],args[1],'grok-profile-batch');
   const results = await chrome.scripting.executeScript({ target: { tabId: inspectionTab }, func, args });
   if (!results[0]) throw new Error('无法读取页面。请检查 X 登录状态和扩展的网站访问权限。');
   return results[0].result;
 }
 
 async function navigate(url) {
-  await chrome.tabs.update(inspectionTab, { url });
+  await updateProfileTab(chrome,inspectionTab,{ url },'grok-profile-batch');
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(inspectionTab);
@@ -3452,7 +3443,7 @@ async function followerTab() {
   let identityTab = tabs.find(tab => tab.status === 'complete') || tabs[0];
   let createdIdentityTab = false;
   if (!identityTab) {
-    identityTab = await chrome.tabs.create({url:'https://x.com/home', active:false});
+    identityTab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'panel');
     createdIdentityTab = true;
   }
   let handle = await readOwnHandle(identityTab.id).catch(() => '');
@@ -3469,8 +3460,8 @@ async function followerTab() {
 
   const targetId = createdIdentityTab ? identityTab.id : null;
   const tab = targetId
-    ? await chrome.tabs.update(targetId, {url:`https://x.com/${handle}/followers`})
-    : await chrome.tabs.create({url:`https://x.com/${handle}/followers`, active:false});
+    ? await updateProfileTab(chrome,targetId,{url:`https://x.com/${handle}/followers`},'panel')
+    : await createProfileTab(chrome,{url:`https://x.com/${handle}/followers`, active:false},'panel');
   const tabId = tab.id;
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -4063,10 +4054,10 @@ async function collectSelectedProfiles(customCandidates = null, reportStatus = a
         collected.push({...user, ...cached});
         continue;
       }
-      if (!tabId) { const tab = await chrome.tabs.create({url:'https://x.com/home', active:false}); tabId = tab.id; inspectionTab = tabId; }
+      if (!tabId) { const tab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'panel'); tabId = tab.id; inspectionTab = tabId; }
       reportStatus(`正在读取 @${user.handle} 的资料（${collected.length + 1}/${candidates.length}）…`);
       let netData = {};
-      try { netData = await fetchUserProfileNetwork(user, tabId); } catch {}
+      try { netData = await fetchUserProfileNetwork(user, tabId); } catch(error) { if(error.code==='X_PROFILE_UNAVAILABLE'){reportStatus(`@${user.handle}：${error.message}，已跳过`);continue;} }
       if (['not_found','suspended'].includes(netData.status)) { reportStatus(`@${user.handle}：${netData.reason}，已跳过`); continue; }
       await navigate(`https://x.com/${user.handle}`);
       let data = {pending:true}; const deadline = Date.now() + 18000;
@@ -5271,7 +5262,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
       const finalReply = await preparePanelQuoteText(testRes.reply, testRes.language, followBackEnabled);
       if (confirm(`Grok（${testRes.channel}）已为 @${testHandle} 的帖子写好引用评价：\n\n【原帖】${testPost.text.slice(0, 100)}\n${testPost.url}\n\n【引用评价】「${finalReply}」\n\n是否现在用你的账号发布一条嵌入原帖的公开引用帖？`)) {
         if (handleEl) handleEl.textContent = `正在引用 @${testHandle} 的原帖发布评价…`;
-        const postTab = await chrome.tabs.create({ url: 'about:blank', active: false });
+        const postTab = await createProfileTab(chrome,{ url: 'about:blank', active: false },'panel');
         try {
           const pub = await postQuoteOnTab(postTab.id, testPost, finalReply, publishQuotePostOnPage, sleep);
           isPublished = Boolean(pub.ok);
@@ -6160,7 +6151,7 @@ async function renderGrokVerificationNotice() {
   banner.replaceChildren();
   const message=document.createElement('span');message.textContent='Grok 需要手动安全验证，任务已结束等待。完成验证后请重试。';
   const open=document.createElement('button');open.type='button';open.textContent='打开验证窗口';
-  open.addEventListener('click',async()=>{try{const tab=await chrome.tabs.get(notice.tabId);if(!/^https:\/\/(x\.com|twitter\.com|grok\.com)\//.test(tab.url || ''))throw Error('验证页已关闭');await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});await chrome.tabs.update(tab.id,{active:true});}catch{message.textContent='验证页已关闭，请重新执行任务。';}});
+  open.addEventListener('click',async()=>{try{const tab=await chrome.tabs.get(notice.tabId);if(!/^https:\/\/(x\.com|twitter\.com|grok\.com)\//.test(tab.url || ''))throw Error('验证页已关闭');await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});await updateProfileTab(chrome,tab.id,{active:true},'panel');}catch{message.textContent='验证页已关闭，请重新执行任务。';}});
   const check=document.createElement('button');check.type='button';check.textContent='我已完成验证';
   check.addEventListener('click',async()=>{try{await assertGrokVerificationClear(notice.tabId);message.textContent='验证已解除，请重试原任务。';}catch(error){message.textContent=error.userActionRequired?'验证尚未完成，请先处理验证页面。':'验证页已关闭，请重新执行任务。';}});
   const phone=document.createElement('span');phone.textContent='手机私信提醒：'+({sending:'发送中',sent:'已发送至本人会话',uncertain:'发送结果待确认',failed:'发送失败'}[delivery?.status] || '准备发送')+(delivery?.reason?' · '+delivery.reason:'');banner.append(message,open,check,phone);

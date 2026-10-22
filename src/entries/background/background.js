@@ -1,3 +1,4 @@
+import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
@@ -181,7 +182,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
   while (Date.now() < deadline && data.pending) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) throw new Error('主页标签页已关闭');
-    if (tab.status === 'complete') data = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result || data;
+    if (tab.status === 'complete') data = await readProfileOnTab(chrome,tabId,handle,recentLimit,'comment-auto-follow').catch(()=>null) || data;
     if (data.pending) await sleep(600);
   }
   if (data.pending) throw new Error('公开资料读取超时');
@@ -198,7 +199,7 @@ async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
     await sleep(currentStepDelay);
     remainingDwellMs -= currentStepDelay;
   }
-  const afterScroll = (await chrome.scripting.executeScript({target:{tabId}, func:readProfileBundle, args:[handle, recentLimit]}).catch(() => []))?.[0]?.result;
+  const afterScroll = await readProfileOnTab(chrome,tabId,handle,recentLimit,'comment-auto-follow').catch(()=>null);
   if (afterScroll && !afterScroll.pending && (afterScroll.posts || []).length >= (data.posts || []).length) data = afterScroll;
   return {...data, dwellSeconds};
 }
@@ -239,7 +240,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
       tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
       return {ok:true, summary:cfg.lastSummary};
     }
-    const tab = await chrome.tabs.create({url:'https://x.com/home', active:false});
+    const tab = await createProfileTab(chrome,{url:'https://x.com/home', active:false},'comment-auto-follow');
     tabId = tab?.id;
     if (!tabId) throw new Error('无法创建 X 后台标签页');
     let rateLimited = false;
@@ -255,7 +256,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
       let commentRes = {status:'off'};
       await recordAutoFollowAttempt(handle, 'processing', '', undefined);
       try {
-        await chrome.tabs.update(tabId, {url:`https://x.com/${encodeURIComponent(handle)}`});
+        await updateProfileTab(chrome,tabId,{url:`https://x.com/${encodeURIComponent(handle)}`},'comment-auto-follow');
         const profile = await readProfilePosts(tabId, handle, 5, cfg);
         if (['not_found','suspended'].includes(profile.status)) {
           user.autoFollowState = 'skipped'; user.autoFollowReason = profile.reason;
@@ -364,6 +365,13 @@ async function executeCommentAutoFollow(source = 'alarm') {
           }
         } else { user.followFailedAt = new Date().toISOString(); user.autoFollowState = 'failed'; }
       } catch (error) {
+        if(error.code==='X_PROFILE_UNAVAILABLE'){
+          user.autoFollowState='skipped';user.autoFollowReason=error.message;
+          await recordAutoFollowAttempt(handle,'skipped',error.message,undefined);
+          await saveCommentTrackingData(tracking,handle);
+          await appendAutoFollowLog({scope:'comment',source,handle,result:'skipped',detail:error.message});
+          processedCount++;continue;
+        }
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
@@ -429,7 +437,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
     const post = {tweetId, url, authorHandle, status:'collecting', replyUsers:0, replies:0, collectedAt:new Date().toISOString()};
     await updateCommentStatus({tweetId, url, state:'collecting', message:'正在后台读取帖子回复…', updatedAt:new Date().toISOString()});
     try {
-      const tab = await chrome.tabs.create({url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {})});
+      const tab = await createProfileTab(chrome,{url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {},'comment-auto-follow')});
       tabId = tab.id;
       await waitForTweetTemplate(tabId, tweetId);
       const replyUsers = new Map();

@@ -1,3 +1,4 @@
+import {assertProfileAvailable,observeProfile,unavailableFromProfileResponse,profileUnavailableError} from './profile-access.js';
 // Transport owns session mechanics; confirmation, scheduling and retries belong to callers.
 export const X_QUERY_OPERATIONS=Object.freeze(['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery']);
 const FORMS=Object.freeze({Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'});
@@ -99,6 +100,8 @@ export async function executeXRequestOnPage(request) {
 export function createXNetworkClient(api=globalThis.chrome) {
   async function request(tabId,operation,variables={}) {
     let template,dispatched=false;
+    const handle=operation==='UserByScreenName'?variables.screen_name:null;
+    if(handle)await assertProfileAvailable(api,handle,'profile-network');
     try {
       const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
@@ -109,8 +112,10 @@ export function createXNetworkClient(api=globalThis.chrome) {
       if(!loaded)await api.scripting.executeScript({target:{tabId},world:'MAIN',files:['transaction-id.bundle.js']});
       dispatched=true;
       const results=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:executeXRequestOnPage,args:[prepared]});
-      return results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
-    }catch(error){return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
+      const response=results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
+      if(handle){const state=unavailableFromProfileResponse(response);if(state){await observeProfile(api,handle,state,'profile-network');if(state.status!=='ok')throw profileUnavailableError({...state,handle});}}
+      return response;
+    }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
   }
   return {
     query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),

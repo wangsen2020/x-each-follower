@@ -1,3 +1,4 @@
+import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {createQueueDiagnostics} from './queue-diagnostics.js';
 import {isPageFailure} from '../../platform/page-failure.js';
 import {appendQuoteTags} from '../grok/quote-tags.js';
@@ -72,7 +73,7 @@ export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, o
   wait = sleep, now = Date.now, canContinue = () => true, timeoutMs = 45000}) {
   const started = now();
   const url = `https://x.com/${encodeURIComponent(handle)}`;
-  await api.tabs.update(tabId, {url});
+  await updateProfileTab(api,tabId,{url},'follow-queue');
   let prepared = false;
   let refreshed = false;
   while (now() - started < timeoutMs && await canContinue()) {
@@ -108,7 +109,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   const readBinding = async () => (await api.storage.local.get(BINDING_KEY))[BINDING_KEY];
   const diagnostics=createQueueDiagnostics({api});
   const failureNotice=f=>`异常账号 ${f.diagnostic.handle?'@'+f.diagnostic.handle:'批次级'}，阶段：${f.diagnostic.stageLabel}。详情见执行日志，诊断 ${f.diagnostic.id.slice(0,8)}。`;
-  const script = async (tabId, func, args = []) => {try{return (await api.scripting.executeScript({target:{tabId},func,args}))?.[0]?.result;}catch(error){error.pageContext={...error.pageContext,tabId,operation:func.name,callerStack:new Error('队列页面读取调用位置').stack};throw error;}};
+  const script = async (tabId, func, args = []) => {try{if(func===readProfileBundle)return await readProfileOnTab(api,tabId,args[0],args[1],'follow-queue');return (await api.scripting.executeScript({target:{tabId},func,args}))?.[0]?.result;}catch(error){error.pageContext={...error.pageContext,tabId,operation:func.name,callerStack:new Error('队列页面读取调用位置').stack};throw error;}};
   const safeLog = async entry => {
     if (typeof api?.storage?.local?.get === 'function' && typeof api?.storage?.local?.set === 'function') {
       await (async () => {
@@ -144,7 +145,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     let temporary;
     try {
       identityStage = 'opening';
-      temporary = await api.tabs.create({url:'https://x.com/home',active:false});
+      temporary = await createProfileTab(api,{url:'https://x.com/home',active:false},'follow-queue');
       let handle = '';
       for (let attempt = 0; attempt < 40; attempt++) {
         handle = await viewer(temporary.id).catch(() => '');
@@ -153,7 +154,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       if (!handle) throw new Error('未能读取登录账号，请先在 X 首页完成登录，再点击重试。');
       identityStage = 'initializing';
-      await api.tabs.update(temporary.id,{url:'https://x.com/' + encodeURIComponent(handle)});
+      await updateProfileTab(api,temporary.id,{url:'https://x.com/' + encodeURIComponent(handle)},'follow-queue');
       for (let attempt = 0; attempt < 40; attempt++) {
         // Require the freshly loaded page to confirm the same logged-in viewer.
         const current = await viewer(temporary.id).catch(() => '');
@@ -403,7 +404,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (tab && await viewer(tab.id) !== canonical(binding?.handle)) throw new Error('当前 X 登录账号发生变化');
     }
     try {
-      tab = await api.tabs.create({url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false});
+      tab = await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false},'follow-queue',{jobId:job.id,runId:control.runId});
       const end = Math.min(control.deadline, Date.now() + 30000);
       let profile,lastReadError;
       while (Date.now() < end && !control.signal.aborted) {
@@ -559,6 +560,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       return {state:'followed',followResult,evaluations};
     } catch (error) {
+      if(error.code==='X_PROFILE_UNAVAILABLE'&&!attemptedFollow&&!followResult.succeeded)return {state:'excluded',reason:error.message,followResult:{...followResult,availability:error.availability,reason:error.message,checkedAt:Date.now()}};
       const failure=await diagnostics.record(error,{stage:audit.stage,manual:control.manual,accountId:job.accountId,targetUserId:job.targetUserId,retryCount:job.followResult?.retryCount,settings,jobId:job.id,runId:control.runId,handle:job.handle,requestedUrl:`https://x.com/${encodeURIComponent(job.handle)}`,tabId:tab?.id,recentStages:audit.recentStages,followAttempted:attemptedFollow,followSucceeded:followResult.succeeded});
       if(runFailures)runFailures.push(failure);
       audit.diagnostic=failure.diagnostic;
@@ -631,7 +633,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         if (handle && handle === canonical(binding.handle)) { targetTab = tab; break; }
       }
       if (!targetTab) {
-        temporary = await api.tabs.create({url:'https://x.com/home',active:false});
+        temporary = await createProfileTab(api,{url:'https://x.com/home',active:false},'follow-queue');
         for (let i=0;i<20;i++) {
           const handle = await viewer(temporary.id).catch(() => '');
           if (handle) {
@@ -778,7 +780,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     }
     let tab;
     try {
-      tab = await api.tabs.create({url:`https://x.com/${encodeURIComponent(binding.handle)}`,active:false});
+      tab = await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(binding.handle)}`,active:false},'follow-queue');
       let viewerHandle = '';
       for (let i=0;i<20;i++) {
         viewerHandle = await viewer(tab.id).catch(() => '');
@@ -818,7 +820,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
             return match && canonical(match[1]) === canonical(job.handle) && String(p.text || '').length >= 8;
           });
       if (!post || (!post.text && !ev?.text)) {
-        await api.tabs.update(tab.id,{url:`https://x.com/${encodeURIComponent(job.handle)}`});
+        await updateProfileTab(api,tab.id,{url:`https://x.com/${encodeURIComponent(job.handle)}`},'follow-queue');
         for (let i=0;i<20;i++) {
           const bundle = await script(tab.id,readProfileBundle,[job.handle,5]).catch(() => null);
           if (bundle && !bundle.pending && Array.isArray(bundle.posts)) {
@@ -941,7 +943,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     let bootstrap,runStage='bootstrap';
     try {
       if (!(await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']})).length) {
-        bootstrap = await api.tabs.create({url:'https://x.com/home',active:false});
+        bootstrap = await createProfileTab(api,{url:'https://x.com/home',active:false},'follow-queue');
         for(let i=0;i<30;i++) { if(await viewer(bootstrap.id).catch(error=>{if(isPageFailure(error))throw error;return '';})) break; await sleep(500); }
       }
       reflectJobs = [];runFailures=[];

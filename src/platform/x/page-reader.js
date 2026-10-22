@@ -15,7 +15,8 @@ export function collectVisible(target) {
 }
 
 export function readProfile(handle) {
-  if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return { pending: true };
+  const route=location.pathname.split('/').filter(Boolean);
+  if(route[0]?.toLowerCase()!==handle.toLowerCase()||route.length>2||(route.length===2&&!['followers','following','verified_followers','with_replies'].includes(route[1])))return {pending:true};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return { pending: true };
   // Only X's profile empty state is authoritative; never match bio or tweet text.
@@ -37,7 +38,8 @@ export function readProfile(handle) {
 }
 
 export function readProfileBundle(handle, recentLimit = 8) {
-  if (location.pathname.replaceAll('/', '').toLowerCase() !== handle.toLowerCase()) return {pending:true};
+  const route=location.pathname.split('/').filter(Boolean);
+  if(route[0]?.toLowerCase()!==handle.toLowerCase()||route.length>2||(route.length===2&&!['followers','following','verified_followers','with_replies'].includes(route[1])))return {pending:true};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   if (!root) return {pending:true};
   // Only X's profile empty state is authoritative; never match bio or tweet text.
