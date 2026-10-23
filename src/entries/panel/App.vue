@@ -9,6 +9,7 @@
     <PostTrackingSection />
     <LeaderboardSection />
     <UnreciprocatedSection />
+    <KnowledgeSection />
     <ProfileDrawer />
     <SettingsDrawer />
     <UnreciprocatedSettingsDrawer />
@@ -30,4 +31,5 @@ import CommentsSection from './pages/CommentsSection.vue';
 import PostTrackingSection from './pages/PostTrackingSection.vue';
 import LeaderboardSection from './pages/LeaderboardSection.vue';
 import UnreciprocatedSection from './pages/UnreciprocatedSection.vue';
+import KnowledgeSection from './pages/KnowledgeSection.vue';
 </script>
