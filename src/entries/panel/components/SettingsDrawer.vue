@@ -18,7 +18,7 @@
       aria-labelledby="vueSettingsDrawerTitle"
     >
       <div class="profile-drawer-head">
-        <strong id="vueSettingsDrawerTitle">粉丝管理 · 定时检测与自动回关设置</strong>
+        <strong id="vueSettingsDrawerTitle">粉丝管理设置</strong>
         <div class="drawer-head-actions">
           <button
             id="openMonitorDrawerLogs"
@@ -59,8 +59,8 @@
         <!-- Interval -->
         <div class="drawer-setting-group">
           <label for="monitorEvery" class="drawer-setting-label">
-            <span>定时检测周期（分钟）</span>
-            <span class="info-tip" data-tip="每隔多少分钟自动检测自己的 following 和 follower，检查新增粉丝与回关状态。" aria-label="定时检测周期说明">?</span>
+            <span>检测间隔（分）</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="每隔多少分钟自动检测自己的 following 和 follower，检查新增粉丝与回关状态。 默认每 10 分钟检测一轮。" aria-label="每隔多少分钟自动检测自己的 following 和 follower，检查新增粉丝与回关状态。 默认每 10 分钟检测一轮。">?</span>
           </label>
           <input
             id="monitorEvery"
@@ -69,14 +69,14 @@
             min="10"
             max="1440"
           />
-          <small class="drawer-setting-desc">默认每 10 分钟检测一轮。</small>
+          
         </div>
 
         <!-- Jitter -->
         <div class="drawer-setting-group">
           <label for="monitorJitter" class="drawer-setting-label">
-            <span>随机浮动间隔（±分钟）</span>
-            <span class="info-tip" data-tip="在基础周期上随机浮动，避免固定时间触发。" aria-label="随机浮动间隔说明">?</span>
+            <span>随机浮动（±分）</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="在基础周期上随机浮动，避免固定时间触发。 设为 0 时固定每 10 分钟检测。" aria-label="在基础周期上随机浮动，避免固定时间触发。 设为 0 时固定每 10 分钟检测。">?</span>
           </label>
           <input
             id="monitorJitter"
@@ -85,19 +85,19 @@
             min="0"
             max="120"
           />
-          <small class="drawer-setting-desc">设为 0 时固定每 10 分钟检测。</small>
+          
         </div>
 
         <div class="drawer-setting-group">
-          <label for="monitorFollowerBatch" class="drawer-setting-label">每轮粉丝数</label>
+          <label for="monitorFollowerBatch" class="drawer-setting-label">每轮粉丝数 <span class="info-tip" tabindex="0" role="note" data-tip="最多 1,000 人；读到上限后，下轮接着读取。" aria-label="最多 1,000 人；读到上限后，下轮接着读取。">?</span></label>
           <input id="monitorFollowerBatch" v-model.number="settingsDrawerController.followerBatch.value" type="number" min="100" max="1000" step="20" />
-          <small class="drawer-setting-desc">最多 1,000 人；读到上限后，下轮接着读取。</small>
+          
         </div>
 
         <div class="drawer-setting-group">
-          <label for="monitorFollowingBatch" class="drawer-setting-label">每轮关注数</label>
+          <label for="monitorFollowingBatch" class="drawer-setting-label">每轮关注数 <span class="info-tip" tabindex="0" role="note" data-tip="最多 1,000 人；独立保存续扫位置。" aria-label="最多 1,000 人；独立保存续扫位置。">?</span></label>
           <input id="monitorFollowingBatch" v-model.number="settingsDrawerController.followingBatch.value" type="number" min="100" max="1000" step="20" />
-          <small class="drawer-setting-desc">最多 1,000 人；独立保存续扫位置。</small>
+          
         </div>
 
         <!-- Auto Enqueue -->
@@ -108,10 +108,10 @@
               v-model="settingsDrawerController.autoEnqueue.value"
               type="checkbox"
             />
-            <span>自动将待回关用户拉取到关注队列</span>
-            <span class="info-tip" data-tip="检测到关注自己但未回关且符合条件的用户时，自动推送到统一关注队列进行看帖和回关处理。" aria-label="自动入队说明">?</span>
+            <span>待回关自动入队</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="检测到关注自己但未回关且符合条件的用户时，自动推送到统一关注队列进行看帖和回关处理。 开启后，符合条件的待回关粉丝将自动加入统一关注队列，无需手动重复添加。" aria-label="检测到关注自己但未回关且符合条件的用户时，自动推送到统一关注队列进行看帖和回关处理。 开启后，符合条件的待回关粉丝将自动加入统一关注队列，无需手动重复添加。">?</span>
           </label>
-          <small class="drawer-setting-desc">开启后，符合条件的待回关粉丝将自动加入统一关注队列，无需手动重复添加。</small>
+          
         </div>
 
         <!-- Filter Danger -->
@@ -122,10 +122,10 @@
               v-model="settingsDrawerController.filterDanger.value"
               type="checkbox"
             />
-            <span>自动过滤高风险账号</span>
-            <span class="info-tip" data-tip="过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。" aria-label="过滤高风险账号说明">?</span>
+            <span>过滤风险账号</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。 排查命中关键词和危险信号的账号，确保回关安全性。" aria-label="过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。 排查命中关键词和危险信号的账号，确保回关安全性。">?</span>
           </label>
-          <small class="drawer-setting-desc">排查命中关键词和危险信号的账号，确保回关安全性。</small>
+          
         </div>
 
         <!-- Checkpoint display -->
@@ -148,10 +148,10 @@
               v-model="settingsDrawerController.enabled.value"
               type="checkbox"
             />
-            <span>开启后台定时检测与自动入队</span>
-            <span class="info-tip" data-tip="开启后后台定时唤醒检测粉丝变动，自动同步并拉取待回关用户。" aria-label="开启定时检测说明">?</span>
+            <span>后台定时检测</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="开启后后台定时唤醒检测粉丝变动，自动同步并拉取待回关用户。 关闭时仅支持手动点击“↻”进行同步。" aria-label="开启后后台定时唤醒检测粉丝变动，自动同步并拉取待回关用户。 关闭时仅支持手动点击“↻”进行同步。">?</span>
           </label>
-          <small class="drawer-setting-desc">关闭时仅支持手动点击“↻”进行同步。</small>
+          
         </div>
       </div>
 
@@ -172,7 +172,7 @@
           :disabled="settingsDrawerController.running.value"
           @click="settingsDrawerController.triggerRunNow()"
         >
-          {{ settingsDrawerController.running.value ? '检测中…' : '立即检测并拉取入队' }}
+          {{ settingsDrawerController.running.value ? '检测中…' : '检测并入队' }}
         </button>
       </div>
     </aside>
