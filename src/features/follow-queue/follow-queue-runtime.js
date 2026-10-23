@@ -129,16 +129,28 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   }
   async function resolveIdentity() {
     const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+    const binding = await readBinding();
+    // The account ID was verified when this queue was activated. X's profile
+    // navigation link identifies the current viewer independently of the
+    // display name; avoid a fresh GraphQL lookup on every panel opening.
+    const boundViewer = handle => binding?.activated && binding.accountId &&
+      canonical(binding.handle) === handle ? {accountId:binding.accountId,handle} : null;
     const lookup = async (tabId, handle) => {
       const result = await fetchIdentity(tabId, 'UserByScreenName', {screen_name:handle});
       const user = result.status === 200 && parseNetworkUsers(result.json).find(u => canonical(u.handle) === handle);
-      return user?.id ? {accountId:user.id, handle} : null;
+      if (!user?.id) return null;
+      if (binding?.activated && binding.accountId === user.id && canonical(binding.handle) !== handle) {
+        await writeLocal({[BINDING_KEY]:{...binding,handle}});
+      }
+      return {accountId:user.id, handle};
     };
     // Existing pages may still belong to the extension context removed during uninstall.
     // Try them first, then use one owned page to capture a fresh request template.
     for (const tab of tabs) {
       const handle = await viewer(tab.id).catch(() => '');
       if (!handle) continue;
+      const bound = boundViewer(handle);
+      if (bound) return bound;
       const found = await lookup(tab.id, handle).catch(() => null);
       if (found) return found;
     }
@@ -153,6 +165,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await wait(500);
       }
       if (!handle) throw new Error('未能读取登录账号，请先在 X 首页完成登录，再点击重试。');
+      const bound = boundViewer(handle);
+      if (bound) return bound;
       identityStage = 'initializing';
       await updateProfileTab(api,temporary.id,{url:'https://x.com/' + encodeURIComponent(handle)},'follow-queue');
       for (let attempt = 0; attempt < 40; attempt++) {
