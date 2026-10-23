@@ -5,16 +5,16 @@ main [hidden],main [id][hidden]{display:none}
 main{width:100%;max-width:100%;height:100%;max-height:100%;margin:0;box-sizing:border-box;display:grid;grid-template-columns:clamp(190px,18vw,240px) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);padding:10px;overflow:hidden}
 .sidebar{width:100%;height:100%;min-height:0;max-height:100%;grid-row:1 / -1;grid-column:1;position:static;top:auto;margin:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden}
 main .vue-panel-header{grid-column:2;grid-row:1;min-width:0;min-height:0;padding:0 0 4px 0;margin:0}
-main .vue-panel-header .eyebrow{font-size:11px;letter-spacing:1px;color:#63766a;margin:0;display:block}
 main .vue-panel-header h1{font-size:20px;letter-spacing:-.5px;margin:2px 0 2px 0;line-height:1.2}
 main>.tab-panel,main>.monitor-card,main>.controls,main>.queue-card,main>.note,main>.toolbar,main>.table-wrap,main>footer,.monitor-panel,#monitorSection,#candidatesSection,#commentsSection,#unreciprocatedSection,#followQueueSection{grid-column:2;grid-row:2;min-width:0;max-width:100%;height:100%;min-height:0;max-height:100%;margin:0;box-sizing:border-box}
 .table-wrap{width:100%;max-width:none;min-width:0}
 .brand-logo{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;background:#8bc7a6;color:#18302e;font-size:22px;font-weight:850;letter-spacing:-2px;box-shadow:0 8px 18px #0b201b55}
 .brand-name{margin-top:10px;color:#fff;font-size:17px;font-weight:780;letter-spacing:-.3px}
 .brand-mark span{margin-top:4px}
+.brand-mark .brand-version{display:block;font-size:11px;line-height:1.4;letter-spacing:.2px;color:#a9c9bc;overflow-wrap:anywhere}
 .tab-panel{min-width:0}
 @media(max-width:900px){main{grid-template-columns:clamp(72px,10vw,110px) minmax(0,1fr);padding:10px}.sidebar{height:100%}}
-@media(max-width:600px){body{overflow:auto}main{display:block;width:100%;height:auto;min-height:100vh;padding:10px;overflow:visible}.sidebar{width:100%;height:auto;position:sticky;top:0;min-height:0;margin:-10px -10px 15px;padding:8px;z-index:3}.brand-logo,.brand-name,.brand-mark span{display:none}}
+@media(max-width:600px){body{overflow:auto}main{display:block;width:100%;height:auto;min-height:100vh;padding:10px;overflow:visible}.sidebar{width:100%;height:auto;position:sticky;top:0;min-height:0;margin:-10px -10px 15px;padding:8px;z-index:3}.brand-logo,.brand-name,.brand-mark span,.brand-mark .brand-version{display:none}}
 /* Workspace panels keep their own scroll area; explanatory copy stays inside the active panel. */
 .queue-card{min-height:0;display:flex;flex-direction:column}.queue-card .queue-list{min-height:0;max-height:calc(100vh - 190px);overflow:auto;padding-right:4px}.queue-item{min-width:0}.queue-item>div:first-child{min-width:0}.queue-item small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.toolbar>div{min-width:0}.toolbar .note{margin:3px 0 0;line-height:1.45}#candidatesSection footer{padding:14px 2px 0}
 .brand-logo img{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
@@ -136,7 +136,7 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .monitor-no-match{margin:0;min-height:120px;display:grid;place-items:center;border:1px dashed #cbdacf;border-radius:9px;color:#718479;font-size:13px}
 .monitor-empty[hidden],.monitor-list[hidden],.selection-bar[hidden],.monitor-pagination[hidden]{display:none}
 .profile-drawer-mask{position:fixed;inset:0;background:rgba(16,42,34,.2);z-index:20}.profile-drawer{position:fixed;z-index:21;top:0;right:0;width:min(420px,92vw);height:100vh;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dce7df;box-shadow:-12px 0 32px rgba(20,53,42,.16)}.profile-drawer[hidden],.profile-drawer-mask[hidden]{display:none}.profile-drawer-head{display:flex;align-items:center;justify-content:space-between;min-height:58px;padding:0 16px;border-bottom:1px solid #e4ece6;color:#173f31}.profile-drawer-head strong{font-size:16px}.profile-drawer-content{overflow:auto;flex:1;padding:16px}.drawer-identity{display:flex;align-items:center;padding-bottom:14px}.drawer-avatar{width:42px;height:42px;display:grid;place-items:center;overflow:hidden;border-radius:50%;background:#dff0e5;color:#1d6248;font-weight:700}.drawer-avatar img{width:100%;height:100%;object-fit:cover}.drawer-identity strong,.drawer-identity small{display:block}.drawer-identity small{margin-top:2px;color:#72857b;font-size:12px}.drawer-facts{display:grid;grid-template-columns:1fr 1fr;}.drawer-field{padding:9px;border:1px solid #e3ebe6;border-radius:8px;background:#fbfdfb}.drawer-field span,.drawer-field strong{display:block}.drawer-field span{font-size:11px;color:#72857b}.drawer-field strong{margin-top:3px;font-size:14px;color:#224a3a}.drawer-section{padding:14px 0;border-bottom:1px solid #edf1ee}.drawer-section h3{margin:0 0 6px;font-size:12px;color:#486257}.drawer-section p{margin:0;white-space:pre-wrap;color:#304b40;font-size:13px;line-height:1.55}.drawer-section ol{display:grid;margin:0;padding-left:19px;color:#304b40;font-size:12px;line-height:1.45}.drawer-risk.is-danger p{color:#a24f3f}.profile-drawer-actions{display:flex;padding:12px 16px;border-top:1px solid #e4ece6}.profile-drawer-actions button{flex:1;padding:8px 6px;font-size:12px}@media(max-width:700px){.profile-drawer{width:100vw}.profile-drawer-actions{position:sticky;bottom:0}}
-.settings-drawer-content{display:flex;flex-direction:column;padding:20px 18px}
+.settings-drawer-content{display:flex;flex-direction:column;padding:12px}
 .drawer-setting-group{display:flex;flex-direction:column;padding-bottom:14px;border-bottom:1px solid #edf1ee}
 .drawer-setting-label{display:flex;flex-direction:row;align-items:center;font-size:13px;font-weight:600;color:#2c4238}
 .drawer-setting-group input[type="number"]{width:100%;height:36px;padding:6px 10px;font-size:13px;border:1px solid #cbdacf;border-radius:7px;background:#fff;color:#18302e;box-sizing:border-box}
@@ -281,10 +281,10 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 #monitorSection #monitorPagination{display:flex;align-items:center;flex-wrap:nowrap;white-space:nowrap;}
 #monitorSection #monitorPagination label{display:inline-flex;flex-direction:row;align-items:center;flex-wrap:nowrap;white-space:nowrap}
 #monitorSection #monitorPagination select{display:block;width:54px;height:28px;box-sizing:border-box;padding:2px 22px 2px 7px;line-height:20px;white-space:nowrap;color:#18302e;background-color:#fff;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%2352675d' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 6px center;background-size:12px 12px;appearance:none;-webkit-appearance:none}
-#commentsSection{display:flex;flex-direction:column;min-height:0;padding:12px 16px;background:#fff;border:1px solid #dce7df;border-radius:12px;overflow:hidden}
+#commentsSection{display:flex;flex-direction:column;min-height:0;padding:0 10px 10px;background:#fff;border:1px solid #dce7df;border-radius:12px;overflow:hidden}
 #commentsSection[hidden]{display:none}
 #commentsSection .comments-head,#commentsSection .comments-toolbar{display:flex;align-items:center;justify-content:space-between;flex:0 0 auto;margin:0;padding:0}
-#commentsSection .comments-head{min-height:38px;border-bottom:1px solid #e4ece6}
+#commentsSection .comments-head{min-height:0;padding:6px 0;border-bottom:1px solid #e4ece6}
 #commentsSection .comments-title{display:flex;align-items:center;min-width:0}
 #commentsSection .comments-title h2{margin:0 10px 0 0;font-size:17px;line-height:1.3}
 #commentsSection #openCommentAutoFollowSettings{flex:0 0 32px;width:32px;height:32px;padding:0;margin:0 0 0 8px}
@@ -988,7 +988,9 @@ main > :not(.sidebar){margin-left:20px}
 /* Shared panel inset and inline control alignment. */
 /* Vue shell stays in source order while its children participate in the main grid. */
 #panel-vue-root, #panel-vue-container { display:contents; }
-main .vue-panel-header { padding:0 10px 4px; margin-left:10px; }
+main .vue-panel-header { padding:0 11px 4px; margin-left:0; }
+/* Borderless panels start their text one pixel before bordered cards. */
+#panel-vue-container:has(> :is(#candidatesSection, #followQueueSection, #knowledgeSection):not([hidden])) > .vue-panel-header { padding-left:10px; }
 #panel-vue-container > .tab-panel { padding-left:10px; padding-right:10px; }
 .mutual-network-head > :not(:last-child) { margin-right:10px; }
 .mutual-network-head .mutual-field > input,
@@ -1030,3 +1032,50 @@ label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; 
 @media(max-width:700px) { #candidatesSection .mutual-network-head > .module-header-actions { flex:1 0 100%; justify-content:flex-end; padding-top:10px; } }
 
 #monitorSection .monitor-head .monitor-head-right.module-header-actions { justify-content:flex-end; margin-left:auto; }
+/* Compact configuration rows; live statuses and multiline editors stay readable. */
+.settings-drawer-content > .drawer-setting-group { margin-bottom: 10px; padding-bottom: 10px; text-align: start; }
+.settings-drawer-content > .drawer-setting-group:has(> input[type="number"]) { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; }
+.settings-drawer-content .drawer-setting-group > .drawer-setting-label { margin: 0 10px 0 0; min-width: 10em; max-width: calc(100% - 90px); flex: 0 1 auto; line-height: 20px; text-align: start; }
+.settings-drawer-content .drawer-setting-group > input[type="number"] { width: 80px; flex: 0 0 80px; height: 32px; margin: 0; text-align: start; }
+.settings-drawer-content .drawer-switch-label { flex-wrap: nowrap; justify-content: flex-start; text-align: start; line-height: 20px; }
+.settings-drawer-content .drawer-switch-label > span:not(.info-tip) { min-width: 0; overflow-wrap: anywhere; }
+.settings-drawer-content .drawer-setting-group:has(textarea) > label { max-width: 100%; margin-bottom: 8px; }
+.settings-drawer-content .drawer-setting-group:has(.drawer-checkpoint-display) > label { max-width: 100%; margin-bottom: 8px; }
+:is(.settings-drawer-content,.fq-drawer-body,.post-setting-card) .info-tip { flex: 0 0 16px; width: 16px; height: 16px; box-sizing: border-box; margin-left: 6px; background: transparent; color: #63766a; border: 1px solid #8c9e92; font-weight: 400; }
+:is(.settings-drawer-content,.fq-drawer-body,.post-setting-card) .info-tip::after { top: calc(100% + 8px); bottom: auto; left: auto; right: -70px; transform: none; width: 220px; max-width: calc(100vw - 40px); box-sizing: border-box; text-align: start; overflow-wrap: anywhere; }
+.info-tip:focus::after { opacity: 1; }
+.info-tip:focus-visible { outline: 2px solid #14744c; outline-offset: 3px; }
+
+/* Empty status text should not reserve a separate instruction row. */
+#commentTrackingStatus:empty, .comment-empty > span:empty { display: none; }
+
+#unreciprocatedStatus:empty { display: none; }
+/* Shared compact control contract. Override local component dimensions deliberately. */
+body :is(button, select, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"])):not(.info-tip):not(.kb-help):not(.lb-setting-help):not(.post-setting-help):not(.inline-help button) {
+  box-sizing: border-box !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  max-height: 30px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  font-size: 12px !important;
+  line-height: normal !important;
+}
+body button:not(.info-tip):not(.kb-help):not(.inline-help button) { white-space: nowrap; }
+body :is(input, select, textarea) { font-size: 12px; }
+body textarea { line-height: 1.5; }
+/* Icon buttons keep a square footprint; explanatory question icons remain 14px. */
+body :is(.settings-gear-btn, .icon-button, .lb-icon-btn, .post-refresh-trigger, .post-memory-trigger, .post-settings-trigger) { width: 30px; padding-left: 0; padding-right: 0; }
+/* Action groups use explicit 10px sibling spacing, overriding legacy margin resets. */
+body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .post-head-icons, .post-actions, .post-page-buttons, .lb-head-icons, .kb-head-actions, .kb-card-actions, .kb-page-controls, .logs-modal-head-btns, .drawer-head-actions) { column-gap: 0 !important; align-items: center; }
+body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .post-head-icons, .post-actions, .post-page-buttons, .lb-head-icons, .kb-head-actions, .kb-card-actions, .kb-page-controls, .logs-modal-head-btns, .drawer-head-actions) > :not(:last-child):not([hidden]) { margin-right: 10px !important; }
+#unreciprocatedSection .unreciprocated-head-left { justify-content: flex-start; }
+#unreciprocatedSection .unreciprocated-head-left > button { margin: 0 10px 0 0; }
+#unreciprocatedSection .unreciprocated-head-left > button:last-child { margin-right: 0; }
+#unreciprocatedSection #openUnreciprocatedSettingsDrawer { margin: 0 10px 0 0; }
+#unreciprocatedSection .unreciprocated-subbar .subbar-left > :not(:last-child) { margin-right: 10px; }
+/* Empty header groups left by teleported help should not indent the controls. */
+#commentsSection .comments-title:not(:has(.selected-count-badge:not([hidden]))) { display: none; }
+.post-head-icons .post-memory-trigger { width: auto; padding-left: 6px; padding-right: 6px; }
+#unreciprocatedSection .unreciprocated-head .unreciprocated-head-left > button:not(:last-child) { margin-right: 10px !important; }
+#commentsSection .search-wrap > button { margin-left: 0 !important; }

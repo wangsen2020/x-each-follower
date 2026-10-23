@@ -1595,11 +1595,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }, '×');
 
     const header = el('div', { className: 'fq-drawer-header' }, [
-      el('strong', { className: 'fq-drawer-title' }, '关注队列 · 统一调度与执行设置'),
+      el('strong', { className: 'fq-drawer-title' }, '关注队列设置'),
       closeBtn
     ]);
 
     // Input builders
+    const settingHelp = text => el('span', {className: 'info-tip', tabindex: '0', role: 'note', 'data-tip': text, 'aria-label': text}, '?');
     function createNumberGroup(id, label, desc, key, min, max, step = 1) {
       const input = el('input', {
         id,
@@ -1617,10 +1618,9 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
 
       return el('div', { className: 'fq-setting-group' }, [
         el('label', { htmlFor: id, className: 'fq-setting-label' }, [
-          el('span', {}, label)
+          el('span', {}, label), settingHelp(desc)
         ]),
-        input,
-        el('small', { className: 'fq-setting-desc' }, desc)
+        input
       ]);
     }
 
@@ -1638,9 +1638,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       return el('div', { className: 'fq-setting-group fq-setting-switch' }, [
         el('label', { className: 'fq-switch-label' }, [
           input,
-          el('span', {}, label)
-        ]),
-        el('small', { className: 'fq-setting-desc' }, desc)
+          el('span', {}, label), settingHelp(desc)
+        ])
       ]);
     }
 
@@ -1663,13 +1662,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         }},'×'));
         tags.appendChild(chip);
       }
-      tagPreview.textContent='结尾预览：'+(quoteTagSuffix(current)||'不追加标签')+'（已选 '+current.quoteSelectedTags.length+'/10）';
+      tagPreview.textContent='随机抽取示例：'+(quoteTagSuffix(current)||'不追加标签')+'（候选 '+current.quoteSelectedTags.length+'/10）';
     };
     const enableTags=el('input',{type:'checkbox',checked:current.quoteTagsEnabled,onChange:e=>{current.quoteTagsEnabled=e.target.checked;renderTags();}});
     const tagSection=el('div',{className:'fq-setting-section'},[
       el('h4',{className:'fq-setting-section-title'},'引用评价标签'),
-      el('label',{className:'fq-switch-label'},[enableTags,el('span',{},'在引用评价结尾追加标签')]),
-      el('small',{className:'fq-setting-desc'},'开启后默认选中 10 个中英文推荐标签，可取消或换成自定义标签。发布时按评价语言筛选：中文使用中文标签，其他已识别语言使用非中文标签；自定义拉丁字母标签不区分英语、西语和葡语，请自行勾选目标语言标签。标签用空格分隔；正文超长时会缩短正文以保留标签。'),
+      el('label',{className:'fq-switch-label'},[enableTags,el('span',{},'追加随机标签'), settingHelp('从候选标签随机选取最多 2 个，并按评价语言筛选。重试沿用原标签；空间不足时减少标签，不截断正文。')]),
       tags,el('div',{className:'fq-tag-add'},[tagInput,el('button',{type:'button',onClick:()=>{
         const tag=cleanQuoteTag(tagInput.value);tagError.textContent='';
         if(!tag){tagError.textContent='请输入单个标签，支持中文、英文和带重音字母；不要包含空格或标点。';return;}
@@ -1695,30 +1693,29 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         : null,
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '⏱ 调度周期与执行预算'),
-        createNumberGroup('fq_every', '基础调度间隔（分钟）', '每隔多少分钟调度器唤醒一次检查队列，默认 8 分钟 (1-240)。', 'every', SETTINGS_BOUNDS.every.min, SETTINGS_BOUNDS.every.max),
-        createNumberGroup('fq_jitter', '随机浮动间隔（±分钟）', '在基础周期上增减的随机分钟数，默认 ±2 分钟 (1-120)。', 'jitter', SETTINGS_BOUNDS.jitter.min, SETTINGS_BOUNDS.jitter.max),
-        createNumberGroup('fq_batchLimit', '单轮新增关注上限（人）', '每轮最多成功新增关注的人数，达到后停止并等待下轮，默认 5 人 (1-50)。', 'batchLimit', SETTINGS_BOUNDS.batchLimit.min, SETTINGS_BOUNDS.batchLimit.max),
-        createNumberGroup('fq_inspectLimit', '单轮新检查上限（人）', '单轮最多检查候选人数，防止无限扫页看帖，默认 20 人 (1-200)。', 'inspectLimit', SETTINGS_BOUNDS.inspectLimit.min, SETTINGS_BOUNDS.inspectLimit.max),
-        createNumberGroup('fq_timeBudget', '单轮时间预算（分钟）', '单轮任务最长耗时，超时则保存断点下一轮继续，默认 10 分钟 (1-120)。', 'timeBudgetMinutes', SETTINGS_BOUNDS.timeBudgetMinutes.min, SETTINGS_BOUNDS.timeBudgetMinutes.max)
+        createNumberGroup('fq_every', '调度间隔（分）', '每隔多少分钟调度器唤醒一次检查队列，默认 8 分钟 (1-240)。', 'every', SETTINGS_BOUNDS.every.min, SETTINGS_BOUNDS.every.max),
+        createNumberGroup('fq_jitter', '随机浮动（±分）', '在基础周期上增减的随机分钟数，默认 ±2 分钟 (1-120)。', 'jitter', SETTINGS_BOUNDS.jitter.min, SETTINGS_BOUNDS.jitter.max),
+        createNumberGroup('fq_batchLimit', '每轮关注人数', '每轮最多成功新增关注的人数，达到后停止并等待下轮，默认 5 人 (1-50)。', 'batchLimit', SETTINGS_BOUNDS.batchLimit.min, SETTINGS_BOUNDS.batchLimit.max),
+        createNumberGroup('fq_inspectLimit', '每轮检查人数', '单轮最多检查候选人数，防止无限扫页看帖，默认 20 人 (1-200)。', 'inspectLimit', SETTINGS_BOUNDS.inspectLimit.min, SETTINGS_BOUNDS.inspectLimit.max),
+        createNumberGroup('fq_timeBudget', '每轮时限（分）', '单轮任务最长耗时，超时则保存断点下一轮继续，默认 10 分钟 (1-120)。', 'timeBudgetMinutes', SETTINGS_BOUNDS.timeBudgetMinutes.min, SETTINGS_BOUNDS.timeBudgetMinutes.max)
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '👀 主页访问与模拟看帖'),
-        createNumberGroup('fq_scrollRounds', '主页下拉看帖次数', '打开对方主页后向下模拟滚动的分段次数，默认 5 次 (1-8)。', 'scrollRounds', SETTINGS_BOUNDS.scrollRounds.min, SETTINGS_BOUNDS.scrollRounds.max),
-        createNumberGroup('fq_dwellSec', '看帖停留基准（秒）', '打开主页后的浏览停留基准秒数，默认 15 秒 (2-60)。', 'dwellSeconds', SETTINGS_BOUNDS.dwellSeconds.min, SETTINGS_BOUNDS.dwellSeconds.max),
+        createNumberGroup('fq_scrollRounds', '主页滚动次数', '打开对方主页后向下模拟滚动的分段次数，默认 5 次 (1-8)。', 'scrollRounds', SETTINGS_BOUNDS.scrollRounds.min, SETTINGS_BOUNDS.scrollRounds.max),
+        createNumberGroup('fq_dwellSec', '停留时间（秒）', '打开主页后的浏览停留基准秒数，默认 15 秒 (2-60)。', 'dwellSeconds', SETTINGS_BOUNDS.dwellSeconds.min, SETTINGS_BOUNDS.dwellSeconds.max),
         createNumberGroup('fq_dwellJitter', '停留随机浮动（±秒）', '在停留基准上的随机增减秒数，默认 ±5 秒 (1-30)。', 'dwellJitter', SETTINGS_BOUNDS.dwellJitter.min, SETTINGS_BOUNDS.dwellJitter.max)
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🛡️ 筛选过滤与意向门槛'),
-        createNumberGroup('fq_minFollowers', '最低粉丝数门槛', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
-        createNumberGroup('fq_ratioThreshold', '回关比例门槛（关注/粉丝）', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
-        createSwitchGroup('fq_onlyRecommended', '仅关注推荐/互粉意向账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
-        createSwitchGroup('fq_skipRiskContent', '安全门禁：跳过涉政/涉军/涉宗教/暴力/色情敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
+        createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
+        createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
+        createSwitchGroup('fq_onlyRecommended', '仅推荐或互粉账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
+        createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
-        el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 引用评价与发布'),
-        createSwitchGroup('fq_grokEnabled', '启用 Grok 生成引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
-        createSwitchGroup('fq_autoPublish', '允许自动发布引用评价（显式确认）', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish'),
-        el('small', {className:'fq-setting-desc'}, '自动评价仅使用 X 内置 Grok；失败时跳过本次评价，不会打开 grok.com。')
+        el('h4', { className: 'fq-setting-section-title' }, ['🤖 Grok 引用评价与发布', settingHelp('仅使用 X 内置 Grok；失败时跳过本次评价，不会打开 grok.com。')]),
+        createSwitchGroup('fq_grokEnabled', 'Grok 引用评价', '关注成功后自动提取原帖调用 Grok 生成引用评价草稿。', 'grokEnabled'),
+        createSwitchGroup('fq_autoPublish', '自动公开发布引用', '如开启，评价草稿就绪后将直接发布公开引用推文。未开启则仅存草稿。', 'autoPublish')
       ]), tagSection
     ]);
 

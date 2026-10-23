@@ -1,6 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {IDBFactory, IDBKeyRange} from 'fake-indexeddb';
 import {createRecordProjection} from '../src/features/records/record-projection.js';
+
+test('a blocked upgrade rejects, discards the late attempt and allows explicit retry without deleting old data', {timeout: 2000}, async () => {
+  const factory = new IDBFactory();
+  const request = factory.open('blocked-upgrade', 3);
+  request.onupgradeneeded = () => request.result.createObjectStore('preserved');
+  const old = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+  await new Promise((resolve, reject) => {
+    const tx = old.transaction('preserved', 'readwrite');
+    tx.objectStore('preserved').put({value: 'original'}, 'sentinel');
+    tx.oncomplete = resolve; tx.onabort = () => reject(tx.error);
+  });
+  old.onversionchange = () => {}; // A pre-existing page holds its old connection.
+  const projection = createRecordProjection({indexedDB: factory, IDBKeyRange, dbName: 'blocked-upgrade', blockedTimeoutMs: 10});
+  await assert.rejects(projection.readState(), /旧连接阻塞/);
+  old.close();
+  await projection.writeState({stage: 'ready', cutover: true});
+  assert.equal((await projection.readState()).cutover, true);
+  const verify = factory.open('blocked-upgrade', 4);
+  const db = await new Promise((resolve, reject) => { verify.onsuccess = () => resolve(verify.result); verify.onerror = () => reject(verify.error); });
+  const value = await new Promise((resolve, reject) => {
+    const get = db.transaction('preserved').objectStore('preserved').get('sentinel');
+    get.onsuccess = () => resolve(get.result); get.onerror = () => reject(get.error);
+  });
+  assert.deepEqual(value, {value: 'original'});
+  db.close();
+});
+
+test('a late successful open after blocked timeout is closed and is not cached', {timeout: 2000}, async () => {
+  let first, opens = 0, closes = 0;
+  const fake = createLifecycleDb();
+  const indexed = {open(...args) {
+    if (++opens > 1) return fake.indexedDB.open(...args);
+    first = {}; queueMicrotask(() => first.onblocked()); return first;
+  }};
+  const projection = createRecordProjection({indexedDB: indexed, IDBKeyRange: fake.IDBKeyRange, dbName: 'late-open', blockedTimeoutMs: 5});
+  await assert.rejects(projection.readState(), /旧连接阻塞/);
+  first.result = {close() { closes++; }};
+  first.onsuccess();
+  assert.equal(closes, 1);
+  assert.equal((await projection.readState()).stage, 'idle');
+  assert.equal(opens, 2);
+});
 
 function createLifecycleDb() {
   const stores = new Map();

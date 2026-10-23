@@ -616,7 +616,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
 
   const drawer = root.querySelector('.fq-drawer');
   assert.ok(drawer);
-  assert.ok(drawer.textContent.includes('关注队列 · 统一调度与执行设置'));
+  assert.ok(drawer.textContent.includes('关注队列设置'));
 
   // Verify contract default fields exist
   const batchInput = drawer.querySelector('#fq_batchLimit');

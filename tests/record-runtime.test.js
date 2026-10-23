@@ -895,6 +895,10 @@ test('rebuilding drains more than one journal page and the active migration path
   await deleteDatabase(`${name}-dashboard`);
   const rebuilt = await runtime(name, storage, durable).migrate();
   assert.equal(rebuilt.stage, 'ready');
+  assert.equal(rebuilt.replay.completed, 101);
+  assert.equal(rebuilt.replay.total, 101);
+  assert.equal(rebuilt.replay.steps['read-entry'].count, 101);
+  assert.ok(rebuilt.replay.recent.length <= 12);
   assert.equal((await runtime(name, storage, durable).query({module: 'comments', limit: 1})).records[0].payload.bio, 'step-100');
   assert.equal(storage.data.commentTracking.users[0].bio, 'plain');
   const backups = [...durable.saved.keys()].filter(key => String(key).startsWith('recordLegacySnapshotBackup:v2:'));
@@ -904,4 +908,41 @@ test('rebuilding drains more than one journal page and the active migration path
 test('business writes fail before migration is ready', async () => {
   const service = runtime('runtime-guard', memoryStorage({monitor: {users: [{handle: 'a'}]}}), memoryDurable());
   await assert.rejects(service.handle({op: 'put', module: 'fans', operationId: 'early', record: {payload: {handle: 'b'}}}), /not ready/);
+});
+
+test('replay diagnostics report a pending read, real journal counts and elapsed time before completion', async () => {
+  const durable = memoryDurable();
+  durable.saved.set('recordIncremental:v1:head', {seq: 2});
+  for (let seq = 1; seq <= 2; seq++) durable.saved.set(`recordIncremental:v1:seq:${String(seq).padStart(8, '0')}`,
+    {kind: 'mergeRoot', sourceKey: 'commentTracking', payload: {diagnosticFixture: 'private-payload', value: seq}});
+  let clock = 1000, release, entered;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const waiting = new Promise(resolve => { entered = resolve; });
+  const service = createRecordRuntime({storage: memoryStorage(comments(3)), durableSet: durable.set,
+    durableGet: async key => {
+      if (key === 'recordIncremental:v1:seq:00000002') { entered(); await blocked; }
+      return durable.get(key);
+    }, indexedDB, IDBKeyRange, dbName: 'runtime-replay-diagnostics', now: () => clock});
+  const job = service.migrate();
+  await waiting;
+  clock += 12000;
+  const {status} = await service.handle({op: 'status'});
+  assert.equal(status.cutover, false);
+  assert.equal(status.completed, status.total); // Baseline can be complete while replay is not.
+  assert.equal(status.replay.completed, 1);
+  assert.equal(status.replay.total, 2);
+  assert.equal(status.replay.seq, 2);
+  assert.equal(status.replay.step, 'read-entry');
+  assert.equal(status.replay.stepElapsedMs, 12000);
+  assert.equal(status.replay.steps['read-entry'].count, 1);
+  assert.equal(JSON.stringify(status.replay).includes('private-payload'), false);
+  release();
+  const finished = await job;
+  assert.equal(finished.cutover, true);
+  assert.equal(finished.replay.completed, 2);
+  assert.equal(finished.replay.steps['read-entry'].count, 2);
+  assert.equal(finished.replay.steps['read-entry'].maxMs, 12000);
+  assert.equal(finished.replay.finishedAt, clock);
+  clock += 5000;
+  assert.equal((await service.handle({op: 'status'})).status.replay.elapsedMs, 12000);
 });

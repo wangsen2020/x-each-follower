@@ -5,6 +5,7 @@
         <img :src="iconUrl" alt="XFollower logo">
       </div>
       <div class="brand-name">XFollower</div>
+      <span class="brand-version">v{{ version }}</span>
       <span>粉丝管理</span>
     </div>
 
@@ -33,7 +34,7 @@
     </button>
 
     <div class="sidebar-foot">
-      v{{ version }}<br>本地数据
+      本地数据
     </div>
   </aside>
 </template>

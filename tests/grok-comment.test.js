@@ -961,3 +961,11 @@ test('valid quote end marker completes without recommendations or action buttons
  assert.equal(gate(state,answer),'');
  assert.equal(gate(state,answer),'end-marker');
 });
+
+test('quote prompt requests relevant topic tags and reserves space for two sampled tags',()=>{
+ const prompt=buildGrokCommentPrompt({handle:'alice',postText:'AI coding',nonce:'test'});
+ assert.match(prompt,/1–2 个与原帖具体主题/);
+ assert.match(prompt,/不要生成互关互粉/);
+ assert.match(prompt,/220 加权字符/);
+ assert.doesNotMatch(prompt,/不要标签、链接/);
+});

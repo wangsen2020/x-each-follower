@@ -156,7 +156,14 @@ test('message handler validates the extension sender and reports failures', asyn
 test('production append returns the stored entry instead of the legacy array', async () => {
   const storage = {get: async () => ({}), set: async () => { throw new Error('whole write'); }};
   const prior = globalThis.chrome;
-  globalThis.chrome = {storage: {local: storage}, runtime: {id: 'ext', getURL: path => path}};
+  globalThis.chrome = {
+    storage: {local: storage}, runtime: {id: 'ext', getURL: path => path},
+    tabs: {query: async () => [{id: 1, status: 'complete'}], get: async () => ({id: 1, status: 'complete'})},
+    scripting: {executeScript: async ({args}) => {
+      if (args[0] !== 'get') throw new Error('backup write unavailable');
+      return [{result: JSON.stringify({found: false})}];
+    }}
+  };
   resetDefaultExecutionLogStore();
   try {
     await assert.rejects(appendExecutionLog({id: 'indexed-1', scope: 'comment', detail: 'indexed', posts: [{text: 'kept'}]}));

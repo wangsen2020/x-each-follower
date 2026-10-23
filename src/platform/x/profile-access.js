@@ -18,11 +18,13 @@ async function update(api,handle,patch,event){
 export async function assertProfileAvailable(api,handle,source){
   handle=String(handle||'').replace(/^@/,'').toLowerCase();if(!/^[a-z0-9_]{1,15}$/.test(handle))throw Error('账号名无效');
   const row=await read(api,handle);
-  if(terminal(row.status)&&row.expiresAt>Date.now()){await update(api,handle,{}, {source,action:'blocked',status:row.status});throw profileUnavailableError({...row,handle});}
+  if(terminal(row.status)&&row.expiresAt>Date.now()){await update(api,handle,{}, {source,action:'blocked',status:row.status}).catch(()=>{});throw profileUnavailableError({...row,handle});}
 }
 export async function observeProfile(api,handle,result,source){
   handle=String(handle||'').replace(/^@/,'').toLowerCase();if(!terminal(result?.status)&&result?.status!=='ok')return result;
-  await update(api,handle,{status:result.status,reason:result.reason||'',checkedAt:Date.now(),expiresAt:terminal(result.status)?Date.now()+PROFILE_UNAVAILABLE_TTL:0},{source,action:'observed',status:result.status});return result;
+  // Availability caching and visit traces must not replace a real DOM/API result
+  // with a storage error. A known terminal result still blocks the current action.
+  await update(api,handle,{status:result.status,reason:result.reason||'',checkedAt:Date.now(),expiresAt:terminal(result.status)?Date.now()+PROFILE_UNAVAILABLE_TTL:0},{source,action:'observed',status:result.status}).catch(()=>{});return result;
 }
 export async function createProfileTab(api,options,source,context={}){
   const handle=profileHandle(options.url);if(handle)await assertProfileAvailable(api,handle,source);

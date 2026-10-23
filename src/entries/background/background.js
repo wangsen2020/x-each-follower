@@ -1,6 +1,7 @@
 import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
+import {createPanelLauncher} from '../../platform/panel-launcher.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
 import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
@@ -43,8 +44,9 @@ const recordRuntimeService = createRecordRuntime({
   extensionOrigin: chrome.runtime.getURL('')
 });
 
-chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
+const panelLauncher = createPanelLauncher({api:chrome, sendToPanel:message => safeSendMessageToPanel(message)});
+chrome.action.onClicked.addListener(tab => {
+  void panelLauncher.openPanel(tab?.windowId);
 });
 
 chrome.notifications.onClicked.addListener(async id => {
@@ -438,7 +440,7 @@ async function collectTweetReplies(tweetId, url, authorHandle, sourceTab) {
     const post = {tweetId, url, authorHandle, status:'collecting', replyUsers:0, replies:0, collectedAt:new Date().toISOString()};
     await updateCommentStatus({tweetId, url, state:'collecting', message:'正在后台读取帖子回复…', updatedAt:new Date().toISOString()});
     try {
-      const tab = await createProfileTab(chrome,{url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {},'comment-auto-follow')});
+      const tab = await createProfileTab(chrome,{url, active:false, ...(sourceTab?.windowId != null ? {windowId:sourceTab.windowId} : {})},'comment-tracking');
       tabId = tab.id;
       await waitForTweetTemplate(tabId, tweetId);
       const replyUsers = new Map();
@@ -736,20 +738,7 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const jitter = Math.max(0, Number(monitor.jitter) || 0);
     const nextDelay = randomizedInteger(base, jitter, 10, 1440);
     await chrome.alarms.create('x-followers-scan', { delayInMinutes: nextDelay });
-    const panelUrl = chrome.runtime.getURL('panel.html');
-    const panelTabs = (await chrome.tabs.query({})).filter(tab => tab.url?.startsWith(panelUrl));
-    if (panelTabs.some(tab => tab.url?.includes('?scheduledFollowers='))) return;
-    if (panelTabs.length) {
-      const res = await Promise.race([
-        safeSendMessageToPanel({cmd:'runFollowersScanTick',targetPanelTabId:panelTabs[0].id}),
-        new Promise(resolve => setTimeout(() => resolve(null), 3000))
-      ]);
-      if (res?.ok) return;
-      console.warn('粉丝定时检测未能通知已打开的管理面板，本轮不重复创建扫描页');
-      return;
-    }
-    const token = crypto.randomUUID();
-    await chrome.tabs.create({url:`${panelUrl}?scheduledFollowers=${token}`,active:false});
+    await panelLauncher.runScheduledScan();
     return;
   }
 

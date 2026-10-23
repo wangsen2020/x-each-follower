@@ -899,7 +899,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const settings = await store.getSettings(binding.accountId);
       ev.baseText ||= ev.text;
       ev.language = resolveCommentLanguage(ev.baseText, ev.language);
-      ev.text = appendQuoteTags(ev.baseText, settings, ev.language || 'und');
+      ev.text = appendQuoteTags(ev.baseText, settings, ev.language || 'und', {previousText: ev.text});
       if (!publish && !settings.autoPublish) {
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
         await safeLog({scope:'queue',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`已为 @${job.handle} 生成评价草稿（未开启自动发布）`});

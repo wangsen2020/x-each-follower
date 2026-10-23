@@ -1,6 +1,7 @@
 import {readdirSync} from 'node:fs';
 import {resolve, join, relative} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {inspectBrowserSourceTree} from './check-browser-calls.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const sourceDirs = new Set(['src']);
@@ -24,3 +25,8 @@ for (const file of files) {
   }
 }
 if (!process.exitCode) console.log(`Syntax checked ${files.length} source modules.`);
+const browserCalls = inspectBrowserSourceTree(join(root, 'src'));
+if (browserCalls.errors.length) {
+  console.error(browserCalls.errors.join('\n'));
+  process.exitCode = 1;
+} else console.log(`Browser call contracts checked in ${browserCalls.files} JS/Vue files.`);

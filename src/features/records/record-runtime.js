@@ -513,6 +513,30 @@ export function createRecordRuntime({
   const progress = {
     stage: 'idle', completed: 0, total: 0, migrationId: null, fingerprint: null, error: null, cutover: false
   };
+  // Diagnostic-only state: never used as a recovery cursor or to skip a journal entry.
+  let replayTrace = null;
+  function beginReplayTrace(start = 1) {
+    replayTrace = {startedAt: now(), finishedAt: null, completed: start - 1, total: null,
+      seq: null, kind: '', module: '', step: '', stepStartedAt: null, steps: {}, recent: [], error: null};
+  }
+  async function replayStep(step, action) {
+    if (!replayTrace) return action();
+    const trace = replayTrace;
+    const startedAt = now();
+    trace.step = step;
+    trace.stepStartedAt = startedAt;
+    let failed = false;
+    try { return await action(); }
+    catch (error) { failed = true; trace.error = String(error?.message || error); throw error; }
+    finally {
+      const ms = Math.max(0, now() - startedAt);
+      const stats = trace.steps[step] ||= {count: 0, totalMs: 0, maxMs: 0, lastMs: 0};
+      stats.count++; stats.totalMs += ms; stats.maxMs = Math.max(stats.maxMs, ms); stats.lastMs = ms;
+      trace.recent.push({seq: trace.seq, step, ms, failed});
+      if (trace.recent.length > 12) trace.recent.shift();
+      if (!failed) { trace.step = ''; trace.stepStartedAt = null; }
+    }
+  }
 
   function migration() {
     migrationApi ??= createRecordMigration({
@@ -533,7 +557,14 @@ export function createRecordRuntime({
   }
 
   function publicProgress() {
-    return clone(progress);
+    const result = clone(progress);
+    // Persisted snapshots may belong to a stopped worker. Only this worker's
+    // live trace can claim that an operation is currently running.
+    delete result.replay;
+    if (replayTrace) result.replay = {...clone(replayTrace),
+      elapsedMs: Math.max(0, (replayTrace.finishedAt ?? now()) - replayTrace.startedAt),
+      stepElapsedMs: replayTrace.stepStartedAt == null ? 0 : Math.max(0, (replayTrace.finishedAt ?? now()) - replayTrace.stepStartedAt)};
+    return result;
   }
 
   async function discoverBaseline() {
@@ -887,10 +918,11 @@ export function createRecordRuntime({
   // Fresh projection rebuilds only. A ready checkpoint skips this so warm
   // reads do not walk the incremental journal.
   async function replayIncrementalAfterRebuild() {
+    beginReplayTrace();
     progress.stage = 'replaying';
     progress.cutover = false;
     progress.error = null;
-    await projection.writeState(publicProgress());
+    await replayStep('checkpoint', () => projection.writeState(publicProgress()));
     let cursor = null;
     for (;;) {
       const page = await replayBackups({limit: 100, cursor, deferReady: true});
@@ -899,19 +931,20 @@ export function createRecordRuntime({
       progress.stage = 'replaying';
       progress.cutover = false;
       progress.error = null;
-      await projection.writeState(publicProgress());
+      await replayStep('checkpoint', () => projection.writeState(publicProgress()));
     }
   }
 
   async function commitReadyProjection() {
     await absorbPendingDirty();
     await replayIncrementalAfterRebuild();
-    const pending = [...await dirtyKeys()];
+    const pending = [...await replayStep('read-dirty-keys', dirtyKeys)];
     progress.stage = 'ready';
     progress.completed = progress.total;
     progress.cutover = true;
     progress.error = null;
-    await projection.writeState({...publicProgress(), dirtyKeys: pending});
+    await replayStep('finalize-ready', () => projection.writeState({...publicProgress(), dirtyKeys: pending}));
+    if (replayTrace) replayTrace.finishedAt = now();
     return publicProgress();
   }
 
@@ -941,6 +974,7 @@ export function createRecordRuntime({
           return publicProgress();
         }
         progress.stage = 'discovering';
+        replayTrace = null;
         progress.cutover = false;
         progress.error = null;
         await projection.writeState(publicProgress());
@@ -1025,6 +1059,7 @@ export function createRecordRuntime({
         if (!progress.cutover) throw new Error('legacy source kept changing');
         return publicProgress();
       } catch (error) {
+        if (replayTrace) { replayTrace.finishedAt = now(); replayTrace.error = String(error?.message || error); }
         progress.stage = error?.name === 'BaselineRecoveryAccessError' ? 'repair-required' : 'failed';
         progress.cutover = false;
         progress.error = String(error?.message || error);
@@ -1339,16 +1374,16 @@ export function createRecordRuntime({
     }
   }
 
-  async function recomputeHandle(handle) {
+  async function recomputeHandle(handle, track = (_step, action) => action()) {
     if (!handle) return;
-    const rows = await projection.rowsByHandleKey(handle);
+    const rows = await track('read-related-rows', () => projection.rowsByHandleKey(handle));
     const monitor = rows.filter(row => row.sourceKey === 'monitor');
     const users = monitor.filter(row => row.sourcePath?.[1] === 'users');
     const following = monitor.filter(row => row.sourcePath?.[1] === 'followingUsers');
     const queue = monitor.filter(row => row.sourcePath?.[1] === 'queue');
     let relation = null;
     if (users.length || following.length || queue.length) {
-      const current = (await projection.getRelations([handle]))[0] || {handle};
+      const current = (await track('read-relations', () => projection.getRelations([handle])))[0] || {handle};
       relation = {...current, handle, follower: users.length > 0};
       relation.following = following.length > 0 || users.some(row => row.payload?.state === 'following' || row.payload?.status === 'followed' || row.payload?.relationship?.following === true);
       relation.queued = queue.some(row => row.payload?.status !== 'followed');
@@ -1360,13 +1395,13 @@ export function createRecordRuntime({
       relation.mutualLabel = personalRelationshipLabel(user);
       relation.rank = RELATION_RANK[relation.mutualLabel] ?? 5;
       relation.category = mutualUserCategory(user);
-      await projection.upsertRelation(relation);
+      await track('write-relation', () => projection.upsertRelation(relation));
     } else {
-      await projection.deleteRelation(handle);
+      await track('delete-relation', () => projection.deleteRelation(handle));
     }
     const chosen = notMutualSource(rows);
     const derived = rows.find(row => row.sourceKey === 'derived:notMutual');
-    if (!chosen && derived) await projection.mutateRow(null, [derived.accountId, derived.module, derived.userKey]);
+    if (!chosen && derived) await track('delete-derived-row', () => projection.mutateRow(null, [derived.accountId, derived.module, derived.userKey]));
     if (chosen) {
       const next = {
         accountId: chosen.accountId,
@@ -1382,12 +1417,12 @@ export function createRecordRuntime({
         sortKey: `2|${chosen.sortKey}`,
         view: null
       };
-      await projection.mutateRow({row: next, membership: membershipOf(next)}, derived ? [derived.accountId, derived.module, derived.userKey] : null);
+      await track('write-derived-row', () => projection.mutateRow({row: next, membership: membershipOf(next)}, derived ? [derived.accountId, derived.module, derived.userKey] : null));
     }
     const real = rows.find(row => row.sourceKey === 'unreciprocatedTracker' && row.sourcePath?.[1] === 'users');
     const synthetic = rows.find(row => row.sourceKey === 'derived:tracker' || row.sourcePath?.[1] === 'synthetic');
     const source = trackerSource(rows);
-    if (real && synthetic) await projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]);
+    if (real && synthetic) await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     if (!real && source) {
       const generated = trackerTemplate(source);
       const previous = synthetic?.payload || {};
@@ -1397,20 +1432,20 @@ export function createRecordRuntime({
         status: keepStatus ? previous.status : generated.status,
         exempt: previous.exempt === true ? true : generated.exempt
       };
-      const next = await materializeRow({
+      const next = await track('prepare-tracker-row', () => materializeRow({
         previous: synthetic,
         payload,
         moduleName: 'unreciprocated',
         accountId: synthetic?.accountId || source.accountId || 'unassigned',
         sourcePath: ['unreciprocatedTracker', 'synthetic', handle],
         sourceKey: 'derived:tracker'
-      });
+      }));
       next.userKey = synthetic?.userKey || `derived-tracker/${handle}`;
-      await projection.mutateRow({row: next, membership: membershipOf(next)}, synthetic ? [synthetic.accountId, synthetic.module, synthetic.userKey] : null);
+      await track('write-tracker-row', () => projection.mutateRow({row: next, membership: membershipOf(next)}, synthetic ? [synthetic.accountId, synthetic.module, synthetic.userKey] : null));
     } else if (!real && !source && synthetic) {
-      await projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]);
+      await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     }
-    await refreshBoundViews(handle, relation, rows);
+    await track('refresh-related-views', () => refreshBoundViews(handle, relation, rows));
   }
 
   async function commitRow(previous, row, entry) {
@@ -1756,31 +1791,31 @@ export function createRecordRuntime({
 
   async function applyReplay(entry) {
     if (entry.kind === 'mergeRoot' && entry.sourceKey) {
-      const state = await projection.readState();
+      const state = await replayStep('read-metadata', () => projection.readState());
       const metadata = {...(state.metadata || {})};
       metadata[entry.sourceKey] = {...(metadata[entry.sourceKey] || {}), ...(entry.payload || {})};
-      await projection.writeState({metadata});
+      await replayStep('write-metadata', () => projection.writeState({metadata}));
     } else if (entry.removed) {
       if (entry.userKey && entry.module) {
         const accountId = entry.accountId || entry.result?.accountId || 'unassigned';
-        const existing = await projection.getRow(accountId, entry.module, entry.userKey);
-        if (existing) await projection.mutateRow(null, [existing.accountId, existing.module, existing.userKey]);
+        const existing = await replayStep('read-row', () => projection.getRow(accountId, entry.module, entry.userKey));
+        if (existing) await replayStep('delete-row', () => projection.mutateRow(null, [existing.accountId, existing.module, existing.userKey]));
       }
     } else if (entry.payload && entry.module && entry.userKey) {
       const accountId = entry.accountId || entry.result?.accountId || 'unassigned';
-      const previous = await projection.getRow(accountId, entry.module, entry.userKey);
-      const row = await materializeRow({
+      const previous = await replayStep('read-row', () => projection.getRow(accountId, entry.module, entry.userKey));
+      const row = await replayStep('prepare-row', () => materializeRow({
         previous,
         payload: entry.payload,
         moduleName: entry.module,
         accountId,
         sourcePath: entry.sourcePath || previous?.sourcePath || [entry.sourceKey || entry.module, entry.userKey],
         sourceKey: entry.sourceKey || previous?.sourceKey
-      });
+      }));
       row.userKey = entry.userKey;
-      await projection.mutateRow({row, membership: membershipOf(row)}, previous ? [previous.accountId, previous.module, previous.userKey] : null);
+      await replayStep('write-row', () => projection.mutateRow({row, membership: membershipOf(row)}, previous ? [previous.accountId, previous.module, previous.userKey] : null));
     }
-    if (entry.handle) await recomputeHandle(entry.handle);
+    if (entry.handle) await recomputeHandle(entry.handle, replayStep);
   }
 
   function replayReadError(seq, cause) {
@@ -1805,6 +1840,7 @@ export function createRecordRuntime({
   }
 
   async function stopReplay(error) {
+    if (replayTrace) { replayTrace.finishedAt = now(); replayTrace.error = String(error?.message || error); }
     progress.stage = 'repair-required';
     progress.cutover = false;
     progress.error = String(error?.message || error);
@@ -1820,29 +1856,37 @@ export function createRecordRuntime({
     await ensureOpen();
     const limit = request.limit == null ? 50 : request.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 to 100');
+    const start = request.cursor ? Number(decodeCursor(request.cursor).seq) : 1;
+    if (!replayTrace || (!request.cursor && !request.deferReady)) beginReplayTrace(start);
     let head;
     try {
-      head = await readRecovery(INCREMENTAL_HEAD);
+      head = await replayStep('read-head', () => readRecovery(INCREMENTAL_HEAD));
     } catch (cause) {
       await stopReplay(replayReadError(null, cause));
     }
-    const start = request.cursor ? Number(decodeCursor(request.cursor).seq) : 1;
+    replayTrace.total = Number(head?.seq) || 0;
     if (!head?.seq || !Number.isInteger(start) || start < 1) return {applied: 0, nextCursor: null};
     let applied = 0;
     let seq = start;
     for (; seq <= head.seq && applied < limit; seq += 1) {
+      replayTrace.seq = seq;
+      replayTrace.kind = '';
+      replayTrace.module = '';
       const seqKey = `${INCREMENTAL_PREFIX}seq:${String(seq).padStart(8, '0')}`;
       let entry;
       try {
-        entry = await readRecovery(seqKey);
+        entry = await replayStep('read-entry', () => readRecovery(seqKey));
       } catch (cause) {
         await stopReplay(replayReadError(seq, cause));
       }
       if (!entry || typeof entry !== 'object') await stopReplay(replayGapError(seq));
+      replayTrace.kind = String(entry.kind || 'record');
+      replayTrace.module = String(entry.module || entry.sourceKey || '');
       await applyReplay(entry);
       applied += 1;
+      replayTrace.completed = seq;
     }
-    await bumpRevision();
+    await replayStep('update-revision', bumpRevision);
     const nextCursor = seq <= head.seq ? encodeCursor({v: 1, kind: 'replay', seq, sortKey: String(seq), userKey: String(seq)}) : null;
     // A partial page must stay unready. Otherwise a crash reports cutover
     // before the rest of the journal is applied.
@@ -1850,13 +1894,14 @@ export function createRecordRuntime({
       progress.stage = 'replaying';
       progress.cutover = false;
       progress.error = null;
-      await projection.writeState(publicProgress());
+      await replayStep('checkpoint', () => projection.writeState(publicProgress()));
     } else if (!request.deferReady && !nextCursor && !progress.cutover) {
       progress.stage = 'ready';
       progress.cutover = true;
       progress.error = null;
-      await projection.writeState(publicProgress());
+      await replayStep('finalize-ready', () => projection.writeState(publicProgress()));
     }
+    if (!nextCursor && !request.deferReady) replayTrace.finishedAt = now();
     return {applied, nextCursor};
   }
 

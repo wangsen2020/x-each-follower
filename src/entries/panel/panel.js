@@ -666,7 +666,7 @@ function renderCommentTracking() {
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', String(active));
   });
-  const statusText = commentTrackingStatus?.message || (commentTracking.posts?.length ? `已保存 ${users.length} 位评论用户，来源于 ${(commentTracking.posts || []).length} 个帖子。` : '在 X 帖子旁点击评论图标，静默收集评论用户。');
+  const statusText = commentTrackingStatus?.message || ''; 
   $('commentTrackingStatus').textContent = statusText;
   const filtered = filteredCommentUsers(index);
   const commentWindow = servedRecordWindow('comments', filtered, commentPage, commentPageSize);
@@ -692,8 +692,8 @@ function renderCommentTracking() {
     empty.querySelector('strong').textContent = '没有匹配的评论用户';
     empty.querySelector('span').textContent = '调整搜索词或切换筛选条件后重试。';
   } else {
-    empty.querySelector('strong').textContent = '还没有评论用户';
-    empty.querySelector('span').textContent = '打开 X，在帖子操作栏点击评论追踪图标开始收集。';
+    empty.querySelector('strong').textContent = '暂无评论用户';
+    empty.querySelector('span').textContent = '';
   }
   table.hidden = pageUsers.length === 0;
   list.replaceChildren();
@@ -4401,7 +4401,7 @@ async function bootRecordDashboard() {
       const host = $('recordMigration');
       if (!host || !status) return;
       host.hidden = false;
-      paintMigrationProgress(host, {stage: status.label || migrationStageLabel(status), completed: Number(status.completed) || 0, total: Number(status.total) || 0});
+      paintMigrationProgress(host, {stage: status.label || migrationStageLabel(status), completed: Number(status.completed) || 0, total: Number(status.total) || 0, replay: status.replay});
       if (status.stage === 'failed' && !host.querySelector('[data-migration-retry]')) {
         const button = document.createElement('button');
         button.type = 'button';

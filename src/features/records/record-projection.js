@@ -63,7 +63,7 @@ function isClosingError(error) {
   return name === 'InvalidStateError' || /closing/i.test(message);
 }
 
-export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: keyRangeImpl, dbName, now = () => Date.now()} = {}) {
+export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: keyRangeImpl, dbName, now = () => Date.now(), blockedTimeoutMs = 5000} = {}) {
   if (!indexedDBImpl || !keyRangeImpl) throw new Error('IndexedDB is required');
   if (!dbName) throw new Error('dbName is required');
   let opening = null;
@@ -90,6 +90,12 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   function openOnce() {
     return new Promise((resolve, reject) => {
       let request;
+      let finished = false, blockedTimer;
+      const fail = error => {
+        if (finished) return;
+        finished = true; clearTimeout(blockedTimer);
+        reject(error || new Error('projection open failed'));
+      };
       try {
         request = indexedDBImpl.open(dbName, DB_VERSION);
       } catch (error) {
@@ -97,6 +103,8 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
         return;
       }
       request.onupgradeneeded = () => {
+        if (finished) { request.transaction.abort(); return; }
+        clearTimeout(blockedTimer); blockedTimer = undefined;
         install(request.result);
         const rows = request.transaction.objectStore('rows');
         if (rows.indexNames.contains('sourceOrder')) rows.deleteIndex('sourceOrder');
@@ -108,7 +116,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
           rows.createIndex('byExternalId', ['sourceKey', 'externalId'], {unique: false});
         }
         const backfill = rows.openCursor();
-        backfill.onerror = () => reject(backfill.error || new Error('externalId backfill failed'));
+        backfill.onerror = () => fail(backfill.error || new Error('externalId backfill failed'));
         backfill.onsuccess = () => {
           const cursor = backfill.result;
           if (!cursor) return;
@@ -121,11 +129,16 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
       };
       request.onsuccess = () => {
         const db = request.result;
+        if (finished) { db.close(); return; }
+        finished = true; clearTimeout(blockedTimer);
         bind(db);
         resolve(db);
       };
       request.onerror = () => {
-        reject(request.error || new Error('projection open failed'));
+        fail(request.error || new Error('projection open failed'));
+      };
+      request.onblocked = () => {
+        if (!finished && !blockedTimer) blockedTimer = setTimeout(() => fail(new Error('看板数据库升级被旧连接阻塞，请关闭旧看板后重试')), blockedTimeoutMs);
       };
     });
   }

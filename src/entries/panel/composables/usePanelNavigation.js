@@ -8,7 +8,8 @@ export const TAB_TITLES = {
   postTracking: '帖子追踪',
   leaderboard: 'X 榜单',
   followQueue: '关注队列',
-  unreciprocated: '回关监测'
+  unreciprocated: '回关监测',
+  knowledge: '知识库'
 };
 
 const ALL_NAV_TABS = [
@@ -18,7 +19,8 @@ const ALL_NAV_TABS = [
   { key: 'postTracking', label: '帖子追踪', badgeId: null, hasBadge: false },
   { key: 'leaderboard', label: 'X 榜单', badgeId: null, hasBadge: false },
   { key: 'followQueue', label: '关注队列', badgeId: null, hasBadge: false },
-  { key: 'unreciprocated', label: '回关监测', badgeId: 'unreciprocatedCount', hasBadge: true }
+  { key: 'unreciprocated', label: '回关监测', badgeId: 'unreciprocatedCount', hasBadge: true },
+  { key: 'knowledge', label: '知识库', badgeId: null, hasBadge: false }
 ];
 
 export const NAV_TABS = ALL_NAV_TABS;
@@ -38,7 +40,8 @@ export function usePanelNavigation() {
     postTracking: { count: null, loading: false },
     leaderboard: { count: null, loading: false },
     followQueue: { count: null, loading: false },
-    unreciprocated: { count: null, loading: true }
+    unreciprocated: { count: null, loading: true },
+    knowledge: { count: null, loading: false }
   });
 
   const currentTitle = computed(() => TAB_TITLES[activeTab.value] || '粉丝管理');

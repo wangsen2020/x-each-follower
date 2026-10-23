@@ -3,17 +3,48 @@ import {isPageFailure,diagnosticUrl,diagnosticText} from './page-failure.js';
 // this database survives uninstall/reinstall of this extension (until x.com site data is cleared).
 const dbPage = async (operation, key, value) => {
   const request = indexedDB.open('x-each-follower', 1);
-  request.onupgradeneeded = () => request.result.createObjectStore('records');
-  const db = await new Promise((resolve, reject) => { request.onsuccess=() => resolve(request.result); request.onerror=() => reject(request.error); });
+  const db = await new Promise((resolve, reject) => {
+    let settled = false, blockedTimer;
+    const fail = error => { if (settled) return; settled = true; clearTimeout(blockedTimer); reject(error); };
+    request.onblocked = () => {
+      if (!settled && !blockedTimer) blockedTimer = setTimeout(() => fail(new Error('X 本地数据库升级被旧连接阻塞，请关闭旧看板后重试')), 5000);
+    };
+    request.onupgradeneeded = () => {
+      if (settled) { request.transaction.abort(); return; }
+      clearTimeout(blockedTimer); blockedTimer = undefined;
+      request.result.createObjectStore('records');
+    };
+    request.onsuccess = () => {
+      if (settled) { request.result.close(); return; }
+      settled = true; clearTimeout(blockedTimer);
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
+    request.onerror = () => fail(request.error || new Error('X 本地数据库打开失败'));
+  });
+  // Keep the bridge pending until commit/abort, not merely request success.
+  // A failed write is never retried here; the queue can advance after abort.
+  const transaction = (mode, work) => new Promise((resolve, reject) => {
+    const tx = db.transaction('records', mode);
+    let result, failure;
+    const abort = error => {
+      failure ||= error || new Error('X 本地数据库操作失败');
+      try { tx.abort(); } catch { /* already aborting; onabort settles the operation */ }
+    };
+    tx.oncomplete = () => failure ? reject(failure) : resolve(result);
+    tx.onabort = () => reject(failure || tx.error || new Error('X 本地数据库事务已中止'));
+    tx.onerror = () => { failure ||= tx.error || new Error('X 本地数据库事务失败'); };
+    try { work(tx, value => { result = value; }, abort); } catch (error) { abort(error); }
+  });
+  try {
   if (operation === 'get') {
-    const stored = await new Promise((resolve, reject) => { const tx=db.transaction('records','readonly'); const r=tx.objectStore('records').get(key); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
+    const stored = await transaction('readonly', (tx, resolve, reject) => { const r=tx.objectStore('records').get(key); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
     if (stored === undefined) return JSON.stringify({found: false});
     return JSON.stringify({found: true, v: stored});
   }
   if (operation === 'keys') {
     const keyRange = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange : (globalThis.IDBKeyRange || (typeof self !== 'undefined' ? self.IDBKeyRange : undefined));
-    const keys = await new Promise((resolve, reject) => {
-      const tx = db.transaction('records', 'readonly');
+    const keys = await transaction('readonly', (tx, resolve, reject) => {
       const store = tx.objectStore('records');
       const range = key && keyRange ? keyRange.bound(key, key + '\uffff') : null;
       const r = store.getAllKeys(range);
@@ -25,8 +56,7 @@ const dbPage = async (operation, key, value) => {
   if (operation === 'appendIncremental') {
     const keyRange = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange : (globalThis.IDBKeyRange || (typeof self !== 'undefined' ? self.IDBKeyRange : undefined));
     const entry = JSON.parse(value);
-    const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction('records', 'readwrite');
+    const result = await transaction('readwrite', (tx, resolve, reject) => {
       const store = tx.objectStore('records');
       const seqPrefix = 'recordIncremental:v1:seq:';
       const headKey = 'recordIncremental:v1:head';
@@ -69,7 +99,7 @@ const dbPage = async (operation, key, value) => {
                   if (maxContinuousSeq > headSeq) {
                     store.put({seq: maxContinuousSeq, operationId: existing.operationId}, headKey);
                   }
-                  tx.oncomplete = () => resolve({ok: true, entry: existing, duplicate: true});
+                  resolve({ok: true, entry: existing, duplicate: true});
                   return;
                 }
                 // If index pointed to missing record, fallback to tail scan
@@ -94,7 +124,7 @@ const dbPage = async (operation, key, value) => {
                 if (opIndexKey) {
                   store.put({seq: existingMatch.seq, operationId: existingMatch.operationId}, opIndexKey);
                 }
-                tx.oncomplete = () => resolve({ok: true, entry: existingMatch, duplicate: true});
+                resolve({ok: true, entry: existingMatch, duplicate: true});
                 return;
               }
 
@@ -106,7 +136,7 @@ const dbPage = async (operation, key, value) => {
                 store.put({seq: nextSeq, operationId: entry.operationId}, opIndexKey);
               }
               store.put({seq: nextSeq, operationId: entry.operationId}, headKey);
-              tx.oncomplete = () => resolve({ok: true, entry: storedBody, duplicate: false});
+              resolve({ok: true, entry: storedBody, duplicate: false});
             };
 
             if (tailReq) {
@@ -118,20 +148,20 @@ const dbPage = async (operation, key, value) => {
           };
 
           if (opReq) {
-            opReq.onerror = () => scanTail();
+            opReq.onerror = () => reject(opReq.error);
             opReq.onsuccess = () => checkHistoricalIndex();
           } else {
             scanTail();
           }
         };
       };
-      tx.onerror = () => reject(tx.error);
     });
     return JSON.stringify({found: true, v: result});
   }
   const parsed = JSON.parse(value);
-  await new Promise((resolve, reject) => { const tx=db.transaction('records','readwrite'); const r=tx.objectStore('records').put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
+  await transaction('readwrite', (tx, resolve, reject) => { const r=tx.objectStore('records').put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
   return JSON.stringify({ok: true});
+  } finally { db.close(); }
 };
 
 function decodeDurableResult(raw) {

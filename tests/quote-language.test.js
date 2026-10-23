@@ -19,10 +19,10 @@ test('localized suffixes remove legacy Chinese endings and are idempotent',()=>{
  assert.equal(resolveCommentLanguage('English reply about remote jobs','zh'),'en');
 });
 test('language filters selected tags on generation and legacy draft retry',()=>{
- const settings={quoteTagsEnabled:true};
- const en=appendQuoteTags('Remote work has a price.',settings,'en');
+ const settings={quoteTagsEnabled:true,quoteSelectedTags:['互关','互关呀','FollowBack','FollowForFollow']};
+ const en=appendQuoteTags('Remote work has a price.',settings,'en',{random:()=>0});
  assert.ok(en.includes('#FollowBack #FollowForFollow'));assert.ok(!en.includes('#互关'));
- const zh=appendQuoteTags('远程工作也有隐形代价',settings,'zh');
+ const zh=appendQuoteTags('远程工作也有隐形代价',settings,'zh',{random:()=>0});
  assert.ok(zh.includes('#互关 #互关呀'));assert.ok(!zh.includes('#FollowBack'));
  const old='Remote work has a price.\n\n#互关 #FollowBack';
  assert.equal(appendQuoteTags(old,settings,'und'),en);
