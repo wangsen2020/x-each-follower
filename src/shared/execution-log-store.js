@@ -1,6 +1,6 @@
 // Indexed execution logs. Writes are serialized on one promise chain.
 // Scope rows support newest-first [at, id] cursors. Legacy chrome.storage arrays are imported once and left in place.
-import {durableGet as persistentDurableGet, durableSet as persistentDurableSet} from '../platform/persistent-db.js';
+import {durableGetStrict as persistentDurableGet, durableSet as persistentDurableSet} from '../platform/persistent-db.js';
 import {selectExecutionLogs} from './execution-log-select.js';
 
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
@@ -138,6 +138,8 @@ export function createExecutionLogStore(options = {}) {
   let pendingCount = 0;
   let legacyDone = false;
   let recovered = false;
+  let recoveryPromise;
+  let recoveryState = {phase: 'idle', current: 0, total: 0};
   let backupState = {ok: true, pending: 0, head: 0, error: ''};
 
   function enqueue(task) {
@@ -212,26 +214,23 @@ export function createExecutionLogStore(options = {}) {
   async function countOutbox() {
     const db = await database();
     const tx = db.transaction('backupOutbox', 'readonly');
-    let count = 0;
-    await new Promise((resolve, reject) => {
-      const request = tx.objectStore('backupOutbox').openCursor();
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor) { resolve(); return; }
-        count += 1;
-        cursor.continue();
-      };
-    });
+    const count = await requestToPromise(tx.objectStore('backupOutbox').count());
     await transactionDone(tx);
     return count;
   }
 
   async function initHead() {
     const db = await database();
-    const local = Number((await readMeta(db, 'backupHead'))?.n) || 0;
+    const localHead = await readMeta(db, 'backupHead');
+    const local = Number(localHead?.n) || 0;
+    const recovery = await readMeta(db, 'recoveryProgress');
+    // A committed local head was written only after the corresponding log
+    // transactions. Existing installations can adopt it without replaying.
+    // An incomplete rebuild must still check the remote head and resume.
+    const localReady = recovery?.done === true || (!recovery && localHead != null);
     let remote = 0;
-    try {
+    if (localReady) remote = local;
+    else try {
       remote = Number((await durableGet('executionLogBackupHead'))?.n) || 0;
     } catch (error) {
       throw new Error(error?.message || '执行日志备份头读取失败');
@@ -239,6 +238,7 @@ export function createExecutionLogStore(options = {}) {
     const outboxMax = await maxOutboxSeq();
     pendingCount = await countOutbox();
     durableCommitted = remote;
+    replayedThrough = localReady ? local : Number(recovery?.n) || 0;
     journalHead = Math.max(journalHead, local, remote, outboxMax);
     noteBackup({ok: backupState.ok, error: backupState.error});
   }
@@ -322,9 +322,9 @@ export function createExecutionLogStore(options = {}) {
     return seq;
   }
 
-  async function applyOp(op) {
+  async function applyOp(op, sequence) {
     const db = await database();
-    const tx = db.transaction(['logs', 'scopeRows'], 'readwrite');
+    const tx = db.transaction(['logs', 'scopeRows', 'meta'], 'readwrite');
     if ((op.op === 'put' || op.op === 'dropScopes') && op.record) {
       const record = {...op.record};
       assignLogTime(record, op.record.atRaw !== undefined ? op.record.atRaw : op.record.at, 'replay');
@@ -335,16 +335,21 @@ export function createExecutionLogStore(options = {}) {
       const rows = await requestToPromise(tx.objectStore('scopeRows').index('byLog').getAll(op.id));
       for (const row of rows) tx.objectStore('scopeRows').delete([row.scope, row.at, row.id]);
     }
+    // Commit the replay position together with the data it represents.
+    tx.objectStore('meta').put({key: 'recoveryProgress', n: sequence, done: false});
     await transactionDone(tx);
   }
 
   async function replayJournal() {
     const head = durableCommitted;
     if (!head || head <= replayedThrough) return;
+    recoveryState = {phase: 'recovering', current: replayedThrough, total: head};
     for (let n = replayedThrough + 1; n <= head; n += 1) {
       const op = await durableGet(`executionLogBackupPage:${n}`);
       if (op == null) throw new Error(`执行日志备份页缺失: ${n}`);
-      await applyOp(op);
+      await applyOp(op, n);
+      replayedThrough = n;
+      recoveryState = {...recoveryState, current: n};
     }
     replayedThrough = head;
     journalHead = Math.max(journalHead, head);
@@ -467,12 +472,27 @@ export function createExecutionLogStore(options = {}) {
   }
 
   async function ensureRecovered() {
-    await ensureLegacy();
-    await cleanupQueueFromFansScopes();
     if (recovered) return;
-    await initHead();
-    await replayJournal();
-    recovered = true;
+    if (!recoveryPromise) {
+      recoveryPromise = (async () => {
+        recoveryState = {phase: 'initializing', current: 0, total: 0};
+        await ensureLegacy();
+        await initHead();
+        await replayJournal();
+        await cleanupQueueFromFansScopes();
+        const db = await database();
+        const tx = db.transaction('meta', 'readwrite');
+        tx.objectStore('meta').put({key: 'backupHead', n: durableCommitted});
+        tx.objectStore('meta').put({key: 'recoveryProgress', n: replayedThrough, done: true});
+        await transactionDone(tx);
+        recovered = true;
+        recoveryState = {phase: 'ready', current: replayedThrough, total: replayedThrough};
+      })().catch(error => {
+        recoveryState = {...recoveryState, phase: 'error'};
+        throw error;
+      }).finally(() => { recoveryPromise = undefined; });
+    }
+    await recoveryPromise;
   }
 
   async function findByEpisode(tx, episodeKey) {
@@ -483,6 +503,7 @@ export function createExecutionLogStore(options = {}) {
 
   return {
     backupStatus: () => ({...backupState}),
+    recoveryStatus: () => ({...recoveryState}),
     ready() {
       return enqueue(async () => {
         await ensureRecovered();
@@ -526,13 +547,15 @@ export function createExecutionLogStore(options = {}) {
       });
     },
     query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null} = {}) {
-      return enqueue(async () => {
+      // Reads share initialization, but never wait for the mutation/backup
+      // chain. IndexedDB gives this page a committed, consistent snapshot.
+      return (async () => {
         assertLogScope(scope);
         const bound = assertLogCursor(cursor);
         await ensureRecovered();
         const db = await database();
         const size = Math.max(1, Math.min(50, Number(limit) || LOG_PAGE_SIZE));
-        const tx = db.transaction('scopeRows', 'readonly');
+        const tx = db.transaction(['scopeRows', 'logs'], 'readonly');
         const rows = [];
         await new Promise((resolve, reject) => {
           const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, bound), 'prev');
@@ -545,22 +568,20 @@ export function createExecutionLogStore(options = {}) {
           };
         });
         const count = await requestToPromise(tx.objectStore('scopeRows').count(scopeBound(scope, null)));
-        await transactionDone(tx);
         const page = rows.slice(0, size);
         const hasMore = rows.length > size;
-        const read = db.transaction('logs', 'readonly');
         const entries = [];
         for (const row of page) {
-          const record = await requestToPromise(read.objectStore('logs').get(row.logId));
+          const record = await requestToPromise(tx.objectStore('logs').get(row.logId));
           if (record) {
             if ((scope === 'fans' || scope === 'monitor') && record.scope === 'queue') continue;
             entries.push(record);
           }
         }
-        await transactionDone(read);
+        await transactionDone(tx);
         const last = page[page.length - 1];
         return {entries, nextCursor: hasMore && last ? {at: last.at, id: last.id} : null, total: count};
-      });
+      })();
     },
     clear(scope) {
       return enqueue(async () => {
@@ -627,7 +648,7 @@ export function resetDefaultExecutionLogStore() {
   defaultStore = undefined;
 }
 
-const LOG_COMMANDS = new Set(['appendExecutionLog', 'queryExecutionLogs', 'clearExecutionLogs']);
+const LOG_COMMANDS = new Set(['appendExecutionLog', 'queryExecutionLogs', 'clearExecutionLogs', 'executionLogStatus']);
 
 export function isExecutionLogSender(sender, runtime = globalThis.chrome?.runtime) {
   if (!sender || !runtime || sender.id !== runtime.id) return false;
@@ -640,6 +661,10 @@ export function handleExecutionLogRequest(message, sender, sendResponse, store =
   if (!LOG_COMMANDS.has(message?.cmd)) return false;
   if (!isExecutionLogSender(sender, runtime)) {
     sendResponse({ok: false, error: '仅扩展内部可读写执行日志'});
+    return true;
+  }
+  if (message.cmd === 'executionLogStatus') {
+    sendResponse({ok: true, recovery: store.recoveryStatus()});
     return true;
   }
   const run = message.cmd === 'appendExecutionLog' ? store.append(message.entry)

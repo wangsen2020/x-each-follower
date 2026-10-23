@@ -16,6 +16,40 @@ export function useExecutionLogs() {
   const total = ref(0);
   const canPrev = ref(false);
   const canNext = ref(false);
+  const elapsedSeconds = ref(0);
+  const recovery = ref(null);
+  let loadingTimer;
+  const loadingTitle = computed(() => recovery.value?.phase === 'recovering' ? '正在恢复历史日志…' : '正在加载执行日志…');
+  const loadingDetail = computed(() => {
+    const state = recovery.value;
+    if (state?.phase === 'recovering') return `已恢复 ${state.current} / ${state.total} 项历史操作，完成后自动显示。`;
+    if (elapsedSeconds.value >= 10) return '加载时间较长，仍在等待后台响应。你可以关闭窗口稍后重试。';
+    return '正在读取本页记录，请稍候。';
+  });
+
+  function stopLoadingFeedback() {
+    clearInterval(loadingTimer);
+    loadingTimer = undefined;
+  }
+
+  function startLoadingFeedback(token) {
+    stopLoadingFeedback();
+    elapsedSeconds.value = 0;
+    recovery.value = null;
+    const started = Date.now();
+    let polling = false;
+    loadingTimer = setInterval(async () => {
+      if (!logPager.current(token) || status.value !== 'loading' || !isOpen.value) return;
+      elapsedSeconds.value = Math.floor((Date.now() - started) / 1000);
+      if (polling || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+      polling = true;
+      try {
+        const response = await chrome.runtime.sendMessage({cmd: 'executionLogStatus'});
+        if (logPager.current(token) && status.value === 'loading' && response?.ok) recovery.value = response.recovery;
+      } catch { /* The primary page request reports failures. */ }
+      finally { polling = false; }
+    }, 500);
+  }
 
   const logPager = createLogPager();
 
@@ -57,6 +91,7 @@ export function useExecutionLogs() {
   });
 
   const totalBadgeText = computed(() => {
+    if (status.value === 'loading') return '加载中';
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       return `本页 ${displayedEntries.value.length} 条记录`;
     }
@@ -101,6 +136,7 @@ export function useExecutionLogs() {
     status.value = 'loading';
     errorMessage.value = '';
     updatePaginationFlags();
+    startLoadingFeedback(token);
 
     let saved;
     try {
@@ -120,6 +156,7 @@ export function useExecutionLogs() {
       }
     } catch (err) {
       if (!logPager.current(token)) return;
+      stopLoadingFeedback();
       status.value = 'error';
       errorMessage.value = err?.message || '日志后台未响应，请重新加载扩展';
       entries.value = [];
@@ -128,6 +165,7 @@ export function useExecutionLogs() {
     }
 
     if (!logPager.current(token)) return;
+    stopLoadingFeedback();
     if (!saved?.ok) {
       status.value = 'error';
       errorMessage.value = saved?.error || '日志后台未响应，请重新加载扩展';
@@ -157,6 +195,8 @@ export function useExecutionLogs() {
 
   function close() {
     isOpen.value = false;
+    logPager.reset();
+    stopLoadingFeedback();
   }
 
   async function prevPage() {
@@ -234,6 +274,9 @@ export function useExecutionLogs() {
     setFansSubTab,
     status,
     errorMessage,
+    elapsedSeconds,
+    loadingTitle,
+    loadingDetail,
     entries: displayedEntries,
     rawEntries: entries,
     total,

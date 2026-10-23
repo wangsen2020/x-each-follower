@@ -45,7 +45,7 @@
             class="secondary danger-btn"
             type="button"
             :title="isFansScope && fansSubTab === 'followBack' ? '队列回关记录由关注队列统一管理' : '清空当前范围的执行日志'"
-            :disabled="isFansScope && fansSubTab === 'followBack'"
+            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack')"
             style="margin-right: 10px"
             @click="clearLogs"
           >清空日志</button>
@@ -85,14 +85,18 @@
       <!-- Body Section -->
       <div class="logs-modal-body">
         <!-- Loading State -->
-        <div id="logsLoading" class="logs-empty" :hidden="status !== 'loading'">
-          <p><strong>正在加载执行日志…</strong></p>
+        <div id="logsLoading" class="logs-empty" :hidden="status !== 'loading'" role="status" aria-live="polite" :aria-busy="status === 'loading'">
+          <span class="logs-loading-spinner" aria-hidden="true"></span>
+          <p><strong>{{ loadingTitle }}</strong></p>
+          <span>{{ loadingDetail }}</span>
+          <span class="logs-loading-elapsed">已等待 {{ elapsedSeconds }} 秒 · 可随时关闭窗口</span>
         </div>
 
         <!-- Error State -->
         <div id="logsError" class="logs-empty" :hidden="status !== 'error'">
           <p><strong>执行日志加载失败</strong></p>
           <span id="logsErrorText">{{ errorMessage }}</span>
+          <button id="retryLogsBtn" class="secondary logs-retry" type="button" @click="loadPage">重新加载</button>
         </div>
 
         <!-- Empty State -->
@@ -337,6 +341,10 @@ const {
   setFansSubTab,
   status,
   errorMessage,
+  elapsedSeconds,
+  loadingTitle,
+  loadingDetail,
+  loadPage,
   entries,
   canPrev,
   canNext,
@@ -543,6 +551,19 @@ async function copyText(text, event) {
 </script>
 
 <style scoped>
+.logs-loading-spinner {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  border: 3px solid #dce9df;
+  border-top-color: #268456;
+  border-radius: 50%;
+  animation: logs-spin .8s linear infinite;
+}
+.logs-loading-elapsed { display: block; margin-top: 10px; font-size: 12px; color: #617369; }
+.logs-retry { display: block; margin: 12px auto 0; }
+@keyframes logs-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .logs-loading-spinner { animation: none; } }
 .logs-modal-subtabs {
   display: flex;
   align-items: center;
