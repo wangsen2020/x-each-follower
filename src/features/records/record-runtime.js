@@ -596,6 +596,9 @@ export function createRecordRuntime({
       const candidates = [];
       for (const key of v2Keys) {
         const item = await readRecovery(key);
+        if (item?.version != null && item.version !== 2) {
+          throw new Error('不支持的持久化快照版本，已停止恢复');
+        }
         if (item && item.fingerprint && key.endsWith(item.fingerprint) && item.snapshot) {
           const calculated = await hashCanonical(item.snapshot);
           if (calculated === item.fingerprint) {
@@ -632,11 +635,19 @@ export function createRecordRuntime({
       let v1Keys = [];
       if (typeof listRecovery === 'function') {
         const allBackupKeys = await listRecovery('recordLegacySnapshotBackup:');
-        v1Keys = allBackupKeys.filter(k => !k.startsWith('recordLegacySnapshotBackup:v2:'));
+        v1Keys = allBackupKeys.filter(k => !k.startsWith(BACKUP_PREFIX));
+        // The original format used an unversioned fingerprint suffix. A future
+        // versioned namespace is not an old-format snapshot we can interpret.
+        if (v1Keys.some(key => key.slice('recordLegacySnapshotBackup:'.length).includes(':'))) {
+          throw new Error('不支持的持久化快照版本，已停止恢复');
+        }
       }
       const v1Candidates = [];
       for (const key of v1Keys) {
         const item = await readRecovery(key);
+        if (item?.version != null && item.version !== 1) {
+          throw new Error('不支持的持久化快照版本，已停止恢复');
+        }
         if (item && item.fingerprint && item.snapshot) {
           const calculated = await hashCanonical(item.snapshot);
           if (calculated === item.fingerprint) {
@@ -663,6 +674,8 @@ export function createRecordRuntime({
             total: best.total
           };
         }
+      } else if (v1Keys.length > 0) {
+        throw new Error('持久化快照数据损坏（指纹或内容校验失败），拒绝作为空基线恢复');
       }
 
       const durableSnapshot = {};

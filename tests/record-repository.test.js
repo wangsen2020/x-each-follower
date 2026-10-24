@@ -227,7 +227,7 @@ test('retries a failed open, closes on versionchange, bounds blocked opens, and 
       attempts += 1;
       if (attempts === 1) {
         const request = {};
-        queueMicrotask(() => request.onerror?.({preventDefault() {}}));
+        queueMicrotask(() => request.onerror?.({target: request, preventDefault() {}, stopPropagation() {}}));
         Object.defineProperty(request, 'error', {get: () => new Error('open failed')});
         return request;
       }
@@ -266,9 +266,9 @@ test('retries a failed open, closes on versionchange, bounds blocked opens, and 
   assert.equal((await versioned.getRecord('acct-1', 'fans', 'b')).userKey, 'b');
 
   const blocked = {
-    open() {
+    open(_name, version) {
       const request = {};
-      queueMicrotask(() => request.onblocked?.({}));
+      queueMicrotask(() => request.onblocked?.({target: request, oldVersion: 0, newVersion: version ?? 10}));
       return request;
     }
   };
