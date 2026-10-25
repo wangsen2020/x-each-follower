@@ -113,3 +113,15 @@ test('unfollow logs explain disabled window and skip categories',async()=>{
 test('unfollow failure records target, HTTP status and failing stage',async()=>{
  const f=setup({deps:{unfollow:async()=>({status:429})}});await f.runner.run();const failure=f.logs.at(-1);assert.equal(failure.details['HTTP状态'],429);assert.equal(failure.details['阶段'],'核对取关接口响应');assert.ok(failure.details['目标账号']);
 });
+
+test('successful automatic unfollow writes account lists to the detail and round summary',async()=>{
+ const f=setup();await f.runner.run();
+ const success=f.logs.filter(l=>l.result==='success');
+ assert.deepEqual(success.at(-1).unfollowedHandles,f.sent);
+ assert.deepEqual(success.find(l=>l.handle===f.sent[0]).unfollowedHandles,f.sent);
+});
+
+test('rejected unfollow is never reported in a successful account list',async()=>{
+ const f=setup({deps:{unfollow:async()=>({status:429})}});await f.runner.run();
+ assert.equal(f.logs.some(l=>l.unfollowedHandles?.length),false);
+});

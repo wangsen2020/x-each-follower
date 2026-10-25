@@ -5719,6 +5719,7 @@ async function unfollowOneUnreciprocated(user, btn) {
       await writeLocal({ monitor, mutualNetwork });
       persist('monitor', monitor);
       persist('mutualNetwork', mutualNetwork);
+      await appendUnreciprocatedLog({source:'unfollow-manual',result:'success',handle:user.handle,unfollowedHandles:[user.handle],summary:`手动取关 @${user.handle} 成功`});
       renderUnreciprocatedUI();
       if (statusEl) statusEl.textContent = `已成功取消关注 @${user.handle}。`;
       return;
@@ -5886,6 +5887,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
   }
 
   let completed = 0;
+  let pendingLogHandles = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       if (unreciprocatedUnfollowStopped) {
@@ -5903,16 +5905,20 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
           user.unfollowedAt = new Date().toISOString();
           removeUnfollowedUser(user.handle);
           selectedUnreciprocatedHandles.delete(user.handle.toLowerCase());
-          completed++;
+          completed++;pendingLogHandles.push(user.handle);
         }
       } catch (e) {
         console.error('取关出错：', user.handle, e);
       }
-      if (i % 3 === 0 || i === targets.length - 1) {
+      if (pendingLogHandles.length || i % 3 === 0 || i === targets.length - 1) {
         await saveUnreciprocatedTracker();
         await writeLocal({ monitor, mutualNetwork });
         persist('monitor', monitor);
         persist('mutualNetwork', mutualNetwork);
+        if (pendingLogHandles.length) {
+          await appendUnreciprocatedLog({source:'unfollow-batch',result:'success',unfollowedHandles:pendingLogHandles,summary:`批量取关已保存 ${pendingLogHandles.length} 人`});
+          pendingLogHandles = [];
+        }
         renderUnreciprocatedUI();
       }
       if (i < targets.length - 1 && !unreciprocatedUnfollowStopped) {

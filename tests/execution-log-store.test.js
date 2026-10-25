@@ -510,3 +510,28 @@ test('log date range covers counts and cursor pages without removing history',as
  await assert.rejects(store.query({scope:'comment',since:'invalid'}));
  await assert.rejects(store.query({scope:'comment',since,cursor:{at:'2026-10-01T00:00:00.000Z',id:'range-1'}}));
 });
+
+test('unfollow log filtering scans beyond unrelated newest pages and counts only matches',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'unfollow-filter');
+ for(let i=0;i<65;i++)await store.append({id:'noise'+i,scope:'unreciprocated',source:'greeting-auto',at:`2026-10-25T15:00:${String(i%60).padStart(2,'0')}.000Z`});
+ for(let i=0;i<3;i++)await store.append({id:'u'+i,scope:'unreciprocated',source:'unfollow-auto',at:`2026-10-25T14:00:0${i}.000Z`,unfollowedHandles:['person'+i]});
+ const first=await store.query({scope:'unreciprocated',kind:'unfollow',limit:2});
+ assert.equal(first.total,3);assert.deepEqual(first.entries.map(e=>e.id),['u2','u1']);assert.ok(first.nextCursor);
+ const second=await store.query({scope:'unreciprocated',kind:'unfollow',limit:2,cursor:first.nextCursor});
+ assert.equal(second.total,3);assert.deepEqual(second.entries.map(e=>e.id),['u0']);assert.equal(second.nextCursor,null);
+});
+
+test('legacy confirmed unfollow detail exposes its recorded handle without inferring failed attempts',async()=>{
+ const {unfollowLogHandles}=await import('../src/shared/execution-log-select.js');
+ const log={source:'unfollow-auto',result:'success',handle:'old',details:{'提交状态':'已确认取关并回写本地'}};
+ assert.deepEqual(unfollowLogHandles(log),['old']);
+ assert.deepEqual(unfollowLogHandles({...log,result:'failed'}),[]);
+ assert.deepEqual(unfollowLogHandles({...log,details:{'提交状态':'已预留额度，请求结果待确认'}}),[]);
+});
+
+test('unfollow query supports an older running worker without filtering only its first page',async()=>{
+ const {queryUnfollowLogs}=await import('../src/shared/execution-log-select.js');
+ const send=async q=>q.cursor?{ok:true,entries:[{id:'u',at:'2026-10-25',source:'unfollow-auto'}],nextCursor:null,total:2}:{ok:true,entries:[{id:'g',source:'greeting-auto'}],nextCursor:{at:'2026-10-26',id:'g'},total:2};
+ const result=await queryUnfollowLogs(send,{kind:'unfollow',scope:'unreciprocated',limit:10,cursor:null});
+ assert.equal(result.total,1);assert.equal(result.entries[0].id,'u');assert.equal(result.nextCursor,null);
+});

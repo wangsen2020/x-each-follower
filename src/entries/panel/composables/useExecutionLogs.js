@@ -1,3 +1,4 @@
+import {queryUnfollowLogs} from '../../../shared/execution-log-select.js';
 import {readSystemSettings} from '../../../shared/system-settings.js';
 import { ref, computed } from 'vue';
 import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-store.js';
@@ -10,6 +11,12 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-sto
 export function useExecutionLogs() {
   const isOpen = ref(false);
   const currentScope = ref('queue');
+  const followbackSubTab = ref('all');
+  async function setFollowbackSubTab(tab) {
+    if (!['all','unfollow'].includes(tab)) return;
+    followbackSubTab.value = tab; logPager.reset();
+    if (isOpen.value) await loadPage();
+  }
   const fansSubTab = ref('scan'); // 'scan' | 'followBack'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
@@ -148,13 +155,17 @@ export function useExecutionLogs() {
         if (isFansScope.value && fansSubTab.value === 'followBack') {
           queryScope = 'queueFans';
         }
-        saved = await chrome.runtime.sendMessage({
+        const query = {
           cmd: 'queryExecutionLogs',
           scope: queryScope,
+          ...(queryScope === 'unreciprocated' && followbackSubTab.value === 'unfollow' ? {kind:'unfollow'} : {}),
           limit: pageSize,
           since,
           cursor: logPager.cursor()
-        });
+        };
+        saved = query.kind === 'unfollow'
+          ? await queryUnfollowLogs(message => chrome.runtime.sendMessage(message), query)
+          : await chrome.runtime.sendMessage(query);
       } else {
         saved = { ok: true, entries: [], total: 0 };
       }
@@ -228,6 +239,7 @@ export function useExecutionLogs() {
   }
 
   async function clearLogs() {
+    if (currentScope.value === 'unreciprocated' && followbackSubTab.value === 'unfollow') return;
     const scope = currentScope.value;
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       if (typeof window !== 'undefined' && window.alert) {
@@ -287,6 +299,8 @@ export function useExecutionLogs() {
     isOpen,
     currentScope,
     fansSubTab,
+    followbackSubTab,
+    setFollowbackSubTab,
     isFansScope,
     setFansSubTab,
     status,

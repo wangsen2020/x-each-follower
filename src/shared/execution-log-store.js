@@ -1,7 +1,7 @@
 // Indexed execution logs. Writes are serialized on one promise chain.
 // Scope rows support newest-first [at, id] cursors. Legacy chrome.storage arrays are imported once and left in place.
 import {durableGetStrict as persistentDurableGet, durableSet as persistentDurableSet} from '../platform/persistent-db.js';
-import {selectExecutionLogs} from './execution-log-select.js';
+import {selectExecutionLogs, isUnfollowLog} from './execution-log-select.js';
 
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
@@ -605,7 +605,7 @@ export function createExecutionLogStore(options = {}) {
         return {entry: record, backup: {...backupState}};
       });
     },
-    query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null, since = null} = {}) {
+    query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null, since = null, kind = null} = {}) {
       // Reads share initialization, but never wait for the mutation/backup
       // chain. IndexedDB gives this page a committed, consistent snapshot.
       return (async () => {
@@ -617,6 +617,32 @@ export function createExecutionLogStore(options = {}) {
         const db = await database();
         const size = Math.max(1, Math.min(50, Number(limit) || LOG_PAGE_SIZE));
         const tx = db.transaction(['scopeRows', 'logs'], 'readonly');
+        if (kind === 'unfollow' && scope === 'unreciprocated') {
+          const matches = [];
+          let count = 0;
+          await new Promise((resolve, reject) => {
+            const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, null, since), 'prev');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const current = request.result;
+              if (!current) { resolve(); return; }
+              const row = current.value;
+              const get = tx.objectStore('logs').get(row.logId);
+              get.onerror = () => reject(get.error);
+              get.onsuccess = () => {
+                if (isUnfollowLog(get.result)) {
+                  count++;
+                  const after = !bound || row.at < bound.at || (row.at === bound.at && row.id < bound.id);
+                  if (after && matches.length <= size) matches.push({row, record: get.result});
+                }
+                current.continue();
+              };
+            };
+          });
+          await transactionDone(tx);
+          const page = matches.slice(0, size), last = page.at(-1)?.row;
+          return {kind:'unfollow', entries: page.map(item => item.record), total: count, nextCursor: matches.length > size && last ? {at:last.at,id:last.id} : null};
+        }
         const rows = [];
         await new Promise((resolve, reject) => {
           const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, bound, since), 'prev');
@@ -729,7 +755,7 @@ export function handleExecutionLogRequest(message, sender, sendResponse, store =
     return true;
   }
   const run = message.cmd === 'appendExecutionLog' ? store.append(message.entry)
-    : message.cmd === 'queryExecutionLogs' ? store.query({scope: message.scope, limit: message.limit, cursor: message.cursor, since: message.since})
+    : message.cmd === 'queryExecutionLogs' ? store.query({scope: message.scope, limit: message.limit, cursor: message.cursor, since: message.since, kind: message.kind})
     : store.clear(message.scope);
   Promise.resolve(run).then(result => sendResponse({ok: true, ...result}), error => sendResponse({ok: false, error: error?.message || '执行日志读写失败'}));
   return true;

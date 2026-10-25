@@ -33,7 +33,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
   async function run() {
     if(running){await log({source:'unfollow-auto',scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：上一轮仍在运行'});return {skipped:'running'};}
     const audit=createFollowbackAudit('自动取关',entry=>log({source:'unfollow-auto',...entry}),now);
-    running=true;let completed=0,attempted=0,checked=0;
+    running=true;let completed=0,attempted=0,checked=0;const unfollowedHandles=[];
     try {
       const cfg=await config();
       audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
@@ -110,11 +110,11 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         if(verified.relationship?.following!==false)throw new Error('取关结果待确认，本轮已停止');
         await reconcile(user,verified);
         state.pending=null;state.lastSuccessAt=now();await dequeue();
-        completed++;
-        await audit.event({scope:'unreciprocated',summary:`自动取关 @${handle} 成功`,result:'success',handle},{'提交状态':'已确认取关并回写本地','今日已用':state.used});
+        completed++;unfollowedHandles.push(handle);
+        await audit.event({scope:'unreciprocated',summary:`自动取关 @${handle} 成功`,result:'success',handle,unfollowedHandles:[handle]},{'提交状态':'已确认取关并回写本地','今日已用':state.used});
       }
-      audit.stage('本轮结束');
-      await audit.event({scope:'unreciprocated',summary:`自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${cfg.dailyLimit}`,result:'success'},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
+      audit.stage('本轮结束',{'提交状态':completed?'已确认取关并回写本地':'本轮未新增取关'});
+      await audit.event({scope:'unreciprocated',summary:`自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${cfg.dailyLimit}`,result:'success',unfollowedHandles:[...unfollowedHandles]},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
       return {completed,attempted};
     } catch(error) {
       await audit.event({scope:'unreciprocated',summary:`自动取关已停止：${error.message}`,result:'failed'},{'错误类型':error.name,'错误代码':error.code||'未提供',...(error.status!=null?{'HTTP状态':error.status}:{}),'处理次数':attempted,'成功人数':completed,'处理建议':'核对目标关系及接口状态；有待确认记录时不会重复取关'}).catch(()=>{});

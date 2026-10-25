@@ -197,3 +197,17 @@ test('clearLogs targets the current module and never clears fan scan records fro
     globalThis.window = originalWindow;
   }
 });
+
+test('unfollow tab reads legacy backend pages and cannot clear all followback logs',async()=>{
+ const previous=globalThis.chrome,calls=[];
+ globalThis.chrome={runtime:{sendMessage:async m=>{
+  calls.push(m);
+  return m.cursor?{ok:true,entries:[{id:'u',at:'2026-10-25',source:'unfollow-auto'}],total:2,nextCursor:null}:{ok:true,entries:[{id:'g',at:'2026-10-26',source:'greeting-auto'}],total:2,nextCursor:{at:'2026-10-26',id:'g'}};
+ }}};
+ const c=useExecutionLogs();
+ try{
+  await c.open('unreciprocated');await c.setFollowbackSubTab('unfollow');
+  assert.equal(c.total.value,1);assert.equal(c.entries.value[0].id,'u');
+  await c.clearLogs();assert.equal(calls.some(m=>m.cmd==='clearExecutionLogs'),false);
+ }finally{c.close();globalThis.chrome=previous;}
+});

@@ -45,7 +45,7 @@
             class="secondary danger-btn"
             type="button"
             :title="isFansScope && fansSubTab === 'followBack' ? '队列回关记录由关注队列统一管理' : '清空当前范围的执行日志'"
-            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack')"
+            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack') || (currentScope === 'unreciprocated' && followbackSubTab === 'unfollow')"
             style="margin-right: 10px"
             @click="clearLogs"
           >清空日志</button>
@@ -56,6 +56,10 @@
         </div>
       </div>
 
+      <div v-if="currentScope === 'unreciprocated'" class="logs-modal-subtabs">
+        <button type="button" class="subtab-btn" :class="{active: followbackSubTab === 'all'}" @click="setFollowbackSubTab('all')">全部</button>
+        <button id="subtabUnfollowLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'unfollow'}" @click="setFollowbackSubTab('unfollow')">取关</button>
+      </div>
       <!-- Sub-tabs for Fans Scope (Scan vs Queue Follow-back) -->
       <div v-if="isFansScope" class="logs-modal-subtabs">
         <button
@@ -193,8 +197,8 @@
                 </template></dl>
               </details>
               <div v-else class="followback-legacy-note">旧日志未记录诊断详情，无法追溯当时执行阶段。</div>
-              <div v-if="rawLog.unfollowedHandles?.length" class="log-unfollowed-row">
-                已取关账号：{{ rawLog.unfollowedHandles.map(h => '@' + h).join('， ') }}
+              <div v-if="unfollowLogHandles(rawLog).length" class="log-unfollowed-row">
+                已取关账号：{{ unfollowLogHandles(rawLog).map(h => '@' + h).join('， ') }}
               </div>
             </template>
 
@@ -335,6 +339,7 @@
 </template>
 
 <script setup>
+import {unfollowLogHandles} from '../../../shared/execution-log-select.js';
 import {followbackLogPresentation} from '../../../features/relationships/followback-log.js';
 import { logsModalController } from '../composables/useExecutionLogs.js';
 import PanelCloseButton from './PanelCloseButton.vue';
@@ -346,6 +351,8 @@ const {
   isOpen,
   currentScope,
   fansSubTab,
+  followbackSubTab,
+  setFollowbackSubTab,
   isFansScope,
   setFansSubTab,
   status,
