@@ -42,11 +42,11 @@ test('one queued unfollow per round, daily quota and account state survive resta
  assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].used,3);
  assert.deepEqual(f.sent.slice(0,3),['test0','test1','test2']);
 });
-test('legacy high limits still allow at most one request per round and twelve per day',async()=>{
+test('legacy high daily setting is not silently capped at twelve while each round still sends one',async()=>{
  const f=setup({config:{batchLimit:50,dailyLimit:400},deps:{candidates:async()=>Array.from({length:15},(_,i)=>user(i))}});
- for(let i=0;i<12;i++){assert.equal((await f.runner.run()).attempted,1);f.advance(31*60000);}
- assert.equal((await f.runner.run()).skipped,'daily_limit');
- assert.equal(f.sent.length,12);
+ for(let i=0;i<13;i++){assert.equal((await f.runner.run()).attempted,1);f.advance(31*60000);}
+ assert.equal(f.sent.length,13);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].used,13);
 });
 test('persisted queue order wins over a reordered candidate scan and stale entries are removed',async()=>{
  const f=setup({deps:{candidates:async()=>[user(1),user(2),user(3)]}});

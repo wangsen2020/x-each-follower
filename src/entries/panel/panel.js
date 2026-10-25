@@ -193,8 +193,8 @@ let unreciprocatedTracker = {
     autoUnfollowEvery: 45,
     autoUnfollowJitter: 15,
     batchLimit: 1,
-    settingsSchemaVersion: 3,
-    dailyLimit: 12,
+    settingsSchemaVersion: 4,
+    dailyLimit: 24,
     unfollowDelay: 15,
     unfollowDelayJitter: 5,
     activeTimeStart: '09:00',
@@ -5407,7 +5407,7 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollowEvery: 45,
     autoUnfollowJitter: 15,
     batchLimit: 1,
-    dailyLimit: 12,
+    dailyLimit: 24,
     unfollowDelay: 15,
     unfollowDelayJitter: 5,
     activeTimeStart: '09:00',
@@ -5420,9 +5420,9 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   if (Number(cfg?.settingsSchemaVersion || 0) < 3) {
     if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 45;
     if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 15;
-    if (cfg?.dailyLimit == null || Number(cfg.dailyLimit) === 400) res.dailyLimit = 12;
   }
-  res.settingsSchemaVersion = 3;
+  if (Number(cfg?.settingsSchemaVersion || 0) < 4 && [null, 12, 400].includes(cfg?.dailyLimit == null ? null : Number(cfg.dailyLimit))) res.dailyLimit = 24;
+  res.settingsSchemaVersion = 4;
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
   res.jitter = Math.max(1, Math.min(60, Number(res.jitter) || 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
@@ -5435,7 +5435,7 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollowEvery = Math.max(30, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
   res.autoUnfollowJitter = Math.max(0, Math.min(15, Number(res.autoUnfollowJitter) || 0));
   res.batchLimit = 1;
-  res.dailyLimit = Math.max(1, Math.min(12, Math.floor(Number(res.dailyLimit)) || 12));
+  res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 24));
   res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
   res.unfollowDelayJitter = Math.max(0, Math.min(60, Number(res.unfollowDelayJitter) || 0));
   res.activeTimeStart = /^\d{2}:\d{2}$/.test(res.activeTimeStart) ? res.activeTimeStart : '09:00';
@@ -6245,7 +6245,7 @@ async function saveUnreciprocatedSettingsFromDrawer() {
     greetingText: $('unreciprocatedGreetingText')?.value,
     greetingTextEn: $('unreciprocatedGreetingTextEn')?.value,
     autoUnfollow: $('unreciprocatedAutoUnfollow')?.checked,
-    settingsSchemaVersion: 3,
+    settingsSchemaVersion: 4,
     batchLimit: $('unreciprocatedBatchLimit')?.value,
     unfollowDelay: $('unreciprocatedUnfollowDelay')?.value,
     unfollowDelayJitter: $('unreciprocatedUnfollowDelayJitter')?.value,

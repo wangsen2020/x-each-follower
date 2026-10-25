@@ -170,9 +170,9 @@
             v-model.number="unreciprocatedSettingsController.dailyLimit.value"
             type="number"
             min="1"
-            max="12"
+            max="400"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="每天最多尝试 12 人；按本机日期累计，结果不确定的请求也占用额度。" aria-label="单日取关上限说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="默认 24 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 30 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。24 是默认 12 小时窗口按最短间隔计算的理论上限，并非 X 官方限额。" aria-label="单日取关上限说明">?</span>
         </div>
 
         <div class="drawer-setting-group drawer-setting-time">

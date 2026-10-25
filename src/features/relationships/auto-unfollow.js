@@ -2,7 +2,6 @@ import {createFollowbackAudit,unfollowSkipReason} from './followback-audit.js';
 export const AUTO_UNFOLLOW_ALARM='x-auto-unfollow';
 export const AUTO_UNFOLLOW_STATE='autoUnfollowState';
 export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=30*60000;
-export const AUTO_UNFOLLOW_DAILY_CAP=12;
 const MAX_PROFILE_CHECKS_PER_ROUND=5;
 const handleOf=u=>String(u?.handle||'').replace(/^@/,'').toLowerCase();
 export function inUnfollowWindow(config, time=Date.now()) {
@@ -37,7 +36,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     running=true;let completed=0,attempted=0,checked=0;
     try {
       const cfg=await config();
-      audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':Math.min(cfg.dailyLimit,AUTO_UNFOLLOW_DAILY_CAP)});
+      audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
       await schedule(); // A worker interruption still leaves the next round scheduled.
       if(!cfg.autoUnfollow||!inUnfollowWindow(cfg,now())){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
       if(!cfg.autoUnfollowAccount?.id || !cfg.autoUnfollowAccount?.handle)throw new Error('缺少绑定账号，请重新保存自动取关设置');
@@ -59,7 +58,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         state.pending=null;await persist();
       }
       if(state.day!==day())state={...state,day:day(),used:0};
-      const cap=Math.min(1,Math.max(0,Math.min(cfg.dailyLimit,AUTO_UNFOLLOW_DAILY_CAP)-(state.used||0)));
+      const cap=Math.min(1,Math.max(0,cfg.dailyLimit-(state.used||0)));
       if(!cap){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：今日额度已用完'},{'今日已用':state.used,'下次条件':'本地日期变更后恢复额度'});return {skipped:'daily_limit'};}
       if(now()-(state.lastAttemptAt||0)<AUTO_UNFOLLOW_MIN_INTERVAL_MS){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：距上次请求不足 30 分钟'},{'上次请求时间':new Date(state.lastAttemptAt).toISOString()});return {skipped:'interval'};}
       audit.stage('筛选超时账号',{'今日已用':state.used,'本轮可用额度':cap});
@@ -80,7 +79,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         if(!current.autoUnfollow || current.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(current,now()))break;
         if(!eligibleAutoUnfollow(user,current,now())){await dequeue();continue;}
         if(state.day!==day())state={...state,day:day(),used:0};
-        if(state.used>=Math.min(current.dailyLimit,AUTO_UNFOLLOW_DAILY_CAP))break;
+        if(state.used>=current.dailyLimit)break;
         user=await refreshCandidate(user);
         if(!user || !eligibleAutoUnfollow(user,current,now())){audit.skip(unfollowSkipReason(user,current,now()),user);await dequeue();continue;}
         checked++;
@@ -92,7 +91,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         if(!latest.autoUnfollow || latest.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(latest,now()))break;
         user=await refreshCandidate(user);
         if(!user || !eligibleAutoUnfollow(user,latest,now())){await dequeue();continue;}
-        if(state.used>=Math.min(latest.dailyLimit,AUTO_UNFOLLOW_DAILY_CAP))break;
+        if(state.used>=latest.dailyLimit)break;
         state.used=(state.used||0)+1;attempted++;
         state.lastAttemptAt=now();
         state.pending={user:{...user,id:live.id},at:now()};
@@ -115,7 +114,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         await audit.event({scope:'unreciprocated',summary:`自动取关 @${handle} 成功`,result:'success',handle},{'提交状态':'已确认取关并回写本地','今日已用':state.used});
       }
       audit.stage('本轮结束');
-      await audit.event({scope:'unreciprocated',summary:`自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${Math.min(cfg.dailyLimit,AUTO_UNFOLLOW_DAILY_CAP)}`,result:'success'},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
+      await audit.event({scope:'unreciprocated',summary:`自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${cfg.dailyLimit}`,result:'success'},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
       return {completed,attempted};
     } catch(error) {
       await audit.event({scope:'unreciprocated',summary:`自动取关已停止：${error.message}`,result:'failed'},{'错误类型':error.name,'错误代码':error.code||'未提供',...(error.status!=null?{'HTTP状态':error.status}:{}),'处理次数':attempted,'成功人数':completed,'处理建议':'核对目标关系及接口状态；有待确认记录时不会重复取关'}).catch(()=>{});

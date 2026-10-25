@@ -72,10 +72,13 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.autoUnfollowEvery, 45);
   assert.equal(empty.autoUnfollowJitter, 15);
   assert.equal(empty.batchLimit, 1);
-  assert.equal(empty.dailyLimit, 12);
-  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 12]);
+  assert.equal(empty.dailyLimit, 24);
+  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 24]);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 3, dailyLimit: 12}).dailyLimit, 24);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 12}).dailyLimit, 12);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).autoUnfollowEvery, 90);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).dailyLimit, 6);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, dailyLimit: 100}).dailyLimit, 100);
   assert.equal(empty.unfollowDelay, 15);
   assert.equal(empty.whitelist, '');
 
@@ -91,7 +94,7 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(bounded.jitter, 60);
   assert.equal(bounded.overdueDays, 90);
   assert.equal(bounded.batchLimit, 1);
-  assert.equal(bounded.dailyLimit, 12);
+  assert.equal(bounded.dailyLimit, 400);
   assert.equal(bounded.whitelist, 'elonmusk, OpenAI');
 });
 
