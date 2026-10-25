@@ -268,6 +268,29 @@ test('blocked run reports the specific cause and retry time without claiming job
   assert.deepEqual(events.find(e=>e.type==='run-blocked').blockReason,blockReason);
 });
 
+test('follow HTTP 429 stops only this batch and the next scheduled run can claim another job',async()=>{
+  const {store,clock}=setupEnv();
+  await store.saveSettings('acc-1',{enabled:true,batchLimit:5,inspectLimit:5});
+  const first=await store.enqueue({accountId:'acc-1',handle:'first',sources:[{module:'fans',enabled:true}]});
+  const second=await store.enqueue({accountId:'acc-1',handle:'second',sources:[{module:'fans',enabled:true}]});
+  const calls=[];
+  const scheduler=createFollowQueueScheduler({store,now:()=>clock.t,owner:'worker',canRun:async()=>true,
+    execute:async job=>{
+      calls.push(job.id);
+      return job.id===first.id
+        ? {state:'uncertain',rateLimited:true,reason:'关注接口返回限流（HTTP 429）',followResult:{attemptedAt:clock.t,responseStatus:429}}
+        : {state:'followed',followResult:{succeeded:true}};
+    }});
+  const one=await scheduler.run({accountId:'acc-1'});
+  assert.deepEqual(calls,[first.id]);
+  assert.match(one.summary,/本轮遇到关注接口限流/);
+  assert.equal((await store.get(first.id)).state,'uncertain');
+  const two=await scheduler.run({accountId:'acc-1'});
+  assert.deepEqual(calls,[first.id,second.id]);
+  assert.equal((await store.get(second.id)).state,'followed');
+  assert.doesNotMatch(two.summary,/限流/);
+});
+
 test('comment quota metadata cannot stop subsequent automatic follows', async () => {
   const {store, clock} = setupEnv();
   await store.saveSettings('acc-1', {enabled:true,batchLimit:5,inspectLimit:10});

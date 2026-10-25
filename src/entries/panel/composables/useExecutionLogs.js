@@ -96,7 +96,7 @@ export function useExecutionLogs() {
   const totalBadgeText = computed(() => {
     if (status.value === 'loading') return '加载中';
     if (isFansScope.value && fansSubTab.value === 'followBack') {
-      return `本页 ${displayedEntries.value.length} 条记录`;
+      return `${queryDays.value ? `近 ${queryDays.value} 天 · ` : ''}${total.value} 条记录`;
     }
     return `${queryDays.value ? `近 ${queryDays.value} 天 · ` : ''}${total.value} 条记录`;
   });
@@ -146,7 +146,7 @@ export function useExecutionLogs() {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         let queryScope = currentScope.value;
         if (isFansScope.value && fansSubTab.value === 'followBack') {
-          queryScope = 'queue';
+          queryScope = 'queueFans';
         }
         saved = await chrome.runtime.sendMessage({
           cmd: 'queryExecutionLogs',

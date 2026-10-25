@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
 
-test('read-only run check distinguishes cooldown, account mismatch and unreadable viewer',async()=>{
+test('read-only run check ignores legacy cooldown and still checks account identity',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true};
   let pause=new Date(Date.now()+3600000).toISOString(),currentViewer='viewer';
   const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},
@@ -10,10 +10,8 @@ test('read-only run check distinguishes cooldown, account mismatch and unreadabl
   const runtime=createFollowQueueRuntime({api,store:{},records:{metadata:async()=>({pausedUntil:pause})}});
   const check=()=>runtime.handle({cmd:'followQueueRunCheck'});
   let result=await check();
-  assert.equal(result.allowed,false);
-  assert.equal(result.blockReason.code,'follow-cooldown');
-  assert.equal(result.blockReason.retryAt,Date.parse(pause));
-  assert.match(result.blockReason.message,/本地冷却时间/);
+  assert.equal(result.allowed,true);
+  assert.equal(result.blockReason,null);
   pause=new Date(Date.now()-1000).toISOString();
   result=await check();
   assert.equal(result.allowed,true);

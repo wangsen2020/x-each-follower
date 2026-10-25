@@ -313,6 +313,7 @@ export function createFollowQueueScheduler({
 
       while (
         !state.paused &&
+        !state.rateLimited &&
         !pausedAccounts.has(account) &&
         counters.followed < batchLimit &&
         counters.inspected < inspectLimit &&
@@ -375,7 +376,9 @@ export function createFollowQueueScheduler({
       }
 
       const paused = state.paused || pausedAccounts.has(account);
-      const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual}) + (state.blockReason?.message ? ' '+state.blockReason.message : '');
+      const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual})
+        + (state.rateLimited ? ' 本轮遇到关注接口限流，后续任务留待下轮正常调度；本次结果待核实。' : '')
+        + (state.blockReason?.message ? ' '+state.blockReason.message : '');
       lastCompletedAt = now();
       lastSummary = summary;
       lastCounters = clone(counters);
@@ -743,6 +746,7 @@ export function createFollowQueueScheduler({
         counters,
         runState
       });
+      if (outcome?.rateLimited === true) runState.rateLimited = true;
     });
   }
 

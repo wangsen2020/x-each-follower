@@ -166,7 +166,7 @@ test('useExecutionLogs fansSubTab cleanly isolates scan logs from queue follow-b
   // 2. followBack tab: only queue and verification logs
   c.setFansSubTab('followBack');
   assert.deepEqual(c.entries.value.map(e => e.id), ['queue-1', 'queue-2', 'ver-1']);
-  assert.equal(c.totalBadgeText.value, '本页 3 条记录');
+  assert.equal(c.totalBadgeText.value, '0 条记录');
 
   c.setFansSubTab('all');
   assert.equal(c.fansSubTab.value, 'followBack', 'Unsupported aggregate tab must not imply an incomplete combined query');
@@ -188,6 +188,7 @@ test('clearLogs targets the current module and never clears fan scan records fro
     assert.deepEqual(requests.filter(r => r.cmd === 'clearExecutionLogs').map(r => r.scope), ['comment']);
     await c.open('fans');
     await c.setFansSubTab('followBack');
+    assert.equal(requests.filter(r => r.cmd === 'queryExecutionLogs').at(-1).scope, 'queueFans');
     const before = requests.filter(r => r.cmd === 'clearExecutionLogs').length;
     await c.clearLogs();
     assert.equal(requests.filter(r => r.cmd === 'clearExecutionLogs').length, before);

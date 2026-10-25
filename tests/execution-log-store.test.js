@@ -45,6 +45,41 @@ test('queue scope isolates mixed writers, pagination totals and clear from follo
   assert.deepEqual((await rebuilt.query({scope:'unreciprocated'})).entries.map(row=>row.id), before);
 });
 
+test('fan queue log scope indexes historical and new rows before pagination', async () => {
+  const durable = memoryDurable(), storage = legacyStorage();
+  const name = 'logs-fan-queue-pages';
+  const store = storeFor(storage, durable, name);
+  await store.append({id:'old-fan', scope:'queue', sources:[{module:'fans'}], at:'2026-10-24T10:00:00.000Z'});
+  const db = await new Promise((resolve,reject)=>{const req=indexedDB.open(name);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction(['logs','scopeRows','meta'],'readwrite');
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    const req=tx.objectStore('logs').get('old-fan');
+    req.onsuccess=()=>{
+      const old=req.result;
+      old.scopeSchemaVersion=2;
+      old.membership=old.membership.filter(scope=>scope!=='queueFans');
+      tx.objectStore('logs').put(old);
+      tx.objectStore('scopeRows').delete(['queueFans',old.at,old.id]);
+      tx.objectStore('meta').delete('queueFansScopeV1');
+    };
+  });
+  db.close();
+  const reopened=storeFor(storage,durable,name);
+  for(let i=0;i<35;i++) await reopened.append({id:`normal-${i}`,scope:'queue',sources:[{module:'comments'}],at:`2026-10-25T10:00:${String(i).padStart(2,'0')}.000Z`});
+  await reopened.append({id:'new-fan',scope:'queue',sources:[{module:'fans'}],at:'2026-10-25T11:00:00.000Z'});
+  const first=await reopened.query({scope:'queueFans',limit:1});
+  assert.equal(first.total,2);
+  assert.deepEqual(first.entries.map(row=>row.id),['new-fan']);
+  const second=await reopened.query({scope:'queueFans',limit:1,cursor:first.nextCursor});
+  assert.deepEqual(second.entries.map(row=>row.id),['old-fan']);
+  assert.equal(second.nextCursor,null);
+  await reopened.clear('queue');
+  assert.equal((await reopened.query({scope:'queueFans'})).total,0);
+  const recovered=storeFor(storage,durable,'logs-fan-queue-recovered');
+  assert.equal((await recovered.query({scope:'queueFans'})).total,0);
+});
+
 test('legacy backup memberships gain a queue index without copying unrelated events', async () => {
   const durable = memoryDurable();
   durable.saved.set('executionLogBackupHead', {n:2});

@@ -285,8 +285,6 @@ async function executeCommentAutoFollow(source = 'alarm') {
     const commentMeta = await backgroundRecords.metadata('commentTracking');
     const cfg = normalizeAutoFollowConfig(mergeAutoFollowProgress(commentAutoFollowSettings || {}, commentMeta.autoFollow || {}));
     if (source === 'alarm' && !cfg.enabled) return {ok:false, error:'定时关注已关闭。'};
-    const monitor = await backgroundRecords.metadata('monitor');
-    if (monitor.pausedUntil && Date.now() < Date.parse(monitor.pausedUntil)) return {ok:false, error:`关注操作暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}`};
     const candidates = await selectCommentCandidates(backgroundRecords, cfg, chrome.storage.local);
     tracking = {autoFollow: cfg, users: candidates};
     if (!candidates.length) {
@@ -446,7 +444,6 @@ async function executeCommentAutoFollow(source = 'alarm') {
       processedCount++;
       if (didFollow) followedCount++;
       if (rateLimited) {
-        await backgroundRecords.mergeRoot('monitor', {pausedUntil:new Date(Date.now() + 60 * 60000).toISOString()});
         break;
       }
       await sleep(1200 + Math.floor(Math.random() * 1000));
@@ -454,7 +451,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
     const totalFollowed = (Number(cfg.followedCount) || 0) + followedCount;
     cfg.followedCount = totalFollowed;
     cfg.lastRunAt = new Date().toISOString();
-    cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${totalFollowed ? ` · 累计已关注 ${totalFollowed} 人` : ''}${rateLimited ? '；检测到频率限制，已暂停关注 1 小时' : ''}。`;
+    cfg.lastSummary = `本轮处理 ${processedCount} 人，新增关注 ${followedCount} 人${alreadyFollowingCount ? `，已关注 ${alreadyFollowingCount} 人` : ''}${skippedCount ? `，条件不符 ${skippedCount} 人（${Object.entries(skipReasons).map(([reason, count]) => `${reason} ${count} 人`).join('、')}）` : ''}${processedCount > followedCount + skippedCount + alreadyFollowingCount ? `，执行失败 ${processedCount - followedCount - skippedCount - alreadyFollowingCount} 人，请查看执行日志` : ''}${totalFollowed ? ` · 累计已关注 ${totalFollowed} 人` : ''}${rateLimited ? '；检测到频率限制，本轮停止，后续按正常调度检查' : ''}。`;
     tracking.autoFollow = cfg; await saveCommentTrackingData(tracking);
     return {ok:true, summary:cfg.lastSummary};
   } catch (error) {

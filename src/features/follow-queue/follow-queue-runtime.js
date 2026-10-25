@@ -197,10 +197,6 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     const binding = await readBinding();
     if (!binding?.activated) return blockRun('unbound','尚未确认队列账号，请先确认数据归属。');
     if (binding.accountId !== accountId) return blockRun('binding-changed','队列绑定账号已变化，本轮已停止。');
-    const monitor = records ? await records.metadata('monitor') : ((await api.storage.local.get('monitor')).monitor || {});
-    if (Date.parse(monitor.pausedUntil || '') > Date.now()) return blockRun('follow-cooldown',
-      '关注操作处于限流冷却，暂停至 '+new Date(monitor.pausedUntil).toLocaleString('zh-CN',{hour12:false})+' 后按调度重试（本地冷却时间，非 X 保证的恢复时间）。',
-      {retryAt:Date.parse(monitor.pausedUntil)});
     const tabs = await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
     let pageError;
     for (const tab of tabs) {
@@ -270,15 +266,6 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     const patch = {...previous, ...incoming, handle:incoming.handle || previous.handle || handle, posts:mergeRecentPosts(previous.posts || [], incoming.posts || [], 100), profileCachedAt:new Date().toISOString()};
     await records.batch({sourceKey:'profileCache', changes:[{handle:key, sourceBucket:'map', create:!existing, patch}]});
     return patch;
-  }
-  async function pauseMonitor(hours = 1) {
-    const pausedUntil = new Date(Date.now() + hours * 3600000).toISOString();
-    if (records) {
-      await records.mergeRoot('monitor', {pausedUntil});
-      return;
-    }
-    const {monitor = {}} = await api.storage.local.get('monitor');
-    await writeLocal({monitor:{...monitor, pausedUntil}});
   }
   async function backfillProfiles({cursor = null, limit = 50} = {}) {
     const binding = await readBinding();
@@ -536,9 +523,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const result = await performFollow(tab.id,{id:target.id,handle:job.handle});
       if (!(result.status >= 200 && result.status < 300)) {
         if (result.status === 429) {
-          await pauseMonitor(1);
           return {state:'uncertain',followResult:{...followResult,attemptedAt:Date.now(),targetUserId:target.id,responseStatus:429},
-            reason:'关注接口返回限流（HTTP 429），本轮已停止，冷却 1 小时后按调度重试；该账号的关注关系待核实。'};
+            rateLimited:true,
+            reason:'关注接口返回限流（HTTP 429），本轮停止；下轮按正常调度检查。该账号的关注关系待核实。'};
         }
         return {state:'uncertain',reason:result.error || `关注返回 ${result.status}，需要核对实际关系`};
       }

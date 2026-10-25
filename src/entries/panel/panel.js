@@ -2108,10 +2108,6 @@ function renderMutualNetwork() {
 async function followMutualUser(user, button) {
   const key = String(user?.handle || '').toLowerCase();
   if (!key || user.relationship?.following === true || followBackBusy.has(key)) return;
-  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
-    networkStatus(`关注受限已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，请稍后再试。`);
-    return;
-  }
   followBackBusy.add(key);
   setMonitorIconButtonState(button, true, '关注中…');
   let tabId;
@@ -2145,10 +2141,7 @@ async function followMutualUser(user, button) {
       return;
     }
     if (result.reason === 'rate_limited') {
-      monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-      await writeLocal({monitor});
-      persist('monitor', monitor);
-      networkStatus(`@${user.handle} 触发关注限制，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
+      networkStatus(`@${user.handle} 触发关注限制，本次未成功；请核实关系后再试。`);
       return;
     }
     networkStatus(`@${user.handle} 未执行关注：${result.error || result.reason}`);
@@ -2709,10 +2702,6 @@ async function runMutualAutoFollowBatch(source = 'manual') {
     networkStatus('定时看帖关注任务正在运行中…');
     return;
   }
-  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
-    networkStatus(`关注受限已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，暂不执行自动关注。`);
-    return;
-  }
   const cfg = getMutualAutoConfig();
   const attempts = await readAutoFollowAttempts(mutualNetwork.users || []);
   const candidates = selectValuableMutualTargets(
@@ -2792,13 +2781,10 @@ async function runMutualAutoFollowBatch(source = 'manual') {
             handle: target.handle,
             name: target.name,
             result: 'rate_limited',
-            detail: '触发 X 关注频率受限，已自动暂停任务 1 小时。',
+            detail: '触发 X 关注频率受限，本轮停止；后续按正常调度检查。',
             posts: postsScanned
           });
-          monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-          await writeLocal({monitor});
-          persist('monitor', monitor);
-          networkStatus(`@${target.handle} 触发关注限制，已暂停 1 小时。`);
+          networkStatus(`@${target.handle} 触发关注限制，本轮停止；后续按正常调度检查。`);
           break;
         } else {
           target.autoFollowState = 'failed';
@@ -3167,12 +3153,6 @@ async function followBackOne(user, button) {
     monitorStatus(`@${user.handle}：${interactionReason}`);
     return;
   }
-  if (monitor.pausedUntil && Date.now() < new Date(monitor.pausedUntil).getTime()) {
-    await writeLocal({monitor});
-    persist('monitor', monitor);
-    monitorStatus(`已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}，不会重复尝试。`);
-    return;
-  }
   followBackBusy.add(key);
   setMonitorIconButtonState(button, true, '回关中…');
   let tabId;
@@ -3192,11 +3172,8 @@ async function followBackOne(user, button) {
     }
     if (result.reason === 'rate_limited') {
       await markQueueFollowFailed(user, result.error || 'X 关注频率受限');
-      monitor.pausedUntil = new Date(Date.now() + 60 * 60000).toISOString();
-      await writeLocal({monitor});
-      persist('monitor', monitor);
       renderMonitorList();
-      monitorStatus(`@${user.handle} 触发关注限制，已暂停至 ${new Date(monitor.pausedUntil).toLocaleString()}。`);
+      monitorStatus(`@${user.handle} 触发关注限制，本次未成功；请核实关系后再试。`);
       return;
     }
     await markQueueFollowFailed(user, result.error || result.reason);
