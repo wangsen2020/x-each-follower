@@ -150,13 +150,13 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     greetingText: '你好！刚刚关注了你，期待互关交流！',
     greetingTextEn: 'Hi there! Just followed you, looking forward to connecting and following back!',
     autoUnfollow: false,
-    autoUnfollowEvery: 30,
-    autoUnfollowJitter: 5,
+    autoUnfollowEvery: 45,
+    autoUnfollowJitter: 15,
     activeTimeStart: '09:00',
     activeTimeEnd: '21:00',
-    batchLimit: 20,
-    settingsSchemaVersion: 2,
-    dailyLimit: 400,
+    batchLimit: 1,
+    settingsSchemaVersion: 3,
+    dailyLimit: 12,
     unfollowDelay: 15,
     unfollowDelayJitter: 5,
     whitelist: '',
@@ -164,8 +164,12 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     lastSummary: '尚未执行回关监控'
   };
   const res = { ...defaults, ...(cfg || {}) };
-  if (cfg?.settingsSchemaVersion == null && Number(cfg?.batchLimit) === 10) res.batchLimit = 20;
-  res.settingsSchemaVersion = 2;
+  if (Number(cfg?.settingsSchemaVersion || 0) < 3) {
+    if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 45;
+    if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 15;
+    if (cfg?.dailyLimit == null || Number(cfg.dailyLimit) === 400) res.dailyLimit = 12;
+  }
+  res.settingsSchemaVersion = 3;
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
   res.jitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.jitter)) ? Number(res.jitter) : 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
@@ -175,10 +179,10 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   if (res.greetingText === '你好，刚关注了你，期待交流！') res.greetingText = defaults.greetingText;
   res.greetingTextEn = String(res.greetingTextEn || defaults.greetingTextEn).trim().slice(0, 1000);
   res.autoUnfollow = Boolean(res.autoUnfollow);
-  res.autoUnfollowEvery = Math.max(5, Math.min(1440, Number(res.autoUnfollowEvery) || 30));
-  res.autoUnfollowJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 5));
-  res.batchLimit = Math.max(1, Math.min(50, Math.floor(Number(res.batchLimit)) || 20));
-  res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 400));
+  res.autoUnfollowEvery = Math.max(30, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
+  res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 15));
+  res.batchLimit = 1;
+  res.dailyLimit = Math.max(1, Math.min(12, Math.floor(Number(res.dailyLimit)) || 12));
   res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
   res.unfollowDelayJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.unfollowDelayJitter)) ? Number(res.unfollowDelayJitter) : 5));
   res.whitelist = String(res.whitelist || '').trim();

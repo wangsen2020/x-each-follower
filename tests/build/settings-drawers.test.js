@@ -69,9 +69,13 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.every, 60);
   assert.equal(empty.jitter, 10);
   assert.equal(empty.overdueDays, 14);
-  assert.equal(empty.batchLimit, 20);
-  assert.equal(normalizeUnreciprocatedConfig({batchLimit: 10}).batchLimit, 20);
-  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, batchLimit: 10}).batchLimit, 10);
+  assert.equal(empty.autoUnfollowEvery, 45);
+  assert.equal(empty.autoUnfollowJitter, 15);
+  assert.equal(empty.batchLimit, 1);
+  assert.equal(empty.dailyLimit, 12);
+  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 12]);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).autoUnfollowEvery, 90);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).dailyLimit, 6);
   assert.equal(empty.unfollowDelay, 15);
   assert.equal(empty.whitelist, '');
 
@@ -79,13 +83,15 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
     every: 2, // below min 5
     jitter: 100, // above max 60
     overdueDays: 120, // above max 90
-    batchLimit: 999, // above max 50
+    batchLimit: 999,
+    dailyLimit: 999,
     whitelist: '  elonmusk, OpenAI  '
   });
   assert.equal(bounded.every, 5);
   assert.equal(bounded.jitter, 60);
   assert.equal(bounded.overdueDays, 90);
-  assert.equal(bounded.batchLimit, 50);
+  assert.equal(bounded.batchLimit, 1);
+  assert.equal(bounded.dailyLimit, 12);
   assert.equal(bounded.whitelist, 'elonmusk, OpenAI');
 });
 
@@ -110,7 +116,7 @@ test('useUnreciprocatedSettings handles open, save and close reactively', async 
   assert.equal(drawer.jitter.value, 5);
   assert.equal(drawer.overdueDays.value, 7);
   assert.equal(drawer.autoUnfollow.value, true);
-  assert.equal(drawer.batchLimit.value, 15);
+  assert.equal(drawer.batchLimit.value, 1);
   assert.equal(drawer.whitelist.value, 'vitalik');
 
   const ok = await drawer.save();

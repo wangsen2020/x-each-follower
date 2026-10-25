@@ -5,10 +5,11 @@ const time=new Date(2026,9,23,12).getTime();
 const base={autoUnfollow:true,autoUnfollowAccount:{id:'1',handle:'owner'},overdueDays:14,activeTimeStart:'09:00',activeTimeEnd:'21:00',autoUnfollowEvery:30,autoUnfollowJitter:5,batchLimit:20,dailyLimit:400,unfollowDelay:15,unfollowDelayJitter:5};
 const user=(i=1)=>({id:String(i+10),handle:`test${i}`,status:'overdue',followedAt:new Date(time-15*86400000).toISOString(),relationship:{following:true,followedBy:false}});
 function setup(options={}){
+ let offset=0;
  const data={unreciprocatedSettings:{...base,...options.config}},sent=[],logs=[],reconciled=[],alarms=new Map(),done=new Set();
  const storage={get:async key=>structuredClone({[key]:data[key]}),set:async value=>Object.assign(data,structuredClone(value))};
- const deps={storage,alarms:{get:async k=>alarms.get(k),clear:async k=>alarms.delete(k),create:async(k,v)=>alarms.set(k,v)},normalize:x=>x,now:()=>time,random:()=>0.5,sleep:async()=>{},candidates:async()=>Array.from({length:5},(_,i)=>user(i)),profile:async u=>({...u,relationship:{following:!done.has(u.handle),followedBy:false}}),unfollow:async u=>{sent.push(u.handle);done.add(u.handle);return {status:200};},reconcile:async(u,v)=>reconciled.push([u,v]),log:async e=>logs.push(e),...options.deps};
- return {data,sent,logs,reconciled,alarms,deps,runner:createAutoUnfollow(deps)};
+ const deps={storage,alarms:{get:async k=>alarms.get(k),clear:async k=>alarms.delete(k),create:async(k,v)=>alarms.set(k,v)},normalize:x=>x,now:()=>time+offset,random:()=>0.5,sleep:async()=>{},candidates:async()=>Array.from({length:5},(_,i)=>user(i)),profile:async u=>({...u,relationship:{following:!done.has(u.handle),followedBy:false}}),unfollow:async u=>{sent.push(u.handle);done.add(u.handle);return {status:200};},reconcile:async(u,v)=>reconciled.push([u,v]),log:async e=>logs.push(e),...options.deps};
+ return {data,sent,logs,reconciled,alarms,deps,advance:ms=>{offset+=ms;},runner:createAutoUnfollow(deps)};
 }
 test('only expired known one-way following qualifies, with exemption and whitelist protection',()=>{
  assert.equal(eligibleAutoUnfollow(user(),base,time),true);
@@ -25,20 +26,55 @@ test('alarm can be enabled, preserved and cancelled',async()=>{
  f.data.unreciprocatedSettings.autoUnfollowEvery=10;await f.runner.schedule(true);assert.equal(f.alarms.get(AUTO_UNFOLLOW_ALARM).when,time+30*60000);
  f.data.unreciprocatedSettings.autoUnfollow=false;await f.runner.schedule();assert.equal(f.alarms.size,0);
 });
-test('batch and daily quotas survive restart and switching away and back',async()=>{
- const f=setup({config:{batchLimit:2,dailyLimit:3}});
- assert.equal((await f.runner.run()).completed,2);
+test('one queued unfollow per round, daily quota and account state survive restart',async()=>{
+ const f=setup({config:{batchLimit:20,dailyLimit:3}});
+ assert.equal((await f.runner.run()).completed,1);
+ assert.deepEqual(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].queue,['test1','test2','test3','test4']);
+ assert.equal((await createAutoUnfollow(f.deps).run()).skipped,'interval');
+ f.advance(31*60000);
+ assert.equal((await createAutoUnfollow(f.deps).run()).completed,1);
+ f.advance(31*60000);
  assert.equal((await createAutoUnfollow(f.deps).run()).completed,1);
  assert.equal((await f.runner.run()).skipped,'daily_limit');
  f.data.unreciprocatedSettings.autoUnfollowAccount={id:'2',handle:'owner2'};await f.runner.run();
  f.data.unreciprocatedSettings.autoUnfollowAccount={id:'1',handle:'owner'};
  assert.equal((await createAutoUnfollow(f.deps).run()).skipped,'daily_limit');
  assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].used,3);
+ assert.deepEqual(f.sent.slice(0,3),['test0','test1','test2']);
+});
+test('legacy high limits still allow at most one request per round and twelve per day',async()=>{
+ const f=setup({config:{batchLimit:50,dailyLimit:400},deps:{candidates:async()=>Array.from({length:15},(_,i)=>user(i))}});
+ for(let i=0;i<12;i++){assert.equal((await f.runner.run()).attempted,1);f.advance(31*60000);}
+ assert.equal((await f.runner.run()).skipped,'daily_limit');
+ assert.equal(f.sent.length,12);
+});
+test('persisted queue order wins over a reordered candidate scan and stale entries are removed',async()=>{
+ const f=setup({deps:{candidates:async()=>[user(1),user(2),user(3)]}});
+ await f.runner.run();
+ assert.deepEqual(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].queue,['test2','test3']);
+ f.deps.candidates=async()=>[{...user(3),followedAt:new Date(time-30*86400000).toISOString()},user(2)];
+ f.advance(31*60000);
+ await createAutoUnfollow(f.deps).run();
+ assert.deepEqual(f.sent,['test1','test2']);
+ f.deps.candidates=async()=>[user(4)];
+ f.advance(31*60000);
+ await createAutoUnfollow(f.deps).run();
+ assert.deepEqual(f.sent,['test1','test2','test4']);
+ assert.deepEqual(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].queue,[]);
 });
 test('live mutual relationship and unknown relationship never trigger unfollow',async()=>{
  for(const followedBy of [true,null]){
  const f=setup({deps:{profile:async u=>({...u,relationship:{following:true,followedBy}})}});await f.runner.run();assert.equal(f.sent.length,0);
  }
+});
+test('a round checks no more than five live relationships before deferring the queue',async()=>{
+ let checks=0;
+ const f=setup({deps:{candidates:async()=>Array.from({length:12},(_,i)=>user(i)),profile:async u=>{checks++;return {...u,relationship:{following:true,followedBy:null}};}}});
+ const result=await f.runner.run();
+ assert.equal(result.attempted,0);
+ assert.equal(checks,5);
+ assert.equal(f.sent.length,0);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].queue.length,7);
 });
 test('disabling during live lookup takes effect before mutation',async()=>{
  const f=setup();f.deps.profile=async u=>{f.data.unreciprocatedSettings.autoUnfollow=false;return u;};

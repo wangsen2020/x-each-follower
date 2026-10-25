@@ -141,10 +141,10 @@
             id="unreciprocatedAutoUnfollowEvery"
             v-model.number="unreciprocatedSettingsController.autoUnfollowEvery.value"
             type="number"
-            min="5"
+            min="30"
             max="1440"
           />
-          <span class="info-tip" tabindex="0" role="note" data-tip="自动取关任务两轮开始的时间间隔，默认 30 分钟。" aria-label="取关执行周期说明">?</span>
+          <span class="info-tip" tabindex="0" role="note" data-tip="默认每 45±15 分钟检查队列；每轮最多处理 1 人，实际两次取关请求至少间隔 30 分钟。X 官方不允许自动取关，此间隔不是平台认可的安全频率。" aria-label="取关执行周期说明">?</span>
         </div>
 
         <div class="drawer-setting-group">
@@ -156,23 +156,9 @@
             v-model.number="unreciprocatedSettingsController.autoUnfollowJitter.value"
             type="number"
             min="0"
-            max="60"
+            max="15"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="取关周期随机浮动，默认 ±5 分钟。" aria-label="取关周期浮动说明">?</span>
-        </div>
-
-        <div class="drawer-setting-group">
-          <label for="unreciprocatedBatchLimit" class="drawer-setting-label">
-            <span>单轮取关上限（人）</span>
-          </label>
-          <input
-            id="unreciprocatedBatchLimit"
-            v-model.number="unreciprocatedSettingsController.batchLimit.value"
-            type="number"
-            min="1"
-            max="50"
-          />
-            <span class="info-tip" tabindex="0" role="note" data-tip="每轮定时任务最多自动取消关注的人数，默认 20 人。" aria-label="单轮取关上限说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="取关检查周期随机浮动，默认 ±15 分钟。" aria-label="取关周期浮动说明">?</span>
         </div>
 
         <div class="drawer-setting-group">
@@ -184,37 +170,9 @@
             v-model.number="unreciprocatedSettingsController.dailyLimit.value"
             type="number"
             min="1"
-            max="400"
+            max="12"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="每天最多自动尝试取关 400 人；按本机日期累计，结果不确定的请求也占用额度。" aria-label="单日取关上限说明">?</span>
-        </div>
-
-        <div class="drawer-setting-group">
-          <label for="unreciprocatedUnfollowDelay" class="drawer-setting-label">
-            <span>取关人间隔（秒）</span>
-          </label>
-          <input
-            id="unreciprocatedUnfollowDelay"
-            v-model.number="unreciprocatedSettingsController.unfollowDelay.value"
-            type="number"
-            min="3"
-            max="300"
-          />
-            <span class="info-tip" tabindex="0" role="note" data-tip="连续取消关注时每人之间的基准等待秒数，默认 15 秒。" aria-label="取关人间隔说明">?</span>
-        </div>
-
-        <div class="drawer-setting-group">
-          <label for="unreciprocatedUnfollowDelayJitter" class="drawer-setting-label">
-            <span>取关人浮动（±秒）</span>
-          </label>
-          <input
-            id="unreciprocatedUnfollowDelayJitter"
-            v-model.number="unreciprocatedSettingsController.unfollowDelayJitter.value"
-            type="number"
-            min="0"
-            max="60"
-          />
-            <span class="info-tip" tabindex="0" role="note" data-tip="每次取关等待的随机浮动秒数，默认 ±5 秒。" aria-label="取关人浮动说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="每天最多尝试 12 人；按本机日期累计，结果不确定的请求也占用额度。" aria-label="单日取关上限说明">?</span>
         </div>
 
         <div class="drawer-setting-group drawer-setting-time">
