@@ -14,8 +14,8 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollowEvery: 45,
     autoUnfollowJitter: 15,
     batchLimit: 1,
-    settingsSchemaVersion: 4,
-    dailyLimit: 24,
+    settingsSchemaVersion: 5,
+    dailyLimit: 100,
     unfollowDelay: 15,
     unfollowDelayJitter: 5,
     activeTimeStart: '09:00',
@@ -29,8 +29,9 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 45;
     if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 15;
   }
-  if (Number(cfg?.settingsSchemaVersion || 0) < 4 && [null, 12, 400].includes(cfg?.dailyLimit == null ? null : Number(cfg.dailyLimit))) res.dailyLimit = 24;
-  res.settingsSchemaVersion = 4;
+  if (Number(cfg?.settingsSchemaVersion || 0) < 4 && [null, 12, 400].includes(cfg?.dailyLimit == null ? null : Number(cfg.dailyLimit))) res.dailyLimit = 100;
+  if (Number(cfg?.settingsSchemaVersion || 0) < 5 && Number(cfg?.dailyLimit) === 24) res.dailyLimit = 100;
+  res.settingsSchemaVersion = 5;
   res.enabled = Boolean(res.enabled);
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
   res.jitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.jitter)) ? Number(res.jitter) : 10));
@@ -44,7 +45,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollowEvery = Math.max(30, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
   res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 15));
   res.batchLimit = 1;
-  res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 24));
+  res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 100));
   res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
   res.unfollowDelayJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.unfollowDelayJitter)) ? Number(res.unfollowDelayJitter) : 5));
   res.activeTimeStart = typeof res.activeTimeStart === 'string' && res.activeTimeStart ? res.activeTimeStart : '09:00';
@@ -71,7 +72,7 @@ export function useUnreciprocatedSettings() {
   const autoUnfollowEvery = ref(45);
   const autoUnfollowJitter = ref(15);
   const batchLimit = ref(1);
-  const dailyLimit = ref(24);
+  const dailyLimit = ref(100);
   const unfollowDelay = ref(15);
   const unfollowDelayJitter = ref(5);
   const activeTimeStart = ref('09:00');
@@ -148,7 +149,7 @@ export function useUnreciprocatedSettings() {
       autoUnfollow: Boolean(autoUnfollow.value),
       autoUnfollowEvery: Number(autoUnfollowEvery.value),
       autoUnfollowJitter: Number(autoUnfollowJitter.value),
-      settingsSchemaVersion: 4,
+      settingsSchemaVersion: 5,
       batchLimit: Number(batchLimit.value),
       dailyLimit: Number(dailyLimit.value),
       unfollowDelay: Number(unfollowDelay.value),

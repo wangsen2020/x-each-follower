@@ -72,9 +72,11 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.autoUnfollowEvery, 45);
   assert.equal(empty.autoUnfollowJitter, 15);
   assert.equal(empty.batchLimit, 1);
-  assert.equal(empty.dailyLimit, 24);
-  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 24]);
-  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 3, dailyLimit: 12}).dailyLimit, 24);
+  assert.equal(empty.dailyLimit, 100);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 24}).dailyLimit, 100);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 5, dailyLimit: 24}).dailyLimit, 24);
+  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 100]);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 3, dailyLimit: 12}).dailyLimit, 100);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 12}).dailyLimit, 12);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).autoUnfollowEvery, 90);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).dailyLimit, 6);
