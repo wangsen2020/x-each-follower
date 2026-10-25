@@ -63,6 +63,14 @@ export function compareFollowback({followingUsers = [], followerUsers = [], prev
       lostMutualDetectedAt: followedBy === false && (old.everMutual === true || old.status === 'mutual') ? (old.lostMutualDetectedAt || new Date(now).toISOString()) : old.lostMutualDetectedAt || null
     });
   }
+  // Keep recorded unfollows when a fresh comparison only contains active following.
+  for (const old of previousUsers) {
+    const key = followbackKey(old);
+    if (old.status === 'unfollowed' && !seen.has(key)) {
+      seen.add(key);
+      users.push({...old});
+    }
+  }
   return users;
 }
 

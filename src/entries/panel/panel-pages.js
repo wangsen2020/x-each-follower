@@ -268,6 +268,10 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
         const record = locate(found.__sourceBucket || bucket, handle, found.__userKey);
         const sourceBucket = found.__sourceBucket || record?.sourcePath?.[1] || bucket;
         const payload = stripBridgeMeta(found);
+        if (key === 'unreciprocatedTracker' && payload.status === 'unfollowed' && sourceBucket === 'synthetic') {
+          changes.push({handle, sourceBucket: 'users', sourceKey: key, create: true, patch: payload});
+          continue;
+        }
         const synthetic = sourceBucket === 'synthetic' || record?.sourcePath?.[1] === 'synthetic';
         const sourceKey = synthetic ? 'unreciprocatedTracker' : (found.__sourceKey || record?.sourcePath?.[0] || key);
         if (synthetic) {

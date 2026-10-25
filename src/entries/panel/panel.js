@@ -493,7 +493,7 @@ function currentRecordFilter(moduleName) {
   const tab = activeUnreciprocatedTab === 'unreciprocated' && unreciprocatedOverdueFilter !== 'all'
     ? ({overdue: 'overdue', within: 'pending', unknown: 'pending'}[unreciprocatedOverdueFilter] || 'all')
     : activeUnreciprocatedTab === 'unreciprocated' ? 'all' : activeUnreciprocatedTab;
-  return {tab, ...(unreciprocatedAvailabilityFilter !== 'all' ? {availability: unreciprocatedAvailabilityFilter} : {}), ...(activeUnreciprocatedTab === 'unreciprocated' && unreciprocatedOverdueFilter === 'all' ? {statuses: ['pending', 'overdue']} : {}), ...(unreciprocatedOverdueFilter === 'unknown' ? {dateUnknown: true} : unreciprocatedOverdueFilter === 'within' ? {dateKnown: true} : {}), search: unreciprocatedSearch, pageSize: capPageSize(unreciprocatedPageSize)};
+  return {tab, ...(unreciprocatedAvailabilityFilter !== 'all' ? {availability: unreciprocatedAvailabilityFilter} : {}), ...(activeUnreciprocatedTab === 'unreciprocated' && unreciprocatedOverdueFilter === 'all' ? {statuses: ['pending', 'overdue']} : {}), ...(activeUnreciprocatedTab === 'unreciprocated' ? (unreciprocatedOverdueFilter === 'unknown' ? {dateUnknown: true} : unreciprocatedOverdueFilter === 'within' ? {dateKnown: true} : {}) : {}), search: unreciprocatedSearch, pageSize: capPageSize(unreciprocatedPageSize)};
 }
 function capPageSize(value) {
   return Math.max(1, Math.min(100, Number(value) || 20));
@@ -5604,6 +5604,7 @@ async function runUnreciprocatedCheckCycle(source = 'manual') {
     let overdueCount = 0;
     let unknownCount = 0;
     for (const item of compared) {
+      if (item.status === 'unfollowed') continue;
       if (item.status === 'mutual') {
         mutualCount++;
       } else if (item.status === 'overdue') {
@@ -5711,6 +5712,7 @@ async function unfollowOneUnreciprocated(user, btn) {
     const result = await unfollowViaNetwork(tabId, user);
     if (result.ok) {
       user.status = 'unfollowed';
+      user.relationship = {...user.relationship, following: false};
       user.unfollowedAt = new Date().toISOString();
       removeUnfollowedUser(user.handle);
       await saveUnreciprocatedTracker();
@@ -5897,6 +5899,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
         const result = await unfollowViaNetwork(tabId, user);
         if (result.ok) {
           user.status = 'unfollowed';
+          user.relationship = {...user.relationship, following: false};
           user.unfollowedAt = new Date().toISOString();
           removeUnfollowedUser(user.handle);
           selectedUnreciprocatedHandles.delete(user.handle.toLowerCase());
@@ -5933,7 +5936,7 @@ async function batchUnfollowUnreciprocated(targetsOverride = null) {
 }
 
 function getFilteredUnreciprocatedUsers() {
-  const users = (unreciprocatedTracker.users || []).filter(u => u.status !== 'unfollowed');
+  const users = (unreciprocatedTracker.users || []).filter(u => activeUnreciprocatedTab === 'unfollowed' ? u.status === 'unfollowed' : u.status !== 'unfollowed');
   const keyword = unreciprocatedSearch.trim().toLowerCase();
 
   return sortFollowbackUsers(users.filter(user => {
@@ -5980,6 +5983,12 @@ function renderUnreciprocatedUI() {
   if ($('tabPendingCount')) $('tabPendingCount').textContent = pendingCount;
   if ($('tabMutualCount')) $('tabMutualCount').textContent = mutualCount;
   if ($('tabAllCount')) $('tabAllCount').textContent = totalCount;
+  if ($('tabUnfollowedCount')) $('tabUnfollowedCount').textContent = trackerTabs ? (trackerTabs.unfollowed || 0) : (unreciprocatedTracker.users || []).filter(u => u.status === 'unfollowed').length;
+  const historyView = activeUnreciprocatedTab === 'unfollowed';
+  for (const id of ['unreciprocatedSelectAll', 'unfollowAllOverdueBtn']) {
+    if ($(id)) $(id).disabled = historyView;
+  }
+  if ($('unreciprocatedOverdueFilter')) $('unreciprocatedOverdueFilter').disabled = activeUnreciprocatedTab !== 'unreciprocated';
 
   const filtered = getFilteredUnreciprocatedUsers();
   const trackerWindow = unreciprocatedLocalReady
@@ -6001,7 +6010,7 @@ function renderUnreciprocatedUI() {
   if ($('unreciprocatedSelectedCount')) $('unreciprocatedSelectedCount').textContent = selectedUnreciprocatedHandles.size;
   if ($('unreciprocatedTotalVisibleCount')) $('unreciprocatedTotalVisibleCount').textContent = trackerVisible;
   if ($('batchUnfollowUnreciprocatedBtn')) {
-    $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0 || unreciprocatedUnfollowRunning;
+    $('batchUnfollowUnreciprocatedBtn').disabled = selectedUnreciprocatedHandles.size === 0 || unreciprocatedUnfollowRunning || historyView;
   }
 
   const tbody = $('unreciprocatedResults');
@@ -6027,6 +6036,7 @@ function renderUnreciprocatedUI() {
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.checked = selectedUnreciprocatedHandles.has(key);
+    check.disabled = user.status === 'unfollowed';
     check.addEventListener('change', () => {
       if (check.checked) { selectedUnreciprocatedHandles.add(key); selectedRowCopies.retain('unreciprocated', key, user); }
       else { selectedUnreciprocatedHandles.delete(key); selectedRowCopies.forget('unreciprocated', key); }
@@ -6100,7 +6110,11 @@ function renderUnreciprocatedUI() {
     timeDiv.textContent = `关注于 ${dateStr}`;
 
     const waitDiv = document.createElement('div');
-    if (user.status === 'overdue') {
+    if (user.status === 'unfollowed') {
+      const unfollowedTime = Date.parse(user.unfollowedAt);
+      waitDiv.textContent = Number.isFinite(unfollowedTime) ? `取关于 ${new Date(unfollowedTime).toLocaleString()}` : '取关时间未记录';
+      waitDiv.style.color = '#52685d';
+    } else if (user.status === 'overdue') {
       waitDiv.className = 'record-overdue-warn';
       waitDiv.textContent = `已等待 ${elapsedDays} 天`;
     } else if (user.status === 'mutual') {
@@ -6119,7 +6133,9 @@ function renderUnreciprocatedUI() {
     const badge = document.createElement('span');
     badge.className = 'badge-status';
 
-    if (user.status === 'overdue') {
+    if (user.status === 'unfollowed') {
+      badge.textContent = '已取关';
+    } else if (user.status === 'overdue') {
       badge.classList.add('badge-overdue');
       badge.textContent = '未回关';
     } else if (user.status === 'mutual') {
@@ -6142,7 +6158,7 @@ function renderUnreciprocatedUI() {
     }
     const tdDeadline = document.createElement('td');
     tdDeadline.className = 'col-status';
-    tdDeadline.textContent = user.status === 'mutual' ? '—' : user.status === 'overdue' ? '已超时' : elapsedDays === null ? '时间未知' : '未超时';
+    tdDeadline.textContent = ['mutual', 'unfollowed'].includes(user.status) ? '—' : user.status === 'overdue' ? '已超时' : elapsedDays === null ? '时间未知' : '未超时';
     tr.append(tdRelation);
     tr.append(tdDeadline);
 
@@ -6172,7 +6188,7 @@ function renderUnreciprocatedUI() {
     const unfollowBtn = monitorIconButton('unfollow', '取消关注');
     unfollowBtn.classList.add('danger-btn');
     unfollowBtn.dataset.tip = '取消关注';
-    unfollowBtn.disabled = unreciprocatedBusy.has(key) || isAccountUnavailable(user) || availabilityStatus==='identity_unresolved';
+    unfollowBtn.disabled = user.status === 'unfollowed' || unreciprocatedBusy.has(key) || isAccountUnavailable(user) || availabilityStatus==='identity_unresolved';
     unfollowBtn.addEventListener('click', () => unfollowOneUnreciprocated(user, unfollowBtn));
 
     const exemptBtn = monitorIconButton('shield', user.exempt ? '取消豁免' : '豁免');
@@ -6184,7 +6200,7 @@ function renderUnreciprocatedUI() {
       renderUnreciprocatedUI();
     });
 
-    tdActions.append(greetingBtn, unfollowBtn, exemptBtn);
+    if (user.status !== 'unfollowed') tdActions.append(greetingBtn, unfollowBtn, exemptBtn);
     if (isAccountUnavailable(user)) {
       const deleteBtn = monitorIconButton('delete', '删除本地数据');
       deleteBtn.classList.add('danger-btn', 'delete-unavailable-account');
@@ -6321,6 +6337,8 @@ document.querySelectorAll('.unreciprocated-tab').forEach(tabBtn => {
     document.querySelectorAll('.unreciprocated-tab').forEach(b => b.classList.remove('active'));
     tabBtn.classList.add('active');
     activeUnreciprocatedTab = tabBtn.dataset.unreciprocatedTab || 'unreciprocated';
+    selectedUnreciprocatedHandles.clear();
+    if ($('unreciprocatedSelectAll')) $('unreciprocatedSelectAll').checked = false;
     document.querySelectorAll('.unreciprocated-tab').forEach(button => button.setAttribute('aria-selected', String(button === tabBtn)));
     unreciprocatedPage = 1;
     if (unreciprocatedLocalReady) renderUnreciprocatedUI();

@@ -148,3 +148,13 @@ test('unresolved identity is a visible hold, never evidence of suspension or per
  assert.equal(isAccountUnavailable(user),false);
 });
 
+
+test('comparison retains unfollow history without duplicating newly followed accounts', () => {
+  const past={handle:'past',status:'unfollowed',unfollowedAt:'2026-10-25T10:00:00Z',relationship:{following:false}};
+  const result=compareFollowback({followingUsers:[],previousUsers:[past]});
+  assert.deepEqual(result,[past]);
+  assert.notEqual(result[0],past);
+  const followed=compareFollowback({followingUsers:[{handle:'past',relationship:{following:true,followedBy:false}}],previousUsers:[past]});
+  assert.equal(followed.length,1);
+  assert.equal(followed[0].status,'pending');
+});

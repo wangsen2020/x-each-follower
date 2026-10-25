@@ -1057,13 +1057,13 @@ test('identical batch writes create no extra backup and still recover an earlier
   assert.equal(durable.saved.get('recordIncremental:v1:head').seq,1);
 });
 
-test('automatic unfollow adapter reconciles actual record sources and does not restore following on reopen',async()=>{
+for(const persistedTracker of [true,false]) test(`automatic unfollow history survives reopen with persisted tracker=${persistedTracker}`,async()=>{
   const {createBackgroundAutoUnfollow}=await import('../src/features/relationships/auto-unfollow-adapter.js');
   const {createBackgroundRecords}=await import('../src/features/records/background-record-data.js');
   const t=new Date(2026,9,23,12).getTime();
   const u={id:'123',handle:'autotarget',followedAt:'2026-09-01T00:00:00Z',state:'following',status:'overdue',relationship:{following:true,followedBy:false}};
-  const storage=memoryStorage({monitor:{followingUsers:[u],users:[u]},mutualNetwork:{users:[u]},unreciprocatedTracker:{users:[u]}});
-  const durable=memoryDurable(),service=runtime('auto-unfollow-reconcile',storage,durable);await service.migrate();
+  const storage=memoryStorage({monitor:{followingUsers:[u],users:[u]},mutualNetwork:{users:[u]},unreciprocatedTracker:{users:persistedTracker?[u]:[]}});
+  const durable=memoryDurable(),service=runtime('auto-unfollow-reconcile-'+persistedTracker,storage,durable);await service.migrate();
   const records=createBackgroundRecords({service});
   const data={unreciprocatedSettings:{autoUnfollow:true,autoUnfollowAccount:{id:'999',handle:'owner'},overdueDays:14,batchLimit:1,dailyLimit:400,autoUnfollowEvery:30,activeTimeStart:'09:00',activeTimeEnd:'21:00'}};
   let followed=true,calls=0;
@@ -1073,7 +1073,12 @@ test('automatic unfollow adapter reconciles actual record sources and does not r
   for(const sourceKey of ['monitor','mutualNetwork','unreciprocatedTracker']){
     const rows=await service.lookupAll({sourceKey,handle:'autotarget'});assert.ok(rows.length);for(const row of rows){assert.equal(row.payload.relationship.following,false);assert.equal(row.payload.status,'unfollowed');}
   }
-  const reopened=runtime('auto-unfollow-reconcile',storage,durable);
+  const reopened=runtime('auto-unfollow-reconcile-'+persistedTracker,storage,durable);
   const rows=await reopened.lookupAll({sourceKey:'monitor',handle:'autotarget'});assert.ok(rows.every(r=>r.payload.relationship.following===false));
+  const history=await reopened.query({module:'unreciprocated',limit:10,filter:{tab:'unfollowed',search:'autotarget'}});
+  assert.equal(history.records.length,1);
+  assert.ok(Number.isFinite(Date.parse(history.records[0].payload.unfollowedAt)));
+  assert.equal((await reopened.summary({module:'unreciprocated'})).tabs.unfollowed,1);
+  assert.equal((await reopened.query({module:'unreciprocated',limit:10,filter:{tab:'all'}})).records.length,0);
   await runner.run();assert.equal(calls,1);
 });

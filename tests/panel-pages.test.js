@@ -117,6 +117,12 @@ test('startup queries only the visible module and reports real progress', async 
   assert.equal(trackerBatch.changes[0].patch.note, 'from-mutual');
   assert.equal(trackerBatch.changes[0].patch.status, 'followed');
   assert.equal(Object.hasOwn(trackerBatch.changes[0].patch, '__userKey'), false);
+  await tracker.bridgeWrite('unreciprocatedTracker', {users: [{handle: 'ada', status: 'unfollowed', unfollowedAt: '2026-10-25T10:00:00Z', __userKey: 'derived:tracker/ada', __sourceBucket: 'synthetic'}]});
+  const historyBatch = trackerSent.filter(message => message.op === 'batch').at(-1);
+  assert.equal(historyBatch.changes[0].sourceBucket, 'users');
+  assert.equal(historyBatch.changes[0].create, true);
+  assert.equal(historyBatch.changes[0].patch.unfollowedAt, '2026-10-25T10:00:00Z');
+  assert.equal(historyBatch.changes[0].userKey, undefined);
   const memory = createSelectionMemory();
   memory.retain('fans', 'ada', {handle: 'ada', bio: 'page-1'});
   memory.retain('fans', 'bob', {handle: 'bob', bio: 'page-2'});

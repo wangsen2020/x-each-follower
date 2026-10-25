@@ -18,8 +18,9 @@
         <div class="follower-tabs unreciprocated-tabs" role="tablist" aria-label="回关状态筛选">
           <button class="follower-tab unreciprocated-tab active" data-unreciprocated-tab="unreciprocated" role="tab" aria-selected="true">未回关 <span id="tabUnreciprocatedCount">0</span></button>
           <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="mutual" role="tab" aria-selected="false">已互关 <span id="tabMutualCount">0</span></button>
+          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="unfollowed" role="tab" aria-selected="false">已取关 <span id="tabUnfollowedCount">0</span></button>
           <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="all" role="tab" aria-selected="false">全部 <span id="tabAllCount">0</span></button>
-          <span class="info-tip" tabindex="0" role="note" data-tip="未回关：我们关注对方但对方目前未关注我们；已互关：双方已形成互相关注；全部：当前主动关注的全部账号。" aria-label="回关状态说明">?</span>
+          <span class="info-tip" tabindex="0" role="note" data-tip="未回关：我们关注对方但对方目前未关注我们；已互关：双方已形成互相关注；已取关：本地记录的取关账号及时间；全部：当前主动关注的全部账号，不含已取关。" aria-label="回关状态说明">?</span>
         </div>
         <select id="unreciprocatedOverdueFilter" class="unreciprocated-filter-select" title="期限状态筛选" aria-label="期限状态筛选">
           <option value="all">全部期限</option>

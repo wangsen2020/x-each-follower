@@ -42,6 +42,10 @@ export function createBackgroundAutoUnfollow({api,service,records,normalize,fetc
     },
     async unfollow(user,config){await ownerTab(config,user.tabId);return sendUnfollow(user.tabId,user.id);},
     async reconcile(user,live){
+      if(live.relationship.following===false){
+        // Save an independent tracker row before removing its active-following sources.
+        await records.batch({sourceKey:'unreciprocatedTracker',changes:[{handle:user.handle,sourceBucket:'users',create:true,patch:{...user,relationship:{...user.relationship,...live.relationship},status:'unfollowed',unfollowedAt:new Date().toISOString()}}]});
+      }
       for(const sourceKey of ['monitor','mutualNetwork','commentTracking','unreciprocatedTracker','derived:tracker']){
         const rows=await service.lookupAll({sourceKey,handle:user.handle});
         for(const row of rows){
