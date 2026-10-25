@@ -3118,7 +3118,7 @@ async function closeBackgroundXActionTab(tabId) {
 }
 
 function isFollowRateLimited(response) {
-  return response?.status === 429 || /rate limit|try again in an hour|too quickly|频率受限|操作过于频繁/i.test(String(response?.error || ''));
+  return response?.status === 429 || response?.followLimit === true || /rate limit|try again in an hour|too quickly|频率受限|操作过于频繁/i.test(String(response?.error || ''));
 }
 
 async function followViaNetwork(tabId, user) {

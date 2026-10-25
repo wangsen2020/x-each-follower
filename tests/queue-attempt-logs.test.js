@@ -16,6 +16,18 @@ test('successful logs never fall back to a previous failure, including stored hi
   assert.equal(normalizeQueueExecutionLog({...historic,result:'retry'}).detail,previous);
 });
 
+test('historical X follow limit logs render a clear message and preserve the stored evidence',()=>{
+  const raw="You are unable to follow more people at this time. Learn more <a href='http://support.twitter.com/articles/66885-i-can-t-follow-people-follow-limits'>here</a>.";
+  const old={type:'job-complete',scope:'queue',state:'uncertain',reason:raw,detail:`${raw} 普通来源，按普通候选筛选`,
+    followResult:{relationshipDecision:{reason:'普通来源，按普通候选筛选',following:false,followedBy:false}}};
+  const displayed=normalizeQueueExecutionLog(old,{},old);
+  assert.match(displayed.detail,/X 拒绝继续关注/);
+  assert.match(displayed.detail,/普通来源/);
+  assert.doesNotMatch(displayed.detail,/<a|Learn more|You are unable/i);
+  assert.doesNotMatch(displayed.reason,/<a|Learn more|You are unable/i);
+  assert.equal(old.reason,raw);
+});
+
 test('new attempt logs cannot inherit previous errors, diagnostics or scan timing',()=>{
   const old={diagnostic:{id:'old',runId:'same-run'},posts:[{text:'old'}],finishedAt:'old',scrollRounds:5};
   const result=normalizeQueueExecutionLog({type:'job-start',runId:'same-run',jobId:'job'},

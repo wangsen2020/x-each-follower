@@ -380,7 +380,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
           followUncertain = result.uncertain === true;
           if (!followed) {
             user.followFailureReason = result.error || `关注接口返回 ${result.status}`;
-            rateLimited = result.status === 429 || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
+            rateLimited = result.status === 429 || result.followLimit === true || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
           }
         }
         if (!followed && !rateLimited && !followUncertain) {
@@ -393,7 +393,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
             followed = result.status >= 200 && result.status < 300;
             if (!followed) {
               user.followFailureReason = result.error || `关注接口返回 ${result.status}`;
-              rateLimited = result.status === 429 || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
+              rateLimited = result.status === 429 || result.followLimit === true || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
             }
           } else if (!user.followFailureReason) {
             user.followFailureReason = lookup.error || '无法解析用户 ID';

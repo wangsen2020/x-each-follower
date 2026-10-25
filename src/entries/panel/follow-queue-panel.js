@@ -10,6 +10,7 @@ import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffi
 
 import { FOLLOW_QUEUE_DEFAULT_SETTINGS } from '../../features/follow-queue/follow-queue-store.js';
 import {followQueuePriority} from '../../features/follow-queue/follow-queue-priority.js';
+import {displayFollowLimitError, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
 export const DEFAULT_SETTINGS = FOLLOW_QUEUE_DEFAULT_SETTINGS || Object.freeze({
   enabled: false,
@@ -1221,13 +1222,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         if (job.state === 'followed') {
           resultDisplay = '关注成功';
         } else if (job.state === 'skipped') {
-          resultDisplay = job.followResult?.reason || '条件不符';
+          resultDisplay = displayFollowLimitError(job.followResult?.reason || '条件不符');
         } else if (job.state === 'retry') {
-          resultDisplay = job.followResult?.error || '等待重试';
+          resultDisplay = displayFollowLimitError(job.followResult?.error || '等待重试');
         } else if (job.state === 'uncertain') {
-          resultDisplay = '待核对主页关系';
+          resultDisplay = isAccountFollowLimit(job.followResult) ? '关注超额，关系待核实' : '待核对主页关系';
         } else if (job.followResult?.error) {
-          resultDisplay = job.followResult.error;
+          resultDisplay = displayFollowLimitError(job.followResult.error);
         }
         const resultCell = el('td', { className: 'fq-col-result' }, [
           el('span', { className: 'fq-result-text' }, resultDisplay)
@@ -1423,9 +1424,9 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('div', { className: 'fq-trace-row' }, [
         el('span', { className: 'fq-trace-label' }, '关注结果 / 跳过原因:'),
         el('span', { className: 'fq-trace-val' },
-          typeof job.followResult === 'string'
+          displayFollowLimitError(typeof job.followResult === 'string'
             ? job.followResult
-            : (job.followResult?.reason || job.followResult?.error || (job.state === 'followed' ? '已关注成功' : '-'))
+            : (job.followResult?.reason || job.followResult?.error || (job.state === 'followed' ? '已关注成功' : '-')))
         )
       ]),
       el('div', { className: 'fq-trace-row' }, [
@@ -1555,13 +1556,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     if (job.state === 'followed') {
       resultOutcome = '关注成功';
     } else if (job.state === 'skipped') {
-      resultOutcome = job.followResult?.reason || '条件不符跳过';
+      resultOutcome = displayFollowLimitError(job.followResult?.reason || '条件不符跳过');
     } else if (job.state === 'retry') {
-      resultOutcome = job.followResult?.error || '异常等待重试';
+      resultOutcome = displayFollowLimitError(job.followResult?.error || '异常等待重试');
     } else if (job.state === 'uncertain') {
-      resultOutcome = '发送后结果待核实';
+      resultOutcome = isAccountFollowLimit(job.followResult) ? '关注超额，关系待核实' : '发送后结果待核实';
     } else if (job.followResult?.error) {
-      resultOutcome = job.followResult.error;
+      resultOutcome = displayFollowLimitError(job.followResult.error);
     }
 
     const uncertainActions = job.state === 'uncertain'
@@ -1593,14 +1594,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       ]),
       job.followResult?.reason
         ? el('div', { className: 'fq-trace-row' }, [
-            el('span', { className: 'fq-trace-label' }, '跳过原因:'),
-            el('span', { className: 'fq-trace-val' }, job.followResult.reason)
+            el('span', { className: 'fq-trace-label' }, job.state === 'skipped' ? '跳过原因:' : '处理原因:'),
+            el('span', { className: 'fq-trace-val' }, displayFollowLimitError(job.followResult.reason))
           ])
         : null,
       job.followResult?.error
         ? el('div', { className: 'fq-trace-row' }, [
             el('span', { className: 'fq-trace-label' }, '失败详情:'),
-            el('span', { className: 'fq-trace-val' }, job.followResult.error)
+            el('span', { className: 'fq-trace-val' }, displayFollowLimitError(job.followResult.error))
           ])
         : null,
       uncertainActions

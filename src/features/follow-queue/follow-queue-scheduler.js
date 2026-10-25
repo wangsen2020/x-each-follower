@@ -377,7 +377,11 @@ export function createFollowQueueScheduler({
 
       const paused = state.paused || pausedAccounts.has(account);
       const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual})
-        + (state.rateLimited ? ' 本轮遇到关注接口限流，后续任务留待下轮正常调度；本次结果待核实。' : '')
+        + (state.rateLimited ? state.accountFollowLimit
+          ? ' X 已限制继续关注（错误 161），本轮停止；请在 X 核实限制，当前任务结果待核实。'
+          : state.profileReadLimited
+            ? ' 用户资料接口限流，本轮停止；未发送关注请求，下轮按正常调度重试。'
+            : ' 本轮遇到关注接口限流，后续任务留待下轮正常调度；本次结果待核实。' : '')
         + (state.blockReason?.message ? ' '+state.blockReason.message : '');
       lastCompletedAt = now();
       lastSummary = summary;
@@ -746,7 +750,11 @@ export function createFollowQueueScheduler({
         counters,
         runState
       });
-      if (outcome?.rateLimited === true) runState.rateLimited = true;
+      if (outcome?.rateLimited === true) {
+        runState.rateLimited = true;
+        runState.accountFollowLimit = outcome.accountFollowLimit === true;
+        runState.profileReadLimited = outcome.profileReadLimited === true;
+      }
     });
   }
 

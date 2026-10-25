@@ -40,3 +40,44 @@ test('manual verification cannot reopen a fan whose relationship is still missin
  await assert.rejects(runtime.handle({cmd:'followQueueVerify',jobId:'job'}),/关系待核实/);
  assert.equal(writes,0);
 });
+
+test('X error 161 stops this batch after one follow attempt without a global cooldown',async()=>{
+ const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{fans:true}}};
+ const api={storage:{local:{get:async k=>typeof k==='string'?{[k]:values[k]}:{...values},set:async p=>Object.assign(values,p)}},
+  tabs:{query:async()=>[{id:1}],create:async()=>({id:2}),get:async()=>({status:'complete',url:'https://x.com/first'}),remove:async()=>{}},
+  alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},
+  scripting:{executeScript:async({func})=>[{result:func.name==='readQueueViewerOnPage'?'viewer':{pending:false,name:'Candidate',bio:'',followersText:'1000',followingText:'1',posts:[]}}]}};
+ const store=createFollowQueueStore({indexedDB,dbName:'account-follow-limit-'+crypto.randomUUID()});
+ await store.saveSettings('1',{enabled:true,batchLimit:2,inspectLimit:2,grokEnabled:false,followBackAllowAll:true});
+ for(const handle of ['first','second'])await store.enqueue({accountId:'1',handle,targetUserId:handle==='first'?'42':'43',sources:[{module:'fans',enabled:true}]});
+ let attempts=0;
+ const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async(_,handle)=>({status:200,json:{rest_id:handle==='first'?'42':'43',core:{screen_name:handle},relationship_perspectives:{following:false,followed_by:true}}}),performFollow:async()=>{attempts++;return{status:403,json:{errors:[{code:161}]},error:'You are unable to follow more people at this time.'}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
+ const result=await runtime.run();
+ assert.equal(attempts,1);
+ assert.match(result.summary,/错误 161/);
+ const jobs=await store.list({accountId:'1'});
+ assert.equal(jobs.filter(job=>job.state==='uncertain').length,1);
+ assert.equal(jobs.filter(job=>job.state==='pending').length,1);
+ assert.equal(jobs.find(job=>job.state==='uncertain').followResult.errorCode,161);
+ assert.equal(values.monitor?.pausedUntil,undefined);
+});
+
+test('profile read HTTP 429 stops this batch before any follow request',async()=>{
+ const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{fans:true}}};
+ const api={storage:{local:{get:async k=>typeof k==='string'?{[k]:values[k]}:{...values},set:async p=>Object.assign(values,p)}},
+  tabs:{query:async()=>[{id:1}],create:async()=>({id:2}),get:async()=>({status:'complete',url:'https://x.com/first'}),remove:async()=>{}},
+  alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},
+  scripting:{executeScript:async({func})=>[{result:func.name==='readQueueViewerOnPage'?'viewer':{pending:false,name:'Candidate',bio:'',followersText:'1000',followingText:'1',posts:[]}}]}};
+ const store=createFollowQueueStore({indexedDB,dbName:'profile-limit-'+crypto.randomUUID()});
+ await store.saveSettings('1',{enabled:true,batchLimit:2,inspectLimit:2,grokEnabled:false,followBackAllowAll:true});
+ for(const handle of ['first','second'])await store.enqueue({accountId:'1',handle,targetUserId:handle==='first'?'42':'43',sources:[{module:'fans',enabled:true}]});
+ let attempts=0;
+ const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async()=>({status:429,error:'Too Many Requests'}),performFollow:async()=>{attempts++;return{status:200}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
+ const result=await runtime.run();
+ assert.equal(attempts,0);
+ assert.equal(result.counters.inspected,1);
+ assert.match(result.summary,/用户资料接口限流，本轮停止；未发送关注请求/);
+ const jobs=await store.list({accountId:'1'});
+ assert.equal(jobs.filter(job=>job.state==='retry').length,1);
+ assert.equal(jobs.filter(job=>job.state==='pending').length,1);
+});

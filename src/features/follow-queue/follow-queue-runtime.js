@@ -18,6 +18,7 @@ import {evaluateProfileGrokRisk, interactionSkipReason} from '../relationships/c
 import {randomizedSeconds, randomizedInteger} from '../../shared/timing.js';
 import {appendExecutionLog, normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {readAutoFollowAttempts} from '../../shared/auto-follow-history.js';
+import {ACCOUNT_FOLLOW_LIMIT_MESSAGE, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
 export const QUEUE_ALARM = 'x-unified-follow-queue';
 const BINDING_KEY = 'followQueueBinding';
@@ -521,7 +522,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       stage('following');
       attemptedFollow = true;
       const result = await performFollow(tab.id,{id:target.id,handle:job.handle});
-      if (!(result.status >= 200 && result.status < 300)) {
+      if (isAccountFollowLimit(result) || !(result.status >= 200 && result.status < 300)) {
+        if (isAccountFollowLimit(result)) {
+          return {state:'uncertain',followResult:{...followResult,attemptedAt:Date.now(),targetUserId:target.id,responseStatus:result.status,errorCode:161},
+            rateLimited:true,accountFollowLimit:true,
+            reason:`${ACCOUNT_FOLLOW_LIMIT_MESSAGE} 本轮停止；该账号的关注关系待核实。`};
+        }
         if (result.status === 429) {
           return {state:'uncertain',followResult:{...followResult,attemptedAt:Date.now(),targetUserId:target.id,responseStatus:429},
             rateLimited:true,
@@ -562,7 +568,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const failure=await diagnostics.record(error,{deferLog:true,stage:audit.stage,manual:control.manual,accountId:job.accountId,targetUserId:job.targetUserId,retryCount:job.followResult?.retryCount,settings,jobId:job.id,runId:control.runId,handle:job.handle,requestedUrl:`https://x.com/${encodeURIComponent(job.handle)}`,tabId:tab?.id,recentStages:audit.recentStages,followAttempted:attemptedFollow,followSucceeded:followResult.succeeded});
       if(runFailures)runFailures.push(failure);
       audit.diagnostic=failure.diagnostic;
-      return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,diagnostic:failure.diagnostic,reason:failure.message};
+      const profileReadLimited = error.code === 'X_PROFILE_READ_LIMIT' && !attemptedFollow;
+      return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,
+        rateLimited:profileReadLimited,profileReadLimited,diagnostic:failure.diagnostic,reason:failure.message};
     } finally { audit.finishedAt = new Date().toISOString(); audit.evaluations = structuredClone(evaluations); if (tab) await api.tabs.remove(tab.id).catch(() => {}); }
   }
   let reflectJobs = null,runFailures=null,runPromise=null;

@@ -1,5 +1,6 @@
 import {getDefaultExecutionLogStore} from './execution-log-store.js';
 import {selectExecutionLogs} from './execution-log-select.js';
+import {displayFollowLimitError} from './follow-limit.js';
 
 export {selectExecutionLogs};
 
@@ -66,6 +67,7 @@ export function normalizeQueueExecutionLog(event, job = {}, audit = {}) {
     handle:event.handle || job.handle || '', name:audit.name || job.profile?.name || '',
     sources:event.sources || job.sources || [], evaluations, followResult:follow,
     result, source:event.manual === true ? 'manual' : event.manual === false ? 'scheduled' : event.source || 'unknown',
-    detail,
+    reason:displayFollowLimitError(event.reason),
+    detail:displayFollowLimitError(detail),
     at:new Date(event.at || Date.now()).toISOString()};
 }

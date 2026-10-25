@@ -1,5 +1,6 @@
 import {createXNetworkClient} from '../../platform/x/network-client.js';
 import { repairMojibake } from './scoring.js';
+import {ACCOUNT_FOLLOW_LIMIT_MESSAGE, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
 function collectUsers(value, out = new Map()) {
   if (!value || typeof value !== 'object') return out;
@@ -53,6 +54,8 @@ export const networkGetTweetDetail = (tabId, variables) => createXNetworkClient(
 // the target's resulting relationship before callers persist a followed state.
 export async function networkFollow(tabId, target, client = createXNetworkClient()) {
   const result = await client.follow(tabId, target);
+  if (isAccountFollowLimit(result)) return {...result, httpStatus:result.status, status:result.status >= 200 && result.status < 300 ? 0 : result.status,
+    followLimit:true, errorCode:161, error:ACCOUNT_FOLLOW_LIMIT_MESSAGE};
   if (!(result.status >= 200 && result.status < 300)) return result;
   const expectedId = String(typeof target === 'object' ? target?.id || '' : target || '');
   const handle = typeof target === 'object' ? String(target?.handle || '').replace(/^@/, '') : '';
