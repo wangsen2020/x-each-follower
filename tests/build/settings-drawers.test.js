@@ -139,3 +139,10 @@ test('automatic reminder configuration can wait longer than the unfollow deadlin
  const drawer=useUnreciprocatedSettings();let saved;drawer.setSaveHandler(async cfg=>{saved=cfg;});
  drawer.open({autoGreeting:true,greetingAfterDays:20,overdueDays:14});assert.equal(await drawer.save(),true);assert.equal(saved.autoGreeting,true);assert.equal(saved.greetingAfterDays,20);
 });
+
+test('five-minute automatic unfollow setting survives save and reopening',async()=>{
+ const c=useUnreciprocatedSettings();c.open({settingsSchemaVersion:5,autoUnfollowEvery:30,autoUnfollowJitter:3});
+ let saved;c.setSaveHandler(async cfg=>{saved=cfg;});c.autoUnfollowEvery.value=5;c.autoUnfollowJitter.value=0;
+ assert.equal(await c.save(),true);assert.equal(saved.autoUnfollowEvery,5);assert.equal(saved.autoUnfollowJitter,0);
+ c.open(saved);assert.equal(c.autoUnfollowEvery.value,5);
+});

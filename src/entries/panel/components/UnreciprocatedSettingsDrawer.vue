@@ -141,10 +141,10 @@
             id="unreciprocatedAutoUnfollowEvery"
             v-model.number="unreciprocatedSettingsController.autoUnfollowEvery.value"
             type="number"
-            min="30"
+            min="5"
             max="1440"
           />
-          <span class="info-tip" tabindex="0" role="note" data-tip="默认每 45±15 分钟检查队列；每轮最多处理 1 人，实际两次取关请求至少间隔 30 分钟。X 官方不允许自动取关，此间隔不是平台认可的安全频率。" aria-label="取关执行周期说明">?</span>
+          <span class="info-tip" tabindex="0" role="note" data-tip="支持 5–1440 分钟，每轮最多处理 1 人。实际间隔按周期与浮动计算，最短 5 分钟；设为 5 分钟且浮动为 0，即按每 5 分钟安排一轮。此值不是 X 官方安全频率。" aria-label="取关执行周期说明">?</span>
         </div>
 
         <div class="drawer-setting-group">
@@ -172,7 +172,7 @@
             min="1"
             max="400"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 30 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。" aria-label="单日取关上限说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 5 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。" aria-label="单日取关上限说明">?</span>
         </div>
 
         <div class="drawer-setting-group drawer-setting-time">

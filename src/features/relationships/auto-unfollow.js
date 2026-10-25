@@ -1,7 +1,7 @@
 import {createFollowbackAudit,unfollowSkipReason} from './followback-audit.js';
 export const AUTO_UNFOLLOW_ALARM='x-auto-unfollow';
 export const AUTO_UNFOLLOW_STATE='autoUnfollowState';
-export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=30*60000;
+export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=5*60000;
 const MAX_PROFILE_CHECKS_PER_ROUND=5;
 const handleOf=u=>String(u?.handle||'').replace(/^@/,'').toLowerCase();
 export function autoUnfollowScheduleChanged(previous, next) {
@@ -41,7 +41,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     const cfg=await config();
     if(!cfg.autoUnfollow){await alarms.clear(AUTO_UNFOLLOW_ALARM);return;}
     if(preserve && await alarms.get(AUTO_UNFOLLOW_ALARM))return;
-    const earliest=now()+delay(cfg.autoUnfollowEvery,cfg.autoUnfollowJitter,30)*60000;
+    const earliest=now()+delay(cfg.autoUnfollowEvery,cfg.autoUnfollowJitter,AUTO_UNFOLLOW_MIN_INTERVAL_MS/60000)*60000;
     const when=nextUnfollowWindow(cfg,earliest);
     await alarms.create(AUTO_UNFOLLOW_ALARM,{when});
     return when;
@@ -54,7 +54,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
       const cfg=await config();
       audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
       const nextAt=await schedule(); // A worker interruption still leaves the next round scheduled.
-      audit.stage('检查配置',{'下次计划时间':nextAt?new Date(nextAt).toISOString():'未启用','当前本地时间':new Date(now()).toLocaleString(),'最短请求间隔分钟':30});
+      audit.stage('检查配置',{'下次计划时间':nextAt?new Date(nextAt).toISOString():'未启用','当前本地时间':new Date(now()).toLocaleString(),'最短请求间隔分钟':AUTO_UNFOLLOW_MIN_INTERVAL_MS/60000});
       if(!cfg.autoUnfollow||!inUnfollowWindow(cfg,now())){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
       if(!cfg.autoUnfollowAccount?.id || !cfg.autoUnfollowAccount?.handle)throw new Error('缺少绑定账号，请重新保存自动取关设置');
       await audit.event({scope:'unreciprocated',result:'started',summary:'开始自动取关检查'});
@@ -77,7 +77,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
       if(state.day!==day())state={...state,day:day(),used:0};
       const cap=Math.min(1,Math.max(0,cfg.dailyLimit-(state.used||0)));
       if(!cap){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：今日额度已用完'},{'今日已用':state.used,'下次条件':'本地日期变更后恢复额度'});return {skipped:'daily_limit'};}
-      if(now()-(state.lastAttemptAt||0)<AUTO_UNFOLLOW_MIN_INTERVAL_MS){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：距上次请求不足 30 分钟'},{'上次请求时间':new Date(state.lastAttemptAt).toISOString()});return {skipped:'interval'};}
+      if(now()-(state.lastAttemptAt||0)<AUTO_UNFOLLOW_MIN_INTERVAL_MS){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：距上次请求不足 5 分钟'},{'上次请求时间':new Date(state.lastAttemptAt).toISOString()});return {skipped:'interval'};}
       audit.stage('筛选超时账号',{'今日已用':state.used,'本轮可用额度':cap});
       const allUsers=await candidates();
       audit.stage('筛选超时账号',{'候选记录总数':allUsers.length});

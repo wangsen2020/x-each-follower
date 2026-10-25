@@ -180,7 +180,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   if (res.greetingText === '你好，刚关注了你，期待交流！') res.greetingText = defaults.greetingText;
   res.greetingTextEn = String(res.greetingTextEn || defaults.greetingTextEn).trim().slice(0, 1000);
   res.autoUnfollow = Boolean(res.autoUnfollow);
-  res.autoUnfollowEvery = Math.max(30, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
+  res.autoUnfollowEvery = Math.max(5, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
   res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 15));
   res.batchLimit = 1;
   res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 100));
