@@ -46,6 +46,14 @@ export function buildXRequest(operation,template,variables={}) {
 
 // Self-contained: Chrome serializes this function into the authenticated X MAIN world.
 export async function executeXRequestOnPage(request) {
+  // One page/session owns pending reads. Never retain completed responses.
+  const pending = window.__xefPendingReads ||= new Map();
+  const readable = request.kind === 'query' && request.method === 'GET';
+  const key = readable ? JSON.stringify([request.origin,request.operation,request.path,
+    Object.entries(request.headers || {}).sort(([a],[b])=>a.localeCompare(b))]) : null;
+  if (key && pending.has(key)) return structuredClone(await pending.get(key));
+  if (!readable) {pending.clear();window.__xefNativeProfile=null;}
+  const execute = async () => {
   let attempted=false;const started=Date.now(),timings={metadataMs:0,signatureMs:0,requestMs:0};
   const redact=value=> {
     let text=String(value||'');for(const key of ['authorization','x-csrf-token','x-client-transaction-id'])if(request.headers[key])text=text.split(request.headers[key]).join('[redacted]');
@@ -93,16 +101,46 @@ export async function executeXRequestOnPage(request) {
     const gqlError=json?.errors?.map(e=>e.message).filter(Boolean).join('；');
     const retryHeader=response.headers?.get?.('retry-after');
     const retryAfterSeconds=retryHeader ? (/^\d+$/.test(retryHeader)?Number(retryHeader):Math.max(0,(Date.parse(retryHeader)-Date.now())/1000)) : null;
-    return {timings:{...timings,totalMs:Date.now()-started},status:response.status,json,error:redact(gqlError||(!response.ok?text||`HTTP ${response.status}`:(!json?'X 返回了无效数据':''))),attempted,retryAfterSeconds:Number.isFinite(retryAfterSeconds)?retryAfterSeconds:null};
+    const rateLimit={};
+    for(const [key,header] of Object.entries({limit:'x-rate-limit-limit',remaining:'x-rate-limit-remaining',resetAt:'x-rate-limit-reset'})) {
+      const value=response.headers?.get?.(header);
+      if(value!==null && value!==undefined && /^\d+$/.test(value))rateLimit[key]=Number(value)*(key==='resetAt'?1000:1);
+    }
+    return {operation:request.operation,rateLimit,timings:{...timings,totalMs:Date.now()-started},status:response.status,json,error:redact(gqlError||(!response.ok?text||`HTTP ${response.status}`:(!json?'X 返回了无效数据':''))),attempted,retryAfterSeconds:Number.isFinite(retryAfterSeconds)?retryAfterSeconds:null};
   }catch(error){return {timings:{...timings,totalMs:Date.now()-started},status:0,json:null,error:redact(error?.message||error),attempted};}
+  };
+  const task = execute();
+  if (key) pending.set(key,task);
+  try {return structuredClone(await task);}
+  finally {
+    if (key && pending.get(key) === task) pending.delete(key);
+    if (!readable) {pending.clear();window.__xefNativeProfile=null;}
+  }
+
+}
+
+// Opt-in for a newly opened queue profile only; verification reads stay fresh.
+export function readNativeProfileResponse(handle) {
+  const cached = window.__xefNativeProfile;
+  const key = String(handle || '').toLowerCase();
+  const route=location.pathname.toLowerCase().split('/').filter(Boolean);
+  const matches=route[0]===key && (route.length===1 || route.length===2 && ['followers','following','verified_followers','with_replies'].includes(route[1]));
+  if (!cached || cached.handle !== key || !matches ||
+      cached.path !== location.pathname || Date.now()-cached.at < 0 || Date.now()-cached.at > 30000 ||
+      !cached.json || cached.json.errors?.length) return null;
+  return {status:200,json:cached.json,error:'',attempted:false,source:'native-page',observedAt:cached.at};
 }
 
 export function createXNetworkClient(api=globalThis.chrome) {
-  async function request(tabId,operation,variables={}) {
+  async function request(tabId,operation,variables={},options={}) {
     let template,dispatched=false;
     const handle=operation==='UserByScreenName'?variables.screen_name:null;
     if(handle)await assertProfileAvailable(api,handle,'profile-network');
     try {
+      if (handle && options.preferPageResponse === true) {
+        const cached = await api.scripting.executeScript({target:{tabId},world:'MAIN',func:readNativeProfileResponse,args:[handle]});
+        if (cached?.[0]?.result?.status === 200) return cached[0].result;
+      }
       const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
       if(FORMS[operation]||operation==='DeleteTweet')template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
@@ -119,7 +157,7 @@ export function createXNetworkClient(api=globalThis.chrome) {
   }
   return {
     query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
-    profile:(tabId,handle)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')}),
+    profile:(tabId,handle,options)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')},options),
     userPosts:(tabId,userId,variables={})=>request(tabId,'UserTweets',{...variables,userId}),
     userOriginals:(tabId,userId,variables={})=>request(tabId,'UserOriginalsTimeline',{...variables,userId}),
     userReplies:(tabId,userId,variables={})=>request(tabId,'UserRepliesTimeline',{...variables,userId}),

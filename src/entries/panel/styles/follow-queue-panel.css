@@ -548,19 +548,6 @@
   color: #18302e;
 }
 
-.fq-drawer-close {
-  background: transparent;
-  border: 0;
-  font-size: 22px;
-  color: #69766c;
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-.fq-drawer-close:hover {
-  color: #18302e;
-}
-
 .fq-drawer-body {
   flex: 1;
   overflow-y: auto;

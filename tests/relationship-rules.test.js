@@ -44,7 +44,7 @@ test('not-mutual derivation keeps monitor rows ahead of later duplicates', () =>
 test('tracker derivation preserves stored rows and skips unfollowed users', () => {
   const rows = rules.deriveTrackerUsers({
     monitor: {followingUsers: [{handle: 'New', name: 'New Name', relationship: {followedBy: false}}]},
-    mutualNetwork: {users: [{handle: 'FromMutual', followedAt: '2026-01-01', relationship: {followedBy: true}}]},
+    mutualNetwork: {users: [{handle: 'FromMutual', followedAt: '2026-01-01', relationship: {following: true, followedBy: true}}]},
     commentTracking: {users: [{handle: 'Commented', state: 'saved'}]},
     unreciprocatedTracker: {users: [
       {handle: 'Stored', status: 'pending', relationship: {following: true, followedBy: false}},
@@ -76,6 +76,41 @@ test('relationship index still classifies queue, following, and empty handles', 
   assert.equal(snapped.relationship.followedBy, false);
   assert.equal(snapped.relationshipKnown, true);
   assert.equal(rules.snapshotMutualUsers([{handle: 'Nope'}], index)[0].relationship.following, false);
+});
+
+test('explicit not-following survives stale lists, queue success, and follow dates', () => {
+  const snapshot = {
+    monitor: {
+      queue:[{handle:'Stale',status:'followed'}],
+      users:[{handle:'Stale',state:'following',relationship:{following:false,followedBy:false}}],
+      followingUsers:[{handle:'Stale',relationship:{following:false,followedBy:false}}]
+    },
+    mutualNetwork:{users:[{handle:'Stale',followedAt:'2026-10-16',relationship:{following:false,followedBy:false}}]},
+    unreciprocatedTracker:{users:[{handle:'Stale',status:'pending',relationship:{following:false,followedBy:false}}]}
+  };
+  const index = rules.buildRelationshipIndex(snapshot.monitor);
+  assert.equal(index.following.has('stale'),false);
+  assert.equal(rules.applyRelationshipSnapshot(snapshot.monitor.users[0],index).relationship.following,false);
+  assert.equal(rules.commentRelationshipLabel(snapshot.monitor.users[0],index),'未互关');
+  assert.equal(rules.deriveNotMutualUsers(snapshot).some(row=>row.handle==='stale'),false);
+  assert.equal(rules.deriveTrackerUsers(snapshot).some(row=>row.handle==='stale'),false);
+});
+
+test('old followedAt without a current positive relationship cannot create a tracker record', () => {
+  const rows=rules.deriveTrackerUsers({mutualNetwork:{users:[{handle:'Old',followedAt:'2026-10-16',relationship:{following:false}}]}});
+  assert.deepEqual(rows,[]);
+});
+
+test('a stale following-list entry loses to explicit negatives in other live collections', () => {
+  const snapshot={
+    monitor:{followingUsers:[{handle:'Stale',relationship:{followedBy:false}}],users:[{handle:'Stale',relationship:{following:false}}]},
+    mutualNetwork:{users:[{handle:'Other',relationship:{following:false}}]},
+    unreciprocatedTracker:{users:[{handle:'Other',status:'no_longer_following'}]}
+  };
+  assert.equal(rules.buildRelationshipIndex(snapshot.monitor).following.has('stale'),false);
+  assert.deepEqual(rules.deriveNotMutualUsers(snapshot),[]);
+  assert.deepEqual(rules.deriveTrackerUsers(snapshot),[]);
+  assert.equal(rules.inactiveFollowingHandles(snapshot).has('other'),true);
 });
 test('applyRelationshipSnapshot safely handles numeric index from array map or missing index', () => {
   const users = [{handle: 'QQ20C'}, {handle: 'OtherUser', relationship: {followedBy: true}}];

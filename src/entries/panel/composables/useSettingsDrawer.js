@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue';
 
 /**
- * Composable for managing 粉丝管理 · 定时检测与自动回关设置抽屉
+ * Composable for managing 粉丝跟进 · 定时检测与自动回关设置抽屉
  */
 export function useSettingsDrawer() {
   const isOpen = ref(false);

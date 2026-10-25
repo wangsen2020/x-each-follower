@@ -1,3 +1,4 @@
+import {readSystemSettings} from '../../../shared/system-settings.js';
 import { ref, computed } from 'vue';
 import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-store.js';
 
@@ -8,12 +9,13 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-sto
  */
 export function useExecutionLogs() {
   const isOpen = ref(false);
-  const currentScope = ref('autoFollow');
+  const currentScope = ref('queue');
   const fansSubTab = ref('scan'); // 'scan' | 'followBack'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
   const entries = ref([]);
   const total = ref(0);
+  const queryDays = ref(0);
   const canPrev = ref(false);
   const canNext = ref(false);
   const elapsedSeconds = ref(0);
@@ -52,6 +54,7 @@ export function useExecutionLogs() {
   }
 
   const logPager = createLogPager();
+  let pageSize=LOG_PAGE_SIZE, since=null;
 
   const isFansScope = computed(() => currentScope.value === 'fans' || currentScope.value === 'monitor');
 
@@ -68,12 +71,12 @@ export function useExecutionLogs() {
   const title = computed(() => {
     const scope = currentScope.value;
     if (scope === 'fans' || scope === 'monitor') {
-      if (fansSubTab.value === 'scan') return '粉丝管理 · 粉丝扫描日志';
-      if (fansSubTab.value === 'followBack') return '粉丝管理 · 队列回关日志';
-      return '粉丝管理 · 全部执行日志';
+      if (fansSubTab.value === 'scan') return '粉丝跟进 · 粉丝扫描日志';
+      if (fansSubTab.value === 'followBack') return '粉丝跟进 · 队列回关日志';
+      return '粉丝跟进 · 全部执行日志';
     }
     if (scope === 'unreciprocated') {
-      return '回关监测 · 定时检测与取关日志';
+      return '回关监控 · 执行日志';
     }
     const prefix = scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '关注队列';
     return `${prefix} · 执行日志`;
@@ -95,7 +98,7 @@ export function useExecutionLogs() {
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       return `本页 ${displayedEntries.value.length} 条记录`;
     }
-    return `${total.value} 条记录`;
+    return `${queryDays.value ? `近 ${queryDays.value} 天 · ` : ''}${total.value} 条记录`;
   });
 
   const emptyTitle = computed(() => {
@@ -103,9 +106,9 @@ export function useExecutionLogs() {
     if (scope === 'fans' || scope === 'monitor') {
       if (fansSubTab.value === 'scan') return '暂无粉丝扫描日志';
       if (fansSubTab.value === 'followBack') return '暂无队列回关日志';
-      return '暂无粉丝管理执行日志';
+      return '暂无粉丝跟进执行日志';
     }
-    if (scope === 'unreciprocated') return '暂无回关监测日志';
+    if (scope === 'unreciprocated') return '暂无回关监控日志';
     return '暂无执行日志记录';
   });
 
@@ -143,12 +146,13 @@ export function useExecutionLogs() {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         let queryScope = currentScope.value;
         if (isFansScope.value && fansSubTab.value === 'followBack') {
-          queryScope = 'autoFollow';
+          queryScope = 'queue';
         }
         saved = await chrome.runtime.sendMessage({
           cmd: 'queryExecutionLogs',
           scope: queryScope,
-          limit: LOG_PAGE_SIZE,
+          limit: pageSize,
+          since,
           cursor: logPager.cursor()
         });
       } else {
@@ -181,8 +185,8 @@ export function useExecutionLogs() {
     updatePaginationFlags();
   }
 
-  async function open(scope = 'autoFollow') {
-    currentScope.value = scope;
+  async function open(scope = 'queue') {
+    currentScope.value = scope === 'autoFollow' ? 'queue' : scope;
     if (scope === 'fans' || scope === 'monitor') {
       fansSubTab.value = 'scan';
     }
@@ -190,6 +194,18 @@ export function useExecutionLogs() {
     entries.value = [];
     total.value = 0;
     isOpen.value = true;
+    status.value = 'loading';
+    const generation=logPager.generation();
+    try {
+      const settings=globalThis.chrome?.storage?.local?.get ? await readSystemSettings('logs') : {pageSize:LOG_PAGE_SIZE,days:0};
+      if(!isOpen.value || generation!==logPager.generation())return;
+      pageSize=settings.pageSize;
+      queryDays.value=settings.days;
+      since=settings.days?new Date(Date.now()-settings.days*86400000).toISOString():null;
+    } catch(error) {
+      if(!isOpen.value || generation!==logPager.generation())return;
+      status.value='error';errorMessage.value=error.message;return;
+    }
     await loadPage();
   }
 
@@ -221,12 +237,12 @@ export function useExecutionLogs() {
     }
 
     const label = scope === 'fans' || scope === 'monitor'
-      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝管理全部日志')
+      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝跟进全部日志')
       : scope === 'unreciprocated'
-        ? '回关监测执行日志'
+        ? '回关监控执行日志'
         : '当前范围的执行日志';
 
-    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？此操作不可撤销。`)) {
+    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`)) {
       return;
     }
 
@@ -257,6 +273,7 @@ export function useExecutionLogs() {
   }
 
   async function refreshIfOpen(targetScope) {
+    if (targetScope === 'autoFollow') targetScope = 'queue';
     if (!isOpen.value) return;
     if (targetScope) {
       const match = targetScope === currentScope.value ||

@@ -49,3 +49,16 @@ for(const response of [
  if(response.json.errors)await assert.rejects(request,e=>e.code==='X_PROFILE_UNAVAILABLE'&&e.availability==='suspended');
  else assert.deepEqual(await request,response);
 });
+
+test('unresolved identity persists across clients and blocks requests until a verified ID is observed',async()=>{
+ const {api,values,calls}=fixture();
+ await observeProfile(api,'target',{status:'identity_unresolved',reason:'无法确认用户 ID'},'greeting-identity');
+ const client=createXNetworkClient(api);
+ await assert.rejects(client.profile(12,'target'),{code:'X_PROFILE_IDENTITY_UNRESOLVED'});
+ await assert.rejects(createProfileTab(api,{url:'https://x.com/target'},'follow-queue'),{code:'X_PROFILE_IDENTITY_UNRESOLVED'});
+ assert.equal(calls.length,0);
+ await observeProfile(api,'target',{status:'ok'},'incomplete-dom');
+ assert.equal(values[PROFILE_ACCESS_PREFIX+'target'].status,'identity_unresolved');
+ await observeProfile(api,'target',{status:'ok',id:'123'},'manual-check');
+ await createProfileTab(api,{url:'https://x.com/target'},'follow-queue');assert.equal(calls.length,1);
+});

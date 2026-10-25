@@ -92,7 +92,7 @@ export function createBackgroundRecords({service, extensionUrl = ''} = {}) {
       for (const group of chunks(list, PAGE_LIMIT)) {
         if (!group.length) continue;
         const {result} = await call({op: 'batch', sourceKey, changes: group});
-        updated += Number(result?.updated) || group.length;
+        updated += Number(result?.updated ?? group.length);
       }
       return {updated};
     }

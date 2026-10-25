@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "XFollower · 粉丝管理",
-  "version": "2.10.6",
+  "name": "XFollower · 粉丝跟进",
+  "version": "2.15.1",
   "description": "本地保存 X 粉丝画像，管理待回关账号，并批量提交选中账号给 Grok 分析。",
   "permissions": [
     "scripting",
@@ -53,6 +53,6 @@
     "128": "icon128.png"
   },
   "action": {
-    "default_title": "打开 XFollower 粉丝管理"
+    "default_title": "打开 XFollower 粉丝跟进"
   }
 }

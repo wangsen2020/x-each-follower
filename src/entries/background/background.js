@@ -1,11 +1,19 @@
+import {createUnavailableCleanup,UNAVAILABLE_CLEANUP_ALARM} from '../../features/relationships/unavailable-cleanup.js';
+import {AUTO_GREETING_ALARM} from '../../features/relationships/auto-greeting.js';
+import {createBackgroundAutoGreeting} from '../../features/relationships/auto-greeting-adapter.js';
+import {createGreetingLedger} from '../../features/relationships/greeting-ledger.js';
+import {AUTO_UNFOLLOW_ALARM} from '../../features/relationships/auto-unfollow.js';
+import {createBackgroundAutoUnfollow} from '../../features/relationships/auto-unfollow-adapter.js';
 import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
+import {createVersionHistory} from '../../shared/version-history.js';
+import {createSidebarIdentity} from '../../platform/x/sidebar-identity.js';
 import {createPanelLauncher} from '../../platform/panel-launcher.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
-import {createFollowQueueRuntime, QUEUE_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
+import {createFollowQueueRuntime, QUEUE_ALARM, COMMENT_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
 import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
-import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental } from '../../platform/persistent-db.js';
+import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental, durableCompactSnapshots } from '../../platform/persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
 import { evaluateMutualProfile, parseCount, repairMojibake } from '../../features/relationships/scoring.js';
 import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
@@ -24,14 +32,20 @@ import { executeGrokComTask, getGrokSessionState, handleGrokSessionAction, probe
 import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {createStorageWriteAdapter} from '../../platform/storage-write-adapter.js';
 import {createRecordRuntime} from '../../features/records/record-runtime.js';
+import {BACKUP_SETTINGS_KEY, validateBackupSettings} from '../../features/records/record-snapshots.js';
 import {createPostRuntime, POST_ALARM} from '../../features/post-tracking/post-runtime.js';
 import {createLeaderboardRuntime, LEADERBOARD_ALARM} from '../../features/leaderboard/leaderboard-runtime.js';
 import {createLeaderboardStore} from '../../features/leaderboard/leaderboard-store.js';
 import {canUseLeaderboardAction} from '../../features/leaderboard/leaderboard-access.js';
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
+const sidebarIdentity = createSidebarIdentity({api: chrome, fetchProfile: networkGetUserProfile, parseUsers: parseNetworkUsers});
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
 const writeLocal = payload => storageWrites.perform({op: 'localSet', payload});
+const versionHistory = createVersionHistory({storage:chrome.storage.local,version:APP_VERSION});
+const greetingLedger=createGreetingLedger({storage:chrome.storage.local,write:writeLocal});
+const handleFirstGreetingClaim=message=>greetingLedger.claim(message);
+const handleFirstGreetingFinish=message=>greetingLedger.finish(message);
 const recordRuntimeService = createRecordRuntime({
   storage: chrome.storage,
   durableGet,
@@ -40,9 +54,19 @@ const recordRuntimeService = createRecordRuntime({
   durableGetStrict,
   durableKeysStrict,
   durableAppendIncremental,
+  durableCompactSnapshots,
+  onBackupSettingsChanged: configureBackupAlarm,
+  hooks:{onCheckpoint: checkpoint => versionHistory.recordMigration('importing', checkpoint).catch(error => console.warn('升级日志写入失败:', error))},
   queue: storageWriteQueue,
   extensionOrigin: chrome.runtime.getURL('')
 });
+async function configureBackupAlarm(settings, preserveSchedule = false) {
+  if (!settings.enabled) { await chrome.alarms.clear('x-record-backup-maintenance'); return; }
+  const existing = preserveSchedule ? await chrome.alarms.get('x-record-backup-maintenance') : null;
+  if (existing?.periodInMinutes === settings.checkMinutes) return;
+  await chrome.alarms.create('x-record-backup-maintenance', {delayInMinutes: settings.checkMinutes, periodInMinutes: settings.checkMinutes});
+}
+chrome.storage.local.get(BACKUP_SETTINGS_KEY).then(saved => configureBackupAlarm(validateBackupSettings(saved[BACKUP_SETTINGS_KEY]), true)).catch(error => console.warn('备份计划恢复失败:', error.message));
 
 const panelLauncher = createPanelLauncher({api:chrome, sendToPanel:message => safeSendMessageToPanel(message)});
 chrome.action.onClicked.addListener(tab => {
@@ -62,7 +86,16 @@ const backgroundRecords = createBackgroundRecords({
   service: recordRuntimeService,
   extensionUrl: chrome.runtime.getURL('')
 });
+const autoGreetingRuntime=createBackgroundAutoGreeting({api:chrome,service:recordRuntimeService,records:backgroundRecords,ledger:greetingLedger});
+autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划恢复失败',error));
+const autoUnfollowRuntime=createBackgroundAutoUnfollow({api:chrome,service:recordRuntimeService,records:backgroundRecords,normalize:normalizeUnreciprocatedConfig});
+autoUnfollowRuntime.schedule(true).catch(error=>console.warn('自动取关计划恢复失败',error));
 const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
+const unavailableCleanup=createUnavailableCleanup({storage:chrome.storage.local,queue:followQueueRuntime.store,records:{handle:request=>recordRuntimeService.handle(request,chrome.runtime.getURL('background.js'))}});
+chrome.alarms.create(UNAVAILABLE_CLEANUP_ALARM,{periodInMinutes:5});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===UNAVAILABLE_CLEANUP_ALARM)unavailableCleanup.run().catch(console.warn);});
+unavailableCleanup.run().catch(console.warn);
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&unavailableCleanup.changed(changes))unavailableCleanup.run().catch(console.warn);});
 const postTrackingRuntime = createPostRuntime();
 const leaderboardRuntime = createLeaderboardRuntime({
   store:createLeaderboardStore(),
@@ -112,22 +145,42 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     every: 60,
     jitter: 10,
     overdueDays: 14,
+    autoGreeting: false,
+    greetingAfterDays: 1,
+    greetingText: '你好！刚刚关注了你，期待互关交流！',
+    greetingTextEn: 'Hi there! Just followed you, looking forward to connecting and following back!',
     autoUnfollow: false,
-    batchLimit: 10,
-    unfollowDelay: 3,
-    unfollowDelayJitter: 2,
+    autoUnfollowEvery: 30,
+    autoUnfollowJitter: 5,
+    activeTimeStart: '09:00',
+    activeTimeEnd: '21:00',
+    batchLimit: 20,
+    settingsSchemaVersion: 2,
+    dailyLimit: 400,
+    unfollowDelay: 15,
+    unfollowDelayJitter: 5,
     whitelist: '',
     lastRunAt: null,
-    lastSummary: '尚未执行回关监测'
+    lastSummary: '尚未执行回关监控'
   };
   const res = { ...defaults, ...(cfg || {}) };
+  if (cfg?.settingsSchemaVersion == null && Number(cfg?.batchLimit) === 10) res.batchLimit = 20;
+  res.settingsSchemaVersion = 2;
   res.every = Math.max(5, Math.min(1440, Number(res.every) || 60));
-  res.jitter = Math.max(1, Math.min(60, Number(res.jitter) || 10));
+  res.jitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.jitter)) ? Number(res.jitter) : 10));
   res.overdueDays = Math.max(1, Math.min(90, Number(res.overdueDays) || 14));
+  res.autoGreeting = Boolean(res.autoGreeting);
+  res.greetingAfterDays = Math.max(1, Math.min(30, Number(res.greetingAfterDays) || 1));
+  res.greetingText = String(res.greetingText || defaults.greetingText).trim().slice(0, 1000);
+  if (res.greetingText === '你好，刚关注了你，期待交流！') res.greetingText = defaults.greetingText;
+  res.greetingTextEn = String(res.greetingTextEn || defaults.greetingTextEn).trim().slice(0, 1000);
   res.autoUnfollow = Boolean(res.autoUnfollow);
-  res.batchLimit = Math.max(1, Math.min(50, Number(res.batchLimit) || 10));
-  res.unfollowDelay = Math.max(1, Math.min(30, Number(res.unfollowDelay) || 3));
-  res.unfollowDelayJitter = Math.max(1, Math.min(15, Number(res.unfollowDelayJitter) || 0));
+  res.autoUnfollowEvery = Math.max(5, Math.min(1440, Number(res.autoUnfollowEvery) || 30));
+  res.autoUnfollowJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 5));
+  res.batchLimit = Math.max(1, Math.min(50, Math.floor(Number(res.batchLimit)) || 20));
+  res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 400));
+  res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
+  res.unfollowDelayJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.unfollowDelayJitter)) ? Number(res.unfollowDelayJitter) : 5));
   res.whitelist = String(res.whitelist || '').trim();
   return res;
 }
@@ -137,7 +190,7 @@ export function scheduleUnreciprocatedTracker(rawCfg = {}) {
   chrome.alarms.clear('x-unreciprocated-tracker').then(() => {
     if (!cfg.enabled) return;
     const base = Number(cfg.every) || 60;
-    const jitter = Number(cfg.jitter) || 1;
+    const jitter = Number(cfg.jitter) || 0;
     const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     chrome.alarms.create('x-unreciprocated-tracker', { delayInMinutes: nextDelay });
   }).catch(() => {});
@@ -322,15 +375,17 @@ async function executeCommentAutoFollow(source = 'alarm') {
           continue;
         }
         let followed = false;
+        let followUncertain = false;
         if (user.id) {
           const result = await networkFollow(tabId, {id:user.id, handle});
           followed = result.status >= 200 && result.status < 300;
+          followUncertain = result.uncertain === true;
           if (!followed) {
             user.followFailureReason = result.error || `关注接口返回 ${result.status}`;
             rateLimited = result.status === 429 || /rate limit|too quickly|频率受限|过于频繁/i.test(user.followFailureReason);
           }
         }
-        if (!followed && !rateLimited) {
+        if (!followed && !rateLimited && !followUncertain) {
           const lookup = await networkGetUserProfile(tabId, handle);
           const target = lookup.status === 200 ? parseNetworkUsers(lookup.json).find(item => item.handle.toLowerCase() === handle.toLowerCase()) : null;
           if (target?.relationship?.following) followed = true;
@@ -514,6 +569,22 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  if (cmd === 'sidebarIdentity') {
+    if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
+      sendResponse({ok: false, error: '仅管理面板可读取账号身份'}); return false;
+    }
+    sidebarIdentity.read({force: message.force === true}).then(sendResponse, error => sendResponse({ok: false, error: error.message}));
+    return true;
+  }
+
+  if (cmd === 'firstGreetingClaim' || cmd === 'firstGreetingFinish') {
+    if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
+      sendResponse({ok: false, error: '私信操作仅允许从管理面板发起'}); return false;
+    }
+    const action = cmd === 'firstGreetingClaim' ? handleFirstGreetingClaim : handleFirstGreetingFinish;
+    action(message).then(sendResponse, error => sendResponse({ok: false, error: error.message}));
+    return true;
+  }
 
   if (cmd === 'scheduledFollowersDone') {
     const tab = sender.tab;
@@ -563,10 +634,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ok:false, error:'仅扩展内部可访问记录'});
       return false;
     }
-    recordRuntimeService.handle(message, sender.url).then(
+    const run = async () => {
+      if (message.op !== 'migrate') return recordRuntimeService.handle(message, sender.url);
+      const before = (await recordRuntimeService.handle({op:'status'}, sender.url)).status;
+      if (before.cutover && before.stage === 'ready') return recordRuntimeService.handle(message, sender.url);
+      await versionHistory.recordMigration('started', before).catch(error => console.warn('升级日志写入失败:', error));
+      try {
+        const result = await recordRuntimeService.handle(message, sender.url);
+        await versionHistory.recordMigration(result.status?.stage || 'completed', result.status).catch(error => console.warn('升级日志写入失败:', error));
+        return result;
+      } catch (error) {
+        await versionHistory.recordMigration('failed', {...recordRuntimeService.status(),error:error?.message || String(error)}).catch(logError => console.warn('升级日志写入失败:', logError));
+        throw error;
+      }
+    };
+    run().then(
       result => sendResponse(result),
       error => sendResponse({ok:false, error:String(error?.message || error)})
     );
+    return true;
+  }
+  if (cmd === 'versionHistory') {
+    if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
+      sendResponse({ok:false,error:'仅管理面板可读取版本记录'}); return false;
+    }
+    versionHistory.read().then(history => sendResponse({ok:true,version:APP_VERSION,...history}),
+      error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (cmd === 'storageWrite') {
@@ -650,6 +743,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ok:true});
     return false;
   }
+  if (cmd === 'configureUnreciprocatedTracker') {
+    if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可配置回关监控'}); return false; }
+    scheduleUnreciprocatedTracker(message.config || {});
+    sendResponse({ok:true});
+    return false;
+  }
   if (cmd === 'runCommentAutoFollowNow') {
     runCommentAutoFollow('manual').then(sendResponse);
     return true;
@@ -703,6 +802,12 @@ function safeSendMessageToPanel(message) {
 }
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if(alarm.name===AUTO_GREETING_ALARM){await autoGreetingRuntime.run();return;}
+  if(alarm.name===AUTO_UNFOLLOW_ALARM){await autoUnfollowRuntime.run();return;}
+  if (alarm.name === 'x-record-backup-maintenance') {
+    await recordRuntimeService.maintainBackups().catch(error => console.warn('业务备份维护:', error.message));
+    return;
+  }
   if (alarm.name === LEADERBOARD_ALARM) {
     await leaderboardRuntime.alarm().catch(error=>console.warn('X 榜单监控:',error.message));
     return;
@@ -712,6 +817,10 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     return;
   }
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
+  if (alarm.name === COMMENT_ALARM) {
+    await followQueueRuntime.runComments().catch(error=>console.warn('独立评论任务:',error.message));
+    return;
+  }
   if (alarm.name === QUEUE_ALARM) {
     const result = await followQueueRuntime.run().catch(error=>({ok:false,error:pageFailureMessage(error)}));
     if(result.notify!==false)await createNotification(`follow-queue-${Date.now()}`,{type:'basic',title:'X 关注队列',message:result.summary || result.error || '本轮结束'});
@@ -747,7 +856,7 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const cfg = normalizeAutoFollowConfig(mutualAutoFollowSettings || {});
     if (!cfg?.enabled) return;
     const base = Number(cfg.every) || 5;
-    const jitter = Number(cfg.jitter) || 1;
+    const jitter = Number(cfg.jitter) || 0;
     const nextDelay = randomizedInteger(base, jitter, 5, 1440);
     await chrome.alarms.create('x-mutual-auto-follow', { delayInMinutes: nextDelay });
     const res = await safeSendMessageToPanel({ cmd: 'runMutualAutoFollowTick' });
@@ -774,8 +883,8 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     if (!handledByPanel) {
       await createNotification(`x-unreciprocated-${Date.now()}`, {
         type: 'basic',
-        title: 'X 回关监测 · 定时检测提醒',
-        message: `定时回关检测周期已到（默认一小时一次），请保持管理面板开启以自动检测对方回关状态并清理超时未回关账号。`
+        title: 'X 回关监控 · 定时检测提醒',
+        message: '回关监控的定时比对时间已到。打开管理面板即可执行本地比对；自动取关由独立后台计划执行。'
       });
     }
   }
@@ -791,7 +900,8 @@ chrome.runtime.onStartup.addListener(async () => {
   await restoreSettingsFromSync();
   await recoverAlarms();
 });
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async details => {
+  await versionHistory.recordInstalled(details).catch(error => console.warn('版本记录写入失败:', error));
   await restoreSettingsFromSync();
   await recoverAlarms();
 });
@@ -804,6 +914,9 @@ leaderboardRuntime.schedule().catch(error=>console.warn('恢复 X 榜单监控�
 
 let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {
+  if(area==='local' && changes['systemSettings:windows'])ensureTemporaryWindowCleanup().catch(error=>console.warn('窗口回收设置应用失败',error));
+  if(area==='local' && changes.unreciprocatedSettings)autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划更新失败',error));
+  if(area==='local' && changes.unreciprocatedSettings)autoUnfollowRuntime.schedule().catch(error=>console.warn('自动取关计划更新失败',error));
   if (area === 'local') {
     recordRuntimeService.noteLegacyChange(changes).catch(error => console.warn('记录库变更标记失败:', error?.message || error));
   }

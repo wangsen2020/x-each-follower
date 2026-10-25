@@ -1,6 +1,6 @@
 <template>
   <dialog ref="dialog" class="action-settings-drawer" :aria-labelledby="titleId" @click="backdrop" @close="$emit('close')">
-    <header class="action-drawer-header"><h2 :id="titleId">{{ title }}</h2><button type="button" class="secondary action-drawer-close" :aria-label="closeLabel" @click="close">×</button></header>
+    <header class="action-drawer-header"><h2 :id="titleId">{{ title }}</h2><PanelCloseButton :label="closeLabel" @click="close" /></header>
     <div class="action-drawer-body"><slot /></div>
     <footer v-if="$slots.footer" class="action-drawer-footer"><slot name="footer" /></footer>
   </dialog>
@@ -8,6 +8,7 @@
 
 <script setup>
 import {ref,useId} from 'vue';
+import PanelCloseButton from './PanelCloseButton.vue';
 defineProps({title:{type:String,required:true},closeLabel:{type:String,default:'关闭'}});
 defineEmits(['close']);
 const dialog=ref(null),titleId=useId();
@@ -24,8 +25,6 @@ defineExpose({open,close});
 .action-drawer-header, .action-drawer-footer { display: flex; align-items: center; flex-shrink: 0; padding: 10px; background: #f9fbf9; }
 .action-drawer-header { justify-content: space-between; border-bottom: 1px solid #e7ece5; }
 .action-drawer-header h2 { margin: 0 10px 0 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
-.action-drawer-close { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 30px; height: 30px; min-height: 30px; max-height: 30px; line-height: 30px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #69766c; font-size: 20px; cursor: pointer; }
-.action-drawer-close:hover { color: #18302e; background: #eef4ef; }
 .action-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
 .action-drawer-footer { justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid #e7ece5; }
 .action-drawer-footer :slotted(:not(:last-child)) { margin-right: 10px; }

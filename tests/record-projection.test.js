@@ -19,7 +19,7 @@ test('a blocked upgrade rejects, discards the late attempt and allows explicit r
   old.close();
   await projection.writeState({stage: 'ready', cutover: true});
   assert.equal((await projection.readState()).cutover, true);
-  const verify = factory.open('blocked-upgrade', 4);
+  const verify = factory.open('blocked-upgrade');
   const db = await new Promise((resolve, reject) => { verify.onsuccess = () => resolve(verify.result); verify.onerror = () => reject(verify.error); });
   const value = await new Promise((resolve, reject) => {
     const get = db.transaction('preserved').objectStore('preserved').get('sentinel');

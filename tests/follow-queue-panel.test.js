@@ -5,11 +5,51 @@ import {
   SETTINGS_BOUNDS,
   STATE_LABELS,
   MODULE_LABELS,
+  summarizeQueueSources,
   safeHttpsUrl,
   safeHandleUrl,
   normalizeSettings,
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
+
+test('queue deletion requires confirmation, keeps failed rows and disables running jobs', async () => {
+  const root = createMockElement('div');
+  let jobs = ['uncertain', 'running'].map((state, index) => ({id:`del-${index}`, handle:`User${index}`, accountId:'owner', state, sources:[], evaluations:[]}));
+  let confirmed = false, fail = true;
+  const calls = [];
+  const prior = globalThis.confirm;
+  globalThis.confirm = () => confirmed;
+  const request = async message => {
+    calls.push(message);
+    if (message.cmd === 'followQueueList') return {ok:true, jobs};
+    if (message.cmd === 'followQueueSettings') return {ok:true, settings:DEFAULT_SETTINGS};
+    if (message.cmd === 'followQueueDelete') {
+      if (fail) return {ok:false, reason:'模拟删除失败'};
+      jobs = jobs.filter(job => job.id !== message.jobId);
+      return {ok:true};
+    }
+    return {ok:true};
+  };
+  const panel = mountFollowQueuePanel(root, {request, accountId:'owner'});
+  const wait = () => new Promise(resolve => setTimeout(resolve, 15));
+  try {
+    await wait();
+    const buttons = root.querySelectorAll('.fq-delete-job');
+    assert.equal(buttons.length, 2);
+    assert.equal(buttons[1].disabled, true);
+    buttons[0].click(); await wait();
+    assert.equal(calls.some(call=>call.cmd === 'followQueueDelete'), false);
+    confirmed = true;
+    root.querySelector('.fq-delete-job').click(); await wait();
+    assert.equal(jobs.length, 2);
+    assert.match(root.textContent, /模拟删除失败/);
+    fail = false;
+    root.querySelector('.fq-delete-job').click(); await wait();
+    assert.equal(jobs.length, 1);
+    assert.equal(root.querySelectorAll('.fq-delete-job').length, 1);
+    assert.ok(calls.some(call=>call.cmd === 'followQueueDelete' && call.confirmed && call.accountId === 'owner'));
+  } finally { panel.destroy(); globalThis.confirm = prior; }
+});
 
 test('automatic schedule switch enables scheduling when toggled on', async () => {
   const root=createMockElement('div'), calls=[];
@@ -430,7 +470,7 @@ test('mountFollowQueuePanel loads list and renders jobs with status badges and s
 
   // Check row 1 handle and badges
   assert.ok(rows[0].textContent.includes('@TargetUserOne'));
-  assert.ok(rows[0].textContent.includes('粉丝管理'));
+  assert.ok(rows[0].textContent.includes('粉丝跟进'));
   assert.ok(rows[0].textContent.includes('互关追踪'));
   assert.ok(rows[0].textContent.includes('已关注'));
   assert.ok(rows[0].textContent.includes('已发布帖子'));
@@ -442,6 +482,38 @@ test('mountFollowQueuePanel loads list and renders jobs with status badges and s
   assert.ok(rows[1].textContent.includes('无评价'));
 
   handle.destroy();
+});
+
+test('source column shows one module tag while trace keeps every discovery record', async () => {
+  const sources = [
+    {module:'fans',url:'https://x.com/target',enabled:true,discoveredAt:1},
+    {module:'fans',url:'',enabled:true,discoveredAt:2},
+    {module:'comments',url:'https://x.com/author/status/1',enabled:true,discoveredAt:3},
+    {module:'comments',url:'https://x.com/author/status/2',enabled:true,discoveredAt:4},
+    {module:'mutual',url:'https://x.com/anchor/followers',enabled:true,discoveredAt:5}
+  ];
+  assert.deepEqual(summarizeQueueSources(sources).map(group => [group.module, group.count, group.url]), [
+    ['fans', 2, 'https://x.com/target'],
+    ['comments', 2, null],
+    ['mutual', 1, 'https://x.com/anchor/followers']
+  ]);
+  const root = createMockElement('div');
+  const job = {id:'multi-source',accountId:'WatsonTaylor23',targetUserId:'123',handle:'target',sources,state:'pending',stage:'queued',createdAt:1,updatedAt:2,evaluations:[]};
+  const request = async ({cmd}) => cmd === 'followQueueList'
+    ? {ok:true,jobs:[job]}
+    : {ok:true,settings:{...DEFAULT_SETTINGS}};
+  const mounted = mountFollowQueuePanel(root,{request,accountId:'WatsonTaylor23'});
+  await new Promise(resolve => setTimeout(resolve, 15));
+  const row = root.querySelector('tbody tr');
+  const sourceCell = row.querySelector('.fq-col-sources');
+  assert.deepEqual(sourceCell.querySelectorAll('.fq-tag').map(tag => tag.textContent), ['粉丝跟进','评论追踪','互关追踪']);
+  assert.equal(sourceCell.querySelectorAll('.fq-source-link').length, 2);
+  row.querySelector('.fq-col-actions button').click();
+  const trace = root.querySelector('.fq-drawer');
+  assert.ok(trace.textContent.includes('候选来源记录 (5)'));
+  assert.ok(trace.textContent.includes('https://x.com/author/status/1'));
+  assert.ok(trace.textContent.includes('https://x.com/author/status/2'));
+  mounted.destroy();
 });
 
 test('mountFollowQueuePanel renders untrusted strings safely without HTML interpretation', async () => {
@@ -584,8 +656,9 @@ test('traceability drawer opens with complete chain and closes cleanly', async (
   assert.ok(drawer.textContent.includes('这是一段测试引用草稿'));
 
   // Close drawer via close button
-  const closeBtn = drawer.querySelector('.fq-drawer-close');
+  const closeBtn = drawer.querySelector('.panel-close-button');
   assert.ok(closeBtn);
+  assert.equal(closeBtn.getAttribute('aria-label'), '关闭');
   closeBtn.click();
 
   assert.equal(root.querySelector('.fq-drawer'), null);
@@ -630,6 +703,11 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   const autoPublishSwitch = drawer.querySelector('#fq_autoPublish');
   assert.ok(autoPublishSwitch);
   assert.equal(autoPublishSwitch.checked, false);
+  const fanBypass = drawer.querySelector('#fq_followBackAllowAll');
+  assert.ok(fanBypass);
+  assert.equal(fanBypass.checked, false);
+  fanBypass.checked = true;
+  fanBypass.dispatchEvent({type:'change',target:{checked:true}});
 
   // Edit fields
   batchInput.value = '10';
@@ -647,6 +725,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.ok(savedSettings);
   assert.equal(savedSettings.batchLimit, 10);
   assert.equal(savedSettings.autoPublish, true);
+  assert.equal(savedSettings.followBackAllowAll, true);
   assert.equal(savedSettings.enabled, false);
 
   handle.destroy();
@@ -1141,7 +1220,7 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   const updatedRows = root.querySelectorAll('tbody tr');
   const row1Btns = updatedRows[1].querySelectorAll('.fq-col-actions button');
   assert.equal(row1Btns[0].textContent, '发布评价');
-  const traceBtn = row1Btns[row1Btns.length - 1];
+  const traceBtn = Array.from(row1Btns).find(button => button.textContent === '溯源详情');
   traceBtn.click();
 
   const drawer = root.querySelector('.fq-drawer');
@@ -1476,4 +1555,50 @@ test('weight column defaults descending and toggle requests ascending from the f
   assert.equal(latest.order,'asc'); assert.equal(latest.cursor,null);
   assert.equal(root.querySelector('.fq-col-priority').getAttribute('aria-sort'),'ascending');
   panel.destroy();
+});
+
+for (const rejected of [false, true]) {
+  test(`first-page scan recovers an invalid cursor without mixing revisions, rejected=${rejected}`, async () => {
+    const root = createMockElement('div');
+    const cursors = [];
+    let restarted = false;
+    const request = async payload => {
+      if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+      cursors.push(payload.cursor);
+      if (payload.cursor) {
+        restarted = true;
+        if (rejected) throw new Error('invalid follow queue cursor');
+        return {ok: false, error: 'invalid follow queue cursor'};
+      }
+      return {ok: true, paged: true, jobs: [{id: restarted ? 'fresh' : 'old', handle: restarted ? 'Fresh' : 'Obsolete', state: 'uncertain', sources: []}], hasMore: !restarted, nextCursor: restarted ? null : 'old-cursor', totalKnown: false};
+    };
+    const panel = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+    try {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      assert.deepEqual(cursors, [null, 'old-cursor', null]);
+      assert.ok(root.textContent.includes('@Fresh'));
+      assert.equal(root.textContent.includes('@Obsolete'), false);
+      assert.equal(root.textContent.includes('invalid follow queue cursor'), false);
+    } finally { panel.destroy(); }
+  });
+}
+
+test('cursor recovery is bounded and manual retry gets a fresh budget', async () => {
+  const root = createMockElement('div');
+  let calls = 0;
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    calls++;
+    return {ok: false, error: 'invalid follow queue cursor'};
+  };
+  const panel = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls, 3);
+    assert.ok(root.textContent.includes('队列正在更新，请稍后重试。'));
+    const retry = [...root.querySelectorAll('button')].find(button => button.textContent === '重试');
+    retry.click();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls, 6);
+  } finally { panel.destroy(); }
 });

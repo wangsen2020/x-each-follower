@@ -100,7 +100,7 @@ test('slow read keeps the skeleton and withholds the empty state', async () => {
   const doc = fakeDocument();
   applyModuleView(doc, 'monitor', registry.get('monitor'), 0);
   assert.equal(doc.nodes.get('monitorLoad').hidden, false);
-  assert.equal(doc.nodes.get('monitorLoad').textContent.includes('正在加载粉丝管理'), true);
+  assert.equal(doc.nodes.get('monitorLoad').textContent.includes('正在加载粉丝跟进'), true);
   const done = (async () => {
     await read;
     registry.succeed('monitor');

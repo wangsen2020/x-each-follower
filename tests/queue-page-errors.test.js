@@ -27,7 +27,7 @@ test('outer-cycle failures are localized, persisted and rescheduled; concurrent 
  const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{mutual:true}}};let release;const gate=new Promise(r=>{release=r});let alarms=0;
  const api={storage:{local:local(values)},tabs:{query:async()=>[{id:1}],get:async()=>({status:'complete',url:'https://x.com/home'})},scripting:{executeScript:async()=>[{result:'viewer'}]},alarms:{clear:async()=>{},getAll:async()=>[],create:async()=>{alarms++;}}};
  const runtime=createFollowQueueRuntime({api,store:{getSettings:async()=>({enabled:true,every:8,jitter:2}),claim:async()=>{await gate;throw new Error('Frame with ID 0 is showing error page')}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]})}});
- const a=runtime.run();await new Promise(r=>setTimeout(r,1));const busy=await runtime.run();assert.equal(busy.notify,false);release();const result=await a;assert.match(result.summary,/页面加载失败/);assert.equal(result.ok,false);assert.equal(values[QUEUE_DIAGNOSTICS_KEY].recent[0].stage,'run-queue');assert.equal(alarms,1);
+ const a=runtime.run();await new Promise(r=>setTimeout(r,1));const busy=await runtime.run();assert.equal(busy.notify,false);release();const result=await a;assert.match(result.summary,/页面加载失败/);assert.equal(result.ok,false);assert.equal(values[QUEUE_DIAGNOSTICS_KEY].recent[0].stage,'run-queue');assert.equal(alarms,2);
 });
 
 test('backup reads evict cached error pages and use another tab; writes are not blindly replayed',async()=>{

@@ -5,16 +5,16 @@ main [hidden],main [id][hidden]{display:none}
 main{width:100%;max-width:100%;height:100%;max-height:100%;margin:0;box-sizing:border-box;display:grid;grid-template-columns:clamp(190px,18vw,240px) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);padding:10px;overflow:hidden}
 .sidebar{width:100%;height:100%;min-height:0;max-height:100%;grid-row:1 / -1;grid-column:1;position:static;top:auto;margin:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden}
 main .vue-panel-header{grid-column:2;grid-row:1;min-width:0;min-height:0;padding:0 0 4px 0;margin:0}
-main .vue-panel-header h1{font-size:20px;letter-spacing:-.5px;margin:2px 0 2px 0;line-height:1.2}
 main>.tab-panel,main>.monitor-card,main>.controls,main>.queue-card,main>.note,main>.toolbar,main>.table-wrap,main>footer,.monitor-panel,#monitorSection,#candidatesSection,#commentsSection,#unreciprocatedSection,#followQueueSection{grid-column:2;grid-row:2;min-width:0;max-width:100%;height:100%;min-height:0;max-height:100%;margin:0;box-sizing:border-box}
 .table-wrap{width:100%;max-width:none;min-width:0}
 .brand-logo{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;background:#8bc7a6;color:#18302e;font-size:22px;font-weight:850;letter-spacing:-2px;box-shadow:0 8px 18px #0b201b55}
-.brand-name{margin-top:10px;color:#fff;font-size:17px;font-weight:780;letter-spacing:-.3px}
+.brand-row{display:flex;align-items:center;flex-wrap:wrap;margin-top:10px}
+.brand-name{margin-right:8px;color:#fff;font-size:17px;font-weight:780;letter-spacing:-.3px}
 .brand-mark span{margin-top:4px}
-.brand-mark .brand-version{display:block;font-size:11px;line-height:1.4;letter-spacing:.2px;color:#a9c9bc;overflow-wrap:anywhere}
+.brand-mark .brand-version{display:block;margin-top:0;font-size:11px;letter-spacing:.2px;color:#a9c9bc;overflow-wrap:anywhere}
 .tab-panel{min-width:0}
 @media(max-width:900px){main{grid-template-columns:clamp(72px,10vw,110px) minmax(0,1fr);padding:10px}.sidebar{height:100%}}
-@media(max-width:600px){body{overflow:auto}main{display:block;width:100%;height:auto;min-height:100vh;padding:10px;overflow:visible}.sidebar{width:100%;height:auto;position:sticky;top:0;min-height:0;margin:-10px -10px 15px;padding:8px;z-index:3}.brand-logo,.brand-name,.brand-mark span,.brand-mark .brand-version{display:none}}
+@media(max-width:600px){body{overflow:auto}main{display:block;width:100%;height:auto;min-height:100vh;padding:10px;overflow:visible}.sidebar{width:100%;height:auto;position:sticky;top:0;min-height:0;margin:-10px -10px 15px;padding:8px;z-index:3}.brand-logo,.brand-row,.brand-name,.brand-mark span,.brand-mark .brand-version{display:none}}
 /* Workspace panels keep their own scroll area; explanatory copy stays inside the active panel. */
 .queue-card{min-height:0;display:flex;flex-direction:column}.queue-card .queue-list{min-height:0;max-height:calc(100vh - 190px);overflow:auto;padding-right:4px}.queue-item{min-width:0}.queue-item>div:first-child{min-width:0}.queue-item small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.toolbar>div{min-width:0}.toolbar .note{margin:3px 0 0;line-height:1.45}#candidatesSection footer{padding:14px 2px 0}
 .brand-logo img{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
@@ -93,6 +93,10 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .tag-custom-star{background:#fff9c4;color:#e65100;border-color:#fff59d}
 .tag-custom-white{background:#e1f5fe;color:#0277bd;border-color:#b3e5fc}
 
+/* 语种标识 */
+.tag-lang-zh{background:#e6f4ea;color:#137333;border-color:#ceead6}
+.tag-lang-en{background:#e8f0fe;color:#1a73e8;border-color:#d2e3fc}
+
 /* 6. 内容风险主题 */
 .tag-risk-politics{background:#ffebee;color:#c62828;border-color:#ffcdd2;font-weight:600}
 .tag-risk-military{background:#ede7f6;color:#4527a0;border-color:#d1c4e9;font-weight:600}
@@ -151,7 +155,7 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .drawer-switch-label > *{display:inline-block;margin-bottom:0}
 .drawer-switch-label input[type="checkbox"]{width:16px;height:16px;margin:0 8px 0 0;padding:0;flex-shrink:0;cursor:pointer}
 .drawer-switch-label .info-tip{display:inline-grid;margin:0 0 0 4px;flex-shrink:0}
-.info-tip{position:relative;display:inline-grid;place-items:center;width:14px;height:14px;margin-left:3px;vertical-align:middle;border-radius:50%;background:#769287;color:#fff;font-family:Arial,sans-serif;font-size:10px;font-weight:700;line-height:1;cursor:help}.info-tip::after{position:absolute;z-index:40;left:50%;bottom:calc(100% + 8px);width:max-content;max-width:220px;padding:7px 9px;transform:translateX(-50%);border-radius:5px;background:#2c3834;color:#fff;box-shadow:0 4px 12px rgba(18,32,26,.18);content:attr(data-tip);font-size:12px;font-weight:400;line-height:1.35;opacity:0;pointer-events:none;transition:opacity .12s;white-space:normal}.info-tip:hover::after{opacity:1}.monitor-toolbar .info-tip{margin-left:2px}.selection-bar .info-tip{margin-left:1px}.queue-head h2 .info-tip{vertical-align:2px}
+.info-tip{position:relative;display:inline-grid;place-items:center;width:14px;height:14px;margin-left:3px;vertical-align:middle;border-radius:50%;background:#769287;color:#fff;font-family:Arial,sans-serif;font-size:10px;font-weight:700;line-height:1;cursor:help}.info-tip::after{position:absolute;z-index:40;left:50%;top:calc(100% + 8px);bottom:auto;width:max-content;max-width:220px;padding:7px 9px;transform:translateX(-50%);border-radius:5px;background:#2c3834;color:#fff;box-shadow:0 4px 12px rgba(18,32,26,.18);content:attr(data-tip);font-size:12px;font-weight:400;line-height:1.35;opacity:0;pointer-events:none;transition:opacity .12s;white-space:normal}.info-tip:hover::after{opacity:1}.monitor-toolbar .info-tip{margin-left:2px}.selection-bar .info-tip{margin-left:1px}.queue-head h2 .info-tip{vertical-align:2px}
 .mutual-network-head{display:flex;align-items:end;margin:8px 0}.mutual-network-head label{display:grid;grid-template-columns:auto minmax(150px,280px);align-items:center;color:#52685d;font-size:12px}.mutual-network-head label:nth-child(2){grid-template-columns:auto 86px}.mutual-network-head input,.mutual-network-head select{height:34px;padding:7px 8px;font-size:13px}.mutual-network-head button{height:34px;padding:7px 12px;font-size:12px}.network-status{min-height:20px;margin:7px 0 10px;color:#60756a;font-size:12px}@media(max-width:700px){.mutual-network-head{align-items:stretch;flex-wrap:wrap}.mutual-network-head label{flex:1 1 100%;grid-template-columns:auto 1fr}.mutual-network-head button{width:100%}}
 
 /* Candidates reciprocal network layout */
@@ -161,7 +165,7 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .mutual-network-head .mutual-anchor-field{flex:0 1 460px}
 .mutual-network-head .mutual-limit-field{flex:0 0 92px}
 .mutual-field-label{display:inline-flex;align-items:center;width:max-content;font-weight:600;line-height:16px}
-.mutual-field-label .info-tip{margin:0}
+.mutual-field-label .info-tip{margin:0 0 0 10px}
 .mutual-field-label .info-tip::after{left:0;transform:none}
 .mutual-network-head .mutual-field input,.mutual-network-head .mutual-field select{width:100%;height:32px;padding:6px 8px;font-size:13px}
 .mutual-network-head #collectNetwork{flex:0 0 auto;width:auto;height:32px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
@@ -411,7 +415,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
   align-items: center;
 
 }
-.logs-modal-head-btns button:not(.icon-button) {
+.logs-modal-head-btns button:not(.icon-button):not(.panel-close-button) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -813,6 +817,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 #unreciprocatedSection .unreciprocated-table-wrap {
   flex: 1 1 0;
   min-height: 0;
+  max-height: none;
   overflow: auto;
   background: #fff;
   border: 1px solid #dce3d9;
@@ -820,6 +825,19 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
   margin: 0;
   padding: 0;
 }
+#unreciprocatedSection .greeting-dialog-mask { position:fixed; inset:0; z-index:30; background:rgba(16,42,34,.25); }
+#unreciprocatedSection .greeting-dialog { position:fixed; z-index:31; left:50%; top:50%; transform:translate(-50%,-50%); width:min(420px,calc(100vw - 24px)); padding:16px; border:1px solid #dce7df; border-radius:10px; background:#fff; box-shadow:0 14px 40px #102a2240; display:flex; flex-direction:column; }
+#unreciprocatedSection .greeting-dialog[hidden],#unreciprocatedSection .greeting-dialog-mask[hidden] { display:none; }
+#unreciprocatedSection .greeting-dialog strong { font-size:15px; color:#173f31; }
+#unreciprocatedSection .greeting-dialog p { margin:8px 0; font-size:12px; color:#52685d; }
+#unreciprocatedSection .greeting-dialog label { margin:8px 0 6px; font-size:12px; }
+#unreciprocatedSection .greeting-dialog textarea { width:100%; min-height:86px; padding:8px; box-sizing:border-box; border:1px solid #cbdacf; border-radius:6px; resize:vertical; font-size:12px; }
+#unreciprocatedSection .greeting-dialog-actions { display:flex; justify-content:flex-end; margin-top:8px; }
+#unreciprocatedSection .greeting-dialog-actions > :not(:last-child) { margin-right:10px; }
+#unreciprocatedSection .greeting-action { margin-right:10px; }
+#vueUnreciprocatedSettingsDrawer .greeting-test-controls { display:flex; align-items:center; min-width:0; }
+#vueUnreciprocatedSettingsDrawer .greeting-test-controls input { flex:1 1 auto; width:0; margin-right:10px; }
+#vueUnreciprocatedSettingsDrawer .greeting-test-controls button { flex:0 0 auto; }
 #unreciprocatedSection .unreciprocated-table {
   width: 100%;
   border-collapse: collapse;
@@ -989,6 +1007,7 @@ main > :not(.sidebar){margin-left:20px}
 /* Vue shell stays in source order while its children participate in the main grid. */
 #panel-vue-root, #panel-vue-container { display:contents; }
 main .vue-panel-header { padding:0 11px 4px; margin-left:0; }
+main .vue-panel-header:has(#recordMigration[hidden]) { display:none; }
 /* Borderless panels start their text one pixel before bordered cards. */
 #panel-vue-container:has(> :is(#candidatesSection, #followQueueSection, #knowledgeSection):not([hidden])) > .vue-panel-header { padding-left:10px; }
 #panel-vue-container > .tab-panel { padding-left:10px; padding-right:10px; }
@@ -1037,12 +1056,27 @@ label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; 
 .settings-drawer-content > .drawer-setting-group:has(> input[type="number"]) { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; }
 .settings-drawer-content .drawer-setting-group > .drawer-setting-label { margin: 0 10px 0 0; min-width: 10em; max-width: calc(100% - 90px); flex: 0 1 auto; line-height: 20px; text-align: start; }
 .settings-drawer-content .drawer-setting-group > input[type="number"] { width: 80px; flex: 0 0 80px; height: 32px; margin: 0; text-align: start; }
+/* Keep labels compact; unused width stays after the controls. */
+.settings-drawer-content .drawer-setting-group:has(> input[type="number"]) > .drawer-setting-label,
+#vueUnreciprocatedSettingsDrawer .drawer-setting-time > .drawer-setting-label {
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+  flex: 0 0 120px;
+  justify-content: flex-start;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+#vueUnreciprocatedSettingsDrawer .drawer-setting-group > input[type="number"],
+#vueUnreciprocatedSettingsDrawer .drawer-setting-time > .time-window-inputs { margin-left: 0; }
 .settings-drawer-content .drawer-switch-label { flex-wrap: nowrap; justify-content: flex-start; text-align: start; line-height: 20px; }
 .settings-drawer-content .drawer-switch-label > span:not(.info-tip) { min-width: 0; overflow-wrap: anywhere; }
 .settings-drawer-content .drawer-setting-group:has(textarea) > label { max-width: 100%; margin-bottom: 8px; }
 .settings-drawer-content .drawer-setting-group:has(.drawer-checkpoint-display) > label { max-width: 100%; margin-bottom: 8px; }
-:is(.settings-drawer-content,.fq-drawer-body,.post-setting-card) .info-tip { flex: 0 0 16px; width: 16px; height: 16px; box-sizing: border-box; margin-left: 6px; background: transparent; color: #63766a; border: 1px solid #8c9e92; font-weight: 400; }
-:is(.settings-drawer-content,.fq-drawer-body,.post-setting-card) .info-tip::after { top: calc(100% + 8px); bottom: auto; left: auto; right: -70px; transform: none; width: 220px; max-width: calc(100vw - 40px); box-sizing: border-box; text-align: start; overflow-wrap: anywhere; }
+:is(.settings-drawer-content,.fq-drawer-body) .info-tip { flex: 0 0 14px; width: 14px; height: 14px; box-sizing: border-box; margin-left: 10px; background: #769287; color: #fff; border: 0; font-weight: 700; }
+:is(.settings-drawer-content,.fq-drawer-body) .info-tip::after { top: calc(100% + 8px); bottom: auto; left: auto; right: -70px; transform: none; width: 220px; max-width: calc(100vw - 40px); box-sizing: border-box; text-align: start; overflow-wrap: anywhere; }
+.post-setting-card .info-tip { flex: 0 0 14px; width: 14px; height: 14px; background: #769287; color: #fff; border: 0; font-weight: 700; }
+.post-setting-card .info-tip::after { left: auto; right: 0; transform: none; max-width: min(220px, calc(100vw - 40px)); }
 .info-tip:focus::after { opacity: 1; }
 .info-tip:focus-visible { outline: 2px solid #14744c; outline-offset: 3px; }
 
@@ -1051,7 +1085,7 @@ label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; 
 
 #unreciprocatedStatus:empty { display: none; }
 /* Shared compact control contract. Override local component dimensions deliberately. */
-body :is(button, select, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"])):not(.info-tip):not(.kb-help):not(.lb-setting-help):not(.post-setting-help):not(.inline-help button) {
+body :is(button, select, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"])):not(.info-tip):not(.lb-setting-help):not(.post-setting-help):not(.inline-help button) {
   box-sizing: border-box !important;
   height: 30px !important;
   min-height: 30px !important;
@@ -1061,11 +1095,43 @@ body :is(button, select, input:not([type="checkbox"]):not([type="radio"]):not([t
   font-size: 12px !important;
   line-height: normal !important;
 }
-body button:not(.info-tip):not(.kb-help):not(.inline-help button) { white-space: nowrap; }
+body button:not(.info-tip):not(.inline-help button) { white-space: nowrap; }
 body :is(input, select, textarea) { font-size: 12px; }
 body textarea { line-height: 1.5; }
 /* Icon buttons keep a square footprint; explanatory question icons remain 14px. */
 body :is(.settings-gear-btn, .icon-button, .lb-icon-btn, .post-refresh-trigger, .post-memory-trigger, .post-settings-trigger) { width: 30px; padding-left: 0; padding-right: 0; }
+/* One close affordance for Vue drawers, notices, and DOM-created queue drawers. */
+body button.panel-close-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #69766c;
+  cursor: pointer;
+}
+body button.panel-close-button::before,
+body button.panel-close-button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+body button.panel-close-button::after { transform: translate(-50%, -50%) rotate(-45deg); }
+body button.panel-close-button:hover { color: #18302e; background: #eef4ef; }
+body button.panel-close-button:focus-visible { outline: 2px solid #14744c; outline-offset: 2px; }
 /* Action groups use explicit 10px sibling spacing, overriding legacy margin resets. */
 body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .post-head-icons, .post-actions, .post-page-buttons, .lb-head-icons, .kb-head-actions, .kb-card-actions, .kb-page-controls, .logs-modal-head-btns, .drawer-head-actions) { column-gap: 0 !important; align-items: center; }
 body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .post-head-icons, .post-actions, .post-page-buttons, .lb-head-icons, .kb-head-actions, .kb-card-actions, .kb-page-controls, .logs-modal-head-btns, .drawer-head-actions) > :not(:last-child):not([hidden]) { margin-right: 10px !important; }
@@ -1079,3 +1145,17 @@ body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .po
 .post-head-icons .post-memory-trigger { width: auto; padding-left: 6px; padding-right: 6px; }
 #unreciprocatedSection .unreciprocated-head .unreciprocated-head-left > button:not(:last-child) { margin-right: 10px !important; }
 #commentsSection .search-wrap > button { margin-left: 0 !important; }
+
+#unreciprocatedSection .col-actions .monitor-icon-button { position:relative; width:30px; height:30px; min-width:30px; padding:6px; margin:0 10px 0 0; }
+#unreciprocatedSection .col-actions .monitor-icon-button:last-child { margin-right:0; }
+#unreciprocatedSection .col-actions .monitor-icon-button::after { content:attr(data-tip); position:absolute; right:0; bottom:calc(100% + 6px); z-index:60; width:max-content; max-width:220px; white-space:normal; padding:6px 8px; border-radius:5px; background:#2c3834; color:#fff; font-size:12px; font-weight:400; line-height:1.4; opacity:0; pointer-events:none; }
+#unreciprocatedSection .col-actions .monitor-icon-button:hover::after,
+#unreciprocatedSection .col-actions .monitor-icon-button:focus-visible::after { opacity:1; }
+#unreciprocatedSection .col-actions .monitor-icon-button[aria-pressed="true"] { background:#bfe0ce; }
+
+#unreciprocatedSection .account-availability-icon { position:relative; display:inline-flex; vertical-align:middle; width:20px; min-width:20px; height:20px; padding:2px; margin-left:6px; border:0; background:transparent; }
+#unreciprocatedSection .account-availability-icon svg { width:16px; height:16px; }
+#unreciprocatedSection .availability-not_found, #unreciprocatedSection .availability-suspended { color:#b3342a; }
+#unreciprocatedSection .availability-ok { color:#28744d; }
+#unreciprocatedSection .account-availability-icon::after { content:attr(data-tip); position:absolute; left:0; top:calc(100% + 5px); width:max-content; max-width:260px; z-index:60; white-space:normal; padding:6px 8px; border-radius:5px; background:#2c3834; color:white; font-size:12px; font-weight:400; line-height:1.4; opacity:0; pointer-events:none; }
+#unreciprocatedSection .account-availability-icon:hover::after, #unreciprocatedSection .account-availability-icon:focus-visible::after { opacity:1; }

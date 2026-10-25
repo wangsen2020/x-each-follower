@@ -3,7 +3,7 @@ import {compareFollowQueuePriority, followQueuePriority} from './follow-queue-pr
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
-const DB_VERSION = 4;
+const DB_VERSION = 7;
 const DEFAULT_DB_NAME = 'x-each-follower-follow-queue';
 const STORES = ['jobs', 'outcomes', 'settings', 'meta'];
 const PAGE_MAX = 100;
@@ -26,6 +26,7 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   minFollowers: 50,
   ratioThreshold: 0.8,
   onlyRecommended: true,
+  followBackAllowAll: false,
   skipRiskContent: true,
   grokProfileAssessment: true,
   grokEnabled: false,
@@ -155,6 +156,10 @@ function mergeEvaluations(existing, incoming, followJobId) {
       reason: item.reason != null ? String(item.reason) : (prev.reason || ''),
       channel: item.channel || prev.channel || '',
       status: item.status || prev.status || '',
+      automaticComment: item.automaticComment ?? prev.automaticComment ?? false,
+      retryAt: item.retryAt ?? prev.retryAt ?? 0,
+      originalPostText: item.originalPostText ?? prev.originalPostText ?? '',
+      candidatePosts: clone(item.candidatePosts ?? prev.candidatePosts ?? []),
       publishedPostId: item.publishedPostId || prev.publishedPostId || '',
       publishedPostUrl: item.publishedPostUrl || prev.publishedPostUrl || '',
       attempts
@@ -174,6 +179,7 @@ function normalizeSettings(input, base) {
   const next = {...FOLLOW_QUEUE_DEFAULT_SETTINGS};
   next.enabled = merged.enabled === true;
   next.onlyRecommended = merged.onlyRecommended !== false;
+  next.followBackAllowAll = merged.followBackAllowAll === true;
   next.skipRiskContent = merged.skipRiskContent !== false;
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
@@ -530,6 +536,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         ensureIndex(jobs, 'byState', 'state', {unique: false});
         ensureIndex(jobs, 'accountPriorityAsc', ['accountId', 'priority', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountPriorityDesc', ['accountId', 'priorityDescending', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountStatePriorityAsc', ['accountId', 'state', 'priority', 'createdAt', 'id'], {unique: true});
+        ensureIndex(jobs, 'accountStatePriorityDesc', ['accountId', 'state', 'priorityDescending', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountCreated', ['accountId', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountStateCreated', ['accountId', 'state', 'createdAt', 'id'], {unique: true});
         ensureIndex(jobs, 'accountStateDue', ['accountId', 'state', 'nextEligibleAt', 'createdAt', 'id'], {unique: true});
@@ -679,7 +687,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
   }
 
   return {
-    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult, profile} = {}) {
+    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult, profile, followBackCandidate} = {}) {
       const account = requireAccountId(accountId);
       const userId = userIdString(targetUserId);
       const canonical = canonicalHandle(handle);
@@ -690,6 +698,11 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
 
       return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
         const targetKey = userId ? `id:${userId}` : `handle:${canonical}`;
+        const deletedById = userId && await requestResult(meta.get(`deleted:${account}:id:${userId}`));
+        const deletedByHandle = canonical && await requestResult(meta.get(`deleted:${account}:handle:${canonical}`));
+        if (deletedById || (deletedByHandle && (!userId || !deletedByHandle.targetUserId || deletedByHandle.targetUserId === userId))) {
+          return {deleted:true, state:'excluded', accountId:account, targetUserId:userId, handle:shown, reason:'该账号已从队列删除'};
+        }
         const accountJobs = await jobsForIdentity(jobs, account, userId, canonical);
         let primary = null;
         let provisional = null;
@@ -786,6 +799,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           mergeStoredProfile(primary, {profile});
         }
 
+        if (typeof followBackCandidate === 'boolean') primary.followBackCandidate = followBackCandidate;
         const durableHit = await durableForJob(outcomes, account, primary, canonical);
         if (durableHit && (primary.state === 'pending' || primary.state === 'retry')) {
           applyDurableState(primary, durableHit);
@@ -906,19 +920,24 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           }
         }
         const sourceOnly = moduleName !== 'all';
-        const indexName = order ? (order === 'asc' ? 'accountPriorityAsc' : 'accountPriorityDesc') : sourceOnly
+        const priorityState = Boolean(order && status !== 'all');
+        const indexName = priorityState ? (order === 'asc' ? 'accountStatePriorityAsc' : 'accountStatePriorityDesc')
+          : order ? (order === 'asc' ? 'accountPriorityAsc' : 'accountPriorityDesc') : sourceOnly
           ? SOURCE_INDEXES[moduleName]
           : (status === 'all' ? 'accountCreated' : 'accountStateCreated');
         const indexed = jobs.index(indexName);
-        const baseRange = order ? accountCreatedRange(account) : sourceOnly
+        const baseRange = priorityState ? keyRange().bound([account, status], [account, status, []], false, true)
+          : order ? accountCreatedRange(account) : sourceOnly
           ? accountCreatedRange(account)
           : (status === 'all' ? accountCreatedRange(account) : stateCreatedRange(account, status));
         let range = baseRange;
         if (parsed) {
-          const lower = order ? [account, parsed.priorityKey, parsed.createdAt, parsed.id] : sourceOnly || status === 'all'
+          const lower = priorityState ? [account, status, parsed.priorityKey, parsed.createdAt, parsed.id]
+            : order ? [account, parsed.priorityKey, parsed.createdAt, parsed.id] : sourceOnly || status === 'all'
             ? [account, parsed.createdAt, parsed.id]
             : [account, status, parsed.createdAt, parsed.id];
-          const upper = order || sourceOnly || status === 'all' ? [account, []] : [account, status, []];
+          const upper = priorityState ? [account, status, []]
+            : order || sourceOnly || status === 'all' ? [account, []] : [account, status, []];
           range = keyRange().bound(lower, upper, true, true);
         }
         const bounded = searching || (sourceOnly && status !== 'all') || Boolean(order && (sourceOnly || status !== 'all'));
@@ -1076,17 +1095,13 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         // Enablement and migration pause are not enforced in this store.
         // follow-queue-runtime does not yet reject claims while a migration is in progress.
         let job = null;
-        // The fan index also covers pre-existing jobs; stop at the oldest ready fan.
-        await cursorWalk(jobs.index('sourceFans'), accountCreatedRange(account), cursor => {
-          const candidate = cursor.value;
-          if (candidate.accountId !== account || candidate.redirectTo) return;
-          if (!['pending', 'retry'].includes(candidate.state) || candidate.nextEligibleAt > seenAt) return;
-          if (followQueuePriority(candidate) !== 100) return;
-          job = candidate;
-          return 'stop';
-        });
-        for (const state of job ? [] : ['pending', 'retry']) {
-          await cursorWalk(jobs.index('accountStateCreated'), stateCreatedRange(account, state), cursor => {
+        // Read the best ready candidate in each executable state, then compare them.
+        // Followers who already follow us retain priority 100; other profiles use
+        // the locally observed follower-count bands from follow-queue-priority.js.
+        for (const state of ['pending', 'retry']) {
+          await cursorWalk(jobs.index('accountStatePriorityDesc'), keyRange().bound(
+            [account, state], [account, state, []], false, true
+          ), cursor => {
             const candidate = cursor.value;
             if (candidate.accountId !== account || candidate.redirectTo) return;
             if (candidate.state !== state || !sourceAuthorized(candidate)) return;
@@ -1165,6 +1180,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           return {ok: false, reason: 'imported-hold', job: clone(job)};
         }
         if (typeof changes.stage === 'string') job.stage = changes.stage;
+        if(changes.lastDiagnostic===null)delete job.lastDiagnostic;
         if(changes.lastDiagnostic&&typeof changes.lastDiagnostic==='object')job.lastDiagnostic=clone(changes.lastDiagnostic);
         if (Number.isFinite(changes.nextEligibleAt)) job.nextEligibleAt = changes.nextEligibleAt;
         if (changes.followResult && typeof changes.followResult === 'object') {
@@ -1183,6 +1199,39 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         rememberOutcome(outcomes, job);
         await bumpRevision(meta);
         return {ok: true, job: clone(job)};
+      });
+    },
+
+    async markDeletedHandle({accountId,handle}={}) {
+      const account=requireAccountId(accountId),key=canonicalHandle(handle);
+      if(!/^[a-z0-9_]{1,15}$/.test(key))throw new Error('账号格式无效');
+      return withTransaction('readwrite',async({meta})=>{
+        meta.put({key:`deleted:${account}:handle:${key}`,accountId:account,targetUserId:'',deletedAt:now()});
+        await bumpRevision(meta);return {ok:true};
+      });
+    },
+    async deleteJob({accountId, id} = {}) {
+      const account = requireAccountId(accountId);
+      if (typeof id !== 'string' || !id) throw new Error('job id is required');
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
+        const job = await requestResult(jobs.get(id));
+        if (!job || job.accountId !== account) return {ok:false, reason:'未找到该账号的队列任务'};
+        const matches = (await jobsForIdentity(jobs, account, job.targetUserId, job.handleCanonical))
+          .filter(other => other.id === job.id || (job.targetUserId && other.targetUserId === job.targetUserId) || (!other.targetUserId && other.handleCanonical === job.handleCanonical));
+        if (matches.some(other => other.state === 'running' || (leaseHeld(other) && other.lease.expiresAt > now()))) {
+          return {ok:false, reason:'任务正在执行，请结束后再删除'};
+        }
+        for (const row of matches) {
+          const stamp = {accountId:account, targetUserId:row.targetUserId || job.targetUserId || '', deletedAt:now()};
+          if (row.targetUserId) meta.put({...stamp, key:`deleted:${account}:id:${row.targetUserId}`});
+          for (const handle of new Set([row.handleCanonical, ...(row.aliases || []).map(alias=>canonicalHandle(alias.handle))].filter(Boolean))) {
+            meta.put({...stamp, key:`deleted:${account}:handle:${handle}`});
+          }
+          outcomes.delete(outcomeKey(account, row.targetKey));
+          jobs.delete(row.id);
+        }
+        await bumpRevision(meta);
+        return {ok:true, deleted:matches.length, handle:job.handle};
       });
     },
 

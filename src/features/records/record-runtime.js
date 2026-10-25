@@ -4,10 +4,13 @@
 import {canonicalValue, createRecordRepository} from './record-repository.js';
 import {createRecordMigration, hashCanonical, flattenLegacySnapshot, moduleForPath} from './record-migration.js';
 import {createRecordProjection} from './record-projection.js';
+import {SNAPSHOT_CATALOG, SNAPSHOT_PREFIX, SNAPSHOT_LOG_PREFIX, BACKUP_SETTINGS_KEY, validateBackupSettings, splitSnapshot, readSnapshot, verifySnapshotRestore} from './record-snapshots.js';
+import {resolveFollowedAt, matchesAccountAvailability} from '../relationships/followback-monitor.js';
 import {filterMutualTrackingUsers} from '../relationships/scoring.js';
 import {mutualUserCategory, personalRelationshipLabel} from '../relationships/network-api.js';
 import {applyRelationshipSnapshot, buildRelationshipIndex, commentRelationshipLabel, deriveNotMutualUsers, deriveTrackerUsers} from '../relationships/relationship-rules.js';
 import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
+import {PROFILE_ACCESS_PREFIX} from '../../platform/x/profile-access.js';
 
 export const LEGACY_RECORD_KEYS = [
   'monitor', 'rows', 'profileCache', 'mutualNetwork', 'commentTracking',
@@ -121,7 +124,9 @@ function tabsFor(moduleName, payload, path, index) {
   }
   if (moduleName === 'unreciprocated') {
     if (payload?.status === 'unfollowed') return ['unfollowed'];
-    return ['all', payload?.status || 'pending'];
+    const tabs = ['all', payload?.status || 'unknown'];
+    if (payload?.status === 'pending' || payload?.status === 'overdue') tabs.push('unreciprocated');
+    return tabs;
   }
   return ['all'];
 }
@@ -135,8 +140,8 @@ function sortKeyFor(moduleName, payload, path, index) {
   if (moduleName === 'fans') return dated(payload?.discoveredAt);
   if (moduleName === 'logs') return dated(payload?.at);
   if (moduleName === 'unreciprocated') {
-    const rank = payload?.status === 'overdue' ? '0' : '1';
-    return `${rank}|${String(payload?.followedAt || '')}|${tie}|${handle}`;
+    const followedAt = Date.parse(payload?.followedAt);
+    return `${Number.isFinite(followedAt) ? '0' : '1'}|${Number.isFinite(followedAt) ? String(followedAt).padStart(15, '0') : '999999999999999'}|${tie}|${handle}`;
   }
   if (moduleName === 'mutual') {
     const view = applyRelationshipSnapshot(payload, index);
@@ -288,9 +293,8 @@ function compareProjectionRows(moduleName, a, b) {
   if (moduleName === 'fans') return descendingDate(a.payload?.discoveredAt, b.payload?.discoveredAt) || stable();
   if (moduleName === 'comments') return descendingDate(a.payload?.lastSeenAt, b.payload?.lastSeenAt) || stable();
   if (moduleName === 'unreciprocated') {
-    const rank = row => row.payload?.status === 'overdue' ? 0 : 1;
-    return rank(a) - rank(b)
-      || (Date.parse(a.payload?.followedAt) || 0) - (Date.parse(b.payload?.followedAt) || 0)
+    const date = row => Date.parse(row.payload?.followedAt) || Number.POSITIVE_INFINITY;
+    return date(a) - date(b)
       || handleOrder();
   }
   if (moduleName === 'mutual') {
@@ -393,6 +397,10 @@ function membershipOf(row) {
 
 function matches(moduleName, row, filter) {
   const payload = row.payload || {};
+  if (Array.isArray(filter.statuses) && filter.statuses.length && !filter.statuses.includes(payload.status || row.status)) return false;
+  if (filter.dateUnknown && Number.isFinite(Date.parse(payload.followedAt))) return false;
+  if (filter.dateKnown && !Number.isFinite(Date.parse(payload.followedAt))) return false;
+  if (filter.availability && !matchesAccountAvailability(payload, filter.availability)) return false;
   if (filter.status && payload.status !== filter.status && row.status !== filter.status) return false;
   if (moduleName === 'mutual' && (filter.search || (filter.tags && filter.tags.length) || filter.tab)) {
     if (filter.tab && filter.tab !== 'all' && mutualUserCategory(payload) !== filter.tab) return false;
@@ -487,6 +495,8 @@ export function createRecordRuntime({
   durableGetStrict,
   durableKeysStrict,
   durableAppendIncremental,
+  durableCompactSnapshots,
+  onBackupSettingsChanged,
   indexedDB: indexedDBImpl,
   IDBKeyRange: keyRangeImpl,
   dbName = 'x-each-follower-records',
@@ -986,6 +996,13 @@ export function createRecordRuntime({
           await retryPending(20);
           return publicProgress();
         }
+        const restored = await restoreLatestSnapshot();
+        if (restored) {
+          await replayIncrementalAfterRebuild();
+          progress.stage = 'ready'; progress.cutover = true; progress.error = null;
+          await projection.writeState(publicProgress());
+          return publicProgress();
+        }
         progress.stage = 'discovering';
         replayTrace = null;
         progress.cutover = false;
@@ -1107,7 +1124,7 @@ export function createRecordRuntime({
     await flushDirty(moduleName);
     const filter = request.filter && typeof request.filter === 'object' ? request.filter : {};
     const tab = filter.tab || 'all';
-    const complex = Boolean(filter.search || (filter.tags && filter.tags.length));
+    const complex = Boolean(filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown || filter.availability);
     const revision = (await projection.readState()).revision || 0;
     const filterHash = canonicalValue({module: moduleName, accountId, tab, filter});
     const parsed = request.cursor ? decodeCursor(request.cursor) : null;
@@ -1324,9 +1341,11 @@ export function createRecordRuntime({
     };
   }
 
-  function trackerTemplate(source) {
+  function trackerTemplate(source, related = []) {
     const user = source.payload || {};
-    const followedBy = user.relationship?.followedBy === true;
+    const candidates = [user, ...related.filter(row => row.accountId === source.accountId).map(row => row.payload || {})];
+    const date = candidates.some(item => Number.isFinite(Date.parse(item.followedAt))) ? resolveFollowedAt(candidates) : {followedAt: '', followedAtSource: 'unknown'};
+    const followedBy = typeof user.relationship?.followedBy === 'boolean' ? user.relationship.followedBy : null;
     return {
       id: user.id || '',
       handle: user.handle,
@@ -1335,10 +1354,10 @@ export function createRecordRuntime({
       bio: user.bio || '',
       followersText: user.followersText || '',
       followingText: user.followingText || '',
-      followedAt: user.followedAt || '',
+      ...date,
       followBackAt: user.followBackAt || null,
       relationship: {following: true, followedBy},
-      status: followedBy ? 'mutual' : 'pending',
+      status: followedBy === true ? 'mutual' : followedBy === false ? 'pending' : 'unknown',
       exempt: false
     };
   }
@@ -1437,12 +1456,16 @@ export function createRecordRuntime({
     const source = trackerSource(rows);
     if (real && synthetic) await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     if (!real && source) {
-      const generated = trackerTemplate(source);
+      const generated = trackerTemplate(source, rows);
       const previous = synthetic?.payload || {};
       const keepStatus = previous.status && previous.status !== 'pending' && previous.status !== 'mutual';
+      const followedBy = generated.relationship.followedBy ?? previous.relationship?.followedBy ?? null;
       const payload = {
+        ...previous,
         ...generated,
-        status: keepStatus ? previous.status : generated.status,
+        ...([generated, previous].some(user => Number.isFinite(Date.parse(user.followedAt))) ? resolveFollowedAt([generated, previous]) : {}),
+        relationship: {...generated.relationship, followedBy},
+        status: keepStatus ? previous.status : followedBy === true ? 'mutual' : followedBy === false ? 'pending' : 'unknown',
         exempt: previous.exempt === true ? true : generated.exempt
       };
       const next = await track('prepare-tracker-row', () => materializeRow({
@@ -1531,10 +1554,140 @@ export function createRecordRuntime({
     return {recovered};
   }
 
+  async function restoreLatestSnapshot() {
+    let catalog;
+    try { catalog = await readRecovery(SNAPSHOT_CATALOG); }
+    catch (cause) {
+      const error = new Error(`持久化备份来源访问失败: ${cause?.message || cause}`);
+      error.name = 'BaselineRecoveryAccessError';
+      throw error;
+    }
+    if (!catalog?.snapshots?.length) {
+      const head = await readRecovery(INCREMENTAL_HEAD);
+      if (head?.baseSeq > 0) throw new Error('完整快照目录缺失，禁止使用不完整的旧基线恢复');
+      return null;
+    }
+    let failure;
+    for (const descriptor of catalog.snapshots) {
+      try {
+        const {image} = await readSnapshot(readRecovery, descriptor);
+        await projection.importSnapshot(image);
+        const state = await projection.readState();
+        // Only copy progress fields. Copying metadata into progress would let a
+        // later progress checkpoint overwrite metadata applied from increments.
+        Object.assign(progress, {completed: state.completed, total: state.total,
+          migrationId: state.migrationId, fingerprint: state.fingerprint,
+          stage: 'replaying', cutover: false, error: null});
+        await projection.writeState({...publicProgress(), snapshotBaseSeq: descriptor.seq});
+        return descriptor;
+      } catch (error) { failure = error; }
+    }
+    throw failure || new Error('没有可恢复的完整快照');
+  }
+
+  async function backupSettings(value) {
+    if (value !== undefined) {
+      const settings = validateBackupSettings(value);
+      await storage.local.set({[BACKUP_SETTINGS_KEY]: settings});
+      await onBackupSettingsChanged?.(settings);
+      return settings;
+    }
+    return validateBackupSettings((await storage.local.get([BACKUP_SETTINGS_KEY]))[BACKUP_SETTINGS_KEY]);
+  }
+
+  let backupRun = null;
+  async function backupStatus() {
+    const [catalog, head, saved] = await Promise.all([readRecovery(SNAPSHOT_CATALOG), readRecovery(INCREMENTAL_HEAD), storage.local.get(['recordBackupLastAttempt'])]);
+    const latest = catalog?.snapshots?.[0];
+    return {snapshotCount: catalog?.snapshots?.length || 0,
+      incrementalCount: Math.max(0, (head?.seq || 0) - (head?.baseSeq || 0)),
+      lastBackupAt: latest?.savedAt || null, verification: latest?.verification || null,
+      running: !!backupRun, lastAttempt: saved.recordBackupLastAttempt || null};
+  }
+
+  async function maintainBackups(request = {}) {
+    if (backupRun) return backupRun;
+    backupRun = (async () => {
+      try {
+        const result = await performBackupMaintenance(request);
+        if (!result.skipped) await storage.local.set({recordBackupLastAttempt: {at: now(), ok: true}});
+        return result;
+      } catch (error) {
+        await storage.local.set({recordBackupLastAttempt: {at: now(), ok: false, error: String(error.message || error)}});
+        throw error;
+      } finally { backupRun = null; }
+    })();
+    return backupRun;
+  }
+
+  async function performBackupMaintenance({force = false} = {}) {
+    const settings = await backupSettings();
+    if (!settings.enabled && !force) return {skipped: true, reason: 'disabled'};
+    await ensureOpen();
+    requireReady();
+    if (typeof durableCompactSnapshots !== 'function') throw new Error('快照存储接口不可用');
+    return sequenceMutation(async () => {
+      await recoverBackups();
+      const head = await readRecovery(INCREMENTAL_HEAD) || {seq: 0};
+      const catalog = await readRecovery(SNAPSHOT_CATALOG);
+      const latest = catalog?.snapshots?.[0];
+      if (!force && latest && (head.seq === latest.seq ||
+          (head.seq - latest.seq < settings.incrementalLimit && now() - latest.savedAt < settings.maxAgeHours * 3600000))) {
+        const localDeleted = await projection.compactBackups(catalog.compactedThrough || 0);
+        return {skipped: true, seq: head.seq, retained: catalog.snapshots.length, localDeleted};
+      }
+      const image = await projection.exportSnapshot();
+      const {business, logs} = splitSnapshot(image);
+      const fingerprint = await hashCanonical(business);
+      const id = `${head.seq}-${now()}-${fingerprint.slice(0, 12)}`;
+      const descriptor = {id, seq: head.seq, savedAt: now(), fingerprint};
+      await durableSet(SNAPSHOT_LOG_PREFIX + id, {logs});
+      await durableSet(SNAPSHOT_PREFIX + id, {version: 1, seq: head.seq, business, fingerprint, logFingerprint: await hashCanonical(logs)});
+      const stored = await readSnapshot(readRecovery, descriptor);
+      const verification = await verifySnapshotRestore({image: stored.image, indexedDB: indexed, IDBKeyRange: keyRange,
+        dbName: `${dbName}-restore-check-${id}`});
+      const result = await durableCompactSnapshots({expectedHead: head.seq, retain: settings.retain, snapshot: {...descriptor, verified: true, verification}});
+      const localDeleted = await projection.compactBackups(result.compactedThrough);
+      await projection.writeState({snapshotBaseSeq: head.seq});
+      return {...result, localDeleted, verification};
+    });
+  }
+
   async function mutate(kind, request = {}) {
     await ensureOpen();
     requireReady();
     return sequenceMutation(() => applyMutation(kind, request));
+  }
+
+  async function deleteUnavailableAccount(request = {}) {
+    await ensureOpen();
+    requireReady();
+    const handle = String(request.handle || '').replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new Error('账号格式无效');
+    return sequenceMutation(async () => {
+      await recoverBackups();
+      const rows = await projection.rowsByHandleKey(handle);
+      const evidence = rows.map(row => row.payload?.accountAvailability).filter(Boolean);
+      const accessKey = PROFILE_ACCESS_PREFIX + handle;
+      const access = (await storage.local.get([accessKey]))[accessKey];
+      if (access) evidence.push(access);
+      const latest = evidence.sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0))[0];
+      if (!['suspended', 'not_found'].includes(latest?.status) || evidence.some(e=>e.checkedAt===latest?.checkedAt&&!['suspended','not_found'].includes(e.status))) {
+        if(request.automatic)return {handle,deleted:0,skipped:true};
+        throw new Error('账号尚未确认为封禁或不存在，请先重新检查');
+      }
+      const modules = new Set(['fans', 'mutual', 'comments', 'unreciprocated', 'profiles', 'analysis', 'rows']);
+      // Delete original sources first, then tracker overlays. Derived rows are recomputed.
+      const targets = rows.filter(row => modules.has(row.module) && row.sourceKey !== 'derived:notMutual')
+        .sort((a, b) => Number(a.module === 'unreciprocated') - Number(b.module === 'unreciprocated'));
+      let deleted = 0;
+      for (const row of targets) {
+        const result = await applyMutation('delete', {module: row.module, accountId: row.accountId,
+          userKey: row.userKey, expectedHandle: handle, operationId: crypto.randomUUID()});
+        if (!result.missing) deleted++;
+      }
+      return {handle, deleted};
+    });
   }
 
   async function applyMutation(kind, request = {}) {
@@ -1685,6 +1838,8 @@ export function createRecordRuntime({
   }
 
   async function applyBatchBody(sourceKey, changes, requestAccount) {
+    await recoverBackups();
+    let skipped = 0;
     for (const change of changes) {
       const patch = stripRecordMeta(change.patch || {});
       const handle = String(change.handle || patch.handle || '').toLowerCase();
@@ -1724,6 +1879,7 @@ export function createRecordRuntime({
       if (!existing && !change.create && bucket !== 'synthetic') throw new Error('batch record was not found');
       const payload = {...(existing?.payload || {}), ...patch};
       if (handle) payload.handle = patch.handle || existing?.payload?.handle || handle;
+      if (existing && canonicalValue(payload) === canonicalValue(existing.payload)) { skipped++; continue; }
       const leaf = identity || handle || operationId;
       const sourcePath = existing?.sourcePath || canonicalSourcePath(moduleName, sourceKey, bucket, leaf);
       const row = await materializeRow({
@@ -1746,7 +1902,7 @@ export function createRecordRuntime({
         payload
       });
     }
-    return {updated: changes.length};
+    return {updated: changes.length - skipped, skipped};
   }
 
   async function sourcePage(request = {}) {
@@ -1869,7 +2025,8 @@ export function createRecordRuntime({
     await ensureOpen();
     const limit = request.limit == null ? 50 : request.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 to 100');
-    const start = request.cursor ? Number(decodeCursor(request.cursor).seq) : 1;
+    const state = await projection.readState();
+    const start = request.cursor ? Number(decodeCursor(request.cursor).seq) : (Number(state.snapshotBaseSeq) || 0) + 1;
     if (!replayTrace || (!request.cursor && !request.deferReady)) beginReplayTrace(start);
     let head;
     try {
@@ -1936,6 +2093,7 @@ export function createRecordRuntime({
     if (op === 'put') return {ok: true, result: await mutate('put', message)};
     if (op === 'patch') return {ok: true, result: await mutate('patch', message)};
     if (op === 'delete') return {ok: true, result: await mutate('delete', message)};
+    if (op === 'deleteUnavailableAccount') return {ok: true, result: await deleteUnavailableAccount(message)};
     if (op === 'summary') return {ok: true, summary: await summary(message)};
     if (op === 'relations') return {ok: true, relations: await relations(message)};
     if (op === 'relationSummary') return {ok: true, summary: await relationSummary()};
@@ -1946,6 +2104,9 @@ export function createRecordRuntime({
     if (op === 'sourcePage') return {ok: true, page: await sourcePage(message)};
     if (op === 'lookupAll') return {ok: true, records: await lookupAll(message)};
     if (op === 'recoverBackups') return {ok: true, result: await recoverBackups()};
+    if (op === 'maintainBackups') return {ok: true, result: await maintainBackups(message)};
+    if (op === 'backupStatus') return {ok: true, result: await backupStatus()};
+    if (op === 'backupSettings') return {ok: true, settings: await backupSettings(message.value)};
     if (op === 'replayBackups') return {ok: true, result: await replayBackups(message)};
     if (op === 'lookup') {
       await ensureOpen();
@@ -2003,6 +2164,7 @@ export function createRecordRuntime({
     sourcePage,
     lookupAll,
     recoverBackups,
+    maintainBackups,
     replayBackups,
     handle,
     cancel(token) { cancels.add(token); }

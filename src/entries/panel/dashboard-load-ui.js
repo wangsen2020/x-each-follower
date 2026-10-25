@@ -1,11 +1,11 @@
 /** Per-module dashboard load chrome. Presentation only; it does not read or migrate storage. */
 
 export const DASHBOARD_MODULES = {
-  monitor: {initial: '正在加载粉丝管理…', refresh: '正在刷新粉丝管理…', recover: '正在从本地备份恢复粉丝管理…', badgeId: 'queueCount'},
+  monitor: {initial: '正在加载粉丝跟进…', refresh: '正在刷新粉丝跟进…', recover: '正在从本地备份恢复粉丝跟进…', badgeId: 'queueCount'},
   mutual: {initial: '正在加载互关追踪…', refresh: '正在刷新互关追踪…', recover: '正在从本地备份恢复互关追踪…', badgeId: 'mutualNetworkCount'},
   comments: {initial: '正在加载评论追踪…', refresh: '正在刷新评论追踪…', recover: '正在从本地备份恢复评论追踪…', badgeId: 'commentTrackingCount'},
   followQueue: {initial: '正在加载关注队列…', refresh: '正在刷新关注队列…', recover: '正在从本地备份恢复关注队列…', badgeId: null},
-  unreciprocated: {initial: '正在加载回关监测…', refresh: '正在刷新回关监测…', recover: '正在从本地备份恢复回关监测…', badgeId: 'unreciprocatedCount'}
+  unreciprocated: {initial: '正在加载回关监控…', refresh: '正在刷新回关监控…', recover: '正在从本地备份恢复回关监控…', badgeId: 'unreciprocatedCount'}
 };
 
 export const RECOVERY_KEY_MODULE = {
@@ -162,7 +162,7 @@ const REPLAY_STEPS = {
   'read-related-rows': '读取关联记录', 'read-relations': '读取关系状态',
   'write-relation': '写入关系状态', 'delete-relation': '清理关系状态',
   'write-derived-row': '更新未互关记录', 'delete-derived-row': '清理未互关记录',
-  'prepare-tracker-row': '整理回关监测记录', 'write-tracker-row': '写入回关监测记录', 'delete-tracker-row': '清理回关监测记录',
+  'prepare-tracker-row': '整理回关监控记录', 'write-tracker-row': '写入回关监控记录', 'delete-tracker-row': '清理回关监控记录',
   'refresh-related-views': '更新关联视图', 'update-revision': '更新数据版本',
   checkpoint: '保存回放批次状态', 'read-dirty-keys': '检查待同步数据', 'finalize-ready': '完成迁移状态写入'
 };

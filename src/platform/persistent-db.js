@@ -53,6 +53,55 @@ const dbPage = async (operation, key, value) => {
     });
     return JSON.stringify({found: true, v: keys});
   }
+  if (operation === 'compactSnapshots') {
+    const plan = JSON.parse(value);
+    const result = await transaction('readwrite', (tx, resolve, reject) => {
+      const store = tx.objectStore('records');
+      const headRequest = store.get('recordIncremental:v1:head');
+      headRequest.onsuccess = () => {
+        const head = headRequest.result || {seq: 0};
+        if (head.seq !== plan.expectedHead) { reject(new Error('备份期间数据已变化，请重新生成快照')); return; }
+        const catalogRequest = store.get('recordSnapshots:v1:catalog');
+        catalogRequest.onsuccess = () => {
+          const catalog = catalogRequest.result || {snapshots: []};
+          const candidate = store.get('recordSnapshots:v1:image:' + plan.snapshot.id);
+          candidate.onsuccess = () => {
+            if (!plan.snapshot.verified || candidate.result?.fingerprint !== plan.snapshot.fingerprint || candidate.result?.seq !== head.seq) {
+              reject(new Error('快照未通过恢复验证，拒绝清理')); return;
+            }
+            const retain = plan.retain ?? 3;
+            if (!Number.isInteger(retain) || retain < 1 || retain > 10) { reject(new Error('快照保留数量无效')); return; }
+            const snapshots = [plan.snapshot, ...catalog.snapshots.filter(s => s.id !== plan.snapshot.id)].slice(0, retain);
+            const floor = Math.min(...snapshots.map(s => s.seq));
+            const keep = new Set(snapshots.map(s => s.id));
+            let deleted = 0;
+            const cursorRequest = store.openKeyCursor();
+            cursorRequest.onsuccess = () => {
+              const cursor = cursorRequest.result;
+              if (!cursor) {
+                store.put({version: 1, snapshots, compactedThrough: floor}, 'recordSnapshots:v1:catalog');
+                store.put({...head, baseSeq: floor, validatedThrough: head.seq, tailIndexed: true}, 'recordIncremental:v1:head');
+                resolve({verified: true, deleted, retained: snapshots.length, compactedThrough: floor, seq: head.seq});
+                return;
+              }
+              const name = String(cursor.key);
+              if (name.startsWith('recordIncremental:v1:seq:') && Number(name.split(':').at(-1)) <= floor) {
+                store.delete(cursor.primaryKey); deleted++;
+              } else if ((name.startsWith('recordSnapshots:v1:image:') || name.startsWith('recordLogArchives:v1:')) && !keep.has(name.split(':').at(-1))) {
+                store.delete(cursor.primaryKey);
+              }
+              cursor.continue();
+            };
+            cursorRequest.onerror = () => reject(cursorRequest.error);
+          };
+          candidate.onerror = () => reject(candidate.error);
+        };
+        catalogRequest.onerror = () => reject(catalogRequest.error);
+      };
+      headRequest.onerror = () => reject(headRequest.error);
+    });
+    return JSON.stringify({found: true, v: result});
+  }
   if (operation === 'appendIncremental') {
     const keyRange = typeof IDBKeyRange !== 'undefined' ? IDBKeyRange : (globalThis.IDBKeyRange || (typeof self !== 'undefined' ? self.IDBKeyRange : undefined));
     const entry = JSON.parse(value);
@@ -68,12 +117,15 @@ const dbPage = async (operation, key, value) => {
         const head = headReq.result || {seq: 0};
         const headSeq = head.seq || 0;
 
-        const seqRange = keyRange ? keyRange.bound(seqPrefix, seqPrefix + '\uffff') : null;
+        const baseSeq = Number(head.baseSeq) || 0;
+        const checkpoint = headSeq > baseSeq && head.validatedThrough === headSeq;
+        const seqStart = !checkpoint && !baseSeq ? seqPrefix : seqPrefix + String(checkpoint ? headSeq : baseSeq + 1).padStart(8, '0');
+        const seqRange = keyRange ? keyRange.bound(seqStart, seqPrefix + '\uffff') : null;
         const keysReq = store.getAllKeys(seqRange);
         keysReq.onerror = () => reject(keysReq.error);
         keysReq.onsuccess = () => {
           const allSeqKeys = keysReq.result || [];
-          let maxContinuousSeq = 0;
+          let maxContinuousSeq = checkpoint ? headSeq - 1 : baseSeq;
           for (let i = 0; i < allSeqKeys.length; i++) {
             const num = parseInt(allSeqKeys[i].slice(seqPrefix.length), 10);
             if (num === maxContinuousSeq + 1) {
@@ -84,12 +136,17 @@ const dbPage = async (operation, key, value) => {
             }
           }
 
+          if (checkpoint && maxContinuousSeq < headSeq) { reject(new Error('incremental checkpoint is missing')); return; }
           const opIndexKey = entry.operationId ? `${opPrefix}${entry.operationId}` : null;
           const opReq = opIndexKey ? store.get(opIndexKey) : null;
 
           const checkHistoricalIndex = () => {
             if (opReq && opReq.result && opReq.result.seq) {
               const matchedSeq = opReq.result.seq;
+              if (matchedSeq <= baseSeq) {
+                resolve({ok: true, entry: {...entry, seq: matchedSeq, status: 'stored'}, duplicate: true});
+                return;
+              }
               const matchedKey = seqPrefix + String(matchedSeq).padStart(8, '0');
               const entryReq = store.get(matchedKey);
               entryReq.onerror = () => reject(entryReq.error);
@@ -113,9 +170,13 @@ const dbPage = async (operation, key, value) => {
           const scanTail = () => {
             const checkStart = Math.max(1, maxContinuousSeq - 100);
             const tailRange = (maxContinuousSeq > 0 && keyRange) ? keyRange.bound(seqPrefix + String(checkStart).padStart(8, '0'), seqPrefix + String(maxContinuousSeq).padStart(8, '0')) : null;
-            const tailReq = tailRange ? store.getAll(tailRange) : null;
+            // Once the legacy tail has operation indexes, retries use the index directly.
+            const tailReq = tailRange && !(head.tailIndexed && maxContinuousSeq === headSeq) ? store.getAll(tailRange) : null;
 
             const onTailReady = tailEntries => {
+              for (const item of tailEntries) {
+                if (item?.operationId && item.seq) store.put({seq: item.seq, operationId: item.operationId}, opPrefix + item.operationId);
+              }
               const existingMatch = tailEntries.find(item => item && item.operationId === entry.operationId);
               if (existingMatch) {
                 if (maxContinuousSeq > headSeq) {
@@ -135,7 +196,7 @@ const dbPage = async (operation, key, value) => {
               if (opIndexKey) {
                 store.put({seq: nextSeq, operationId: entry.operationId}, opIndexKey);
               }
-              store.put({seq: nextSeq, operationId: entry.operationId}, headKey);
+              store.put({seq: nextSeq, baseSeq, operationId: entry.operationId, tailIndexed: true, validatedThrough: nextSeq}, headKey);
               resolve({ok: true, entry: storedBody, duplicate: false});
             };
 
@@ -159,7 +220,13 @@ const dbPage = async (operation, key, value) => {
     return JSON.stringify({found: true, v: result});
   }
   const parsed = JSON.parse(value);
-  await transaction('readwrite', (tx, resolve, reject) => { const r=tx.objectStore('records').put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
+  await transaction('readwrite', (tx, resolve, reject) => { const store=tx.objectStore('records');
+    if (String(key).startsWith('recordIncremental:v1:seq:')) {
+      const head=store.get('recordIncremental:v1:head');
+      head.onsuccess=()=>{if(head.result) store.put({...head.result,validatedThrough:null,tailIndexed:false},'recordIncremental:v1:head');};
+      head.onerror=()=>reject(head.error);
+    }
+    const r=store.put(parsed.v,key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); });
   return JSON.stringify({ok: true});
   } finally { db.close(); }
 };
@@ -318,4 +385,14 @@ export async function durableAppendIncremental(entry) {
     if (!res || !res.ok) throw new Error(res?.error || '增量日志原子写入失败');
     return res.entry;
   },{operation:'append-backup'});
+}
+
+export async function durableCompactSnapshots(plan) {
+  return withStorageTab(async tabId => {
+    const result = await chrome.scripting.executeScript({target: {tabId}, world: 'MAIN', func: dbPage,
+      args: ['compactSnapshots', null, JSON.stringify(plan)]});
+    const value = decodeDurableResult(result?.[0]?.result);
+    if (!value?.verified) throw new Error('快照清理未完成');
+    return value;
+  }, {operation: 'compact-snapshots'});
 }

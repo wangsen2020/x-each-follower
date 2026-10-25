@@ -1,6 +1,7 @@
 const newestFirst = logs => logs.slice().sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
 
 export function selectExecutionLogs(logs = [], scope = 'autoFollow') {
+  if (scope === 'queue') return newestFirst(logs.filter(log => log.scope === 'queue'));
   const verification = log => log.scope === 'verification';
   if (scope === 'fans' || scope === 'monitor') {
     return newestFirst(logs.filter(log =>

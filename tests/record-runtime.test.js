@@ -90,6 +90,43 @@ function comments(count, extra = {}) {
   };
 }
 
+test('unavailable account deletion removes all source rows and survives reopening without removing other users or logs', async () => {
+  const gone = {handle:'GoneUser', relationship:{following:true}, followedAt:'2026-10-01T00:00:00Z',
+    accountAvailability:{status:'suspended', checkedAt:100}};
+  const kept = {handle:'KeepUser', relationship:{following:true}};
+  const storage = memoryStorage({
+    monitor:{users:[gone, kept], followingUsers:[gone, kept], queue:[gone]},
+    mutualNetwork:{users:[gone, kept]}, commentTracking:{users:[gone, kept]},
+    unreciprocatedTracker:{users:[{...gone, status:'pending'}, kept]},
+    profileCache:{goneuser:gone}, analysisRows:[gone],
+    autoFollowLogs:[{handle:'GoneUser', result:'followed', at:'2026-10-01T00:00:00Z'}]
+  });
+  const durable = memoryDurable();
+  const service = runtime('delete-unavailable', storage, durable);
+  await service.migrate();
+  const result = await service.handle({op:'deleteUnavailableAccount', handle:'@GONEUSER'});
+  assert.ok(result.result.deleted >= 6);
+  const remaining = (await service.handle({op:'lookupAll', handle:'goneuser'})).records;
+  assert.ok(remaining.every(row => row.module === 'logs'));
+  assert.ok((await service.handle({op:'lookupAll', handle:'keepuser'})).records.length >= 3);
+  const reopened = runtime('delete-unavailable', storage, durable);
+  assert.equal((await reopened.query({module:'unreciprocated', limit:100})).records.some(row => row.handle === 'goneuser'), false);
+  const recovered = runtime('delete-unavailable-recovered', storage, durable);
+  await recovered.migrate();
+  const restored = (await recovered.handle({op:'lookupAll', handle:'goneuser'})).records;
+  assert.ok(restored.every(row => row.module === 'logs'));
+});
+
+test('unavailable deletion rejects healthy or unknown accounts and respects newer availability evidence', async () => {
+  const storage = memoryStorage({monitor:{followingUsers:[{handle:'safeuser', accountAvailability:{status:'suspended', checkedAt:1}}]}});
+  storage.data['xefProfileAccess:safeuser'] = {status:'ok', checkedAt:2};
+  const service = runtime('delete-unavailable-guard', storage, memoryDurable());
+  await service.migrate();
+  await assert.rejects(service.handle({op:'deleteUnavailableAccount', handle:'safeuser'}), /尚未确认/);
+  await assert.rejects(service.handle({op:'deleteUnavailableAccount', handle:'unknown'}), /尚未确认/);
+  assert.ok((await service.handle({op:'lookupAll', handle:'safeuser'})).records.length);
+});
+
 test('service workers and the runtime use static imports', () => {
   const background = readFileSync(new URL('../src/entries/background/background.js', import.meta.url), 'utf8');
   const source = readFileSync(new URL('../src/features/records/record-runtime.js', import.meta.url), 'utf8');
@@ -334,6 +371,16 @@ test('derived tracker paths keep original indexes and patches upsert the tracker
   assert.equal(tracker.tabs.all, 6);
   assert.equal(tracker.tabs.pending, 5);
   assert.equal(tracker.tabs.mutual, 1);
+  const firstUnreturnedPage = await service.query({module: 'unreciprocated', limit: 2, filter: {tab: 'all', statuses: ['pending', 'overdue']}});
+  assert.equal(firstUnreturnedPage.records.length, 2);
+  assert.ok(firstUnreturnedPage.records.every(row => row.payload.status === 'pending'));
+  const secondUnreturnedPage = await service.query({module: 'unreciprocated', limit: 2, cursor: firstUnreturnedPage.nextCursor, filter: {tab: 'all', statuses: ['pending', 'overdue']}});
+  assert.equal(secondUnreturnedPage.records.length, 2);
+  assert.ok(secondUnreturnedPage.records.every(row => row.payload.status === 'pending'));
+  const unknownFollowDates = await service.query({module: 'unreciprocated', limit: 10, filter: {tab: 'pending', dateUnknown: true}});
+  assert.equal(unknownFollowDates.records.length, 4);
+  const confirmedFollowDates = await service.query({module: 'unreciprocated', limit: 10, filter: {tab: 'pending', dateKnown: true}});
+  assert.equal(confirmedFollowDates.records.length, 1);
   const added = (await service.query({module: 'unreciprocated', limit: 10, filter: {tab: 'pending'}})).records.find(row => row.handle === 'added');
   assert.equal(added.sourcePath[1], 'synthetic');
   assert.notEqual(added.sourcePath[2], 'keep');
@@ -438,7 +485,7 @@ test('undated fans sort last and equal dates keep source order', async () => {
   assert.deepEqual(page.records.map(record => record.handle), ['newest', 'zz', 'aa', 'nodate']);
 });
 
-test('a monitor relationship change refreshes mutual and comment views', async () => {
+test('a monitor relationship change refreshes views without overwriting explicit not-following', async () => {
   const storage = memoryStorage({
     monitor: {users: [{handle: 'ada', relationship: {following: false, followedBy: false}}]},
     mutualNetwork: {users: [{handle: 'ada', name: 'Ada', relationship: {following: false}}]},
@@ -459,7 +506,7 @@ test('a monitor relationship change refreshes mutual and comment views', async (
   });
   const mutual = await service.query({module: 'mutual', limit: 5, filter: {tab: 'all'}});
   const comments = await service.query({module: 'comments', limit: 5, filter: {tab: 'all'}});
-  assert.equal(mutual.records[0].view.following, true);
+  assert.equal(mutual.records[0].view.following, false);
   assert.equal(comments.records[0].view.following, true);
   assert.equal(comments.records[0].view.followedBy, true);
   assert.equal(storage.data.mutualNetwork.users[0].relationship.following, false);
@@ -619,12 +666,14 @@ test('tracker custom fields survive a later follow refresh and posts stay distin
   const service = runtime('runtime-posts', storage, memoryDurable());
   await service.migrate();
   const tracked = (await service.query({module: 'unreciprocated', limit: 5})).records.find(row => row.handle === 'ada');
-  await service.patchRecord({module: 'unreciprocated', userKey: tracked.userKey, operationId: 'custom-status', patch: {status: 'exempt', exempt: true, bio: 'keep-me'}});
+  await service.patchRecord({module: 'unreciprocated', userKey: tracked.userKey, operationId: 'custom-status', patch: {status: 'exempt', exempt: true, bio: 'keep-me', followedAt: '2026-10-22T12:00:00.000Z', followedAtSource: 'estimated'}});
   await service.handle({op: 'batch', sourceKey: 'mutualNetwork', changes: [{handle: 'ada', sourceBucket: 'users', patch: {bio: 'from-source', city: 'nj'}}]});
   const again = (await service.query({module: 'unreciprocated', limit: 5})).records.find(row => row.handle === 'ada');
   assert.equal(again.payload.status, 'exempt');
   assert.equal(again.payload.exempt, true);
   assert.equal(again.payload.bio, 'from-source');
+  assert.equal(again.payload.followedAtSource, 'estimated');
+  assert.equal(again.payload.followedAt, '2026-10-22T12:00:00.000Z');
   const postsBefore = await service.query({module: 'posts', limit: 10});
   const firstPost = postsBefore.records.find(row => row.payload.id === 'p1');
   const secondPost = postsBefore.records.find(row => row.payload.id === 'p2');
@@ -945,4 +994,86 @@ test('replay diagnostics report a pending read, real journal counts and elapsed 
   assert.equal(finished.replay.finishedAt, clock);
   clock += 5000;
   assert.equal((await service.handle({op: 'status'})).status.replay.elapsedMs, 12000);
+});
+
+
+test('tracker recovers a real date from another local module before using an estimate', async () => {
+  const storage = memoryStorage({
+    monitor: {followingUsers: [{handle: 'ada', relationship: {following: true, followedBy: false}}]},
+    mutualNetwork: {users: [{handle: 'ada', followedAt: '2026-10-10T12:00:00.000Z', relationship: {following: true}}]}
+  });
+  const service = runtime('runtime-follow-date-recovery', storage, memoryDurable());
+  await service.migrate();
+  await service.handle({op: 'batch', sourceKey: 'monitor', changes: [{handle: 'ada', sourceBucket: 'followingUsers', patch: {bio: 'refresh'}}]});
+  const record = (await service.query({module: 'unreciprocated', limit: 5})).records.find(row => row.handle === 'ada');
+  assert.equal(record.payload.followedAt, '2026-10-10T12:00:00.000Z');
+  assert.equal(record.payload.followedAtSource, 'confirmed');
+});
+
+test('tracker comparison relationship survives a source with no reverse evidence', async () => {
+  const service = runtime('runtime-follow-evidence', memoryStorage({monitor: {followingUsers: [{handle: 'ada', relationship: {following: true}}]}}), memoryDurable());
+  await service.migrate();
+  const tracked = (await service.query({module: 'unreciprocated', limit: 5})).records[0];
+  await service.patchRecord({module: 'unreciprocated', userKey: tracked.userKey, operationId: 'known-reverse', patch: {relationship: {following: true, followedBy: true}, relationshipKnown: true, status: 'mutual'}});
+  await service.handle({op: 'batch', sourceKey: 'monitor', changes: [{handle: 'ada', sourceBucket: 'followingUsers', patch: {bio: 'refresh'}}]});
+  const result = (await service.query({module: 'unreciprocated', limit: 5})).records[0];
+  assert.equal(result.payload.relationship.followedBy, true);
+  assert.equal(result.payload.status, 'mutual');
+  assert.equal(result.payload.relationshipKnown, true);
+});
+
+
+test('availability filter scans the full tracker dataset with distinct unavailable reasons', async () => {
+  const service = runtime('runtime-availability-filter',memoryStorage({unreciprocatedTracker:{users:[
+    {handle:'active',status:'pending',accountAvailability:{status:'ok',checkedAt:1}},
+    {handle:'gone',status:'pending',accountAvailability:{status:'not_found',checkedAt:1}},
+    {handle:'banned',status:'pending',accountAvailability:{status:'suspended',checkedAt:1}},
+    {handle:'unverified',status:'pending'}
+  ]}}), memoryDurable());
+  await service.migrate();
+  const first=await service.query({module:'unreciprocated',limit:1,filter:{tab:'all',availability:'unavailable'}});
+  const next=await service.query({module:'unreciprocated',limit:1,cursor:first.nextCursor,filter:{tab:'all',availability:'unavailable'}});
+  assert.deepEqual([...first.records,...next.records].map(r=>r.handle).sort(),['banned','gone']);
+  const missing=await service.query({module:'unreciprocated',limit:10,filter:{tab:'all',availability:'not_found'}});
+  assert.deepEqual(missing.records.map(r=>r.handle),['gone']);
+  const unknown=await service.query({module:'unreciprocated',limit:10,filter:{tab:'all',availability:'unknown'}});
+  assert.deepEqual(unknown.records.map(r=>r.handle),['unverified']);
+});
+
+
+test('identical batch writes create no extra backup and still recover an earlier failed write', async () => {
+  const durable=memoryDurable();
+  const service=runtime('runtime-noop-batch',memoryStorage({monitor:{users:[{handle:'ada',bio:'same'}]}}),durable);
+  await service.migrate();
+  const before=durable.writes.length;
+  const result=await service.handle({op:'batch',sourceKey:'monitor',changes:[{handle:'ada',sourceBucket:'users',patch:{bio:'same'}}]});
+  assert.equal(result.result.skipped,1);
+  assert.equal(durable.writes.length,before);
+  durable.failIncremental=true;
+  await assert.rejects(service.handle({op:'batch',sourceKey:'monitor',changes:[{handle:'ada',sourceBucket:'users',patch:{bio:'changed'}}]}));
+  durable.failIncremental=false;
+  const recovered=await service.handle({op:'batch',sourceKey:'monitor',changes:[{handle:'ada',sourceBucket:'users',patch:{bio:'changed'}}]});
+  assert.equal(recovered.result.skipped,1);
+  assert.equal(durable.saved.get('recordIncremental:v1:head').seq,1);
+});
+
+test('automatic unfollow adapter reconciles actual record sources and does not restore following on reopen',async()=>{
+  const {createBackgroundAutoUnfollow}=await import('../src/features/relationships/auto-unfollow-adapter.js');
+  const {createBackgroundRecords}=await import('../src/features/records/background-record-data.js');
+  const t=new Date(2026,9,23,12).getTime();
+  const u={id:'123',handle:'autotarget',followedAt:'2026-09-01T00:00:00Z',state:'following',status:'overdue',relationship:{following:true,followedBy:false}};
+  const storage=memoryStorage({monitor:{followingUsers:[u],users:[u]},mutualNetwork:{users:[u]},unreciprocatedTracker:{users:[u]}});
+  const durable=memoryDurable(),service=runtime('auto-unfollow-reconcile',storage,durable);await service.migrate();
+  const records=createBackgroundRecords({service});
+  const data={unreciprocatedSettings:{autoUnfollow:true,autoUnfollowAccount:{id:'999',handle:'owner'},overdueDays:14,batchLimit:1,dailyLimit:400,autoUnfollowEvery:30,activeTimeStart:'09:00',activeTimeEnd:'21:00'}};
+  let followed=true,calls=0;
+  const api={storage:{local:{get:async k=>structuredClone({[k]:data[k]}),set:async x=>Object.assign(data,structuredClone(x))}},alarms:{create:async()=>{},clear:async()=>{}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:{handle:'owner'}}]}};
+  const runner=createBackgroundAutoUnfollow({api,service,records,normalize:x=>x,now:()=>t,sleep:async()=>{},writeLog:async()=>{},fetchProfile:async(tab,handle)=>({status:200,json:{rest_id:handle==='owner'?'999':'123',legacy:{screen_name:handle,following:followed,followed_by:false}}}),sendUnfollow:async(tab,id)=>{assert.equal(id,'123');calls++;followed=false;return {status:200};}});
+  const result=await runner.run();assert.equal(result.error,undefined);assert.equal(result.completed,1);assert.equal(calls,1);
+  for(const sourceKey of ['monitor','mutualNetwork','unreciprocatedTracker']){
+    const rows=await service.lookupAll({sourceKey,handle:'autotarget'});assert.ok(rows.length);for(const row of rows){assert.equal(row.payload.relationship.following,false);assert.equal(row.payload.status,'unfollowed');}
+  }
+  const reopened=runtime('auto-unfollow-reconcile',storage,durable);
+  const rows=await reopened.lookupAll({sourceKey:'monitor',handle:'autotarget'});assert.ok(rows.every(r=>r.payload.relationship.following===false));
+  await runner.run();assert.equal(calls,1);
 });

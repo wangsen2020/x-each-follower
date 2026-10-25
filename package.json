@@ -1,6 +1,6 @@
 {
   "name": "x-each-follower",
-  "version": "2.10.6",
+  "version": "2.15.1",
   "private": true,
   "type": "module",
   "scripts": {

@@ -13,12 +13,13 @@
       class="profile-drawer"
       role="dialog"
       aria-modal="true"
+      :inert="!settingsDrawerController.isOpen.value"
       :aria-hidden="!settingsDrawerController.isOpen.value"
       :hidden="!settingsDrawerController.isOpen.value"
       aria-labelledby="vueSettingsDrawerTitle"
     >
       <div class="profile-drawer-head">
-        <strong id="vueSettingsDrawerTitle">粉丝管理设置</strong>
+        <strong id="vueSettingsDrawerTitle">粉丝跟进设置</strong>
         <div class="drawer-head-actions">
           <button
             id="openMonitorDrawerLogs"
@@ -36,14 +37,10 @@
               <polyline points="10 9 9 9 8 9"></polyline>
             </svg>
           </button>
-          <button
+          <PanelCloseButton
             id="closeSettingsDrawer"
-            class="icon-button secondary"
-            type="button"
-            title="关闭"
-            aria-label="关闭"
             @click="settingsDrawerController.close()"
-          >×</button>
+          />
         </div>
       </div>
 
@@ -114,7 +111,7 @@
 
         </div>
 
-        <!-- Filter Danger -->
+<!-- Filter Danger -->
         <div class="drawer-setting-group drawer-setting-switch">
           <label class="drawer-switch-label">
             <input
@@ -180,7 +177,9 @@
 </template>
 
 <script setup>
+import {useDrawerFocus} from '../composables/useDrawerFocus.js';
 import { onMounted, onUnmounted } from 'vue';
+import PanelCloseButton from './PanelCloseButton.vue';
 import { settingsDrawerController } from '../composables/useSettingsDrawer.js';
 
 function onKeyDown(event) {
@@ -196,4 +195,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
 });
+useDrawerFocus(settingsDrawerController.isOpen, 'vueSettingsDrawer', 'openSettingsDrawer');
 </script>
+

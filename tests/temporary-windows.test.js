@@ -38,3 +38,19 @@ test('each new X Grok popup navigates once without an extra refresh',async()=>{
  const second=await handleGrokWindowPool({action:'acquire',url:'https://x.com/i/grok'});
  assert.notEqual(second.id,first.id);assert.equal(updates,0);
 });
+
+test('configured window policy changes alarm and leases while preserving busy and focused windows',async()=>{
+ const f=fixture();const values={'systemSettings:windows':{idleMinutes:2,lifetimeMinutes:30,checkMinutes:3}};
+ chrome.storage.local={get:async key=>key===null?values:{[key]:values[key]},set:async data=>Object.assign(values,data),remove:async key=>delete values[key]};
+ const w=await handleGrokWindowPool({action:'acquire',url:'https://grok.com/',lifetime:45*60000});
+ let record=f.records['xfTemporaryWindow:'+w.id];
+ assert.equal(record.busyUntil-record.lastUsedAt,45*60000);
+ await handleGrokWindowPool({action:'release',windowId:w.id});
+ record=f.records['xfTemporaryWindow:'+w.id];assert.equal(record.expiresAt-record.lastUsedAt,2*60000);
+ f.windows.get(w.id).focused=true;
+ const now=Date.now()+3*60000;await scanTemporaryWindows(now);
+ assert.ok(f.windows.has(w.id));assert.equal(f.records['xfTemporaryWindow:'+w.id].expiresAt,now+2*60000);
+ f.windows.get(w.id).focused=false;
+ await scanTemporaryWindows(now+2*60000+1);assert.ok(!f.windows.has(w.id));
+ await ensureTemporaryWindowCleanup();assert.deepEqual(f.alarms.at(-1),[TEMP_WINDOW_ALARM,{periodInMinutes:3}]);
+});

@@ -6,7 +6,7 @@ import { usePanelNavigation, TAB_TITLES, NAV_TABS } from '../../src/entries/pane
 test('usePanelNavigation initializes with default tab and titles', () => {
   const nav = usePanelNavigation();
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
   assert.equal(nav.version.value, JSON.parse(readFileSync(new URL('../../src/manifest.json', import.meta.url))).version);
   assert.equal(nav.tabs.length, 8);
   assert.equal(TAB_TITLES.knowledge, '知识库');
@@ -15,11 +15,11 @@ test('usePanelNavigation initializes with default tab and titles', () => {
 });
 
 test('TAB_TITLES maps all 5 panels correctly', () => {
-  assert.equal(TAB_TITLES.monitor, '粉丝管理');
+  assert.equal(TAB_TITLES.monitor, '粉丝跟进');
   assert.equal(TAB_TITLES.candidates, '互关追踪');
   assert.equal(TAB_TITLES.comments, '评论追踪');
   assert.equal(TAB_TITLES.followQueue, '关注队列');
-  assert.equal(TAB_TITLES.unreciprocated, '回关监测');
+  assert.equal(TAB_TITLES.unreciprocated, '回关监控');
 });
 
 test('NAV_TABS correctly configures badge presence for panels', () => {
@@ -61,16 +61,16 @@ test('setTab reactively updates activeTab and title, ignoring invalid tabs', () 
 
   nav.setTab('unreciprocated');
   assert.equal(nav.activeTab.value, 'unreciprocated');
-  assert.equal(nav.currentTitle.value, '回关监测');
+  assert.equal(nav.currentTitle.value, '回关监控');
 
   nav.setTab('monitor');
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
 
   // Invalid tab ignored
   nav.setTab('nonExistentTab');
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
 });
 
 test('updateBadge reactively sets counts and loading status', () => {

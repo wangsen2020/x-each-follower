@@ -65,7 +65,7 @@ test('parses nested X GraphQL user nodes and relationship state', () => {
   const json = {items:[{rest_id:'1',legacy:{screen_name:'alice',name:'Alice',description:'AI',following:false}},{value:'next-cursor',cursorType:'BottomCursor'}]};
   const users = parseNetworkUsers(json);
   assert.equal(users[0].handle, 'alice');
-  assert.equal(users[0].state, 'follow_back');
+  assert.equal(users[0].state, 'unknown');
   assert.equal(findCursor(json), 'next-cursor');
 });
 
@@ -257,4 +257,14 @@ test('multi-page Followers variables remain independent of the captured transact
   const page3Headers = prepareNetworkHeaders(capturedTemplate.headers, 'Followers');
   assert.equal(page3Headers['x-client-transaction-id'], undefined);
   assert.equal(page3Vars.cursor, 'cursor_step_2');
+});
+
+test('follow-back labels require both explicit relationship directions', () => {
+  for (const followedBy of [true,false,null]) for (const following of [true,false,null]) {
+    const user=parseNetworkUsers({rest_id:'123',core:{screen_name:'candidate'},relationship_perspectives:{followed_by:followedBy,following}})[0];
+    assert.equal(user.state,following===true?'following':following===false&&followedBy===true?'follow_back':following===false&&followedBy===false?'none':'unknown');
+  }
+  const stale={handle:'candidate',state:'follow_back',status:'pending',relationship:{followedBy:true,following:false}};
+  const [updated]=reconcileFollowBackQueue([stale],[{...stale,state:'none',relationship:{followedBy:false,following:false}}]);
+  assert.equal(updated.status,'no_longer_following');
 });

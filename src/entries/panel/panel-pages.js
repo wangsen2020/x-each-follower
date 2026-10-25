@@ -31,6 +31,7 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
   if (typeof request !== 'function') throw new Error('record request is required');
   const wait = delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const windows = new Map();
+  const openRequests = new Map();
   const summaries = {};
   const complete = new Set();
   const cache = [];
@@ -117,8 +118,10 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
   }
 
   async function open(moduleName, filter = {}, token = generation) {
+    const requestId=(openRequests.get(moduleName)||0)+1;
+    openRequests.set(moduleName,requestId);
     const page = await readPage(moduleName, filter, null, token);
-    if (token !== generation) return null;
+    if (token !== generation || openRequests.get(moduleName)!==requestId) return null;
     windows.set(moduleName, page);
     return page;
   }
@@ -136,9 +139,12 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
     }
     const summary = summaries[moduleName] || null;
     const tab = filter.tab || 'all';
-    const complex = Boolean(filter.search || (filter.tags && filter.tags.length));
+    const complex = Boolean(filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown);
     const tabCount = summary?.tabs && Object.prototype.hasOwnProperty.call(summary.tabs, tab) ? summary.tabs[tab] : undefined;
-    const total = complex ? null : (tabCount != null ? tabCount : (tab === 'all' || !summary?.tabs ? (summary?.total ?? result.page.records.length) : 0));
+    const statusesTotal = !filter.search && Array.isArray(filter.statuses) && filter.statuses.length && summary?.tabs
+      ? filter.statuses.reduce((sum, status) => sum + (summary.tabs[status] || 0), 0)
+      : null;
+    const total = statusesTotal ?? (complex ? null : (tabCount != null ? tabCount : (tab === 'all' || !summary?.tabs ? (summary?.total ?? result.page.records.length) : 0)));
     const page = {
       module: moduleName,
       filter: {...filter},

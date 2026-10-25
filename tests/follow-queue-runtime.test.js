@@ -2,6 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
 
+test('read-only run check distinguishes cooldown, account mismatch and unreadable viewer',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true};
+  let pause=new Date(Date.now()+3600000).toISOString(),currentViewer='viewer';
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:currentViewer}]}};
+  const runtime=createFollowQueueRuntime({api,store:{},records:{metadata:async()=>({pausedUntil:pause})}});
+  const check=()=>runtime.handle({cmd:'followQueueRunCheck'});
+  let result=await check();
+  assert.equal(result.allowed,false);
+  assert.equal(result.blockReason.code,'follow-cooldown');
+  assert.equal(result.blockReason.retryAt,Date.parse(pause));
+  assert.match(result.blockReason.message,/本地冷却时间/);
+  pause=new Date(Date.now()-1000).toISOString();
+  result=await check();
+  assert.equal(result.allowed,true);
+  assert.equal(result.blockReason,null);
+  currentViewer='other';
+  assert.equal((await check()).blockReason.code,'viewer-mismatch');
+  currentViewer='';
+  assert.equal((await check()).blockReason.code,'viewer-unavailable');
+});
+
 test('queue eligibility uses configured ratio instead of the legacy 80 percent veto',()=>{
   const profile={handle:'example',bio:'分享技术',followersText:'100',followingText:'70'};
   const settings={minFollowers:50,ratioThreshold:.6,onlyRecommended:true};
@@ -26,7 +48,7 @@ test('worker recovery preserves queued alarm deadline and clears only old follow
   const runtime=createFollowQueueRuntime({api,store:{getSettings:async()=>({enabled:true,every:8,jitter:2})}});
   await runtime.schedule({preserve:true});
   assert.deepEqual(clears,['x-mutual-auto-follow','x-comment-auto-follow']);
-  assert.deepEqual(creates,[]);
+  assert.deepEqual(creates,[['x-independent-comments',{periodInMinutes:1}]]);
 });
 
 test('queue does not open tabs, create a database or migrate before explicit activation',async()=>{
@@ -68,6 +90,19 @@ test('candidate synchronization preserves an active successful follow against st
   assert.equal(imports,0);
 });
 
+test('candidate synchronization does not restore an old followed import after X verified not-following',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
+  const source={module:'mutual',url:'',enabled:true};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding,mutualNetwork:{users:[{handle:'target',relationship:{following:true}}]}})}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let imported=0, enqueued=0;
+  const prior={handle:'target',state:'uncertain',sources:[source],followResult:{following:false,verifiedAt:Date.now()}};
+  const store={lookup:async()=>prior,getSettings:async()=>({}),importOutcome:async()=>{imported++;},enqueue:async()=>{enqueued++;}};
+  await createFollowQueueRuntime({api,store}).syncCandidates();
+  assert.equal(imported,0);
+  assert.equal(enqueued,0);
+});
+
 test('followQueueVerify resolves uncertain job to followed or pending or excluded without blind re-follow',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
   const resolved=[];
@@ -84,7 +119,7 @@ test('followQueueVerify resolves uncertain job to followed or pending or exclude
   const runtime=createFollowQueueRuntime({
     api,
     store,
-    fetchUser:async()=>({id:'42',handle:'target_user',relationship:{following:remoteFollowing}})
+    fetchUser:async()=>({id:'42',handle:'target_user',relationship:{following:remoteFollowing,followedBy:false}})
   });
   const res1=await runtime.handle({cmd:'followQueueVerify',accountId:'123',jobId:'123:id:42',mode:'check'});
   assert.equal(res1.ok,true);

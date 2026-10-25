@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { useExecutionLogs } from '../../src/entries/panel/composables/useExecutionLogs.js';
 
+test('queue dialog queries and clears only its own scope, including the legacy entry alias', async () => {
+  const previous = globalThis.chrome;
+  const calls = [];
+  globalThis.chrome = {runtime:{sendMessage:async message => {calls.push(message); return {ok:true, entries:[], total:0};}}};
+  const c = useExecutionLogs();
+  try {
+    await c.open('autoFollow');
+    await c.clearLogs();
+    assert.equal(c.currentScope.value, 'queue');
+    assert.ok(calls.some(call=>call.cmd === 'clearExecutionLogs' && call.scope === 'queue'));
+    assert.ok(calls.filter(call=>call.cmd === 'queryExecutionLogs').every(call=>call.scope === 'queue'));
+    await c.open('unreciprocated');
+    assert.equal(calls.at(-1).scope, 'unreciprocated');
+  } finally { c.close(); globalThis.chrome = previous; }
+});
+
 test('useExecutionLogs initializes with robust default state and computed titles', () => {
   const c = useExecutionLogs();
   assert.equal(c.isOpen.value, false);
@@ -17,26 +33,26 @@ test('useExecutionLogs initializes with robust default state and computed titles
   // Fans scope (sub-tabs: scan, followBack, all)
   c.currentScope.value = 'fans';
   c.fansSubTab.value = 'scan';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
+  assert.equal(c.title.value, '粉丝跟进 · 粉丝扫描日志');
   assert.equal(c.emptyTitle.value, '暂无粉丝扫描日志');
 
   c.fansSubTab.value = 'followBack';
-  assert.equal(c.title.value, '粉丝管理 · 队列回关日志');
+  assert.equal(c.title.value, '粉丝跟进 · 队列回关日志');
   assert.equal(c.emptyTitle.value, '暂无队列回关日志');
 
   c.fansSubTab.value = 'all';
-  assert.equal(c.title.value, '粉丝管理 · 全部执行日志');
-  assert.equal(c.emptyTitle.value, '暂无粉丝管理执行日志');
+  assert.equal(c.title.value, '粉丝跟进 · 全部执行日志');
+  assert.equal(c.emptyTitle.value, '暂无粉丝跟进执行日志');
 
   // Monitor scope
   c.currentScope.value = 'monitor';
   c.fansSubTab.value = 'scan';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
+  assert.equal(c.title.value, '粉丝跟进 · 粉丝扫描日志');
 
   // Unreciprocated scope
   c.currentScope.value = 'unreciprocated';
-  assert.equal(c.title.value, '回关监测 · 定时检测与取关日志');
-  assert.equal(c.emptyTitle.value, '暂无回关监测日志');
+  assert.equal(c.title.value, '回关监控 · 执行日志');
+  assert.equal(c.emptyTitle.value, '暂无回关监控日志');
 
   // Comment scope
   c.currentScope.value = 'comment';

@@ -3,7 +3,7 @@
     <div class="comments-head">
       <div class="comments-head-left">
         <div class="comments-title">
-          <Teleport to="#panel-title-help" v-if="activeTab === 'comments'"><InlineHelp label="评论追踪说明" text="在 X 帖子操作栏点击评论追踪图标，收集评论用户。可按关系筛选并查看来源。" /></Teleport>
+
           <span id="commentsUserCount" class="page-summary" hidden>0 位用户</span>
           <span class="selected-count-badge" id="commentSelectedBadge" hidden>已选 <b id="commentSelectedCount">0</b> / <span id="commentTotalVisibleCount">0</span></span>
         </div>
@@ -46,7 +46,6 @@
   </section>
 </template>
 <script setup>
-import InlineHelp from '../components/InlineHelp.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
 </script>

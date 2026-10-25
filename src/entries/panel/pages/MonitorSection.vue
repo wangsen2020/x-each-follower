@@ -1,5 +1,5 @@
 <template>
-  <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝管理" :hidden="activeTab !== 'monitor'">
+  <section id="monitorSection" class="monitor-card monitor-panel tab-panel" data-panel="monitor" aria-label="粉丝跟进" :hidden="activeTab !== 'monitor'">
     <div class="monitor-head">
       <div class="follower-tabs" role="tablist">
         <button class="follower-tab active" data-follower-tab="following" role="tab">已关注 <span id="followingCount" aria-busy="true">…</span></button>
@@ -10,7 +10,7 @@
       <div class="monitor-head-right module-header-actions">
         <div class="icon-actions">
           <button id="scanFollowers" class="icon-button" title="增量同步关注与粉丝数据" aria-label="增量同步关注与粉丝">↻</button>
-          <button id="openSettingsDrawer" class="icon-button secondary settings-gear-btn" title="粉丝管理 · 定时检测与自动回关设置" aria-label="粉丝管理设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+          <button id="openSettingsDrawer" class="icon-button secondary settings-gear-btn" title="粉丝跟进 · 定时检测与自动回关设置" aria-label="粉丝跟进设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
         </div>
         <button id="openFollowLogs" class="secondary module-log-button" type="button">执行日志</button>
       </div>
@@ -30,7 +30,7 @@
         <div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
       </div>
     </div>
-    <div id="monitorLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载粉丝管理…</span></div>
+    <div id="monitorLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载粉丝跟进…</span></div>
     <div id="monitorLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="monitor">重试</button></div>
     <p id="monitorStatus" class="monitor-status" role="status" aria-live="polite"></p>
     <div id="monitorEmpty" class="monitor-empty" hidden><span class="empty-icon" aria-hidden="true">＋</span><strong id="monitorEmptyTitle">还没有粉丝列表</strong><button id="initialFollowers" class="secondary">获取初始列表</button></div>

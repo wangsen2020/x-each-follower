@@ -1,3 +1,4 @@
+import {readXGrokUsageCooldown, checkXGrokUsageLimit} from './grok-usage-limit.js';
 import {loadWritingContext} from '../post-tracking/writing-memory.js';
 import { isPostSafeForComment, detectContentRisks, interactionSkipReason } from '../relationships/content-risk.js';
 import {waitForGrokVerification, grokTaskNow, assertPendingGrokVerificationClear, executeGrokScript} from './grok-verification.js';
@@ -683,6 +684,8 @@ export async function openMinimized(url, lifetime) {
 }
 
 async function askOnX(prompt, nonce, sleep, candidateCount) {
+  const cooldown = await readXGrokUsageCooldown();
+  if (cooldown) return cooldown;
   const complete = createGrokAnswerGate(2, 3);
   const { winId, tabId } = await openMinimized('https://x.com/i/grok', 300000);
   try {
@@ -692,6 +695,8 @@ async function askOnX(prompt, nonce, sleep, candidateCount) {
       return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
     } }).catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];}))?.[0]?.result;
     if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
+    const limit = await checkXGrokUsageLimit(tabId);
+    if (limit) return limit;
     const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [prompt] })
       .catch(e => {if (e?.userActionRequired || e?.grokVerificationTimeout) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
     if (!drive?.ok) return { ok: false, reason: `x.com Grok：${drive?.err || '提交失败'}` };
@@ -715,6 +720,8 @@ async function askOnX(prompt, nonce, sleep, candidateCount) {
     };
     while (grokTaskNow() < deadline) {
       await sleep(2000);
+      const limit = await checkXGrokUsageLimit(tabId, nonce);
+      if (limit) return limit;
       const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
         .catch(error => {
           if (error?.userActionRequired || error?.grokVerificationTimeout) throw error;
@@ -779,6 +786,7 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
   for (const ask of askers) {
     try {
       let res = await ask(prompt, nonce, sleep, candidates.length);
+      if (res.quotaExhausted) return res;
       if (res.ok && res.skipped) return {ok:false, skipped:true, channel:res.channel, reason:'Grok 判断最近 5 条帖子暂无值得引用评价的内容'};
       if (res.ok) {
         const post = candidates[res.selectedIndex - 1];
@@ -788,6 +796,7 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
           const repairPrompt = buildGrokCommentPrompt({handle:cleanHandle,name:fix(authorName || cleanHandle),posts:[post],profile,writingContext,nonce:repairNonce})
             + '\n上一轮评价超过上限，请保留核心观点重写，尽量控制在 240 加权字符以内，绝不超过 280；不要机械截断。上一轮评价：' + res.reply;
           const revised = await ask(repairPrompt, repairNonce, sleep, 1);
+          if (revised.quotaExhausted) return revised;
           if (revised.skipped) return {ok:false,skipped:true,reason:'Grok 改写时决定跳过评价'};
           if (!revised.ok || !revised.reply || revised.selectedIndex !== 1 || tweetWeight(revised.reply) > 280) {
             return {ok:false,reason:revised.reason || 'Grok 改写后仍未得到不超过 280 加权字符的有效评价'};
@@ -811,6 +820,8 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
   const fullPrompt = `${userPrompt}\n\n[任务凭证：${nonce}]`;
 
   async function askTextOnX() {
+    const cooldown = await readXGrokUsageCooldown();
+    if (cooldown) return cooldown;
     const { winId, tabId } = await openMinimized('https://x.com/i/grok', timeoutMs + 120000);
     try {
       if (!tabId) return { ok: false, reason: '无法创建 Grok 窗口' };
@@ -819,6 +830,8 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
         return /Subscribe to Premium|Upgrade to Premium|not available in your region/i.test(t) ? 'paywall' : 'ok';
       } }).catch(error => {if (error?.userActionRequired || error?.grokVerificationTimeout) throw error; return [];}))?.[0]?.result;
       if (probe === 'paywall') return { ok: false, reason: 'x.com 账号未开通 Grok' };
+      const limit = await checkXGrokUsageLimit(tabId);
+      if (limit) return limit;
       const drive = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: driveGrokInput, args: [fullPrompt] })
         .catch(e => {if (e?.userActionRequired || e?.grokVerificationTimeout) throw e; return [{ result: { ok: false, err: String(e?.message || e) } }];}))?.[0]?.result;
       if (!drive?.ok) return { ok: false, reason: `x.com Grok 提交失败: ${drive?.err || ''}` };
@@ -827,6 +840,8 @@ export async function requestGrokText(userPrompt, { sleep = ms => new Promise(r 
       const complete = createGrokAnswerGate();
       while (grokTaskNow() < deadline) {
         await sleep(2000);
+        const limit = await checkXGrokUsageLimit(tabId, nonce);
+        if (limit) return limit;
         const dom = (await executeGrokScript({ target: { tabId }, world: 'MAIN', func: readGrokPageAnswer, args: [nonce] })
           .catch(error => {
             if (error?.userActionRequired || error?.grokVerificationTimeout) throw error;

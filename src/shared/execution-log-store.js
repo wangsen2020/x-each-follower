@@ -6,7 +6,7 @@ import {selectExecutionLogs} from './execution-log-select.js';
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
 export const BACKUP_ATTEMPT_LIMIT = 3;
-const UI_SCOPES = ['autoFollow', 'comment', 'mutual', 'fans', 'monitor', 'unreciprocated'];
+const UI_SCOPES = ['autoFollow', 'queue', 'comment', 'mutual', 'fans', 'monitor', 'unreciprocated'];
 const LEGACY_KEYS = ['autoFollowLogs', 'monitorLogs', 'unreciprocatedLogs'];
 
 export function executionLogMembership(log, origin = 'autoFollowLogs') {
@@ -15,12 +15,12 @@ export function executionLogMembership(log, origin = 'autoFollowLogs') {
   if (origin === 'monitorLogs') {
     scopes.add('fans');
     scopes.add('monitor');
-    if (verification) UI_SCOPES.forEach(scope => scopes.add(scope));
+    if (verification) UI_SCOPES.filter(scope => scope !== 'queue').forEach(scope => scopes.add(scope));
     return [...scopes];
   }
   if (origin === 'unreciprocatedLogs') {
     scopes.add('unreciprocated');
-    if (verification) UI_SCOPES.forEach(scope => scopes.add(scope));
+    if (verification) UI_SCOPES.filter(scope => scope !== 'queue').forEach(scope => scopes.add(scope));
     return [...scopes];
   }
   for (const scope of UI_SCOPES) {
@@ -32,6 +32,16 @@ export function executionLogMembership(log, origin = 'autoFollowLogs') {
 
 export function clearScopesFor(scope) {
   return scope === 'fans' || scope === 'monitor' ? ['fans', 'monitor'] : [scope];
+}
+
+// Preserve prior per-view clears. Only legacy records still in the aggregate
+// gain the new queue view; versioned dropScopes backups must never re-add it.
+function upgradeQueueMembership(record) {
+  if (record.scopeSchemaVersion >= 2) return record;
+  const membership = new Set(record.membership || []);
+  if (record.scope === 'queue' && membership.has('autoFollow')) membership.add('queue');
+  else membership.delete('queue');
+  return {...record, membership:[...membership], scopeSchemaVersion:2};
 }
 
 export function assertLogScope(scope) {
@@ -153,8 +163,8 @@ export function createExecutionLogStore(options = {}) {
     return dbPromise;
   }
 
-  function scopeBound(scope, cursor) {
-    const lower = [scope, '', ''];
+  function scopeBound(scope, cursor, since = null) {
+    const lower = [scope, since || '', ''];
     const upper = cursor ? [scope, cursor.at, cursor.id] : [scope, '\uffff', '\uffff'];
     return keyRange.bound(lower, upper, false, Boolean(cursor));
   }
@@ -326,7 +336,7 @@ export function createExecutionLogStore(options = {}) {
     const db = await database();
     const tx = db.transaction(['logs', 'scopeRows', 'meta'], 'readwrite');
     if ((op.op === 'put' || op.op === 'dropScopes') && op.record) {
-      const record = {...op.record};
+      const record = upgradeQueueMembership({...op.record});
       assignLogTime(record, op.record.atRaw !== undefined ? op.record.atRaw : op.record.at, 'replay');
       tx.objectStore('logs').put(record);
       await replaceScopeRows(tx, record);
@@ -373,6 +383,7 @@ export function createExecutionLogStore(options = {}) {
         origin,
         membership: executionLogMembership({...log, id: legacyId(origin, index, log)}, origin)
       };
+      record.scopeSchemaVersion = 2;
       assignLogTime(record, log?.at, 'legacy');
       if (record.scope === 'verification') record.episodeKey = record.episodeKey || (record.tabId != null && record.at ? `${record.tabId}:${record.at}` : '');
       if (!record.episodeKey) delete record.episodeKey;
@@ -471,6 +482,26 @@ export function createExecutionLogStore(options = {}) {
     await writeMeta(db, {key: 'fansQueueDisentangled', done: true, at: new Date().toISOString()});
   }
 
+  async function migrateQueueScope() {
+    const db = await database();
+    if ((await readMeta(db, 'queueScopeV2'))?.done) return;
+    const tx = db.transaction(['logs', 'scopeRows', 'meta'], 'readwrite');
+    await new Promise((resolve, reject) => {
+      const request = tx.objectStore('logs').openCursor();
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(); return; }
+        const record = upgradeQueueMembership(cursor.value);
+        cursor.update(record);
+        if (record.membership.includes('queue')) tx.objectStore('scopeRows').put({scope:'queue', at:scopeSortAt(record), id:record.id, logId:record.id});
+        cursor.continue();
+      };
+    });
+    tx.objectStore('meta').put({key:'queueScopeV2', done:true});
+    await transactionDone(tx);
+  }
+
   async function ensureRecovered() {
     if (recovered) return;
     if (!recoveryPromise) {
@@ -480,6 +511,7 @@ export function createExecutionLogStore(options = {}) {
         await initHead();
         await replayJournal();
         await cleanupQueueFromFansScopes();
+        await migrateQueueScope();
         const db = await database();
         const tx = db.transaction('meta', 'readwrite');
         tx.objectStore('meta').put({key: 'backupHead', n: durableCommitted});
@@ -534,6 +566,7 @@ export function createExecutionLogStore(options = {}) {
           else delete record.episodeKey;
         }
         record.membership = executionLogMembership(record, record.origin);
+        record.scopeSchemaVersion = 2;
         tx.objectStore('logs').put(record);
         await replaceScopeRows(tx, record);
         queueOp(tx, {op: 'put', record});
@@ -546,19 +579,21 @@ export function createExecutionLogStore(options = {}) {
         return {entry: record, backup: {...backupState}};
       });
     },
-    query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null} = {}) {
+    query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null, since = null} = {}) {
       // Reads share initialization, but never wait for the mutation/backup
       // chain. IndexedDB gives this page a committed, consistent snapshot.
       return (async () => {
         assertLogScope(scope);
         const bound = assertLogCursor(cursor);
+        if(since!==null && (typeof since!=='string' || !Number.isFinite(Date.parse(since)) || new Date(since).toISOString()!==since))throw new Error('无效日志时间范围');
+        if(bound && since && bound.at<since)throw new Error('日志游标不在查询范围内');
         await ensureRecovered();
         const db = await database();
         const size = Math.max(1, Math.min(50, Number(limit) || LOG_PAGE_SIZE));
         const tx = db.transaction(['scopeRows', 'logs'], 'readonly');
         const rows = [];
         await new Promise((resolve, reject) => {
-          const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, bound), 'prev');
+          const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, bound, since), 'prev');
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
             const current = request.result;
@@ -567,7 +602,7 @@ export function createExecutionLogStore(options = {}) {
             current.continue();
           };
         });
-        const count = await requestToPromise(tx.objectStore('scopeRows').count(scopeBound(scope, null)));
+        const count = await requestToPromise(tx.objectStore('scopeRows').count(scopeBound(scope, null, since)));
         const page = rows.slice(0, size);
         const hasMore = rows.length > size;
         const entries = [];
@@ -668,7 +703,7 @@ export function handleExecutionLogRequest(message, sender, sendResponse, store =
     return true;
   }
   const run = message.cmd === 'appendExecutionLog' ? store.append(message.entry)
-    : message.cmd === 'queryExecutionLogs' ? store.query({scope: message.scope, limit: message.limit, cursor: message.cursor})
+    : message.cmd === 'queryExecutionLogs' ? store.query({scope: message.scope, limit: message.limit, cursor: message.cursor, since: message.since})
     : store.clear(message.scope);
   Promise.resolve(run).then(result => sendResponse({ok: true, ...result}), error => sendResponse({ok: false, error: error?.message || '执行日志读写失败'}));
   return true;

@@ -235,3 +235,9 @@ test('a missing records service keeps the legacy snapshot path', async () => {
   await createFollowQueueRuntime({api, store:{lookup:async () => null, enqueue:async () => {}, importOutcome:async () => {}}}).syncCandidates();
   assert.equal(gets.includes(null), true);
 });
+
+
+test('adapter preserves a zero update count when unchanged records are skipped', async () => {
+  const records=createBackgroundRecords({service:readyService(async () => ({ok:true,result:{updated:0,skipped:1}}))});
+  assert.deepEqual(await records.batch({sourceKey:'monitor',changes:[{handle:'ada',patch:{bio:'same'}}]}),{updated:0});
+});

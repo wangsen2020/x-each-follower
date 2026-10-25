@@ -10,7 +10,7 @@
     <div class="lb-head">
       <div class="lb-heading">
         <div class="lb-title-row">
-          <Teleport to="#panel-title-help" v-if="activeTab === 'leaderboard'"><InlineHelp label="榜单说明" text="按昨日净增排名，定时采集并生成日报。在 X 帖子操作栏点击灰色 X 图标，将作者加入榜单。" /></Teleport>
+
           <span
             class="lb-owner-badge"
             :title="ownerId ? `当前登录账号 ID: ${ownerId}` : '待识别账号'"
@@ -107,7 +107,7 @@
     </div>
     <div v-if="notice" class="lb-alert lb-alert-info" role="status">
       <span>{{ notice }}</span>
-      <button type="button" class="secondary lb-close-notice" @click="notice = ''">×</button>
+      <PanelCloseButton label="关闭提示" @click="notice = ''" />
     </div>
 
     <!-- Table Container -->
@@ -607,9 +607,9 @@
 </template>
 
 <script setup>
-import InlineHelp from '../components/InlineHelp.vue';
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
+import PanelCloseButton from '../components/PanelCloseButton.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 
 const { activeTab } = panelNavigationController;
@@ -1203,17 +1203,19 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
-  min-height: 16px;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
   padding: 0;
   margin: 0 10px 0 0;
-  border: 1px solid #8c9e92;
+  border: 0;
   border-radius: 50%;
-  background: transparent;
-  color: #63766a;
-  font-size: 11px;
+  background: #769287;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
   line-height: 1;
   cursor: help;
 }
@@ -1407,15 +1409,6 @@ onMounted(() => {
   background: #eef6f2;
   color: #245b45;
   border: 1px solid #d6eadc;
-}
-
-.lb-close-notice {
-  background: transparent;
-  border: 0;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
 }
 
 /* Table Wrap */

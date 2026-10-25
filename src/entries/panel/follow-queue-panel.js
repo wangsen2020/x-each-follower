@@ -1,3 +1,4 @@
+import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
 import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffix, validateQuoteTags} from '../../features/grok/quote-tags.js';
 /**
  * follow-queue-panel.js
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS = FOLLOW_QUEUE_DEFAULT_SETTINGS || Object.freeze({
   minFollowers: 50,
   ratioThreshold: 0.8,
   onlyRecommended: true,
+  followBackAllowAll: false,
   grokEnabled: false,
   autoPublish: false
 });
@@ -39,6 +41,7 @@ export const SETTINGS_BOUNDS = Object.freeze({
   minFollowers: Object.freeze({ min: 0, max: 100_000_000, default: 50, type: 'int' }),
   ratioThreshold: Object.freeze({ min: 0, max: 1.0, default: 0.8, type: 'float' }),
   onlyRecommended: Object.freeze({ default: true, type: 'bool' }),
+  followBackAllowAll: Object.freeze({ default: false, type: 'bool' }),
   grokEnabled: Object.freeze({ default: false, type: 'bool' }),
   autoPublish: Object.freeze({ default: false, type: 'bool' }),
   enabled: Object.freeze({ default: false, type: 'bool' })
@@ -55,10 +58,28 @@ export const STATE_LABELS = Object.freeze({
 });
 
 export const MODULE_LABELS = Object.freeze({
-  fans: '粉丝管理',
+  fans: '粉丝跟进',
   mutual: '互关追踪',
   comments: '评论追踪'
 });
+
+export function summarizeQueueSources(sources) {
+  const groups = new Map();
+  for (const source of Array.isArray(sources) ? sources : []) {
+    if (!source || typeof source !== 'object') continue;
+    const module = source.module || 'fans';
+    if (!groups.has(module)) groups.set(module, {module, count: 0, urls: new Set()});
+    const group = groups.get(module);
+    group.count += 1;
+    const safeUrl = safeHttpsUrl(source.url);
+    if (safeUrl) group.urls.add(safeUrl);
+  }
+  return [...groups.values()].map(group => ({
+    module: group.module,
+    count: group.count,
+    url: group.urls.size === 1 ? [...group.urls][0] : null
+  }));
+}
 
 /**
  * Validates external URLs. Rejects javascript:, data:, and any non-https schemes.
@@ -249,7 +270,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let container = null;
   let drawerOverlay = null;
 
-  async function fetchAll() {
+  async function fetchAll(cursorRetries = 0) {
     if (isDestroyed) return;
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
@@ -290,13 +311,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       if (!listRes || listRes.stale) return;
       if (!listRes.ok) {
         const listError = listRes.error || '获取关注队列数据失败';
-        if (currentPage !== 1 && /cursor/.test(listError)) {
+        if (/invalid follow queue cursor/i.test(listError) && cursorRetries < 2) {
           currentPage = 1;
           startCursors = [null];
           loading = false;
-          return fetchAll();
+          return fetchAll(cursorRetries + 1);
         }
-        error = listError;
+        error = /invalid follow queue cursor/i.test(listError) ? '队列正在更新，请稍后重试。' : listError;
       } else {
         jobs = Array.isArray(listRes.jobs) ? listRes.jobs : [];
         serverPaging = listRes.paged === true;
@@ -322,14 +343,15 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       loading = false;
+      scanActive = false;
       const message = err?.message || '网络连接或执行异常';
-      if (serverPaging && currentPage !== 1 && /cursor/.test(message)) {
+      if (/invalid follow queue cursor/i.test(message) && cursorRetries < 2) {
         currentPage = 1;
         startCursors = [null];
         loading = false;
-        return fetchAll();
+        return fetchAll(cursorRetries + 1);
       }
-      error = message;
+      error = /invalid follow queue cursor/i.test(message) ? '队列正在更新，请稍后重试。' : message;
     }
 
     render();
@@ -450,6 +472,30 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         isExecuting = false;
         render();
       }
+    }
+  }
+
+  async function handleDeleteJob(job) {
+    if (!currentAccountId || !job?.id || job.state === 'running' || busyJobIds.has(job.id) || isDestroyed) return;
+    if (!globalThis.confirm(`删除 @${job.handle || job.targetUserId} 的关注队列记录？旧来源将不会重新加入该账号；此操作不会在 X 上取关或删除账号。`)) return;
+    const reqAccount = currentAccountId;
+    busyJobIds.add(job.id);
+    error = null;
+    render();
+    try {
+      const res = await request({cmd:'followQueueDelete', accountId:reqAccount, jobId:job.id, confirmed:true});
+      if (isDestroyed || currentAccountId !== reqAccount) return;
+      if (!res?.ok) { error = res?.error || res?.reason || '删除队列记录失败'; return; }
+      selectedJobIds.delete(job.id);
+      if (inspectingJob?.id === job.id) inspectingJob = null;
+      currentPage = 1;
+      startCursors = [null];
+      await fetchAll();
+    } catch (err) {
+      if (!isDestroyed && currentAccountId === reqAccount) error = err?.message || '删除队列记录失败';
+    } finally {
+      busyJobIds.delete(job.id);
+      if (!isDestroyed && currentAccountId === reqAccount) render();
     }
   }
 
@@ -730,7 +776,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         execBtn,
         el('button', {
           type: 'button', className: 'fq-btn fq-btn-secondary fq-open-logs module-log-button',
-          onClick: () => root.dispatchEvent(new CustomEvent('open-execution-logs', {bubbles:true}))
+          onClick: () => root.dispatchEvent(new CustomEvent('open-execution-logs', {bubbles:true, detail:{scope:'queue'}}))
         }, '执行日志')
       ])
     ]);
@@ -957,7 +1003,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
 
     const modules = [
       { id: 'all', label: '全部来源' },
-      { id: 'fans', label: '粉丝管理' },
+      { id: 'fans', label: '粉丝跟进' },
       { id: 'mutual', label: '互关追踪' },
       { id: 'comments', label: '评论追踪' }
     ];
@@ -1089,7 +1135,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       const emptyTitle = scanActive ? '正在检索匹配任务' : '关注队列暂无匹配任务';
       const emptyDesc = scanActive || scanStatus
         ? (scanStatus || '正在继续检索…')
-        : '粉丝管理、互关追踪或评论追踪发现候选后，将自动或手动投递至此处执行。';
+        : '粉丝跟进、互关追踪或评论追踪发现候选后，将自动或手动投递至此处执行。';
       tbodyContent = el('tr', {}, [
         el('td', { colSpan: 8, className: 'fq-empty-cell' }, [
           el('div', { className: 'fq-empty-wrap' }, [
@@ -1136,21 +1182,20 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         ]);
 
         // Sources cell
-        const sourcesList = Array.isArray(job.sources) ? job.sources : [];
-        const sourceTags = sourcesList.map(src => {
+        const sourceTags = summarizeQueueSources(job.sources).map(src => {
           const modLabel = MODULE_LABELS[src.module] || src.module;
           const badge = el('span', {
-            className: `fq-tag fq-module-${src.module || 'fans'}`
+            className: `fq-tag fq-module-${src.module}`,
+            title: src.count > 1 ? `${src.count} 条来源记录，详情见溯源` : modLabel
           }, modLabel);
 
-          const safeUrl = safeHttpsUrl(src.url);
-          if (safeUrl) {
+          if (src.url) {
             return el('a', {
-              href: safeUrl,
+              href: src.url,
               target: '_blank',
               rel: 'noopener noreferrer',
               className: 'fq-source-link',
-              title: safeUrl
+              title: src.count > 1 ? `${src.count} 条来源记录，详情见溯源` : src.url
             }, [badge]);
           }
           return badge;
@@ -1197,7 +1242,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           evalCellContent = el('div', { className: 'fq-eval-summary' }, evals.map(ev => {
             const statusBadge = el('span', {
               className: `fq-tag fq-eval-status-${ev.status || 'drafted'}`
-            }, ev.status || '草稿');
+            }, ({pending:'待评论',processing:'评论中',publishing:'发布中',failed:'评论失败',uncertain:'待核实',draft:'草稿',posted:'已发布',skipped:'已跳过'})[ev.status] || ev.status || '草稿');
 
             const publishedSafe = safeHttpsUrl(ev.publishedPostUrl);
             const originalSafe = safeHttpsUrl(ev.originalPostUrl);
@@ -1241,7 +1286,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           }, '排除'));
         } else if (job.state === 'followed') {
           const pendingEval = evals.find(ev => ev && ev.status !== 'posted' && ev.status !== 'published');
-          if (pendingEval) {
+          if (pendingEval && !['pending','processing','publishing'].includes(pendingEval.status)) {
             const retryLabel = pendingEval.status === 'uncertain'
               ? '核对评价'
               : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : '重试评价');
@@ -1260,6 +1305,12 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           }
         }, '溯源详情');
         actionButtons.push(traceBtn);
+        actionButtons.push(el('button', {
+          className: 'fq-btn fq-btn-sm fq-btn-secondary fq-delete-job',
+          title: job.state === 'running' ? '任务正在执行，结束后可删除' : '删除队列记录并阻止旧来源重新加入',
+          disabled: isJobBusy || job.state === 'running',
+          onClick: () => handleDeleteJob(job)
+        }, isJobBusy ? '处理中…' : '删除'));
         const actionsCell = el('td', { className: 'fq-col-actions' }, [
           el('div', { className: 'fq-actions-group' }, actionButtons)
         ]);
@@ -1270,7 +1321,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         }, [
           el('td', { className: 'fq-col-check' }, [rowCheckbox]),
           targetCell,
-          el('td', {className:'fq-col-priority'}, [el('span', {className:'fq-tag fq-priority-tag', title:'权重越高越先执行；同权重按入队时间排列'}, String(followQueuePriority(job)))]),
+          el('td', {className:'fq-col-priority'}, [el('span', {className:'fq-tag fq-priority-tag', title:'权重越高越先执行；确认待回关为 200，其他粉丝来源为 100；执行前重新核实关系，其他账号按本地回关数据换算'}, String(followQueuePriority(job)))]),
           sourcesCell,
           stateCell,
           resultCell,
@@ -1320,13 +1371,15 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const evals = Array.isArray(job.evaluations) ? job.evaluations : [];
 
     const closeBtn = el('button', {
-      className: 'fq-drawer-close',
+      className: 'panel-close-button',
+      type: 'button',
       'aria-label': '关闭',
+      title: '关闭',
       onClick: () => {
         inspectingJob = null;
         render();
       }
-    }, '×');
+    }, '');
 
     const header = el('div', { className: 'fq-drawer-header' }, [
       el('strong', { className: 'fq-drawer-title' }, `关注任务溯源 · @${job.handle || job.targetUserId}`),
@@ -1586,13 +1639,15 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const current = { ...settings };
 
     const closeBtn = el('button', {
-      className: 'fq-drawer-close',
+      className: 'panel-close-button',
+      type: 'button',
       'aria-label': '关闭',
+      title: '关闭',
       onClick: () => {
         isSettingsOpen = false;
         render();
       }
-    }, '×');
+    }, '');
 
     const header = el('div', { className: 'fq-drawer-header' }, [
       el('strong', { className: 'fq-drawer-title' }, '关注队列设置'),
@@ -1709,6 +1764,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         el('h4', { className: 'fq-setting-section-title' }, '🛡️ 筛选过滤与意向门槛'),
         createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
         createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
+        createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过关注筛选；不影响采集、入队与评论审核。', 'followBackAllowAll'),
         createSwitchGroup('fq_onlyRecommended', '仅推荐或互粉账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
@@ -1796,8 +1852,17 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   document.addEventListener('keydown', onKeydown);
   cleanups.push(() => document.removeEventListener('keydown', onKeydown));
 
-  // Initial load
-  fetchAll();
+  const applyPagePreference=async(initial=false)=>{
+    const preference=await readSystemSettings('pagination');
+    if(isDestroyed)return;
+    pageSize=preference.queue;
+    if(initial)await fetchAll();else applyListChange();
+  };
+  const onPreferences=(changes,area)=>{if(area==='local'&&changes[systemSettingsKey('pagination')])applyPagePreference().catch(console.warn);};
+  globalThis.chrome?.storage?.onChanged?.addListener(onPreferences);
+  cleanups.push(()=>globalThis.chrome?.storage?.onChanged?.removeListener(onPreferences));
+  if(globalThis.chrome?.storage?.local?.get && currentAccountId)applyPagePreference(true).catch(()=>fetchAll());
+  else fetchAll();
 
   return {
     refresh: async (opts = {}) => {

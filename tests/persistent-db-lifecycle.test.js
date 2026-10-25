@@ -1,7 +1,7 @@
 import test, {beforeEach, afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {IDBFactory, IDBKeyRange, IDBObjectStore} from 'fake-indexeddb';
-import {durableGetStrict, durableSet, durableKeysStrict, durableAppendIncremental} from '../src/platform/persistent-db.js';
+import {durableGetStrict, durableSet, durableKeysStrict, durableAppendIncremental, durableCompactSnapshots} from '../src/platform/persistent-db.js';
 
 let connections, dispatches, originalPut;
 beforeEach(() => {
@@ -90,4 +90,72 @@ test('blocked opens release the queue and close a late connection without replay
   globalThis.indexedDB = normal;
   assert.equal(await durableGetStrict('blocked-write'), undefined);
   assert.deepEqual(dispatches, ['set', 'get']);
+});
+
+
+test('indexed appends do not deserialize the historical tail again and retries stay idempotent', async () => {
+  await durableSet('recordIncremental:v1:seq:00000001', {seq: 1, operationId: 'legacy'});
+  await durableSet('recordIncremental:v1:head', {seq: 1});
+  const original = IDBObjectStore.prototype.getAll;
+  let reads = 0;
+  IDBObjectStore.prototype.getAll = function (...args) { reads++; return original.apply(this, args); };
+  try {
+    assert.equal((await durableAppendIncremental({operationId: 'new-one'})).seq, 2);
+    assert.equal(reads, 1);
+    for (let i = 0; i < 10; i++) await durableAppendIncremental({operationId: 'more-' + i});
+    assert.equal(reads, 1);
+    assert.equal((await durableAppendIncremental({operationId: 'legacy'})).seq, 1);
+    assert.equal((await durableAppendIncremental({operationId: 'new-one'})).seq, 2);
+    assert.equal((await durableGetStrict('recordIncremental:v1:head')).seq, 12);
+  } finally { IDBObjectStore.prototype.getAll = original; }
+});
+
+
+test('validated append checks only the tail and an imported gap invalidates the checkpoint', async () => {
+  await durableAppendIncremental({operationId: 'first'});
+  const original = IDBObjectStore.prototype.getAllKeys;
+  let lower;
+  IDBObjectStore.prototype.getAllKeys = function (range, ...rest) { lower = range?.lower; return original.call(this, range, ...rest); };
+  try {
+    await durableAppendIncremental({operationId: 'second'});
+    assert.equal(lower, 'recordIncremental:v1:seq:00000001');
+    await durableAppendIncremental({operationId: 'third'});
+    assert.equal(lower, 'recordIncremental:v1:seq:00000002');
+    await durableSet('recordIncremental:v1:seq:00000005', {seq: 5, operationId: 'imported-gap'});
+    await assert.rejects(durableAppendIncremental({operationId: 'after-gap'}), /gap/);
+    assert.equal(lower, 'recordIncremental:v1:seq:');
+    assert.equal(await durableGetStrict('recordIncremental:v1:seq:00000004'), undefined);
+  } finally { IDBObjectStore.prototype.getAllKeys = original; }
+});
+
+test('snapshot compaction is guarded, atomic, retains three restore points and preserves unrelated logs', async () => {
+  const compact = async (id, seq) => {
+    await durableSet('recordSnapshots:v1:image:' + id, {seq, fingerprint: id});
+    await durableSet('recordLogArchives:v1:' + id, {logs: {rows: []}});
+    return durableCompactSnapshots({expectedHead: seq, snapshot: {id, seq, fingerprint: id, verified: true}});
+  };
+  await durableSet('executionLog:keep', {important: true});
+  await durableAppendIncremental({operationId: 'one'});
+  await assert.rejects(durableCompactSnapshots({expectedHead: 0, snapshot: {id: 'bad'}}), /变化/);
+  await durableSet('recordSnapshots:v1:image:unverified', {seq: 1, fingerprint: 'bad'});
+  await assert.rejects(durableCompactSnapshots({expectedHead: 1, snapshot: {id: 'unverified', fingerprint: 'bad'}}), /验证/);
+  abortAfterPut('recordSnapshots:v1:catalog');
+  await assert.rejects(compact('a', 1), /中止|失败|abort/);
+  assert.equal((await durableGetStrict('recordIncremental:v1:seq:00000001')).operationId, 'one');
+  IDBObjectStore.prototype.put = originalPut;
+  assert.equal((await compact('a', 1)).deleted, 1);
+  assert.equal((await durableAppendIncremental({operationId: 'one'})).seq, 1);
+  assert.equal((await durableAppendIncremental({operationId: 'two'})).seq, 2);
+  await compact('b', 2);
+  await durableAppendIncremental({operationId: 'three'});
+  await compact('c', 3);
+  await durableAppendIncremental({operationId: 'four'});
+  const result = await compact('d', 4);
+  assert.equal(result.retained, 3);
+  assert.equal(result.compactedThrough, 2);
+  assert.equal(await durableGetStrict('recordSnapshots:v1:image:a'), undefined);
+  assert.equal(await durableGetStrict('recordIncremental:v1:seq:00000002'), undefined);
+  assert.equal((await durableGetStrict('recordIncremental:v1:seq:00000003')).seq, 3);
+  assert.deepEqual(await durableGetStrict('executionLog:keep'), {important: true});
+  assert.equal((await durableAppendIncremental({operationId: 'five'})).seq, 5);
 });

@@ -22,6 +22,62 @@ function storeFor(storage, durable, dbName) {
   return createExecutionLogStore({dbName, storage, ...durable});
 }
 
+test('queue scope isolates mixed writers, pagination totals and clear from followback logs', async () => {
+  const durable = memoryDurable(), storage = legacyStorage();
+  const store = storeFor(storage, durable, 'logs-queue-isolation');
+  for (let i = 0; i < 5; i++) {
+    await store.append({id:`q${i}`, scope:'queue', at:`2026-10-24T10:00:0${i}.000Z`});
+    await store.append({id:`u${i}`, scope:'unreciprocated', origin:'autoUnfollow', summary:'自动取关', at:`2026-10-24T10:00:0${i}.000Z`});
+  }
+  await store.append({id:'private', scope:'unreciprocated', summary:'自动私信', at:'2026-10-24T10:01:00.000Z'});
+  await store.append({id:'verify', scope:'verification', at:'2026-10-24T10:02:00.000Z'});
+  const first = await store.query({scope:'queue', limit:3});
+  assert.equal(first.total, 5);
+  assert.deepEqual(first.entries.map(row=>row.id), ['q4','q3','q2']);
+  const next = await store.query({scope:'queue', limit:3, cursor:first.nextCursor});
+  assert.deepEqual(next.entries.map(row=>row.id), ['q1','q0']);
+  const before = (await store.query({scope:'unreciprocated'})).entries.map(row=>row.id);
+  assert.equal((await store.clear('queue')).removed, 5);
+  assert.equal((await store.query({scope:'queue'})).total, 0);
+  assert.deepEqual((await store.query({scope:'unreciprocated'})).entries.map(row=>row.id), before);
+  const rebuilt = storeFor(storage, durable, 'logs-queue-isolation-rebuild');
+  assert.equal((await rebuilt.query({scope:'queue'})).total, 0);
+  assert.deepEqual((await rebuilt.query({scope:'unreciprocated'})).entries.map(row=>row.id), before);
+});
+
+test('legacy backup memberships gain a queue index without copying unrelated events', async () => {
+  const durable = memoryDurable();
+  durable.saved.set('executionLogBackupHead', {n:2});
+  for (const [index, scope] of ['queue','unreciprocated'].entries()) durable.saved.set(`executionLogBackupPage:${index+1}`, {op:'put', record:{id:scope, scope, at:'2026-10-24T10:00:00.000Z', origin:'autoFollowLogs', membership:['autoFollow', ...(scope === 'unreciprocated' ? ['unreciprocated'] : [])]}});
+  const store = storeFor(legacyStorage(), durable, 'logs-old-membership-replay');
+  assert.deepEqual((await store.query({scope:'queue'})).entries.map(row=>row.id), ['queue']);
+  assert.deepEqual((await store.query({scope:'unreciprocated'})).entries.map(row=>row.id), ['unreciprocated']);
+});
+
+test('existing local database gains queue membership without losing followback rows', async () => {
+  const name = 'logs-local-scope-upgrade', durable = memoryDurable(), storage = legacyStorage();
+  const store = storeFor(storage, durable, name);
+  const at = '2026-10-24T10:00:00.000Z';
+  await store.append({id:'queue-local', scope:'queue', at});
+  await store.append({id:'unfollow-local', scope:'unreciprocated', at});
+  const db = await new Promise((resolve,reject)=>{const req=indexedDB.open(name);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
+  await new Promise((resolve,reject)=>{
+    const tx = db.transaction(['logs','scopeRows','meta'], 'readwrite');
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    const request=tx.objectStore('logs').get('queue-local');
+    request.onsuccess=()=>{
+      const old=request.result;delete old.scopeSchemaVersion;old.membership=['autoFollow'];
+      tx.objectStore('logs').put(old);
+      tx.objectStore('scopeRows').delete(['queue',at,'queue-local']);
+      tx.objectStore('meta').delete('queueScopeV2');
+    };
+  });
+  db.close();
+  const reopened=storeFor(storage,durable,name);
+  assert.equal((await reopened.query({scope:'queue'})).total,1);
+  assert.equal((await reopened.query({scope:'unreciprocated'})).total,1);
+});
+
 test('more than 300 entries stay queryable and identical timestamps page in id order', async () => {
   const durable = memoryDurable();
   const storage = legacyStorage();
@@ -405,4 +461,17 @@ test('worker log modules do not use dynamic import', () => {
     const text = fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
     assert.equal(/import\s*\(/.test(text), false, name);
   }
+});
+
+test('log date range covers counts and cursor pages without removing history',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'logs-date-range');
+ for(let i=1;i<=4;i++)await store.append({id:`range-${i}`,scope:'comment',at:`2026-10-0${i}T00:00:00.000Z`});
+ const since='2026-10-02T00:00:00.000Z';
+ const first=await store.query({scope:'comment',limit:2,since});
+ assert.equal(first.total,3);assert.deepEqual(first.entries.map(e=>e.id),['range-4','range-3']);
+ const last=await store.query({scope:'comment',limit:2,since,cursor:first.nextCursor});
+ assert.equal(last.total,3);assert.deepEqual(last.entries.map(e=>e.id),['range-2']);assert.equal(last.nextCursor,null);
+ assert.equal((await store.query({scope:'comment'})).total,4);
+ await assert.rejects(store.query({scope:'comment',since:'invalid'}));
+ await assert.rejects(store.query({scope:'comment',since,cursor:{at:'2026-10-01T00:00:00.000Z',id:'range-1'}}));
 });

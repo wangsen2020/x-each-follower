@@ -17,6 +17,7 @@ test('useSettingsDrawer initializes with clean default state and computed checkp
   assert.equal(drawer.checkpointTimeText.value, '');
 });
 
+
 test('useSettingsDrawer validates intervals strictly', () => {
   const drawer = useSettingsDrawer();
   drawer.open({ every: 5, jitter: 15 }); // every < 10
@@ -68,8 +69,10 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.every, 60);
   assert.equal(empty.jitter, 10);
   assert.equal(empty.overdueDays, 14);
-  assert.equal(empty.batchLimit, 10);
-  assert.equal(empty.unfollowDelay, 3);
+  assert.equal(empty.batchLimit, 20);
+  assert.equal(normalizeUnreciprocatedConfig({batchLimit: 10}).batchLimit, 20);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, batchLimit: 10}).batchLimit, 10);
+  assert.equal(empty.unfollowDelay, 15);
   assert.equal(empty.whitelist, '');
 
   const bounded = normalizeUnreciprocatedConfig({
@@ -119,4 +122,9 @@ test('useUnreciprocatedSettings handles open, save and close reactively', async 
 
   drawer.close();
   assert.equal(drawer.isOpen.value, false);
+});
+
+test('automatic reminder configuration can wait longer than the unfollow deadline',async()=>{
+ const drawer=useUnreciprocatedSettings();let saved;drawer.setSaveHandler(async cfg=>{saved=cfg;});
+ drawer.open({autoGreeting:true,greetingAfterDays:20,overdueDays:14});assert.equal(await drawer.save(),true);assert.equal(saved.autoGreeting,true);assert.equal(saved.greetingAfterDays,20);
 });

@@ -158,3 +158,13 @@ test('search rejects a failed query and a later search succeeds', async () => {
     process.off('unhandledRejection', onUnhandled);
   }
 });
+
+test('a late previous page-size request cannot overwrite the newer preference',async()=>{
+ const pending=[];
+ const pages=createPanelPages({request:message=>new Promise(resolve=>pending.push({message,resolve}))});
+ const old=pages.open('fans',{pageSize:20});const newer=pages.open('fans',{pageSize:10});
+ pending[1].resolve({ok:true,page:{records:[{userKey:'new',payload:{handle:'new'}}],nextCursor:null}});
+ await newer;
+ pending[0].resolve({ok:true,page:{records:[{userKey:'old',payload:{handle:'old'}}],nextCursor:null}});
+ assert.equal(await old,null);assert.equal(pages.window('fans').filter.pageSize,10);assert.equal(pages.window('fans').records[0].userKey,'new');
+});

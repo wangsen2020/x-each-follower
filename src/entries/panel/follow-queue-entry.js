@@ -31,7 +31,7 @@ export async function openFollowQueue(root) {
     const setup = document.createElement('div'); setup.className = 'follow-queue-setup';
     const title = document.createElement('strong'); title.textContent = `队列账号：@${identity.handle}`; setup.append(title);
     const checks = {};
-    for (const [key,label] of [['fans','粉丝管理'],['mutual','互关追踪'],['comments','评论追踪']]) {
+    for (const [key,label] of [['fans','粉丝跟进'],['mutual','互关追踪'],['comments','评论追踪']]) {
       const item = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
       input.checked = !identity.binding?.activated || (identity.binding?.accountId === identity.accountId && identity.binding?.sources?.[key] === true);
       checks[key] = input; item.append(input,document.createTextNode(label)); setup.append(item);
@@ -40,7 +40,7 @@ export async function openFollowQueue(root) {
     confirmLabel.append(confirm,document.createTextNode('确认本地候选数据属于此账号')); setup.append(confirmLabel);
     const activate = document.createElement('button'); activate.textContent = '确认来源并接入队列'; setup.append(activate);
     const help = document.createElement('p');
-    help.textContent = '账号已识别。下一步：选择候选来源 → 确认数据属于此账号 → 点击接入队列。没有候选时，先在粉丝管理、互关追踪或评论追踪收集用户。接入后可在队列齿轮设置中配置并开启定时调度，默认不会自动关注或发布。';
+    help.textContent = '账号已识别。下一步：选择候选来源 → 确认数据属于此账号 → 点击接入队列。没有候选时，先在粉丝跟进、互关追踪或评论追踪收集用户。接入后可在队列齿轮设置中配置并开启定时调度，默认不会自动关注或发布。';
     const status = document.createElement('p'); status.setAttribute('role','status');
     const content = document.createElement('div');
     root.replaceChildren(setup,help,status,content);

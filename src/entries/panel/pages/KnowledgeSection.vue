@@ -8,33 +8,31 @@
   >
     <!-- Header -->
     <div class="kb-head">
-      <Teleport to="#panel-title-help" v-if="activeTab === 'knowledge'">
-      <span class="kb-help-wrap">
-        <button type="button" class="kb-help" aria-label="知识库说明" aria-describedby="kb-help-text">?</button>
-        <span id="kb-help-text" class="kb-help-tooltip" role="tooltip">保存写作经验、适用条件与来源，人工审核后采纳。当前支持手动录入，自动分析尚未接入。知识按账号独立保存。{{ ownerId ? '当前账号 ID：' + ownerId : '请先登录 X，再刷新。' }}</span>
-      </span>
-      </Teleport>
-
+      <p class="kb-context">记录写作经验，审核后采纳</p>
       <div class="kb-head-actions">
-        <button type="button" class="secondary settings-gear-btn kb-settings-trigger" aria-label="知识库设置" title="知识库设置" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true">
+        <button type="button" class="secondary settings-gear-btn kb-icon-btn kb-settings-trigger" aria-label="知识库设置" title="知识库设置" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg></button>
         <button
           type="button"
-          class="kb-btn-primary"
+          class="kb-btn-primary kb-icon-btn kb-add-trigger"
+          aria-label="新增知识"
+          title="新增知识"
           :disabled="!ownerId || busy"
           @click="openCreateDrawer"
         >
-          新增知识
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
         <button
           type="button"
-          class="secondary"
+          class="secondary kb-icon-btn kb-refresh-trigger"
+          aria-label="刷新知识"
+          title="刷新知识"
           :disabled="loading || busy"
           @click="loadData"
         >
-          刷新
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg>
         </button>
       </div>
     </div>
@@ -42,11 +40,11 @@
     <!-- Alert / Notice message -->
     <div v-if="error" class="kb-alert kb-alert-error" role="alert">
       <span>{{ error }}</span>
-      <button type="button" class="kb-alert-dismiss" @click="error = ''">×</button>
+      <PanelCloseButton label="关闭提示" @click="error = ''" />
     </div>
     <div v-if="notice" class="kb-alert kb-alert-notice" role="status">
       <span>{{ notice }}</span>
-      <button type="button" class="kb-alert-dismiss" @click="notice = ''">×</button>
+      <PanelCloseButton label="关闭提示" @click="notice = ''" />
     </div>
 
     <!-- Status and Type Filters -->
@@ -412,6 +410,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
+import PanelCloseButton from '../components/PanelCloseButton.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 import { createKnowledgeStore } from '../../../features/knowledge/knowledge-store.js';
 import { createKnowledgeReviewService } from '../../../features/knowledge/knowledge-review.js';
@@ -857,15 +856,6 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
   background: #eef8f2;
   color: #1d5c3a;
   border: 1px solid #cce8d7;
-}
-
-.kb-alert-dismiss {
-  background: transparent;
-  border: 0;
-  font-size: 16px;
-  cursor: pointer;
-  color: inherit;
-  padding: 0 4px;
 }
 
 .kb-filter-row {
@@ -1440,7 +1430,10 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
   .kb-page-controls { flex-wrap: wrap; }
   .kb-page-controls > * { margin-bottom: 10px; }
 }
-.kb-head-actions .kb-settings-trigger { width: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.kb-context { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #63766a; font-size: 12px; }
+.kb-head-actions { flex: 0 0 auto; }
+.kb-head-actions .kb-icon-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; max-height: 30px; padding: 0; }
+.kb-icon-btn svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .kb-settings-trigger svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 
 .kb-filter-row .kb-pagination { margin: 0 0 0 auto; flex-direction: row; align-items: center; flex-shrink: 0; white-space: nowrap; }
@@ -1458,10 +1451,6 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
   .kb-pagination .kb-page-controls > * { margin-bottom: 0; }
 }
 
-.kb-help-wrap { position: relative; display: inline-flex; align-items: center; }
-.kb-help { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; min-height: 14px; padding: 0; border: 0; border-radius: 50%; color: #fff; background: #769287; font-size: 10px; font-weight: 700; line-height: 1; cursor: help;  font-family: Arial, sans-serif;}
-.kb-help-tooltip { display: none; position: absolute; top: 30px; left: 0; z-index: 20; width: 300px; max-width: 70vw; box-sizing: border-box; padding: 10px; background: #18302e; color: #fff; border-radius: 6px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; box-shadow: 0 2px 8px #18302e33; }
-.kb-help-wrap:hover .kb-help-tooltip, .kb-help-wrap:focus-within .kb-help-tooltip { display: block; }
 @media (max-width: 1100px) { .kb-head { flex-direction: row; align-items: center; } .kb-head > :not(:last-child) { margin: 0 10px 0 0; } }
-.kb-head { justify-content: flex-end; }
+.kb-head { justify-content: space-between; }
 </style>

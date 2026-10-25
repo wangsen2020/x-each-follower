@@ -50,3 +50,11 @@ test('failed loading can retry and removes feedback timers after success', async
     assert.equal(calls, 2);
   } finally { c.close(); globalThis.chrome = prior; }
 });
+
+test('closing during settings read prevents a late log open or query',async()=>{
+ const previous=globalThis.chrome;let resolveSettings,calls=0;
+ globalThis.chrome={storage:{local:{get:()=>new Promise(resolve=>resolveSettings=resolve)}},runtime:{sendMessage:async()=>{calls++;return {ok:true,entries:[],total:0};}}};
+ const c=useExecutionLogs();
+ try {const opening=c.open();assert.equal(c.isOpen.value,true);c.close();resolveSettings({'systemSettings:logs':{pageSize:10,days:7}});await opening;assert.equal(c.isOpen.value,false);assert.equal(calls,0);}
+ finally{c.close();globalThis.chrome=previous;}
+});

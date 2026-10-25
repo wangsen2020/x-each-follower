@@ -1,3 +1,4 @@
+import {isPendingFanFollowBack} from '../relationships/fan-followback-policy.js';
 // Legacy monitor, mutual, and comment records are not account-scoped.
 // The caller must confirm they belong to accountId before calling this adapter.
 // Old module switches are not authorization. Only sourceEnabled === true enables a source.
@@ -38,13 +39,10 @@ function preferState(current, incoming) {
 function heldState(user, attempt, forceFollowed) {
   const auto = user?.autoFollowState;
   let state = '';
-  const following = forceFollowed
-    || user?.relationship?.following === true
-    || user?.state === 'following'
-    || Boolean(user?.followedAt)
-    || attempt?.state === 'followed'
-    || auto === 'followed';
+  const following = user?.relationship?.following === true
+    || (forceFollowed && user?.relationship?.following !== false);
   if (following) state = 'followed';
+  else if (user?.state === 'following' || user?.followedAt || attempt?.state === 'followed' || auto === 'followed') state = 'uncertain';
   if (attempt?.state === 'excluded') state = preferState(state, 'excluded');
   if (attempt?.state === 'skipped' || auto === 'skipped') state = preferState(state, 'skipped');
   if (
@@ -131,6 +129,7 @@ export function collectFollowQueueCandidates({
       };
       merged.set(canonical, row);
     }
+    if (module === 'fans' && isPendingFanFollowBack(user)) row.followBackCandidate = true;
     const restId = verifiedRestId(user);
     if (restId) row.restIds.add(restId);
     const sourceUrls = urls.length ? urls : [''];
@@ -195,6 +194,7 @@ export function collectFollowQueueCandidates({
       handle: row.handle,
       sources: row.sources
     };
+    if (row.sources.some(source => source.module === 'fans')) candidate.followBackCandidate = !conflict && row.followBackCandidate === true;
     if (state) candidate.state = state;
     if (conflict) {
       candidate.followResult = {reason: 'conflicting-rest-ids', imported: true};
