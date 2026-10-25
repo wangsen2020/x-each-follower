@@ -4,6 +4,19 @@ export const AUTO_UNFOLLOW_STATE='autoUnfollowState';
 export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=30*60000;
 const MAX_PROFILE_CHECKS_PER_ROUND=5;
 const handleOf=u=>String(u?.handle||'').replace(/^@/,'').toLowerCase();
+export function autoUnfollowScheduleChanged(previous, next) {
+  return ['autoUnfollow','autoUnfollowEvery','autoUnfollowJitter','activeTimeStart','activeTimeEnd']
+    .some(key => previous?.[key] !== next?.[key]);
+}
+export function nextUnfollowWindow(config, time) {
+  if (inUnfollowWindow(config, time)) return time;
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.activeTimeStart || '')) return time;
+  const [hour, minute] = config.activeTimeStart.split(':').map(Number);
+  const next = new Date(time);
+  next.setHours(hour, minute, 0, 0);
+  if (next.getTime() < time) next.setDate(next.getDate() + 1);
+  return next.getTime();
+}
 export function inUnfollowWindow(config, time=Date.now()) {
   const parse=value=>/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value||'')?Number(value.slice(0,2))*60+Number(value.slice(3)):NaN;
   const start=parse(config.activeTimeStart),end=parse(config.activeTimeEnd),d=new Date(time),minute=d.getHours()*60+d.getMinutes();
@@ -28,7 +41,10 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     const cfg=await config();
     if(!cfg.autoUnfollow){await alarms.clear(AUTO_UNFOLLOW_ALARM);return;}
     if(preserve && await alarms.get(AUTO_UNFOLLOW_ALARM))return;
-    await alarms.create(AUTO_UNFOLLOW_ALARM,{when:now()+delay(cfg.autoUnfollowEvery,cfg.autoUnfollowJitter,5)*60000});
+    const earliest=now()+delay(cfg.autoUnfollowEvery,cfg.autoUnfollowJitter,30)*60000;
+    const when=nextUnfollowWindow(cfg,earliest);
+    await alarms.create(AUTO_UNFOLLOW_ALARM,{when});
+    return when;
   }
   async function run() {
     if(running){await log({source:'unfollow-auto',scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：上一轮仍在运行'});return {skipped:'running'};}
@@ -37,7 +53,8 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     try {
       const cfg=await config();
       audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
-      await schedule(); // A worker interruption still leaves the next round scheduled.
+      const nextAt=await schedule(); // A worker interruption still leaves the next round scheduled.
+      audit.stage('检查配置',{'下次计划时间':nextAt?new Date(nextAt).toISOString():'未启用','当前本地时间':new Date(now()).toLocaleString(),'最短请求间隔分钟':30});
       if(!cfg.autoUnfollow||!inUnfollowWindow(cfg,now())){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
       if(!cfg.autoUnfollowAccount?.id || !cfg.autoUnfollowAccount?.handle)throw new Error('缺少绑定账号，请重新保存自动取关设置');
       await audit.event({scope:'unreciprocated',result:'started',summary:'开始自动取关检查'});

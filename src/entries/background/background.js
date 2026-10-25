@@ -2,7 +2,7 @@ import {createUnavailableCleanup,UNAVAILABLE_CLEANUP_ALARM} from '../../features
 import {AUTO_GREETING_ALARM} from '../../features/relationships/auto-greeting.js';
 import {createBackgroundAutoGreeting} from '../../features/relationships/auto-greeting-adapter.js';
 import {createGreetingLedger} from '../../features/relationships/greeting-ledger.js';
-import {AUTO_UNFOLLOW_ALARM} from '../../features/relationships/auto-unfollow.js';
+import {AUTO_UNFOLLOW_ALARM, autoUnfollowScheduleChanged} from '../../features/relationships/auto-unfollow.js';
 import {createBackgroundAutoUnfollow} from '../../features/relationships/auto-unfollow-adapter.js';
 import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {pageFailureMessage} from '../../platform/page-failure.js';
@@ -918,7 +918,11 @@ let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {
   if(area==='local' && changes['systemSettings:windows'])ensureTemporaryWindowCleanup().catch(error=>console.warn('窗口回收设置应用失败',error));
   if(area==='local' && changes.unreciprocatedSettings)autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划更新失败',error));
-  if(area==='local' && changes.unreciprocatedSettings)autoUnfollowRuntime.schedule().catch(error=>console.warn('自动取关计划更新失败',error));
+  if(area==='local' && changes.unreciprocatedSettings){
+    const change=changes.unreciprocatedSettings;
+    const changed=autoUnfollowScheduleChanged(normalizeUnreciprocatedConfig(change.oldValue),normalizeUnreciprocatedConfig(change.newValue));
+    autoUnfollowRuntime.schedule(!changed).catch(error=>console.warn('自动取关计划更新失败',error));
+  }
   if (area === 'local') {
     recordRuntimeService.noteLegacyChange(changes).catch(error => console.warn('记录库变更标记失败:', error?.message || error));
   }

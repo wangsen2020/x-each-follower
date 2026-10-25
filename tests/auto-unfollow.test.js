@@ -125,3 +125,31 @@ test('rejected unfollow is never reported in a successful account list',async()=
  const f=setup({deps:{unfollow:async()=>({status:429})}});await f.runner.run();
  assert.equal(f.logs.some(l=>l.unfollowedHandles?.length),false);
 });
+
+test('scheduler never wakes before the hard request gap and moves outside-window alarms to opening',async()=>{
+ const f=setup({config:{autoUnfollowEvery:30,autoUnfollowJitter:10},deps:{random:()=>0}});
+ await f.runner.schedule();assert.equal(f.alarms.get(AUTO_UNFOLLOW_ALARM).when,time+30*60000);
+ const night=new Date(2026,9,25,22,50).getTime();
+ const n=setup({config:{activeTimeStart:'01:00',activeTimeEnd:'23:00'},deps:{now:()=>night,random:()=>0.5}});
+ await n.runner.schedule();assert.equal(n.alarms.get(AUTO_UNFOLLOW_ALARM).when,new Date(2026,9,26,1).getTime());
+});
+
+test('unrelated settings saves preserve the due unfollow alarm',async()=>{
+ const {autoUnfollowScheduleChanged}=await import('../src/features/relationships/auto-unfollow.js');
+ const f=setup();await f.runner.schedule();const due=f.alarms.get(AUTO_UNFOLLOW_ALARM).when;
+ for(let i=0;i<6;i++){
+  f.advance(5*60000);const before={...f.data.unreciprocatedSettings};
+  Object.assign(f.data.unreciprocatedSettings,{lastSummary:'comparison '+i,greetingText:'message '+i});
+  await f.runner.schedule(!autoUnfollowScheduleChanged(before,f.data.unreciprocatedSettings));
+  assert.equal(f.alarms.get(AUTO_UNFOLLOW_ALARM).when,due);
+ }
+ assert.equal(autoUnfollowScheduleChanged(base,{...base,autoUnfollowEvery:60}),true);
+});
+
+test('outside-window round makes no request and logs its next actionable time',async()=>{
+ const t=new Date(2026,9,26,0,10).getTime();
+ const f=setup({config:{activeTimeStart:'01:00',activeTimeEnd:'23:00'},deps:{now:()=>t}});
+ const r=await f.runner.run();assert.equal(r.skipped,'disabled_or_outside_window');assert.equal(f.sent.length,0);
+ assert.equal(f.alarms.get(AUTO_UNFOLLOW_ALARM).when,new Date(2026,9,26,1).getTime());
+ assert.equal(f.logs.at(-1).details['下次计划时间'],new Date(2026,9,26,1).toISOString());
+});
