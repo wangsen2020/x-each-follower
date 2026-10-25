@@ -316,17 +316,20 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
 
   async function loadComplete(moduleName, legacyKey) {
     const records = [];
-    let cursor = null;
     const seen = new Set();
-    do {
-      const result = await send({op: 'query', module: moduleName, limit: 100, cursor, filter: {tab: 'all'}});
-      for (const record of result.page.records) {
-        if (seen.has(record.userKey)) continue;
-        seen.add(record.userKey);
-        records.push(record);
-      }
-      cursor = result.page.nextCursor;
-    } while (cursor);
+    // The tracker "all" tab contains active following only, not unfollow history.
+    for (const tab of moduleName === 'unreciprocated' ? ['all', 'unfollowed'] : ['all']) {
+      let cursor = null;
+      do {
+        const result = await send({op: 'query', module: moduleName, limit: 100, cursor, filter: {tab}});
+        for (const record of result.page.records) {
+          if (seen.has(record.userKey)) continue;
+          seen.add(record.userKey);
+          records.push(record);
+        }
+        cursor = result.page.nextCursor;
+      } while (cursor);
+    }
     if (legacyKey) complete.add(legacyKey);
     return records;
   }

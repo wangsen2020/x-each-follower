@@ -174,3 +174,29 @@ test('a late previous page-size request cannot overwrite the newer preference',a
  pending[0].resolve({ok:true,page:{records:[{userKey:'old',payload:{handle:'old'}}],nextCursor:null}});
  assert.equal(await old,null);assert.equal(pages.window('fans').filter.pageSize,10);assert.equal(pages.window('fans').records[0].userKey,'new');
 });
+
+test('complete tracker comparison loads every history page as well as active following', async () => {
+  const {compareFollowback}=await import('../src/features/relationships/followback-monitor.js');
+  const calls=[];
+  const pages=createPanelPages({request:async message=>{
+    calls.push([message.filter.tab,message.cursor]);
+    const active={userKey:'active',payload:{handle:'active',relationship:{following:true,followedBy:false}}};
+    const past=n=>({userKey:'past'+n,payload:{handle:'past'+n,status:'unfollowed',unfollowedAt:'2026-10-25T14:40:41Z',relationship:{following:false}}});
+    if(message.filter.tab==='all')return {ok:true,page:{records:[active],nextCursor:null}};
+    return {ok:true,page:{records:message.cursor?[past(2)]:[past(1)],nextCursor:message.cursor?null:'history-2'}};
+  }});
+  const loaded=await pages.loadComplete('unreciprocated','unreciprocatedTracker');
+  assert.deepEqual(calls,[['all',null],['unfollowed',null],['unfollowed','history-2']]);
+  assert.equal(pages.isComplete('unreciprocatedTracker'),true);
+  const compared=compareFollowback({followingUsers:[loaded[0].payload],previousUsers:loaded.map(r=>r.payload)});
+  assert.deepEqual(compared.filter(u=>u.status==='unfollowed').map(u=>u.handle),['past1','past2']);
+});
+
+test('failed history loading must not mark a partial tracker complete',async()=>{
+  const pages=createPanelPages({request:async m=>{
+    if(m.filter.tab==='unfollowed')throw Error('history unavailable');
+    return {ok:true,page:{records:[],nextCursor:null}};
+  }});
+  await assert.rejects(pages.loadComplete('unreciprocated','unreciprocatedTracker'),/history unavailable/);
+  assert.equal(pages.isComplete('unreciprocatedTracker'),false);
+});
