@@ -16,4 +16,3 @@ export function originalTextIssue(text, sourceText='') {
   return '';
 }
 import {isPostSafeForComment,interactionSkipReason} from '../relationships/content-risk.js';
-
