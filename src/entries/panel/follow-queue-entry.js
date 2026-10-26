@@ -5,16 +5,18 @@ let generation = 0;
 const request = message => chrome.runtime.sendMessage(message);
 
 export async function openFollowQueue(root) {
+  const host = root?.querySelector('#followQueueContent');
+  if (!host) throw new Error('关注队列内容容器缺失');
   const current = ++generation;
   mounted?.destroy(); mounted = null;
-  root.replaceChildren();
+  host.replaceChildren();
   const card = document.createElement('div'); card.className = 'queue-onboarding';
   const heading = document.createElement('strong'); heading.textContent = '正在为你准备关注队列';
   const note = document.createElement('p'); note.setAttribute('role','status'); note.setAttribute('aria-live','polite');
   note.textContent = '1 / 3 · 正在识别当前浏览器中的 X 账号…';
   const explanation = document.createElement('p');
   explanation.textContent = '无需手动打开页面。必要时会自动打开一个后台 X 标签页，读取完成后关闭；不会自动关注或发布。';
-  card.append(heading,note,explanation); root.append(card);
+  card.append(heading,note,explanation); host.append(card);
   const stages = {checking:'1 / 3 · 正在检查现有 X 页面…',opening:'2 / 3 · 已自动打开 X 标签页，正在等待账号加载…',initializing:'3 / 3 · 正在初始化账号连接，即将完成…'};
   let pollBusy = false;
   const poll = setInterval(async()=>{
@@ -31,7 +33,7 @@ export async function openFollowQueue(root) {
     const setup = document.createElement('div'); setup.className = 'follow-queue-setup';
     const title = document.createElement('strong'); title.textContent = `队列账号：@${identity.handle}`; setup.append(title);
     const checks = {};
-    for (const [key,label] of [['fans','粉丝管理'],['mutual','互关追踪'],['comments','评论追踪']]) {
+    for (const [key,label] of [['fans','粉丝跟进'],['mutual','互关追踪'],['comments','评论追踪']]) {
       const item = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
       input.checked = !identity.binding?.activated || (identity.binding?.accountId === identity.accountId && identity.binding?.sources?.[key] === true);
       checks[key] = input; item.append(input,document.createTextNode(label)); setup.append(item);
@@ -40,10 +42,10 @@ export async function openFollowQueue(root) {
     confirmLabel.append(confirm,document.createTextNode('确认本地候选数据属于此账号')); setup.append(confirmLabel);
     const activate = document.createElement('button'); activate.textContent = '确认来源并接入队列'; setup.append(activate);
     const help = document.createElement('p');
-    help.textContent = '账号已识别。下一步：选择候选来源 → 确认数据属于此账号 → 点击接入队列。没有候选时，先在粉丝管理、互关追踪或评论追踪收集用户。接入后可在队列齿轮设置中配置并开启定时调度，默认不会自动关注或发布。';
+    help.textContent = '账号已识别。下一步：选择候选来源 → 确认数据属于此账号 → 点击接入队列。没有候选时，先在粉丝跟进、互关追踪或评论追踪收集用户。接入后可在队列齿轮设置中配置并开启定时调度，默认不会自动关注或发布。';
     const status = document.createElement('p'); status.setAttribute('role','status');
     const content = document.createElement('div');
-    root.replaceChildren(setup,help,status,content);
+    host.replaceChildren(setup,help,status,content);
     const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId}); };
     if (identity.binding?.activated && identity.binding.accountId === identity.accountId) mount();
     activate.addEventListener('click',async()=>{
@@ -75,7 +77,7 @@ export async function openFollowQueue(root) {
     const retry = document.createElement('button');
     retry.type = 'button'; retry.textContent = '重新识别账号';
     retry.addEventListener('click', () => openFollowQueue(root));
-    card.append(login,retry); root.replaceChildren(card);
+    card.append(login,retry); host.replaceChildren(card);
     return {ok:false, error:error.message || '无法读取 X 账号'};
   } finally { clearInterval(poll); }
   return {ok:true};

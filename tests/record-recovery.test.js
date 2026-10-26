@@ -420,7 +420,7 @@ test('8. 生产容错包装读失败时严格枚举阻断空基线，成功的�
   assert.equal(blocked.status().cutover, false);
   assert.equal(blocked.status().stage, 'repair-required');
   assert.ok(blocked.status().error);
-  assert.ok(calls.strictKeys >= 1);
+  assert.ok(calls.strictGet >= 1);
   assert.equal(calls.looseKeys, 0);
 
   const emptyCalls = {looseGet: 0, looseKeys: 0, strictGet: 0, strictKeys: 0};

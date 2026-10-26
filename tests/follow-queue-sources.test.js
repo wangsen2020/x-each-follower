@@ -94,6 +94,18 @@ test('verified rest ids, attempt holds, and disabled followed history stay impor
   assert.equal(extra.find(row => row.handle === 'fran').sources[0].enabled, false);
 });
 
+test('old follow dates and outcomes do not override an explicit current not-following state', () => {
+  const rows = collectFollowQueueCandidates({
+    accountId:'acc-1', sourceEnabled:{fans:true,mutual:true},
+    monitor:{users:[],queue:[],followingUsers:[{handle:'Alice',relationship:{following:false},followedAt:'2026-10-16'}]},
+    mutualNetwork:{users:[{handle:'Alice',relationship:{following:false},state:'following',followedAt:'2026-10-16',autoFollowState:'followed'}]},
+    commentTracking:{users:[]}, attempts:{'autoFollowAttempt:alice':{state:'followed'}}
+  });
+  assert.equal(rows.length,1);
+  assert.notEqual(rows[0].state,'followed');
+  assert.notEqual(rows[0].followResult?.following,true);
+});
+
 test('conflicting verified ids stay handle-only and a missing account fails closed', () => {
   const rows = collectFollowQueueCandidates({
     accountId: 'acc-1',
@@ -146,8 +158,8 @@ test('legacy autoFollowState, processed handles, and unflagged following users i
   assert.equal(byHandle('cyd').state, 'followed');
   assert.equal(byHandle('cyd').followResult.reason, undefined);
   assert.equal(byHandle('dee').state, 'uncertain');
-  assert.equal(byHandle('fay').state, 'followed');
-  assert.equal(byHandle('fay').followResult.following, true);
+  assert.equal(byHandle('fay').state, 'uncertain');
+  assert.notEqual(byHandle('fay').followResult?.following, true);
   for (const handle of ['ned', 'erin', 'gina', 'hank', 'ivy']) {
     assert.equal(byHandle(handle).state, 'uncertain');
     assert.equal(byHandle(handle).followResult.reason, 'processed-handle');

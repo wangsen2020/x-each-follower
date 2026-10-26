@@ -1,0 +1,1062 @@
+{
+  "modelRevisionObserved": "2c4055b12046f11709e9df2c122e59ffbdc2f900",
+  "weightSha256": "66FC00F5F29AFCAFF34092E1BDD20008CA3918265A82FB9695A551E510CC4EBC",
+  "transformersVersion": "4.3.1",
+  "onnxRuntimeNodeVersion": "1.30.0",
+  "methodology": "Constructed Chinese diagnostic pairs, labels fixed before inference; CPU native backend, q8, mean pooling, normalized vectors; no Grok. Two fresh processes, first empty model cache, second populated cache. Not browser WASM measurements.",
+  "files": [
+    {
+      "bytes": 673,
+      "name": "config.json"
+    },
+    {
+      "bytes": 496,
+      "name": "tokenizer_config.json"
+    },
+    {
+      "bytes": 17082913,
+      "name": "tokenizer.json"
+    },
+    {
+      "bytes": 118308126,
+      "name": "model_quantized.onnx"
+    }
+  ],
+  "cold": {
+    "date": "2026-10-22T10:01:31.861Z",
+    "node": "v22.22.2",
+    "os": "Windows 11 Pro",
+    "cpu": "Intel(R) Core(TM) i5-14600KF",
+    "logicalCpus": 20,
+    "ram": 34138931200,
+    "model": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+    "dtype": "q8",
+    "device": "cpu",
+    "loadMs": 45841.6066,
+    "uniqueTexts": 58,
+    "firstInferenceMs": 30.15190000000439,
+    "meanInferenceMs": 19.68280862068937,
+    "stages": [
+      {
+        "name": "before_import",
+        "ms": 20.3366,
+        "rss": 39784448,
+        "heapTotal": 5865472,
+        "heapUsed": 4858736,
+        "external": 1839151,
+        "arrayBuffers": 16477
+      },
+      {
+        "name": "after_import",
+        "ms": 120.8884,
+        "rss": 59789312,
+        "heapTotal": 21884928,
+        "heapUsed": 13796504,
+        "external": 2378711,
+        "arrayBuffers": 29843
+      },
+      {
+        "name": "loaded",
+        "ms": 45962.461,
+        "rss": 481914880,
+        "heapTotal": 220749824,
+        "heapUsed": 185111296,
+        "external": 45285019,
+        "arrayBuffers": 41385732
+      },
+      {
+        "name": "after_inference",
+        "ms": 47109.0652,
+        "rss": 461885440,
+        "heapTotal": 221011968,
+        "heapUsed": 191821120,
+        "external": 26020431,
+        "arrayBuffers": 22121144
+      },
+      {
+        "name": "disposed",
+        "ms": 47131.2876,
+        "rss": 336498688,
+        "heapTotal": 221011968,
+        "heapUsed": 192641200,
+        "external": 26020431,
+        "arrayBuffers": 22121144
+      }
+    ],
+    "peakSampledRss": 483729408,
+    "peakOsRssKiB": 557404,
+    "summary": {
+      "paraphrase": {
+        "n": 10,
+        "min": 0.6414208277102926,
+        "max": 0.816985251890145,
+        "mean": 0.7561379887254962
+      },
+      "negation": {
+        "n": 10,
+        "min": 0.5738603472128381,
+        "max": 0.9155865607328365,
+        "mean": 0.7542605415665067
+      },
+      "scope": {
+        "n": 10,
+        "min": 0.41046912582194534,
+        "max": 0.9239461509380991,
+        "mean": 0.7280800063324399
+      },
+      "unrelated": {
+        "n": 10,
+        "min": 0.05668331798272426,
+        "max": 0.5007362984804126,
+        "mean": 0.2215062865111705
+      },
+      "quantity": {
+        "n": 4,
+        "min": 0.6485411739096139,
+        "max": 0.9831495047424195,
+        "mean": 0.8438143754822117
+      }
+    },
+    "thresholds": [
+      {
+        "threshold": 0.7,
+        "tp": 9,
+        "fp": 16,
+        "byCategory": {
+          "negation": 7,
+          "scope": 6,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.75,
+        "tp": 6,
+        "fp": 12,
+        "byCategory": {
+          "negation": 5,
+          "scope": 4,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.8,
+        "tp": 1,
+        "fp": 10,
+        "byCategory": {
+          "negation": 4,
+          "scope": 3,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.85,
+        "tp": 0,
+        "fp": 9,
+        "byCategory": {
+          "negation": 3,
+          "scope": 3,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.9,
+        "tp": 0,
+        "fp": 4,
+        "byCategory": {
+          "negation": 1,
+          "scope": 2,
+          "quantity": 1,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.95,
+        "tp": 0,
+        "fp": 1,
+        "byCategory": {
+          "negation": 0,
+          "scope": 0,
+          "quantity": 1,
+          "unrelated": 0
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "id": "g1-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "先给出结论，再解释原因。",
+        "b": "开头点明观点，随后展开依据。",
+        "score": 0.7472036964888191
+      },
+      {
+        "id": "g1-2",
+        "category": "negation",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "不要先给出结论，应先解释原因。",
+        "score": 0.8626111236728733
+      },
+      {
+        "id": "g1-3",
+        "category": "scope",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "只有技术教程适合先给出结论，再解释原因。",
+        "score": 0.5740962078423129
+      },
+      {
+        "id": "g1-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "每篇文章至少引用三个独立来源。",
+        "score": 0.33893280230419587
+      },
+      {
+        "id": "g2-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "写技术教程时，要让读者能够按步骤重复操作。",
+        "score": 0.7189800897074169
+      },
+      {
+        "id": "g2-2",
+        "category": "negation",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "技术教程不应给出可复现的操作步骤。",
+        "score": 0.5738603472128381
+      },
+      {
+        "id": "g2-3",
+        "category": "scope",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "情绪随笔应给出可复现的操作步骤。",
+        "score": 0.41046912582194534
+      },
+      {
+        "id": "g2-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "图片应该保留清晰的文字。",
+        "score": 0.135350252005064
+      },
+      {
+        "id": "g3-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "没有充分依据，就不能声称两个现象存在因果联系。",
+        "score": 0.7812670286329599
+      },
+      {
+        "id": "g3-2",
+        "category": "negation",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "缺乏证据时，可以把相关性写成因果关系。",
+        "score": 0.8540800838119326
+      },
+      {
+        "id": "g3-3",
+        "category": "scope",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "只有讨论医疗问题时，才不能把相关性写成因果关系。",
+        "score": 0.7202736113339125
+      },
+      {
+        "id": "g3-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "评论开头可以直接回应具体细节。",
+        "score": 0.12643185018975944
+      },
+      {
+        "id": "g4-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "面向初学者写教程时，应说明技术名词的含义。",
+        "score": 0.7567970530156493
+      },
+      {
+        "id": "g4-2",
+        "category": "negation",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "针对新手的教程不需要解释专业术语。",
+        "score": 0.636467245656419
+      },
+      {
+        "id": "g4-3",
+        "category": "scope",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "针对专家的教程需要解释专业术语。",
+        "score": 0.9054517911606069
+      },
+      {
+        "id": "g4-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "视频封面不应遮挡关键画面。",
+        "score": 0.05699544474752269
+      },
+      {
+        "id": "g5-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "使用数字论据，要交代数据出处及对应的时间范围。",
+        "score": 0.7722668933351454
+      },
+      {
+        "id": "g5-2",
+        "category": "negation",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "引用数据时，不必标明来源和统计时间。",
+        "score": 0.6509637663787364
+      },
+      {
+        "id": "g5-3",
+        "category": "scope",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "只有引用自己的数据时，才应标明来源和统计时间。",
+        "score": 0.7985954152845679
+      },
+      {
+        "id": "g5-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "每段文字尽量表达一个核心观点。",
+        "score": 0.2048937468371475
+      },
+      {
+        "id": "g6-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "观察数量太少时，需要交代判断的适用限制。",
+        "score": 0.7451020361143899
+      },
+      {
+        "id": "g6-2",
+        "category": "negation",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "样本不足时，不应说明结论的局限。",
+        "score": 0.7289047274070111
+      },
+      {
+        "id": "g6-3",
+        "category": "scope",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "只有样本充足时，才应明确说明结论的局限。",
+        "score": 0.9239461509380991
+      },
+      {
+        "id": "g6-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "产品截图需要清楚显示操作入口。",
+        "score": 0.21039706575122308
+      },
+      {
+        "id": "g7-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "回答别人时，优先解答他实际提出的问题。",
+        "score": 0.816985251890145
+      },
+      {
+        "id": "g7-2",
+        "category": "negation",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "回复问题时，应避免回应对方的具体疑问。",
+        "score": 0.723024214062074
+      },
+      {
+        "id": "g7-3",
+        "category": "scope",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "只有回复付费用户时，才应先回应对方的具体疑问。",
+        "score": 0.7478374960172465
+      },
+      {
+        "id": "g7-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "引用他人观点应注明作者。",
+        "score": 0.5007362984804126
+      },
+      {
+        "id": "g8-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "不能只因为浏览量少，就认定一条帖子没有内容价值。",
+        "score": 0.7833289649993702
+      },
+      {
+        "id": "g8-2",
+        "category": "negation",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "低曝光能直接证明帖子内容质量差。",
+        "score": 0.7927857828872446
+      },
+      {
+        "id": "g8-3",
+        "category": "scope",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "低曝光不能直接证明技术帖内容质量差。",
+        "score": 0.8794419602477632
+      },
+      {
+        "id": "g8-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "标题需要准确反映正文。",
+        "score": 0.23044848143060984
+      },
+      {
+        "id": "g9-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "分享故障处理方法，应先交代问题表现，再给出处理流程。",
+        "score": 0.6414208277102926
+      },
+      {
+        "id": "g9-2",
+        "category": "negation",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "讲解排障经验时，不要先描述现象，应直接说明解决步骤。",
+        "score": 0.9155865607328365
+      },
+      {
+        "id": "g9-3",
+        "category": "scope",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "撰写产品广告时，先描述现象，再说明解决步骤。",
+        "score": 0.6490390490060571
+      },
+      {
+        "id": "g9-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "转载图片要尊重作者许可。",
+        "score": 0.05668331798272426
+      },
+      {
+        "id": "g10-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "文章末尾的问题要围绕前文讨论的内容。",
+        "score": 0.7980280453607729
+      },
+      {
+        "id": "g10-2",
+        "category": "negation",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "在结尾提出问题时，不应与正文主题相关。",
+        "score": 0.804321563843102
+      },
+      {
+        "id": "g10-3",
+        "category": "scope",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "只有长篇文章结尾的问题才需要与正文主题相关。",
+        "score": 0.6716492556718879
+      },
+      {
+        "id": "g10-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "删除帖子之前应检查其来源。",
+        "score": 0.35419360538304556
+      },
+      {
+        "id": "number-0",
+        "category": "quantity",
+        "same": false,
+        "a": "发布前至少检查两遍正文。",
+        "b": "发布前至少检查三遍正文。",
+        "score": 0.8905677882873341
+      },
+      {
+        "id": "number-1",
+        "category": "quantity",
+        "same": false,
+        "a": "只分析最近七天的帖子。",
+        "b": "只分析最近三十天的帖子。",
+        "score": 0.6485411739096139
+      },
+      {
+        "id": "number-2",
+        "category": "quantity",
+        "same": false,
+        "a": "每批最多分析二十条帖子。",
+        "b": "每批至少分析二十条帖子。",
+        "score": 0.9831495047424195
+      },
+      {
+        "id": "number-3",
+        "category": "quantity",
+        "same": false,
+        "a": "曝光低于一百时再复查。",
+        "b": "曝光高于一百时再复查。",
+        "score": 0.8529990349894794
+      }
+    ]
+  },
+  "warm": {
+    "date": "2026-10-22T10:01:59.983Z",
+    "node": "v22.22.2",
+    "os": "Windows 11 Pro",
+    "cpu": "Intel(R) Core(TM) i5-14600KF",
+    "logicalCpus": 20,
+    "ram": 34138931200,
+    "model": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+    "dtype": "q8",
+    "device": "cpu",
+    "loadMs": 778.7356,
+    "uniqueTexts": 58,
+    "firstInferenceMs": 8.153299999999945,
+    "meanInferenceMs": 3.8492724137931127,
+    "stages": [
+      {
+        "name": "before_import",
+        "ms": 20.9106,
+        "rss": 39649280,
+        "heapTotal": 5865472,
+        "heapUsed": 4858808,
+        "external": 1839176,
+        "arrayBuffers": 16502
+      },
+      {
+        "name": "after_import",
+        "ms": 118.8264,
+        "rss": 59203584,
+        "heapTotal": 22147072,
+        "heapUsed": 13834440,
+        "external": 2378711,
+        "arrayBuffers": 29843
+      },
+      {
+        "name": "loaded",
+        "ms": 897.5757,
+        "rss": 523698176,
+        "heapTotal": 255672320,
+        "heapUsed": 233046576,
+        "external": 71563887,
+        "arrayBuffers": 67737033
+      },
+      {
+        "name": "after_inference",
+        "ms": 1123.0649,
+        "rss": 542900224,
+        "heapTotal": 270090240,
+        "heapUsed": 244546720,
+        "external": 79995663,
+        "arrayBuffers": 76168809
+      },
+      {
+        "name": "disposed",
+        "ms": 1132.173,
+        "rss": 418967552,
+        "heapTotal": 270090240,
+        "heapUsed": 245687472,
+        "external": 79995663,
+        "arrayBuffers": 76168809
+      }
+    ],
+    "peakSampledRss": 542900224,
+    "peakOsRssKiB": 530368,
+    "summary": {
+      "paraphrase": {
+        "n": 10,
+        "min": 0.6414208277102926,
+        "max": 0.816985251890145,
+        "mean": 0.7561379887254962
+      },
+      "negation": {
+        "n": 10,
+        "min": 0.5738603472128381,
+        "max": 0.9155865607328365,
+        "mean": 0.7542605415665067
+      },
+      "scope": {
+        "n": 10,
+        "min": 0.41046912582194534,
+        "max": 0.9239461509380991,
+        "mean": 0.7280800063324399
+      },
+      "unrelated": {
+        "n": 10,
+        "min": 0.05668331798272426,
+        "max": 0.5007362984804126,
+        "mean": 0.2215062865111705
+      },
+      "quantity": {
+        "n": 4,
+        "min": 0.6485411739096139,
+        "max": 0.9831495047424195,
+        "mean": 0.8438143754822117
+      }
+    },
+    "thresholds": [
+      {
+        "threshold": 0.7,
+        "tp": 9,
+        "fp": 16,
+        "byCategory": {
+          "negation": 7,
+          "scope": 6,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.75,
+        "tp": 6,
+        "fp": 12,
+        "byCategory": {
+          "negation": 5,
+          "scope": 4,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.8,
+        "tp": 1,
+        "fp": 10,
+        "byCategory": {
+          "negation": 4,
+          "scope": 3,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.85,
+        "tp": 0,
+        "fp": 9,
+        "byCategory": {
+          "negation": 3,
+          "scope": 3,
+          "quantity": 3,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.9,
+        "tp": 0,
+        "fp": 4,
+        "byCategory": {
+          "negation": 1,
+          "scope": 2,
+          "quantity": 1,
+          "unrelated": 0
+        }
+      },
+      {
+        "threshold": 0.95,
+        "tp": 0,
+        "fp": 1,
+        "byCategory": {
+          "negation": 0,
+          "scope": 0,
+          "quantity": 1,
+          "unrelated": 0
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "id": "g1-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "先给出结论，再解释原因。",
+        "b": "开头点明观点，随后展开依据。",
+        "score": 0.7472036964888191
+      },
+      {
+        "id": "g1-2",
+        "category": "negation",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "不要先给出结论，应先解释原因。",
+        "score": 0.8626111236728733
+      },
+      {
+        "id": "g1-3",
+        "category": "scope",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "只有技术教程适合先给出结论，再解释原因。",
+        "score": 0.5740962078423129
+      },
+      {
+        "id": "g1-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "先给出结论，再解释原因。",
+        "b": "每篇文章至少引用三个独立来源。",
+        "score": 0.33893280230419587
+      },
+      {
+        "id": "g2-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "写技术教程时，要让读者能够按步骤重复操作。",
+        "score": 0.7189800897074169
+      },
+      {
+        "id": "g2-2",
+        "category": "negation",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "技术教程不应给出可复现的操作步骤。",
+        "score": 0.5738603472128381
+      },
+      {
+        "id": "g2-3",
+        "category": "scope",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "情绪随笔应给出可复现的操作步骤。",
+        "score": 0.41046912582194534
+      },
+      {
+        "id": "g2-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "技术教程应给出可复现的操作步骤。",
+        "b": "图片应该保留清晰的文字。",
+        "score": 0.135350252005064
+      },
+      {
+        "id": "g3-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "没有充分依据，就不能声称两个现象存在因果联系。",
+        "score": 0.7812670286329599
+      },
+      {
+        "id": "g3-2",
+        "category": "negation",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "缺乏证据时，可以把相关性写成因果关系。",
+        "score": 0.8540800838119326
+      },
+      {
+        "id": "g3-3",
+        "category": "scope",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "只有讨论医疗问题时，才不能把相关性写成因果关系。",
+        "score": 0.7202736113339125
+      },
+      {
+        "id": "g3-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "缺乏证据时，不要把相关性写成因果关系。",
+        "b": "评论开头可以直接回应具体细节。",
+        "score": 0.12643185018975944
+      },
+      {
+        "id": "g4-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "面向初学者写教程时，应说明技术名词的含义。",
+        "score": 0.7567970530156493
+      },
+      {
+        "id": "g4-2",
+        "category": "negation",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "针对新手的教程不需要解释专业术语。",
+        "score": 0.636467245656419
+      },
+      {
+        "id": "g4-3",
+        "category": "scope",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "针对专家的教程需要解释专业术语。",
+        "score": 0.9054517911606069
+      },
+      {
+        "id": "g4-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "针对新手的教程需要解释专业术语。",
+        "b": "视频封面不应遮挡关键画面。",
+        "score": 0.05699544474752269
+      },
+      {
+        "id": "g5-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "使用数字论据，要交代数据出处及对应的时间范围。",
+        "score": 0.7722668933351454
+      },
+      {
+        "id": "g5-2",
+        "category": "negation",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "引用数据时，不必标明来源和统计时间。",
+        "score": 0.6509637663787364
+      },
+      {
+        "id": "g5-3",
+        "category": "scope",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "只有引用自己的数据时，才应标明来源和统计时间。",
+        "score": 0.7985954152845679
+      },
+      {
+        "id": "g5-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "引用数据时，应标明来源和统计时间。",
+        "b": "每段文字尽量表达一个核心观点。",
+        "score": 0.2048937468371475
+      },
+      {
+        "id": "g6-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "观察数量太少时，需要交代判断的适用限制。",
+        "score": 0.7451020361143899
+      },
+      {
+        "id": "g6-2",
+        "category": "negation",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "样本不足时，不应说明结论的局限。",
+        "score": 0.7289047274070111
+      },
+      {
+        "id": "g6-3",
+        "category": "scope",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "只有样本充足时，才应明确说明结论的局限。",
+        "score": 0.9239461509380991
+      },
+      {
+        "id": "g6-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "样本不足时，应明确说明结论的局限。",
+        "b": "产品截图需要清楚显示操作入口。",
+        "score": 0.21039706575122308
+      },
+      {
+        "id": "g7-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "回答别人时，优先解答他实际提出的问题。",
+        "score": 0.816985251890145
+      },
+      {
+        "id": "g7-2",
+        "category": "negation",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "回复问题时，应避免回应对方的具体疑问。",
+        "score": 0.723024214062074
+      },
+      {
+        "id": "g7-3",
+        "category": "scope",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "只有回复付费用户时，才应先回应对方的具体疑问。",
+        "score": 0.7478374960172465
+      },
+      {
+        "id": "g7-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "回复问题时，应先回应对方的具体疑问。",
+        "b": "引用他人观点应注明作者。",
+        "score": 0.5007362984804126
+      },
+      {
+        "id": "g8-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "不能只因为浏览量少，就认定一条帖子没有内容价值。",
+        "score": 0.7833289649993702
+      },
+      {
+        "id": "g8-2",
+        "category": "negation",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "低曝光能直接证明帖子内容质量差。",
+        "score": 0.7927857828872446
+      },
+      {
+        "id": "g8-3",
+        "category": "scope",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "低曝光不能直接证明技术帖内容质量差。",
+        "score": 0.8794419602477632
+      },
+      {
+        "id": "g8-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "低曝光不能直接证明帖子内容质量差。",
+        "b": "标题需要准确反映正文。",
+        "score": 0.23044848143060984
+      },
+      {
+        "id": "g9-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "分享故障处理方法，应先交代问题表现，再给出处理流程。",
+        "score": 0.6414208277102926
+      },
+      {
+        "id": "g9-2",
+        "category": "negation",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "讲解排障经验时，不要先描述现象，应直接说明解决步骤。",
+        "score": 0.9155865607328365
+      },
+      {
+        "id": "g9-3",
+        "category": "scope",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "撰写产品广告时，先描述现象，再说明解决步骤。",
+        "score": 0.6490390490060571
+      },
+      {
+        "id": "g9-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "讲解排障经验时，先描述现象，再说明解决步骤。",
+        "b": "转载图片要尊重作者许可。",
+        "score": 0.05668331798272426
+      },
+      {
+        "id": "g10-1",
+        "category": "paraphrase",
+        "same": true,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "文章末尾的问题要围绕前文讨论的内容。",
+        "score": 0.7980280453607729
+      },
+      {
+        "id": "g10-2",
+        "category": "negation",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "在结尾提出问题时，不应与正文主题相关。",
+        "score": 0.804321563843102
+      },
+      {
+        "id": "g10-3",
+        "category": "scope",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "只有长篇文章结尾的问题才需要与正文主题相关。",
+        "score": 0.6716492556718879
+      },
+      {
+        "id": "g10-4",
+        "category": "unrelated",
+        "same": false,
+        "a": "在结尾提出问题时，应与正文主题相关。",
+        "b": "删除帖子之前应检查其来源。",
+        "score": 0.35419360538304556
+      },
+      {
+        "id": "number-0",
+        "category": "quantity",
+        "same": false,
+        "a": "发布前至少检查两遍正文。",
+        "b": "发布前至少检查三遍正文。",
+        "score": 0.8905677882873341
+      },
+      {
+        "id": "number-1",
+        "category": "quantity",
+        "same": false,
+        "a": "只分析最近七天的帖子。",
+        "b": "只分析最近三十天的帖子。",
+        "score": 0.6485411739096139
+      },
+      {
+        "id": "number-2",
+        "category": "quantity",
+        "same": false,
+        "a": "每批最多分析二十条帖子。",
+        "b": "每批至少分析二十条帖子。",
+        "score": 0.9831495047424195
+      },
+      {
+        "id": "number-3",
+        "category": "quantity",
+        "same": false,
+        "a": "曝光低于一百时再复查。",
+        "b": "曝光高于一百时再复查。",
+        "score": 0.8529990349894794
+      }
+    ]
+  },
+  "reproductionSource": "import fs from 'node:fs';\nimport os from 'node:os';\nimport {performance} from 'node:perf_hooks';\nconst groups = [\n ['先给出结论，再解释原因。','开头点明观点，随后展开依据。','不要先给出结论，应先解释原因。','只有技术教程适合先给出结论，再解释原因。','每篇文章至少引用三个独立来源。'],\n ['技术教程应给出可复现的操作步骤。','写技术教程时，要让读者能够按步骤重复操作。','技术教程不应给出可复现的操作步骤。','情绪随笔应给出可复现的操作步骤。','图片应该保留清晰的文字。'],\n ['缺乏证据时，不要把相关性写成因果关系。','没有充分依据，就不能声称两个现象存在因果联系。','缺乏证据时，可以把相关性写成因果关系。','只有讨论医疗问题时，才不能把相关性写成因果关系。','评论开头可以直接回应具体细节。'],\n ['针对新手的教程需要解释专业术语。','面向初学者写教程时，应说明技术名词的含义。','针对新手的教程不需要解释专业术语。','针对专家的教程需要解释专业术语。','视频封面不应遮挡关键画面。'],\n ['引用数据时，应标明来源和统计时间。','使用数字论据，要交代数据出处及对应的时间范围。','引用数据时，不必标明来源和统计时间。','只有引用自己的数据时，才应标明来源和统计时间。','每段文字尽量表达一个核心观点。'],\n ['样本不足时，应明确说明结论的局限。','观察数量太少时，需要交代判断的适用限制。','样本不足时，不应说明结论的局限。','只有样本充足时，才应明确说明结论的局限。','产品截图需要清楚显示操作入口。'],\n ['回复问题时，应先回应对方的具体疑问。','回答别人时，优先解答他实际提出的问题。','回复问题时，应避免回应对方的具体疑问。','只有回复付费用户时，才应先回应对方的具体疑问。','引用他人观点应注明作者。'],\n ['低曝光不能直接证明帖子内容质量差。','不能只因为浏览量少，就认定一条帖子没有内容价值。','低曝光能直接证明帖子内容质量差。','低曝光不能直接证明技术帖内容质量差。','标题需要准确反映正文。'],\n ['讲解排障经验时，先描述现象，再说明解决步骤。','分享故障处理方法，应先交代问题表现，再给出处理流程。','讲解排障经验时，不要先描述现象，应直接说明解决步骤。','撰写产品广告时，先描述现象，再说明解决步骤。','转载图片要尊重作者许可。'],\n ['在结尾提出问题时，应与正文主题相关。','文章末尾的问题要围绕前文讨论的内容。','在结尾提出问题时，不应与正文主题相关。','只有长篇文章结尾的问题才需要与正文主题相关。','删除帖子之前应检查其来源。'],\n];\nconst pairs=[];\nfor(let i=0;i<groups.length;i++) for(let j=1;j<5;j++)pairs.push({id:`g${i+1}-${j}`,category:['','paraphrase','negation','scope','unrelated'][j],same:j===1,a:groups[i][0],b:groups[i][j]});\npairs.push(...[\n ['发布前至少检查两遍正文。','发布前至少检查三遍正文。'],\n ['只分析最近七天的帖子。','只分析最近三十天的帖子。'],\n ['每批最多分析二十条帖子。','每批至少分析二十条帖子。'],\n ['曝光低于一百时再复查。','曝光高于一百时再复查。'],\n].map(([a,b],i)=>({id:`number-${i}`,category:'quantity',same:false,a,b})));\nfs.writeFileSync('corpus.json',JSON.stringify(pairs,null,2));\nconst stages=[]; let peak=0;\nfunction snap(name){const m=process.memoryUsage();peak=Math.max(peak,m.rss);const x={name,ms:performance.now(),...m};stages.push(x);console.log(JSON.stringify(x));}\nsnap('before_import');\nconst {pipeline,env}=await import('@huggingface/transformers');\nenv.cacheDir='./model-cache';\nsnap('after_import');\nconst t=performance.now();\nconst extractor=await pipeline('feature-extraction','Xenova/paraphrase-multilingual-MiniLM-L12-v2',{dtype:'q8',device:'cpu',progress_callback:p=>{if(p.status==='done')console.log('downloaded '+p.file);}});\nsnap('loaded');\nconst loadMs=performance.now()-t;\nconst texts=[...new Set(pairs.flatMap(p=>[p.a,p.b]))];const vectors=new Map();const timings=[];\nfor (const s of texts){const st=performance.now();const result=await extractor(s,{pooling:'mean',normalize:true});timings.push(performance.now()-st);vectors.set(s,Array.from(result.data));peak=Math.max(peak,process.memoryUsage().rss);}\nsnap('after_inference');\nconst scored=pairs.map(p=>({...p,score:vectors.get(p.a).reduce((sum,v,i)=>sum+v*vectors.get(p.b)[i],0)}));\nconst thresholds=[0.7,0.75,0.8,0.85,0.9,0.95].map(threshold=>({threshold,tp:scored.filter(p=>p.same&&p.score>=threshold).length,fp:scored.filter(p=>!p.same&&p.score>=threshold).length,byCategory:Object.fromEntries(['negation','scope','quantity','unrelated'].map(c=>[c,scored.filter(p=>p.category===c&&p.score>=threshold).length]))}));\nconst summary=Object.fromEntries([...new Set(scored.map(p=>p.category))].map(c=>{let v=scored.filter(p=>p.category===c).map(p=>p.score);return [c,{n:v.length,min:Math.min(...v),max:Math.max(...v),mean:v.reduce((a,b)=>a+b)/v.length}]}));\nawait extractor.dispose();snap('disposed');\nconst out={date:new Date().toISOString(),node:process.version,os:os.version(),cpu:os.cpus()[0].model,logicalCpus:os.cpus().length,ram:os.totalmem(),model:'Xenova/paraphrase-multilingual-MiniLM-L12-v2',dtype:'q8',device:'cpu',loadMs,uniqueTexts:texts.length,firstInferenceMs:timings[0],meanInferenceMs:timings.reduce((a,b)=>a+b)/timings.length,stages,peakSampledRss:peak,peakOsRssKiB:process.resourceUsage().maxRSS,summary,thresholds,pairs:scored};\nfs.writeFileSync(process.env.RESULT_FILE||'results.json',JSON.stringify(out,null,2));console.log(JSON.stringify({loadMs,summary,thresholds,peakSampledRss:peak}));\n"
+}

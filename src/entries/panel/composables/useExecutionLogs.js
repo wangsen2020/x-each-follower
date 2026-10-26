@@ -1,3 +1,5 @@
+import {queryUnfollowLogs} from '../../../shared/execution-log-select.js';
+import {readSystemSettings} from '../../../shared/system-settings.js';
 import { ref, computed } from 'vue';
 import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-store.js';
 
@@ -8,16 +10,58 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-sto
  */
 export function useExecutionLogs() {
   const isOpen = ref(false);
-  const currentScope = ref('autoFollow');
+  const currentScope = ref('queue');
+  const followbackSubTab = ref('unfollow');
+  async function setFollowbackSubTab(tab) {
+    if (!['timeout-monitoring','greeting','unfollow'].includes(tab)) return;
+    followbackSubTab.value = tab; logPager.reset();
+    if (isOpen.value) await loadPage();
+  }
   const fansSubTab = ref('scan'); // 'scan' | 'followBack'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
   const entries = ref([]);
   const total = ref(0);
+  const queryDays = ref(0);
   const canPrev = ref(false);
   const canNext = ref(false);
+  const elapsedSeconds = ref(0);
+  const recovery = ref(null);
+  let loadingTimer;
+  const loadingTitle = computed(() => recovery.value?.phase === 'recovering' ? '正在恢复历史日志…' : '正在加载执行日志…');
+  const loadingDetail = computed(() => {
+    const state = recovery.value;
+    if (state?.phase === 'recovering') return `已恢复 ${state.current} / ${state.total} 项历史操作，完成后自动显示。`;
+    if (elapsedSeconds.value >= 10) return '加载时间较长，仍在等待后台响应。你可以关闭窗口稍后重试。';
+    return '正在读取本页记录，请稍候。';
+  });
+
+  function stopLoadingFeedback() {
+    clearInterval(loadingTimer);
+    loadingTimer = undefined;
+  }
+
+  function startLoadingFeedback(token) {
+    stopLoadingFeedback();
+    elapsedSeconds.value = 0;
+    recovery.value = null;
+    const started = Date.now();
+    let polling = false;
+    loadingTimer = setInterval(async () => {
+      if (!logPager.current(token) || status.value !== 'loading' || !isOpen.value) return;
+      elapsedSeconds.value = Math.floor((Date.now() - started) / 1000);
+      if (polling || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+      polling = true;
+      try {
+        const response = await chrome.runtime.sendMessage({cmd: 'executionLogStatus'});
+        if (logPager.current(token) && status.value === 'loading' && response?.ok) recovery.value = response.recovery;
+      } catch { /* The primary page request reports failures. */ }
+      finally { polling = false; }
+    }, 500);
+  }
 
   const logPager = createLogPager();
+  let pageSize=LOG_PAGE_SIZE, since=null;
 
   const isFansScope = computed(() => currentScope.value === 'fans' || currentScope.value === 'monitor');
 
@@ -34,12 +78,12 @@ export function useExecutionLogs() {
   const title = computed(() => {
     const scope = currentScope.value;
     if (scope === 'fans' || scope === 'monitor') {
-      if (fansSubTab.value === 'scan') return '粉丝管理 · 粉丝扫描日志';
-      if (fansSubTab.value === 'followBack') return '粉丝管理 · 队列回关日志';
-      return '粉丝管理 · 全部执行日志';
+      if (fansSubTab.value === 'scan') return '粉丝跟进 · 粉丝扫描日志';
+      if (fansSubTab.value === 'followBack') return '粉丝跟进 · 队列回关日志';
+      return '粉丝跟进 · 全部执行日志';
     }
     if (scope === 'unreciprocated') {
-      return '回关监测 · 定时检测与取关日志';
+      return `回关监控 · ${followbackSubTab.value === 'timeout-monitoring' ? '超时监测' : followbackSubTab.value === 'greeting' ? '私信提醒' : '取消关注'}`;
     }
     const prefix = scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '关注队列';
     return `${prefix} · 执行日志`;
@@ -57,10 +101,11 @@ export function useExecutionLogs() {
   });
 
   const totalBadgeText = computed(() => {
+    if (status.value === 'loading') return '加载中';
     if (isFansScope.value && fansSubTab.value === 'followBack') {
-      return `本页 ${displayedEntries.value.length} 条记录`;
+      return `${queryDays.value ? `近 ${queryDays.value} 天 · ` : ''}${total.value} 条记录`;
     }
-    return `${total.value} 条记录`;
+    return `${queryDays.value ? `近 ${queryDays.value} 天 · ` : ''}${total.value} 条记录`;
   });
 
   const emptyTitle = computed(() => {
@@ -68,9 +113,9 @@ export function useExecutionLogs() {
     if (scope === 'fans' || scope === 'monitor') {
       if (fansSubTab.value === 'scan') return '暂无粉丝扫描日志';
       if (fansSubTab.value === 'followBack') return '暂无队列回关日志';
-      return '暂无粉丝管理执行日志';
+      return '暂无粉丝跟进执行日志';
     }
-    if (scope === 'unreciprocated') return '暂无回关监测日志';
+    if (scope === 'unreciprocated') return followbackSubTab.value === 'timeout-monitoring' ? '暂无超时监测日志' : followbackSubTab.value === 'greeting' ? '暂无私信提醒日志' : '暂无取消关注日志';
     return '暂无执行日志记录';
   });
 
@@ -86,7 +131,7 @@ export function useExecutionLogs() {
       return '点击“↻ 增量同步关注与粉丝数据”或关注队列执行回关后，相关明细将显示在此。';
     }
     if (scope === 'unreciprocated') {
-      return '点击“开始检测”或开启定时取关后，检测与取关记录将显示在此。';
+      return followbackSubTab.value === 'timeout-monitoring' ? '查看关系比对、等待天数和超时判定；监测本身不会发送提醒或取关。' : followbackSubTab.value === 'greeting' ? '查看私信提醒及发送结果；待确认的私信不会重复发送。' : '查看自动和手动取关的账号及结果；跳过或待确认不代表已取关。';
     }
     return '开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。';
   });
@@ -101,25 +146,32 @@ export function useExecutionLogs() {
     status.value = 'loading';
     errorMessage.value = '';
     updatePaginationFlags();
+    startLoadingFeedback(token);
 
     let saved;
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         let queryScope = currentScope.value;
         if (isFansScope.value && fansSubTab.value === 'followBack') {
-          queryScope = 'autoFollow';
+          queryScope = 'queueFans';
         }
-        saved = await chrome.runtime.sendMessage({
+        const query = {
           cmd: 'queryExecutionLogs',
           scope: queryScope,
-          limit: LOG_PAGE_SIZE,
+          ...(queryScope === 'unreciprocated' ? {kind:followbackSubTab.value} : {}),
+          limit: pageSize,
+          since,
           cursor: logPager.cursor()
-        });
+        };
+        saved = Boolean(query.kind)
+          ? await queryUnfollowLogs(message => chrome.runtime.sendMessage(message), query)
+          : await chrome.runtime.sendMessage(query);
       } else {
         saved = { ok: true, entries: [], total: 0 };
       }
     } catch (err) {
       if (!logPager.current(token)) return;
+      stopLoadingFeedback();
       status.value = 'error';
       errorMessage.value = err?.message || '日志后台未响应，请重新加载扩展';
       entries.value = [];
@@ -128,6 +180,7 @@ export function useExecutionLogs() {
     }
 
     if (!logPager.current(token)) return;
+    stopLoadingFeedback();
     if (!saved?.ok) {
       status.value = 'error';
       errorMessage.value = saved?.error || '日志后台未响应，请重新加载扩展';
@@ -143,8 +196,8 @@ export function useExecutionLogs() {
     updatePaginationFlags();
   }
 
-  async function open(scope = 'autoFollow') {
-    currentScope.value = scope;
+  async function open(scope = 'queue') {
+    currentScope.value = scope === 'autoFollow' ? 'queue' : scope;
     if (scope === 'fans' || scope === 'monitor') {
       fansSubTab.value = 'scan';
     }
@@ -152,11 +205,25 @@ export function useExecutionLogs() {
     entries.value = [];
     total.value = 0;
     isOpen.value = true;
+    status.value = 'loading';
+    const generation=logPager.generation();
+    try {
+      const settings=globalThis.chrome?.storage?.local?.get ? await readSystemSettings('logs') : {pageSize:LOG_PAGE_SIZE,days:0};
+      if(!isOpen.value || generation!==logPager.generation())return;
+      pageSize=settings.pageSize;
+      queryDays.value=settings.days;
+      since=settings.days?new Date(Date.now()-settings.days*86400000).toISOString():null;
+    } catch(error) {
+      if(!isOpen.value || generation!==logPager.generation())return;
+      status.value='error';errorMessage.value=error.message;return;
+    }
     await loadPage();
   }
 
   function close() {
     isOpen.value = false;
+    logPager.reset();
+    stopLoadingFeedback();
   }
 
   async function prevPage() {
@@ -172,6 +239,8 @@ export function useExecutionLogs() {
   }
 
   async function clearLogs() {
+
+
     const scope = currentScope.value;
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       if (typeof window !== 'undefined' && window.alert) {
@@ -181,12 +250,12 @@ export function useExecutionLogs() {
     }
 
     const label = scope === 'fans' || scope === 'monitor'
-      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝管理全部日志')
+      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝跟进全部日志')
       : scope === 'unreciprocated'
-        ? '回关监测执行日志'
+        ? '超时监测、私信提醒和取消关注的全部日志'
         : '当前范围的执行日志';
 
-    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？此操作不可撤销。`)) {
+    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`)) {
       return;
     }
 
@@ -217,6 +286,7 @@ export function useExecutionLogs() {
   }
 
   async function refreshIfOpen(targetScope) {
+    if (targetScope === 'autoFollow') targetScope = 'queue';
     if (!isOpen.value) return;
     if (targetScope) {
       const match = targetScope === currentScope.value ||
@@ -230,10 +300,15 @@ export function useExecutionLogs() {
     isOpen,
     currentScope,
     fansSubTab,
+    followbackSubTab,
+    setFollowbackSubTab,
     isFansScope,
     setFansSubTab,
     status,
     errorMessage,
+    elapsedSeconds,
+    loadingTitle,
+    loadingDetail,
     entries: displayedEntries,
     rawEntries: entries,
     total,

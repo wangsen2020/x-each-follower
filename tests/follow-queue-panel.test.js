@@ -1,15 +1,115 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {nextTick} from 'vue';
+import {cloudflareImagesController} from '../src/entries/panel/composables/useCloudflareImages.js';
 import {
   DEFAULT_SETTINGS,
   SETTINGS_BOUNDS,
   STATE_LABELS,
   MODULE_LABELS,
+  summarizeQueueSources,
   safeHttpsUrl,
   safeHandleUrl,
   normalizeSettings,
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
+
+test('evaluation retry displays progress and the returned skip reason instead of silently refreshing',async()=>{
+  const prior=globalThis.chrome;let listener,finish;
+  globalThis.chrome={runtime:{onMessage:{addListener:fn=>{listener=fn;},removeListener:()=>{listener=null;}}}};
+  const root=createMockElement('div');
+  const job={id:'retry-feedback',handle:'author',accountId:'owner',state:'followed',sources:[],evaluations:[{taskId:'task',status:'skipped',reasonCode:'quality_skip',reason:'上次内容不足'}]};
+  const request=async m=>m.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:m.cmd==='followQueueRetryEvaluation'?new Promise(r=>{finish=r;}):{ok:true,jobs:[job]};
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request});
+  try{
+    await new Promise(r=>setTimeout(r,15));
+    root.querySelectorAll('button').find(b=>b.textContent==='重新评估').click();
+    assert.match(root.querySelector('.fq-evaluation-feedback').textContent,/正在开始/);
+    listener({cmd:'followQueueEvaluationProgress',accountId:'owner',jobId:job.id,label:'正在读取原帖 2…'});
+    assert.equal(root.querySelector('.fq-evaluation-feedback').textContent,'正在读取原帖 2…');
+    finish({ok:true,summary:'本次内容未达到创作质量要求，未发布'});
+    await new Promise(r=>setTimeout(r,15));
+    assert.equal(root.querySelector('.fq-evaluation-feedback').textContent,'本次内容未达到创作质量要求，未发布');
+  }finally{panel.destroy();globalThis.chrome=prior;}
+  assert.equal(listener,null);
+});
+
+test('image binding updates the settings entry without recreating unsaved controls',async()=>{
+  const c=cloudflareImagesController,refresh=c.refreshStatus,previous=c.connected.value;
+  c.refreshStatus=async()=>{c.connected.value=true;};
+  const root=createMockElement('div');
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async message=>message.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:{ok:true,jobs:[]}});
+  try{
+    await new Promise(r=>setTimeout(r,15));root.querySelector('[aria-label="关注队列设置"]').click();
+    const button=root.querySelector('#fq_cloudflare_connection'),control=root.querySelector('#fq_publicationMode_article');
+    assert.match(button.textContent,/已绑定/);
+    c.connected.value=false;await nextTick();assert.equal(button.textContent,'连接文章配图服务');
+    c.connected.value=true;await nextTick();assert.match(button.textContent,/已绑定/);
+    assert.equal(root.querySelector('#fq_publicationMode_article'),control);
+  }finally{panel.destroy();c.refreshStatus=refresh;c.connected.value=previous;}
+});
+
+test('settings cannot snapshot defaults before the account settings finish loading',async()=>{
+  const root=createMockElement('div');let release, saved;
+  const loaded={...DEFAULT_SETTINGS,every:15,jitter:5,batchLimit:15,inspectLimit:30,followBackAllowAll:true,quoteTagsEnabled:true};
+  const waiting=new Promise(resolve=>{release=resolve;});
+  const request=async message=>{
+    if(message.cmd==='followQueueSettings')return waiting;
+    if(message.cmd==='followQueueSaveSettings'){saved=message.settings;return {ok:true,settings:message.settings};}
+    return {ok:true,jobs:[]};
+  };
+  const panel=mountFollowQueuePanel(root,{request,accountId:'owner'});
+  try{
+    await new Promise(r=>setTimeout(r,0));
+    const initial=root.querySelector('[aria-label="关注队列设置"]');
+    assert.equal(initial.disabled,true);initial.click();assert.equal(root.querySelector('.fq-drawer'),null);
+    release({ok:true,settings:loaded});await new Promise(r=>setTimeout(r,15));
+    const ready=root.querySelector('[aria-label="关注队列设置"]');assert.equal(ready.disabled,false);ready.click();
+    root.querySelector('#fq_publicationMode_article').click();
+    root.querySelector('.fq-drawer-footer .fq-btn-primary').click();await new Promise(r=>setTimeout(r,15));
+    assert.equal(saved.publicationMode,'article');
+    for(const key of ['every','jitter','batchLimit','inspectLimit','followBackAllowAll','quoteTagsEnabled'])assert.equal(saved[key],loaded[key]);
+  }finally{release({ok:true,settings:loaded});panel.destroy();}
+});
+
+test('queue deletion requires confirmation, keeps failed rows and disables running jobs', async () => {
+  const root = createMockElement('div');
+  let jobs = ['uncertain', 'running'].map((state, index) => ({id:`del-${index}`, handle:`User${index}`, accountId:'owner', state, sources:[], evaluations:[]}));
+  let confirmed = false, fail = true;
+  const calls = [];
+  const prior = globalThis.confirm;
+  globalThis.confirm = () => confirmed;
+  const request = async message => {
+    calls.push(message);
+    if (message.cmd === 'followQueueList') return {ok:true, jobs};
+    if (message.cmd === 'followQueueSettings') return {ok:true, settings:DEFAULT_SETTINGS};
+    if (message.cmd === 'followQueueDelete') {
+      if (fail) return {ok:false, reason:'模拟删除失败'};
+      jobs = jobs.filter(job => job.id !== message.jobId);
+      return {ok:true};
+    }
+    return {ok:true};
+  };
+  const panel = mountFollowQueuePanel(root, {request, accountId:'owner'});
+  const wait = () => new Promise(resolve => setTimeout(resolve, 15));
+  try {
+    await wait();
+    const buttons = root.querySelectorAll('.fq-delete-job');
+    assert.equal(buttons.length, 2);
+    assert.equal(buttons[1].disabled, true);
+    buttons[0].click(); await wait();
+    assert.equal(calls.some(call=>call.cmd === 'followQueueDelete'), false);
+    confirmed = true;
+    root.querySelector('.fq-delete-job').click(); await wait();
+    assert.equal(jobs.length, 2);
+    assert.match(root.textContent, /模拟删除失败/);
+    fail = false;
+    root.querySelector('.fq-delete-job').click(); await wait();
+    assert.equal(jobs.length, 1);
+    assert.equal(root.querySelectorAll('.fq-delete-job').length, 1);
+    assert.ok(calls.some(call=>call.cmd === 'followQueueDelete' && call.confirmed && call.accountId === 'owner'));
+  } finally { panel.destroy(); globalThis.confirm = prior; }
+});
 
 test('automatic schedule switch enables scheduling when toggled on', async () => {
   const root=createMockElement('div'), calls=[];
@@ -124,6 +224,7 @@ function createMockElement(tagName) {
     setAttribute(name, value) {
       attributes.set(name, String(value));
       if (name === 'id') element.id = String(value);
+      if (name === 'type') element.type = String(value);
       if (name === 'class') element.className = String(value);
       if (name === 'value') element.value = String(value);
       if (name === 'checked') element.checked = true;
@@ -300,6 +401,9 @@ test('normalizeSettings returns contract defaults when raw is empty or missing',
   assert.equal(settings.onlyRecommended, true);
   assert.equal(settings.grokEnabled, false);
   assert.equal(settings.autoPublish, false);
+  assert.equal(settings.publicationMode, 'quote');
+  assert.equal(settings.quoteParticipationRate, 60);
+  assert.equal(settings.quoteLengthMode, 'adaptive');
 });
 
 test('normalizeSettings clamps out-of-bounds numeric values and respects bounds', () => {
@@ -430,7 +534,7 @@ test('mountFollowQueuePanel loads list and renders jobs with status badges and s
 
   // Check row 1 handle and badges
   assert.ok(rows[0].textContent.includes('@TargetUserOne'));
-  assert.ok(rows[0].textContent.includes('粉丝管理'));
+  assert.ok(rows[0].textContent.includes('粉丝跟进'));
   assert.ok(rows[0].textContent.includes('互关追踪'));
   assert.ok(rows[0].textContent.includes('已关注'));
   assert.ok(rows[0].textContent.includes('已发布帖子'));
@@ -442,6 +546,38 @@ test('mountFollowQueuePanel loads list and renders jobs with status badges and s
   assert.ok(rows[1].textContent.includes('无评价'));
 
   handle.destroy();
+});
+
+test('source column shows one module tag while trace keeps every discovery record', async () => {
+  const sources = [
+    {module:'fans',url:'https://x.com/target',enabled:true,discoveredAt:1},
+    {module:'fans',url:'',enabled:true,discoveredAt:2},
+    {module:'comments',url:'https://x.com/author/status/1',enabled:true,discoveredAt:3},
+    {module:'comments',url:'https://x.com/author/status/2',enabled:true,discoveredAt:4},
+    {module:'mutual',url:'https://x.com/anchor/followers',enabled:true,discoveredAt:5}
+  ];
+  assert.deepEqual(summarizeQueueSources(sources).map(group => [group.module, group.count, group.url]), [
+    ['fans', 2, 'https://x.com/target'],
+    ['comments', 2, null],
+    ['mutual', 1, 'https://x.com/anchor/followers']
+  ]);
+  const root = createMockElement('div');
+  const job = {id:'multi-source',accountId:'WatsonTaylor23',targetUserId:'123',handle:'target',sources,state:'pending',stage:'queued',createdAt:1,updatedAt:2,evaluations:[]};
+  const request = async ({cmd}) => cmd === 'followQueueList'
+    ? {ok:true,jobs:[job]}
+    : {ok:true,settings:{...DEFAULT_SETTINGS}};
+  const mounted = mountFollowQueuePanel(root,{request,accountId:'WatsonTaylor23'});
+  await new Promise(resolve => setTimeout(resolve, 15));
+  const row = root.querySelector('tbody tr');
+  const sourceCell = row.querySelector('.fq-col-sources');
+  assert.deepEqual(sourceCell.querySelectorAll('.fq-tag').map(tag => tag.textContent), ['粉丝跟进','评论追踪','互关追踪']);
+  assert.equal(sourceCell.querySelectorAll('.fq-source-link').length, 2);
+  row.querySelector('.fq-col-actions button').click();
+  const trace = root.querySelector('.fq-drawer');
+  assert.ok(trace.textContent.includes('候选来源记录 (5)'));
+  assert.ok(trace.textContent.includes('https://x.com/author/status/1'));
+  assert.ok(trace.textContent.includes('https://x.com/author/status/2'));
+  mounted.destroy();
 });
 
 test('mountFollowQueuePanel renders untrusted strings safely without HTML interpretation', async () => {
@@ -584,8 +720,9 @@ test('traceability drawer opens with complete chain and closes cleanly', async (
   assert.ok(drawer.textContent.includes('这是一段测试引用草稿'));
 
   // Close drawer via close button
-  const closeBtn = drawer.querySelector('.fq-drawer-close');
+  const closeBtn = drawer.querySelector('.panel-close-button');
   assert.ok(closeBtn);
+  assert.equal(closeBtn.getAttribute('aria-label'), '关闭');
   closeBtn.click();
 
   assert.equal(root.querySelector('.fq-drawer'), null);
@@ -616,7 +753,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
 
   const drawer = root.querySelector('.fq-drawer');
   assert.ok(drawer);
-  assert.ok(drawer.textContent.includes('关注队列 · 统一调度与执行设置'));
+  assert.ok(drawer.textContent.includes('关注队列设置'));
 
   // Verify contract default fields exist
   const batchInput = drawer.querySelector('#fq_batchLimit');
@@ -630,6 +767,11 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   const autoPublishSwitch = drawer.querySelector('#fq_autoPublish');
   assert.ok(autoPublishSwitch);
   assert.equal(autoPublishSwitch.checked, false);
+  const fanBypass = drawer.querySelector('#fq_followBackAllowAll');
+  assert.ok(fanBypass);
+  assert.equal(fanBypass.checked, false);
+  fanBypass.checked = true;
+  fanBypass.dispatchEvent({type:'change',target:{checked:true}});
 
   // Edit fields
   batchInput.value = '10';
@@ -647,6 +789,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.ok(savedSettings);
   assert.equal(savedSettings.batchLimit, 10);
   assert.equal(savedSettings.autoPublish, true);
+  assert.equal(savedSettings.followBackAllowAll, true);
   assert.equal(savedSettings.enabled, false);
 
   handle.destroy();
@@ -1141,7 +1284,7 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   const updatedRows = root.querySelectorAll('tbody tr');
   const row1Btns = updatedRows[1].querySelectorAll('.fq-col-actions button');
   assert.equal(row1Btns[0].textContent, '发布评价');
-  const traceBtn = row1Btns[row1Btns.length - 1];
+  const traceBtn = Array.from(row1Btns).find(button => button.textContent === '溯源详情');
   traceBtn.click();
 
   const drawer = root.querySelector('.fq-drawer');
@@ -1476,4 +1619,321 @@ test('weight column defaults descending and toggle requests ascending from the f
   assert.equal(latest.order,'asc'); assert.equal(latest.cursor,null);
   assert.equal(root.querySelector('.fq-col-priority').getAttribute('aria-sort'),'ascending');
   panel.destroy();
+});
+
+for (const rejected of [false, true]) {
+  test(`first-page scan recovers an invalid cursor without mixing revisions, rejected=${rejected}`, async () => {
+    const root = createMockElement('div');
+    const cursors = [];
+    let restarted = false;
+    const request = async payload => {
+      if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+      cursors.push(payload.cursor);
+      if (payload.cursor) {
+        restarted = true;
+        if (rejected) throw new Error('invalid follow queue cursor');
+        return {ok: false, error: 'invalid follow queue cursor'};
+      }
+      return {ok: true, paged: true, jobs: [{id: restarted ? 'fresh' : 'old', handle: restarted ? 'Fresh' : 'Obsolete', state: 'uncertain', sources: []}], hasMore: !restarted, nextCursor: restarted ? null : 'old-cursor', totalKnown: false};
+    };
+    const panel = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+    try {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      assert.deepEqual(cursors, [null, 'old-cursor', null]);
+      assert.ok(root.textContent.includes('@Fresh'));
+      assert.equal(root.textContent.includes('@Obsolete'), false);
+      assert.equal(root.textContent.includes('invalid follow queue cursor'), false);
+    } finally { panel.destroy(); }
+  });
+}
+
+test('cursor recovery is bounded and manual retry gets a fresh budget', async () => {
+  const root = createMockElement('div');
+  let calls = 0;
+  const request = async payload => {
+    if (payload.cmd !== 'followQueueList') return {ok: true, settings: {}};
+    calls++;
+    return {ok: false, error: 'invalid follow queue cursor'};
+  };
+  const panel = mountFollowQueuePanel(root, {request, accountId: 'acc'});
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls, 3);
+    assert.ok(root.textContent.includes('队列正在更新，请稍后重试。'));
+    const retry = [...root.querySelectorAll('button')].find(button => button.textContent === '重试');
+    retry.click();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls, 6);
+  } finally { panel.destroy(); }
+});
+
+test('settings drawer renders 引用概率 and 篇幅 with accessible help, validates invalid inputs inline without resetting, and reflects persisted values on save', async () => {
+  const root = createMockElement('div');
+  let persistedSettings = { ...DEFAULT_SETTINGS };
+  const saveCalls = [];
+
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') return { ok: true, jobs: [] };
+    if (payload.cmd === 'followQueueSettings') return { ok: true, settings: { ...persistedSettings } };
+    if (payload.cmd === 'followQueueSaveSettings') {
+      saveCalls.push(payload.settings);
+      persistedSettings = { ...persistedSettings, ...payload.settings };
+      return { ok: true, settings: { ...persistedSettings } };
+    }
+    return { ok: true };
+  };
+
+  const panel = mountFollowQueuePanel(root, { request, accountId: 'WatsonTaylor23' });
+  try {
+    await new Promise(r => setTimeout(r, 15));
+
+    const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+    settingsBtn.click();
+
+    let drawer = root.querySelector('.fq-drawer');
+    assert.ok(drawer);
+    assert.ok(drawer.textContent.includes('发帖形式'));
+    assert.ok(drawer.textContent.includes('创作概率'));
+    assert.ok(drawer.textContent.includes('篇幅'));
+
+    const rateInput = drawer.querySelector('#fq_quoteParticipationRate');
+    const lengthSelect = drawer.querySelector('#fq_quoteLengthMode');
+    assert.ok(rateInput);
+    assert.ok(lengthSelect);
+    assert.equal(rateInput.value, '60');
+    assert.equal(lengthSelect.value, 'adaptive');
+
+    // Accessible help tips for 引用概率 and 篇幅
+    const tips = drawer.querySelectorAll('.info-tip');
+    const rateTip = [...tips].find(node => (node.getAttribute('aria-label') || '').includes('只抽取一次'));
+    assert.ok(rateTip, 'Probability help tip must explain single sampling before Grok');
+    assert.match(rateTip.getAttribute('aria-label'), /质量/);
+    assert.match(rateTip.getAttribute('aria-label'), /0%/);
+    assert.equal(rateTip.getAttribute('tabindex'), '0');
+
+    const lengthTip = [...tips].find(node => (node.getAttribute('aria-label') || '').includes('自适应按原帖信息量表达'));
+    assert.ok(lengthTip, 'Length mode help tip must be accessible');
+    assert.equal(lengthTip.getAttribute('tabindex'), '0');
+
+    // Invalid input: decimal / out-of-range / empty must show inline error, preserve invalid input, and block save
+    for (const invalidVal of ['60.5', '-5', '101', '']) {
+      drawer = root.querySelector('.fq-drawer');
+      const input = drawer.querySelector('#fq_quoteParticipationRate');
+      input.value = invalidVal;
+      input.dispatchEvent({ type: 'input', target: { value: invalidVal } });
+
+      const saveBtn = drawer.querySelector('.fq-drawer-footer .fq-btn-primary');
+      saveBtn.click();
+      await new Promise(r => setTimeout(r, 10));
+
+      assert.equal(saveCalls.length, 0, `Invalid rate "${invalidVal}" must not dispatch followQueueSaveSettings`);
+      const refreshedDrawer = root.querySelector('.fq-drawer');
+      assert.ok(refreshedDrawer, 'Settings drawer must stay open on validation error');
+      const refreshedInput = refreshedDrawer.querySelector('#fq_quoteParticipationRate');
+      assert.equal(refreshedInput.value, invalidVal, `Invalid input "${invalidVal}" must be preserved and never silently reset to 60`);
+      assert.equal(refreshedInput.getAttribute('aria-invalid'), 'true');
+      const inlineErr = refreshedDrawer.querySelector('#fq_quoteParticipationRate_error');
+      assert.ok(inlineErr);
+      assert.match(inlineErr.textContent, /请输入 0—100 的整数/);
+    }
+
+    // Valid save at boundary 0% and deep mode
+    drawer = root.querySelector('.fq-drawer');
+    const validRateInput = drawer.querySelector('#fq_quoteParticipationRate');
+    const validLengthSelect = drawer.querySelector('#fq_quoteLengthMode');
+    validRateInput.value = '0';
+    validRateInput.dispatchEvent({ type: 'input', target: { value: '0' } });
+    validLengthSelect.value = 'deep';
+    validLengthSelect.dispatchEvent({ type: 'change', target: { value: 'deep' } });
+
+    const saveBtn = drawer.querySelector('.fq-drawer-footer .fq-btn-primary');
+    saveBtn.click();
+    await new Promise(r => setTimeout(r, 15));
+
+    assert.equal(saveCalls.length, 1);
+    assert.equal(saveCalls[0].quoteParticipationRate, 0);
+    assert.equal(saveCalls[0].quoteLengthMode, 'deep');
+    assert.equal(saveCalls[0].grokEnabled, false);
+    assert.equal(saveCalls[0].autoPublish, false);
+
+    // Summary and reopened drawer reflect persisted values
+    assert.match(root.textContent, /概率 0% · 深入/);
+    settingsBtn.click();
+    drawer = root.querySelector('.fq-drawer');
+    assert.equal(drawer.querySelector('#fq_quoteParticipationRate').value, '0');
+    assert.equal(drawer.querySelector('#fq_quoteLengthMode').value, 'deep');
+  } finally {
+    panel.destroy();
+  }
+});
+
+test('publicationMode radio group enforces exclusivity, keyboard-accessible tips, invalid mode validation, save/reopen roundtrip, and immutable draft mode display', async () => {
+  const root = createMockElement('div');
+  let persistedSettings = { ...DEFAULT_SETTINGS };
+  const saveCalls = [];
+  const jobsData = [
+    {
+      id: 'job-quote-draft',
+      createdAt: 1,
+      accountId: 'WatsonTaylor23',
+      targetUserId: '301',
+      handle: 'QuoteDraftUser',
+      state: 'followed',
+      sources: [{ module: 'comments', url: 'https://x.com/QuoteDraftUser/status/801', enabled: true }],
+      evaluations: [{
+        taskId: 'eval-quote-draft',
+        publicationMode: 'quote',
+        originalAuthorId: '301',
+        originalPostId: '801',
+        originalPostUrl: 'https://x.com/QuoteDraftUser/status/801',
+        status: 'draft',
+        text: '保留为引用评论形式的草稿',
+        attempts: 1
+      }]
+    },
+    {
+      id: 'job-original-draft',
+      createdAt: 2,
+      accountId: 'WatsonTaylor23',
+      targetUserId: '302',
+      handle: 'OriginalDraftUser',
+      state: 'followed',
+      sources: [{ module: 'fans', url: 'https://x.com/OriginalDraftUser/status/802', enabled: true }],
+      evaluations: [{
+        taskId: 'eval-original-draft',
+        publicationMode: 'original',
+        originalAuthorId: '302',
+        originalPostId: '802',
+        originalPostUrl: 'https://x.com/OriginalDraftUser/status/802',
+        status: 'draft',
+        text: '作为独立新帖发布的草稿',
+        attempts: 1
+      }]
+    }
+  ];
+
+  const request = async payload => {
+    if (payload.cmd === 'followQueueList') return { ok: true, jobs: jobsData };
+    if (payload.cmd === 'followQueueSettings') return { ok: true, settings: { ...persistedSettings } };
+    if (payload.cmd === 'followQueueSaveSettings') {
+      saveCalls.push(payload.settings);
+      persistedSettings = { ...persistedSettings, ...payload.settings };
+      return { ok: true, settings: { ...persistedSettings } };
+    }
+    return { ok: true };
+  };
+
+  const panel = mountFollowQueuePanel(root, { request, accountId: 'WatsonTaylor23' });
+  try {
+    await new Promise(r => setTimeout(r, 15));
+
+    // Default summary bar shows 发帖形式 引用评论
+    assert.match(root.textContent, /发帖形式 引用评论/);
+
+    // Table evaluation badges show each evaluation's own publication mode
+    const rows = root.querySelectorAll('tbody tr');
+    assert.equal(rows.length, 2);
+    const quoteRow = [...rows].find(r => r.textContent.includes('@QuoteDraftUser'));
+    const origRow = [...rows].find(r => r.textContent.includes('@OriginalDraftUser'));
+    assert.match(quoteRow.querySelector('.fq-col-eval').textContent, /引用评论/);
+    assert.match(origRow.querySelector('.fq-col-eval').textContent, /新帖/);
+
+    // Open settings drawer
+    const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+    settingsBtn.click();
+
+    let drawer = root.querySelector('.fq-drawer');
+    assert.ok(drawer);
+    const radioGroup = drawer.querySelector('#fq_publicationMode');
+    const quoteRadio = drawer.querySelector('#fq_publicationMode_quote');
+    const originalRadio = drawer.querySelector('#fq_publicationMode_article');
+    assert.ok(radioGroup);
+    assert.equal(radioGroup.getAttribute('role'), 'radiogroup');
+    assert.ok(quoteRadio);
+    assert.ok(originalRadio);
+    assert.equal(quoteRadio.type, 'radio');
+    assert.equal(originalRadio.type, 'radio');
+    assert.equal(quoteRadio.value, 'quote');
+    assert.equal(originalRadio.value, 'article');
+
+    // Default selection is 引用评论 (quote)
+    assert.equal(quoteRadio.checked, true);
+    assert.equal(quoteRadio.getAttribute('aria-checked'), 'true');
+    assert.equal(originalRadio.checked, false);
+    assert.equal(originalRadio.getAttribute('aria-checked'), 'false');
+
+    // Keyboard accessible tips explain standalone original post without quote card, independent value & skip, and new tasks only
+    const tips = drawer.querySelectorAll('.info-tip');
+    const modeTip = [...tips].find(node => (node.getAttribute('aria-label') || '').includes('5:2 封面'));
+    assert.ok(modeTip, 'Publication mode help tip must explain standalone post without quote card');
+    assert.equal(modeTip.getAttribute('tabindex'), '0');
+    assert.match(modeTip.getAttribute('aria-label'), /独立/);
+    assert.match(modeTip.getAttribute('aria-label'), /短描述/);
+    assert.match(modeTip.getAttribute('aria-label'), /保留草稿/);
+    assert.ok(drawer.querySelector('#fq_publicationMode_reply'));
+    assert.equal(drawer.querySelectorAll('input[name="publicationMode"]').length,3);
+
+    // Radio mutual exclusivity: selecting 新帖 unchecks 引用评论, and selecting 引用评论 unchecks 新帖
+    originalRadio.click();
+    assert.equal(originalRadio.checked, true);
+    assert.equal(originalRadio.getAttribute('aria-checked'), 'true');
+    assert.equal(quoteRadio.checked, false);
+    assert.equal(quoteRadio.getAttribute('aria-checked'), 'false');
+
+    quoteRadio.click();
+    assert.equal(quoteRadio.checked, true);
+    assert.equal(originalRadio.checked, false);
+
+    // Invalid mode validation blocks save and shows actionable Chinese message
+    radioGroup.dispatchEvent({ type: 'change', target: { value: 'invalid_mode' } });
+    drawer.querySelector('.fq-drawer-footer .fq-btn-primary').click();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(saveCalls.length, 0);
+    drawer = root.querySelector('.fq-drawer');
+    assert.ok(drawer);
+    assert.equal(drawer.querySelector('#fq_publicationMode').getAttribute('aria-invalid'), 'true');
+    assert.match(drawer.querySelector('#fq_publicationMode_error').textContent, /发帖形式请选择评论、引用评论或文章/);
+    assert.match(drawer.textContent, /发帖形式请选择评论、引用评论或文章/);
+
+    // Select 新帖 (original) and save
+    const refreshedOriginalRadio = drawer.querySelector('#fq_publicationMode_article');
+    const refreshedQuoteRadio = drawer.querySelector('#fq_publicationMode_quote');
+    refreshedOriginalRadio.click();
+    assert.equal(refreshedOriginalRadio.checked, true);
+    assert.equal(refreshedQuoteRadio.checked, false);
+
+    drawer.querySelector('.fq-drawer-footer .fq-btn-primary').click();
+    await new Promise(r => setTimeout(r, 15));
+
+    assert.equal(saveCalls.length, 1);
+    assert.equal(saveCalls[0].publicationMode, 'article');
+    assert.match(root.textContent, /发帖形式 文章/);
+
+    // Reopen settings drawer and verify 新帖 remains selected
+    settingsBtn.click();
+    drawer = root.querySelector('.fq-drawer');
+    assert.equal(drawer.querySelector('#fq_publicationMode_article').checked, true);
+    assert.equal(drawer.querySelector('#fq_publicationMode_quote').checked, false);
+    drawer.querySelector('.panel-close-button').click();
+
+    // Existing saved quote draft in evaluation details STILL shows 引用评论 after settings changed to 新帖
+    const updatedQuoteRow = [...root.querySelectorAll('tbody tr')].find(r => r.textContent.includes('@QuoteDraftUser'));
+    const quoteTraceBtn = [...updatedQuoteRow.querySelectorAll('.fq-col-actions button')].find(b => b.textContent === '溯源详情');
+    quoteTraceBtn.click();
+    const quoteDrawer = root.querySelector('.fq-drawer');
+    assert.ok(quoteDrawer);
+    assert.match(quoteDrawer.textContent, /发帖形式:引用评论（附带引用卡片）/);
+    quoteDrawer.querySelector('.panel-close-button').click();
+
+    // Original draft in evaluation details shows 新帖（独立发帖，不附带引用卡片）
+    const updatedOrigRow = [...root.querySelectorAll('tbody tr')].find(r => r.textContent.includes('@OriginalDraftUser'));
+    const origTraceBtn = [...updatedOrigRow.querySelectorAll('.fq-col-actions button')].find(b => b.textContent === '溯源详情');
+    origTraceBtn.click();
+    const origDrawer = root.querySelector('.fq-drawer');
+    assert.ok(origDrawer);
+    assert.match(origDrawer.textContent, /发帖形式:旧版新帖（独立发帖，不附带引用卡片）/);
+
+  } finally {
+    panel.destroy();
+  }
 });

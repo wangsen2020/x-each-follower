@@ -1,7 +1,11 @@
 import {tweetWeight,resolveCommentLanguage} from './quote-text.js';
 
-export const RECOMMENDED_QUOTE_TAGS = Object.freeze(['互关','互关呀','互关互赞','互关互粉','互关必回','FollowBack','FollowForFollow','MutualFollow','F4F','LetsConnect']);
-export const QUOTE_TAG_DEFAULTS = Object.freeze({quoteTagsEnabled:false,quoteCustomTags:[],quoteSelectedTags:[...RECOMMENDED_QUOTE_TAGS]});
+export const RECOMMENDED_QUOTE_TAGS = Object.freeze([
+  '互关','互关呀','互关互赞','互关互粉','互关必回','FollowBack','FollowForFollow','MutualFollow','F4F','LetsConnect',
+  '蓝V互关','蓝V涨友','蓝V互关互粉','蓝V扩列','蓝V','蓝V涨朋友','蓝V互助朋友',
+  'VerifiedFollowBack','BlueCheckCommunity','VerifiedMutuals','LetsGrowTogether','ConnectAndGrow'
+]);
+export const QUOTE_TAG_DEFAULTS = Object.freeze({quoteTagsEnabled:false,quoteCustomTags:[],quoteSelectedTags:RECOMMENDED_QUOTE_TAGS.slice(0,10)});
 export function cleanQuoteTag(value) {
   const tag=String(value || '').normalize('NFC').trim().replace(/^[#＃]+/u,'');
   return /^[\p{L}\p{M}\p{N}_]{1,30}$/u.test(tag) && /[\p{L}_]/u.test(tag) ? tag : '';
@@ -13,15 +17,24 @@ export function normalizeQuoteTags(raw={}) {
   const selected=unique(Array.isArray(raw.quoteSelectedTags)?raw.quoteSelectedTags:[...RECOMMENDED_QUOTE_TAGS]).map(t=>available.find(a=>a.toLowerCase()===t.toLowerCase())).filter(Boolean).slice(0,10);
   return {quoteTagsEnabled:raw.quoteTagsEnabled===true,quoteCustomTags:custom,quoteSelectedTags:selected};
 }
-export function quoteTagSuffix(settings, language) {
+function eligibleTags(settings, language) {
   const s=normalizeQuoteTags(settings);
-  return s.quoteTagsEnabled?s.quoteSelectedTags.filter(t=>!language || (language==='zh' ? /\p{Script=Han}/u.test(t) : language==='und' ? false : !/\p{Script=Han}/u.test(t))).map(t=>'#'+t).join(' '):'';
+  return s.quoteTagsEnabled?s.quoteSelectedTags.filter(t=>!language || (language==='zh' ? /\p{Script=Han}/u.test(t) : language==='und' ? false : !/\p{Script=Han}/u.test(t))):[];
+}
+export function quoteTagSuffix(settings, language, random = Math.random, previousText = '') {
+  const pool=eligibleTags(settings,language);
+  const existing=new Set((String(previousText).match(/#[\p{L}\p{M}\p{N}_]+/gu)||[]).map(t=>t.slice(1).toLowerCase()));
+  const chosen=[...existing].map(t=>pool.find(p=>p.toLowerCase()===t)).filter(Boolean).slice(0,2);
+  const remaining=pool.filter(t=>!chosen.includes(t));
+  while(chosen.length<2 && remaining.length) chosen.push(...remaining.splice(Math.floor(random()*remaining.length),1));
+  return chosen.map(t=>'#'+t).join(' ');
 }
 export function validateQuoteTags(settings) {
-  if(tweetWeight(quoteTagSuffix(settings))>180) throw new Error('已选标签过长，请减少标签，为评价正文保留空间。');
+  const longest=eligibleTags(settings).map(t=>tweetWeight('#'+t)).sort((a,b)=>b-a).slice(0,2);
+  if(longest.reduce((a,b)=>a+b,0)+1>180) throw new Error('候选标签过长，请缩短标签，为评价正文保留空间。');
 }
-export function appendQuoteTags(text, settings, language) {
-  const suffix=quoteTagSuffix(settings, language ? resolveCommentLanguage(text,language) : undefined);let base=String(text||'').trim();
+export function appendQuoteTags(text, settings, language, {random = Math.random, previousText = text, lengthPolicy} = {}) {
+  const suffix=quoteTagSuffix(settings, language ? resolveCommentLanguage(text,language) : undefined, random, previousText);let base=String(text||'').trim();
   if(!base)return base;
   if(!normalizeQuoteTags(settings).quoteTagsEnabled)return base;
   validateQuoteTags(settings);
@@ -34,7 +47,8 @@ export function appendQuoteTags(text, settings, language) {
   let appended=false;
   for(const tag of suffix.split(' ')) {
     const candidate=result+(appended?' ':'\n\n')+tag;
-    if(tweetWeight(candidate)<=280){result=candidate;appended=true;}
+    const fits = lengthPolicy ? Array.from(candidate).length <= lengthPolicy.maxDraftCharacters : tweetWeight(candidate)<=280;
+    if(fits){result=candidate;appended=true;}
   }
   return result;
 }

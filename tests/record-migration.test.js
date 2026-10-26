@@ -389,3 +389,107 @@ test('rollback keeps payload fields added after import and still overlays nested
   assert.equal(kept.nickname, null);
   assert.equal(kept.posts[0].text, 'after');
 });
+
+
+test('resumes an interrupted migration checkpoint from a taken-over native v1 database without losing staged records', async () => {
+  const dbName = 'migration-native-v1-takeover-resume';
+  const snapshot = sampleSnapshot();
+  const flat = await flattenLegacySnapshot(snapshot);
+  const accounts = [...new Set(flat.records.map(record => record.accountId))].sort();
+  const originals = {};
+  for (const record of flat.records) {
+    const key = JSON.stringify([record.accountId, record.module, record.userKey]);
+    originals[key] = {
+      accountId: record.accountId,
+      module: record.module,
+      userKey: record.userKey,
+      sourceModule: record.sourceModule,
+      scope: record.scope,
+      sourcePath: record.sourcePath,
+      deleted: record.deleted,
+      hash: await hashCanonical(record.payload)
+    };
+  }
+
+  await new Promise((resolve, reject) => {
+    const req = indexedDB.open(dbName, 1);
+    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      db.createObjectStore('meta', {keyPath: 'accountId'});
+      const records = db.createObjectStore('records', {keyPath: 'storageKey'});
+      records.createIndex('scopeSort', ['accountId', 'module', 'generation', 'sortKey', 'userKey'], {unique: true});
+      records.createIndex('scopeStatusSort', ['accountId', 'module', 'generation', 'status', 'sortKey', 'userKey'], {unique: true});
+      records.createIndex('accountGeneration', ['accountId', 'generation', 'module', 'userKey'], {unique: true});
+      const tombstones = db.createObjectStore('tombstones', {keyPath: 'storageKey'});
+      tombstones.createIndex('accountGeneration', ['accountId', 'generation', 'module', 'userKey'], {unique: true});
+      const summaries = db.createObjectStore('summaries', {keyPath: 'storageKey'});
+      summaries.createIndex('accountModule', ['accountId', 'module', 'generation'], {unique: true});
+      const outbox = db.createObjectStore('outbox', {keyPath: 'operationId'});
+      outbox.createIndex('accountModuleRevision', ['accountId', 'module', 'revision'], {unique: false});
+      db.createObjectStore('migrations', {keyPath: 'migrationId'});
+      db.createObjectStore('migrationManifests', {keyPath: 'migrationId'});
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      const stores = ['meta', 'records', 'tombstones', 'summaries', 'outbox', 'migrations', 'migrationManifests'];
+      const tx = db.transaction(stores, 'readwrite');
+      const generationByAccount = {};
+      const baseByAccount = {};
+      for (const accountId of accounts) {
+        generationByAccount[accountId] = 2;
+        baseByAccount[accountId] = {activeGeneration: 1, revision: 0};
+        tx.objectStore('meta').put({
+          accountId,
+          schemaVersion: 1,
+          activeGeneration: 1,
+          nextGeneration: 2,
+          revision: 0,
+          generationRevisions: {'2': 1},
+          sealedGenerations: {}
+        });
+      }
+      for (const row of flat.records.slice(0, 2)) {
+        tx.objectStore('records').put({
+          storageKey: [row.accountId, row.module, 2, row.userKey],
+          accountId: row.accountId,
+          module: row.module,
+          generation: 2,
+          userKey: row.userKey,
+          sortKey: row.sortKey,
+          status: row.status,
+          scope: row.scope,
+          sourcePath: row.sourcePath,
+          payload: structuredClone(row.payload)
+        });
+      }
+      tx.objectStore('migrationManifests').put({
+        migrationId: 'mig-native-resume',
+        generationByAccount,
+        baseByAccount,
+        skeleton: flat.skeleton,
+        fingerprint: flat.fingerprint,
+        total: flat.records.length,
+        chunkSize: 2,
+        originals
+      });
+      tx.objectStore('migrations').put({
+        migrationId: 'mig-native-resume',
+        status: 'importing',
+        nextIndex: 2,
+        error: null,
+        sealedRevisions: null
+      });
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
+  });
+
+  const store = repository(dbName);
+  const resumed = createRecordMigration({repository: store, chunkSize: 2});
+  const verified = await resumed.importSnapshot({snapshot, migrationId: 'mig-native-resume', activate: true});
+  assert.equal(verified.status, 'active');
+  const exported = await resumed.exportRollback('mig-native-resume');
+  assert.deepEqual(exported.snapshot, snapshot);
+  await store.close();
+});

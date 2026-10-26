@@ -9,15 +9,20 @@
     <PostTrackingSection />
     <LeaderboardSection />
     <UnreciprocatedSection />
+    <KnowledgeSection />
     <ProfileDrawer />
     <SettingsDrawer />
     <UnreciprocatedSettingsDrawer />
     <ExecutionLogsModal />
+    <InfoTipLayer />
+    <CloudflareImageSettings />
   </div>
 </template>
 
 <script setup>
 import ExecutionLogsModal from './components/ExecutionLogsModal.vue';
+import InfoTipLayer from './components/InfoTipLayer.vue';
+import CloudflareImageSettings from './components/CloudflareImageSettings.vue';
 import ProfileDrawer from './components/ProfileDrawer.vue';
 import SettingsDrawer from './components/SettingsDrawer.vue';
 import UnreciprocatedSettingsDrawer from './components/UnreciprocatedSettingsDrawer.vue';
@@ -30,4 +35,5 @@ import CommentsSection from './pages/CommentsSection.vue';
 import PostTrackingSection from './pages/PostTrackingSection.vue';
 import LeaderboardSection from './pages/LeaderboardSection.vue';
 import UnreciprocatedSection from './pages/UnreciprocatedSection.vue';
+import KnowledgeSection from './pages/KnowledgeSection.vue';
 </script>

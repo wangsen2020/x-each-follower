@@ -46,3 +46,17 @@
 @media (prefers-reduced-motion: reduce) {
   .dash-spinner { animation: none; }
 }
+.dash-migration-diagnostic {
+  margin: 10px;
+  padding: 10px;
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.6 monospace;
+  background: #f4f8f5;
+  border: 1px solid #cbded2;
+  border-radius: 6px;
+  color: #245b45;
+  user-select: text;
+}

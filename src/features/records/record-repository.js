@@ -1,11 +1,51 @@
-// Extension-origin record store. Not wired to panel, background, or migration runtime.
+// Extension-origin record store. Uses Dexie for IndexedDB CRUD, compound index queries, and version upgrades.
 
+import Dexie from 'dexie';
+
+export const RECORD_NATIVE_LEGACY_VERSION = 1;
+export const RECORD_DEXIE_LEGACY_VERSION = 0.1;
 export const RECORD_DB_VERSION = 1;
+export const RECORD_NATIVE_DB_VERSION = RECORD_DB_VERSION * 10;
 export const RECORD_PAGE_MAX = 100;
 export const RECORD_DB_NAME = 'x-each-follower-records';
 export const RECORD_OPEN_BLOCKED_MS = 3000;
 
-const STORES = ['meta', 'records', 'tombstones', 'summaries', 'outbox', 'migrations', 'migrationManifests'];
+export const RECORD_DEXIE_STORES = Object.freeze({
+  meta: 'accountId',
+  records: 'storageKey, &[accountId+module+generation+sortKey+userKey], &[accountId+module+generation+status+sortKey+userKey], &[accountId+generation+module+userKey]',
+  tombstones: 'storageKey, &[accountId+generation+module+userKey]',
+  summaries: 'storageKey, &[accountId+module+generation]',
+  outbox: 'operationId, [accountId+module+revision]',
+  migrations: 'migrationId',
+  migrationManifests: 'migrationId'
+});
+
+export const RECORD_TRANSACTION_SCOPES = Object.freeze({
+  getMeta: Object.freeze(['meta']),
+  getSummary: Object.freeze(['meta', 'summaries']),
+  getRecord: Object.freeze(['meta', 'records']),
+  getTombstone: Object.freeze(['meta', 'tombstones']),
+  getOutbox: Object.freeze(['outbox']),
+  getCheckpoint: Object.freeze(['migrations']),
+  getManifest: Object.freeze(['migrationManifests']),
+  getMigration: Object.freeze(['migrations', 'migrationManifests']),
+  queryPage: Object.freeze(['meta', 'records']),
+  scanRecords: Object.freeze(['records']),
+  scanTombstones: Object.freeze(['tombstones']),
+  putRecords: Object.freeze(['meta', 'records', 'tombstones', 'summaries', 'outbox']),
+  deleteRecords: Object.freeze(['meta', 'records', 'tombstones', 'summaries', 'outbox']),
+  putTombstones: Object.freeze(['meta', 'records', 'tombstones', 'summaries', 'outbox']),
+  allocateGeneration: Object.freeze(['meta']),
+  beginMigration: Object.freeze(['meta', 'migrations', 'migrationManifests']),
+  saveCheckpoint: Object.freeze(['migrations']),
+  markMigrationVerified: Object.freeze(['meta', 'migrations', 'migrationManifests']),
+  markMigrationFailed: Object.freeze(['migrations']),
+  activateMigration: Object.freeze(['meta', 'migrations', 'migrationManifests'])
+});
+
+const SCOPE_SORT_INDEX = ['accountId', 'module', 'generation', 'sortKey', 'userKey'];
+const SCOPE_STATUS_SORT_INDEX = ['accountId', 'module', 'generation', 'status', 'sortKey', 'userKey'];
+const ACCOUNT_GENERATION_INDEX = ['accountId', 'generation', 'module', 'userKey'];
 
 export class RecordCursorInvalidError extends Error {
   constructor(message) {
@@ -65,34 +105,6 @@ export function canonicalValue(value) {
   return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalValue(value[key])}`).join(',')}}`;
 }
 
-function requestResult(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('IndexedDB request failed'));
-  });
-}
-
-function transactionDone(tx) {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
-    tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed'));
-  });
-}
-
-async function finish(tx, work) {
-  const done = transactionDone(tx);
-  try {
-    const result = await work();
-    await done;
-    return result;
-  } catch (error) {
-    try { tx.abort(); } catch { /* already aborted */ }
-    await done.catch(() => {});
-    throw error;
-  }
-}
-
 function filterHash(filter) {
   if (filter == null) return JSON.stringify({status: null});
   if (typeof filter !== 'object' || Array.isArray(filter)) throw new Error('filter must be an object');
@@ -135,10 +147,6 @@ function validateCursorTuple(last, {account, module, generation, status}) {
   }
 }
 
-function bound(KeyRange, lower, upper, lowerOpen = false, upperOpen = true) {
-  return KeyRange.bound(lower, upper, lowerOpen, upperOpen);
-}
-
 function blankMeta(accountId) {
   return {
     accountId,
@@ -149,28 +157,62 @@ function blankMeta(accountId) {
   };
 }
 
-function installSchema(db) {
-  if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', {keyPath: 'accountId'});
-  if (!db.objectStoreNames.contains('records')) {
-    const records = db.createObjectStore('records', {keyPath: 'storageKey'});
-    records.createIndex('scopeSort', ['accountId', 'module', 'generation', 'sortKey', 'userKey'], {unique: true});
-    records.createIndex('scopeStatusSort', ['accountId', 'module', 'generation', 'status', 'sortKey', 'userKey'], {unique: true});
-    records.createIndex('accountGeneration', ['accountId', 'generation', 'module', 'userKey'], {unique: true});
-  }
-  if (!db.objectStoreNames.contains('tombstones')) {
-    const tombstones = db.createObjectStore('tombstones', {keyPath: 'storageKey'});
-    tombstones.createIndex('accountGeneration', ['accountId', 'generation', 'module', 'userKey'], {unique: true});
-  }
-  if (!db.objectStoreNames.contains('summaries')) {
-    const summaries = db.createObjectStore('summaries', {keyPath: 'storageKey'});
-    summaries.createIndex('accountModule', ['accountId', 'module', 'generation'], {unique: true});
-  }
-  if (!db.objectStoreNames.contains('outbox')) {
-    const outbox = db.createObjectStore('outbox', {keyPath: 'operationId'});
-    outbox.createIndex('accountModuleRevision', ['accountId', 'module', 'revision'], {unique: false});
-  }
-  if (!db.objectStoreNames.contains('migrations')) db.createObjectStore('migrations', {keyPath: 'migrationId'});
-  if (!db.objectStoreNames.contains('migrationManifests')) db.createObjectStore('migrationManifests', {keyPath: 'migrationId'});
+function guardOpenRequest(req, isCancelled, onCancelled) {
+  if (!req || typeof req !== 'object') return req;
+  return new Proxy(req, {
+    set(target, prop, handler) {
+      if (prop === 'onupgradeneeded' && typeof handler === 'function') {
+        target.onupgradeneeded = event => {
+          if (isCancelled()) {
+            try { target.transaction?.abort(); } catch { /* ignore */ }
+            try { target.result?.close(); } catch { /* ignore */ }
+            onCancelled?.();
+            return;
+          }
+          return handler.call(target, event);
+        };
+        return true;
+      }
+      if (prop === 'onsuccess' && typeof handler === 'function') {
+        target.onsuccess = event => {
+          if (isCancelled()) {
+            try { target.result?.close(); } catch { /* ignore */ }
+            onCancelled?.();
+            return;
+          }
+          return handler.call(target, event);
+        };
+        return true;
+      }
+      target[prop] = handler;
+      return true;
+    },
+    get(target, prop) {
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+}
+
+function createRecordDexie(dbName, factory, KeyRange, isCancelled, onCancelled) {
+  let lastRequestedVersion = null;
+  const indexedDB = {
+    open(name, version) {
+      // Prevent Dexie from falling back to versionless open when the on-disk DB is newer than supported.
+      const effectiveVersion = version === undefined && lastRequestedVersion !== null ? lastRequestedVersion : version;
+      if (version !== undefined) lastRequestedVersion = version;
+      const request = effectiveVersion === undefined ? factory.open(name) : factory.open(name, effectiveVersion);
+      return guardOpenRequest(request, isCancelled, onCancelled);
+    },
+    deleteDatabase: typeof factory.deleteDatabase === 'function' ? factory.deleteDatabase.bind(factory) : undefined,
+    cmp: typeof factory.cmp === 'function' ? factory.cmp.bind(factory) : undefined
+  };
+  const db = new Dexie(dbName, {indexedDB, IDBKeyRange: KeyRange, autoOpen: false});
+  // Native version 1 maps to Dexie version 0.1 (0.1 * 10 = 1).
+  // Declaring 0.1 and 1 (native version 10) upgrades legacy native v1 databases without data or index loss.
+  db.version(RECORD_DEXIE_LEGACY_VERSION).stores(RECORD_DEXIE_STORES);
+  db.version(RECORD_DB_VERSION).stores(RECORD_DEXIE_STORES);
+  return db;
 }
 
 export function createRecordRepository({
@@ -185,104 +227,149 @@ export function createRecordRepository({
   if (!factory || !KeyRange) throw new Error('IndexedDB is unavailable');
   let connection = null;
   let opening = null;
+  let cancelOpening = null;
+  let openEpoch = 0;
 
-  function bind(db) {
-    db.onversionchange = () => {
+  function bind(db, epoch) {
+    const idbdb = db.backendDB();
+    if (!idbdb) return;
+    idbdb.onversionchange = () => {
+      if (connection === db && openEpoch === epoch) connection = null;
+      try { idbdb.close(); } catch { /* already closing */ }
       try { db.close(); } catch { /* already closing */ }
-      if (connection === db) connection = null;
     };
-    db.onclose = () => {
-      if (connection === db) connection = null;
+    idbdb.onclose = () => {
+      if (connection === db && openEpoch === epoch) connection = null;
+      try { db.close(); } catch { /* already closed */ }
     };
   }
 
-  function openOnce() {
+  function openOnce(epoch) {
     return new Promise((resolve, reject) => {
-      let request;
-      try {
-        request = factory.open(dbName, RECORD_DB_VERSION);
-      } catch (error) {
-        reject(error);
-        return;
-      }
       let finished = false;
       let blockedTimer = null;
+      let db = null;
+      const isCancelled = () => finished || openEpoch !== epoch;
+
       const fail = error => {
         if (finished) return;
         finished = true;
+        if (cancelOpening === cancelAttempt) cancelOpening = null;
         if (blockedTimer) clearTimeout(blockedTimer);
-        reject(error instanceof Error ? error : new Error('IndexedDB open failed'));
-      };
-      request.onupgradeneeded = () => installSchema(request.result);
-      request.onsuccess = () => {
-        if (finished) {
-          try { request.result?.close(); } catch { /* late success after blocked timeout */ }
-          return;
+        if (db) {
+          try { db.backendDB()?.close(); } catch { /* ignore */ }
+          try { db.close(); } catch { /* ignore */ }
         }
-        finished = true;
-        if (blockedTimer) clearTimeout(blockedTimer);
-        const db = request.result;
-        bind(db);
-        resolve(db);
+        const unwrapped = error?.inner || error;
+        reject(unwrapped instanceof Error ? unwrapped : new Error(String(unwrapped || 'IndexedDB open failed')));
       };
-      request.onerror = event => {
-        event?.preventDefault?.();
-        fail(request.error || new Error('IndexedDB open failed'));
-      };
-      request.onblocked = () => {
-        if (finished || blockedTimer) return;
-        blockedTimer = setTimeout(() => fail(new Error('IndexedDB open blocked')), blockedTimeoutMs);
-      };
+      const cancelAttempt = () => fail(new Error('IndexedDB open cancelled'));
+      cancelOpening = cancelAttempt;
+
+      try {
+        db = createRecordDexie(dbName, factory, KeyRange, isCancelled, cancelAttempt);
+        db.on('blocked', () => {
+          if (isCancelled() || blockedTimer) return;
+          blockedTimer = setTimeout(() => fail(new Error('IndexedDB open blocked')), blockedTimeoutMs);
+        });
+
+        db.open().then(() => {
+          if (isCancelled()) {
+            finished = true;
+            if (cancelOpening === cancelAttempt) cancelOpening = null;
+            if (blockedTimer) clearTimeout(blockedTimer);
+            try { db.backendDB()?.close(); } catch { /* ignore */ }
+            try { db.close(); } catch { /* late open after close or blocked timeout */ }
+            reject(new Error('IndexedDB open cancelled'));
+            return;
+          }
+          const idbdb = db.backendDB();
+          if (idbdb && idbdb.version > RECORD_NATIVE_DB_VERSION) {
+            const versionErr = new Error(`Database version ${idbdb.version} is newer than supported version ${RECORD_NATIVE_DB_VERSION}`);
+            versionErr.name = 'VersionError';
+            fail(versionErr);
+            return;
+          }
+          finished = true;
+          if (cancelOpening === cancelAttempt) cancelOpening = null;
+          if (blockedTimer) clearTimeout(blockedTimer);
+          bind(db, epoch);
+          resolve(db);
+        }).catch(fail);
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
   function open() {
-    if (connection) return Promise.resolve(connection);
+    if (connection && connection.isOpen()) return Promise.resolve(connection);
+    connection = null;
     if (!opening) {
-      opening = openOnce().then(db => {
+      const epoch = ++openEpoch;
+      const attempt = openOnce(epoch).then(db => {
+        if (openEpoch !== epoch) {
+          try { db.backendDB()?.close(); } catch { /* ignore */ }
+          try { db.close(); } catch { /* ignore */ }
+          throw new Error('IndexedDB open superseded');
+        }
         connection = db;
-        opening = null;
+        if (opening === attempt) opening = null;
         return db;
       }).catch(error => {
-        opening = null;
+        if (opening === attempt) opening = null;
         throw error;
       });
+      opening = attempt;
     }
     return opening;
   }
 
   async function close() {
+    openEpoch += 1;
+    const cancel = cancelOpening;
     const pending = opening;
     const current = connection;
+    cancelOpening = null;
     connection = null;
     opening = null;
+    cancel?.();
     if (current) {
+      try { current.backendDB()?.close(); } catch { /* already closed */ }
       try { current.close(); } catch { /* already closed */ }
     }
     if (pending) {
       try {
         const db = await pending;
+        try { db.backendDB()?.close(); } catch { /* already closed */ }
         try { db.close(); } catch { /* already closed */ }
-      } catch { /* open failed */ }
+      } catch { /* open failed or cancelled */ }
     }
   }
 
   async function read(storeNames, fn) {
     const db = await open();
-    const tx = db.transaction(storeNames, 'readonly');
-    return finish(tx, () => fn(tx));
+    const tables = (Array.isArray(storeNames) ? storeNames : [storeNames]).map(name => db.table(name));
+    try {
+      return await db.transaction('r', tables, tx => fn(tx));
+    } catch (error) {
+      throw error?.inner || error;
+    }
   }
 
-  function write(work) {
-    return open().then(db => {
-      const tx = db.transaction(STORES, 'readwrite');
-      return finish(tx, () => work(tx));
-    });
+  async function write(storeNames, work) {
+    const db = await open();
+    const tables = (Array.isArray(storeNames) ? storeNames : [storeNames]).map(name => db.table(name));
+    try {
+      return await db.transaction('rw', tables, tx => work(tx));
+    } catch (error) {
+      throw error?.inner || error;
+    }
   }
 
   async function resolveGeneration(tx, account, requested) {
-    const metaStore = tx.objectStore('meta');
-    const meta = await requestResult(metaStore.get(account)) || blankMeta(account);
+    const metaStore = tx.table('meta');
+    const meta = (await metaStore.get(account)) || blankMeta(account);
     const generation = requested == null ? meta.activeGeneration : requireGeneration(requested);
     if (generation > meta.nextGeneration) throw new Error('generation is not allocated');
     return {metaStore, meta, generation};
@@ -290,17 +377,17 @@ export function createRecordRepository({
 
   async function getMeta(accountId) {
     const account = requireId(accountId, 'accountId');
-    const meta = await read('meta', tx => requestResult(tx.objectStore('meta').get(account)));
+    const meta = await read(RECORD_TRANSACTION_SCOPES.getMeta, tx => tx.table('meta').get(account));
     return meta ? publicMeta(meta) : null;
   }
 
   async function getSummary(accountId, moduleName, options = {}) {
     const account = requireId(accountId, 'accountId');
     const module = requireText(moduleName, 'module');
-    const summary = await read(['meta', 'summaries'], async tx => {
-      const meta = await requestResult(tx.objectStore('meta').get(account));
+    const summary = await read(RECORD_TRANSACTION_SCOPES.getSummary, async tx => {
+      const meta = await tx.table('meta').get(account);
       const generation = options.generation == null ? (meta?.activeGeneration || 1) : requireGeneration(options.generation);
-      return requestResult(tx.objectStore('summaries').get(summaryKey(account, module, generation)));
+      return tx.table('summaries').get(summaryKey(account, module, generation));
     });
     return summary ? publicSummary(summary) : null;
   }
@@ -309,10 +396,10 @@ export function createRecordRepository({
     const account = requireId(accountId, 'accountId');
     const module = requireText(moduleName, 'module');
     const id = requireId(userKey, 'userKey');
-    const record = await read(['meta', 'records'], async tx => {
-      const meta = await requestResult(tx.objectStore('meta').get(account));
+    const record = await read(RECORD_TRANSACTION_SCOPES.getRecord, async tx => {
+      const meta = await tx.table('meta').get(account);
       const generation = options.generation == null ? (meta?.activeGeneration || 1) : requireGeneration(options.generation);
-      return requestResult(tx.objectStore('records').get(storageKey(account, module, generation, id)));
+      return tx.table('records').get(storageKey(account, module, generation, id));
     });
     return record ? publicRecord(record) : null;
   }
@@ -321,45 +408,45 @@ export function createRecordRepository({
     const account = requireId(accountId, 'accountId');
     const module = requireText(moduleName, 'module');
     const id = requireId(userKey, 'userKey');
-    const record = await read(['meta', 'tombstones'], async tx => {
-      const meta = await requestResult(tx.objectStore('meta').get(account));
+    const record = await read(RECORD_TRANSACTION_SCOPES.getTombstone, async tx => {
+      const meta = await tx.table('meta').get(account);
       const generation = options.generation == null ? (meta?.activeGeneration || 1) : requireGeneration(options.generation);
-      return requestResult(tx.objectStore('tombstones').get(storageKey(account, module, generation, id)));
+      return tx.table('tombstones').get(storageKey(account, module, generation, id));
     });
     return record ? publicRecord(record) : null;
   }
 
   async function getOutbox(operationId) {
     const id = requireText(operationId, 'operationId');
-    const entry = await read('outbox', tx => requestResult(tx.objectStore('outbox').get(id)));
+    const entry = await read(RECORD_TRANSACTION_SCOPES.getOutbox, tx => tx.table('outbox').get(id));
     return entry ? publicOutbox(entry) : null;
   }
 
   async function getCheckpoint(migrationId) {
     const id = requireText(migrationId, 'migrationId');
-    const checkpoint = await read('migrations', tx => requestResult(tx.objectStore('migrations').get(id)));
+    const checkpoint = await read(RECORD_TRANSACTION_SCOPES.getCheckpoint, tx => tx.table('migrations').get(id));
     return checkpoint ? clone(checkpoint) : null;
   }
 
   async function getManifest(migrationId) {
     const id = requireText(migrationId, 'migrationId');
-    const manifest = await read('migrationManifests', tx => requestResult(tx.objectStore('migrationManifests').get(id)));
+    const manifest = await read(RECORD_TRANSACTION_SCOPES.getManifest, tx => tx.table('migrationManifests').get(id));
     return manifest ? clone(manifest) : null;
   }
 
   async function getMigration(migrationId) {
     const id = requireText(migrationId, 'migrationId');
-    return read(['migrations', 'migrationManifests'], async tx => {
-      const checkpoint = await requestResult(tx.objectStore('migrations').get(id));
+    return read(RECORD_TRANSACTION_SCOPES.getMigration, async tx => {
+      const checkpoint = await tx.table('migrations').get(id);
       if (!checkpoint) return null;
-      const manifest = await requestResult(tx.objectStore('migrationManifests').get(id));
+      const manifest = await tx.table('migrationManifests').get(id);
       return {...clone(manifest), ...clone(checkpoint)};
     });
   }
 
   async function applyOperation(tx, {accountId, moduleName, generation, operationId, type, content, mutate}) {
-    const outbox = tx.objectStore('outbox');
-    const prior = await requestResult(outbox.get(operationId));
+    const outbox = tx.table('outbox');
+    const prior = await outbox.get(operationId);
     if (prior) {
       if (prior.accountId !== accountId) throw new Error('operationId belongs to another account');
       if (prior.module !== moduleName) throw new Error('operationId belongs to another module');
@@ -377,9 +464,9 @@ export function createRecordRepository({
     if (active) meta.revision += 1;
     meta.generationRevisions[generationKey] = (meta.generationRevisions[generationKey] || 0) + 1;
     const revision = active ? meta.revision : (meta.revision || 0);
-    const summaries = tx.objectStore('summaries');
+    const summaries = tx.table('summaries');
     const key = summaryKey(accountId, moduleName, targetGeneration);
-    const summary = await requestResult(summaries.get(key)) || {
+    const summary = (await summaries.get(key)) || {
       storageKey: key,
       accountId,
       module: moduleName,
@@ -390,8 +477,8 @@ export function createRecordRepository({
     summary.revision = revision;
     summary.generation = targetGeneration;
     summary.updatedAt = now();
-    await requestResult(metaStore.put(meta));
-    await requestResult(summaries.put(summary));
+    await metaStore.put(meta);
+    await summaries.put(summary);
     const result = {
       operationId,
       accountId,
@@ -401,7 +488,7 @@ export function createRecordRepository({
       summary: publicSummary(summary),
       records
     };
-    await requestResult(outbox.put({
+    await outbox.put({
       operationId,
       type,
       content,
@@ -412,7 +499,7 @@ export function createRecordRepository({
       at: now(),
       recordIds: records.map(record => record.userKey),
       result
-    }));
+    });
     return result;
   }
 
@@ -440,7 +527,7 @@ export function createRecordRepository({
     const patch = summaryPatch == null ? null : clone(summaryPatch);
     if (patch && (typeof patch !== 'object' || Array.isArray(patch))) throw new Error('summaryPatch must be an object');
     const content = canonicalValue({type: 'put', accountId: account, module, generation: generation ?? null, summaryPatch: patch, records});
-    return write(tx => applyOperation(tx, {
+    return write(RECORD_TRANSACTION_SCOPES.putRecords, tx => applyOperation(tx, {
       accountId: account,
       moduleName: module,
       generation,
@@ -448,16 +535,16 @@ export function createRecordRepository({
       type: 'put',
       content,
       mutate: async ({summary, generation: targetGeneration}) => {
-        const recordStore = tx.objectStore('records');
-        const tombstones = tx.objectStore('tombstones');
+        const recordStore = tx.table('records');
+        const tombstones = tx.table('tombstones');
         const saved = [];
         for (const input of records) {
           const parts = recordParts(input);
           if (input.accountId != null && input.accountId !== account) throw new Error('record accountId does not match');
           if (input.module != null && input.module !== module) throw new Error('record module does not match');
           const key = storageKey(account, module, targetGeneration, parts.userKey);
-          const previous = await requestResult(recordStore.get(key));
-          const tombstone = await requestResult(tombstones.get(key));
+          const previous = await recordStore.get(key);
+          const tombstone = await tombstones.get(key);
           const payload = {...(previous?.payload || tombstone?.payload || {}), ...parts.payload};
           const stored = {
             storageKey: key,
@@ -471,8 +558,8 @@ export function createRecordRepository({
             sourcePath: Array.isArray(parts.sourcePath) ? parts.sourcePath : (previous?.sourcePath || tombstone?.sourcePath || null),
             payload
           };
-          await requestResult(recordStore.put(stored));
-          if (tombstone) await requestResult(tombstones.delete(key));
+          await recordStore.put(stored);
+          if (tombstone) await tombstones.delete(key);
           if (!previous) summary.count += 1;
           saved.push(publicRecord(stored));
         }
@@ -494,7 +581,7 @@ export function createRecordRepository({
     if (!Array.isArray(userKeys) || userKeys.length === 0) throw new Error('userKeys must be a non-empty array');
     const ids = userKeys.map(userKey => requireId(userKey, 'userKey'));
     const content = canonicalValue({type: 'delete', accountId: account, module, generation: generation ?? null, userKeys: ids});
-    return write(tx => applyOperation(tx, {
+    return write(RECORD_TRANSACTION_SCOPES.deleteRecords, tx => applyOperation(tx, {
       accountId: account,
       moduleName: module,
       generation,
@@ -514,7 +601,7 @@ export function createRecordRepository({
     if (!Array.isArray(records) || records.length === 0) throw new Error('records must be a non-empty array');
     const parts = records.map(recordParts);
     const content = canonicalValue({type: 'tombstone', accountId: account, module, generation: generation ?? null, records});
-    return write(tx => applyOperation(tx, {
+    return write(RECORD_TRANSACTION_SCOPES.putTombstones, tx => applyOperation(tx, {
       accountId: account,
       moduleName: module,
       generation,
@@ -534,13 +621,13 @@ export function createRecordRepository({
   }
 
   async function writeTombstones(tx, {account, module, ids, summary, revision, generation, payloads}) {
-    const recordStore = tx.objectStore('records');
-    const tombstones = tx.objectStore('tombstones');
+    const recordStore = tx.table('records');
+    const tombstones = tx.table('tombstones');
     const saved = [];
     for (const userKey of ids) {
       const key = storageKey(account, module, generation, userKey);
-      const previous = await requestResult(recordStore.get(key));
-      const priorTomb = await requestResult(tombstones.get(key));
+      const previous = await recordStore.get(key);
+      const priorTomb = await tombstones.get(key);
       const supplied = payloads.get(userKey);
       const payload = clone(supplied?.payload || previous?.payload || priorTomb?.payload || {userKey});
       const tombstone = {
@@ -559,10 +646,10 @@ export function createRecordRepository({
         deletedAt: now()
       };
       if (previous) {
-        await requestResult(recordStore.delete(key));
+        await recordStore.delete(key);
         summary.count = Math.max(0, summary.count - 1);
       }
-      await requestResult(tombstones.put(tombstone));
+      await tombstones.put(tombstone);
       saved.push(publicRecord(tombstone));
     }
     return saved;
@@ -575,10 +662,8 @@ export function createRecordRepository({
     if (!Number.isInteger(limit) || limit < 1 || limit > RECORD_PAGE_MAX) throw new Error(`limit must be an integer from 1 to ${RECORD_PAGE_MAX}`);
     const hash = filterHash(filter);
     const status = filter?.status ? indexText(filter.status, 'status') : null;
-    const db = await open();
-    const tx = db.transaction(['meta', 'records'], 'readonly');
-    return finish(tx, async () => {
-      const meta = await requestResult(tx.objectStore('meta').get(account));
+    return read(RECORD_TRANSACTION_SCOPES.queryPage, async tx => {
+      const meta = await tx.table('meta').get(account);
       const revision = meta?.revision || 0;
       const activeGeneration = meta?.activeGeneration || 1;
       const targetGeneration = generation == null ? activeGeneration : requireGeneration(generation);
@@ -607,24 +692,12 @@ export function createRecordRepository({
           upperOpen = true;
         }
       }
-      const indexName = status == null ? 'scopeSort' : 'scopeStatusSort';
-      const index = tx.objectStore('records').index(indexName);
-      const range = bound(KeyRange, lower, upper, lowerOpen, upperOpen);
-      const direction = sort === 'desc' ? 'prev' : 'next';
-      const request = index.openCursor(range, direction);
-      const rows = await new Promise((resolve, reject) => {
-        const collected = [];
-        request.onsuccess = () => {
-          const current = request.result;
-          if (!current || collected.length > limit) {
-            resolve(collected);
-            return;
-          }
-          collected.push(current.value);
-          current.continue();
-        };
-        request.onerror = () => reject(request.error || new Error('cursor failed'));
-      });
+      const indexFields = status == null ? SCOPE_SORT_INDEX : SCOPE_STATUS_SORT_INDEX;
+      let collection = tx.table('records')
+        .where(indexFields)
+        .between(lower, upper, !lowerOpen, !upperOpen);
+      if (sort === 'desc') collection = collection.reverse();
+      const rows = await collection.limit(limit + 1).toArray();
       const page = rows.slice(0, limit).map(publicRecord);
       const hasMore = rows.length > limit;
       const last = page[page.length - 1];
@@ -644,44 +717,33 @@ export function createRecordRepository({
     });
   }
 
-  function scanIndex(storeName, accountId, generation) {
+  function scanIndex(storeName, scopes, accountId, generation) {
     const account = requireId(accountId, 'accountId');
     const target = requireGeneration(generation);
-    return read(storeName, tx => {
-      const index = tx.objectStore(storeName).index('accountGeneration');
-      const range = bound(KeyRange, [account, target], [account, target, []], false, true);
-      const request = index.openCursor(range);
-      return new Promise((resolve, reject) => {
-        const collected = [];
-        request.onsuccess = () => {
-          const current = request.result;
-          if (!current) {
-            resolve(collected.map(publicRecord));
-            return;
-          }
-          collected.push(current.value);
-          current.continue();
-        };
-        request.onerror = () => reject(request.error || new Error('scan failed'));
-      });
+    return read(scopes, async tx => {
+      const rows = await tx.table(storeName)
+        .where(ACCOUNT_GENERATION_INDEX)
+        .between([account, target], [account, target, []], true, false)
+        .toArray();
+      return rows.map(publicRecord);
     });
   }
 
   function scanRecords(accountId, generation) {
-    return scanIndex('records', accountId, generation);
+    return scanIndex('records', RECORD_TRANSACTION_SCOPES.scanRecords, accountId, generation);
   }
 
   function scanTombstones(accountId, generation) {
-    return scanIndex('tombstones', accountId, generation);
+    return scanIndex('tombstones', RECORD_TRANSACTION_SCOPES.scanTombstones, accountId, generation);
   }
 
   async function allocateGeneration(accountId) {
     const account = requireId(accountId, 'accountId');
-    return write(async tx => {
-      const metaStore = tx.objectStore('meta');
-      const meta = await requestResult(metaStore.get(account)) || blankMeta(account);
+    return write(RECORD_TRANSACTION_SCOPES.allocateGeneration, async tx => {
+      const metaStore = tx.table('meta');
+      const meta = (await metaStore.get(account)) || blankMeta(account);
       meta.nextGeneration += 1;
-      await requestResult(metaStore.put(meta));
+      await metaStore.put(meta);
       return meta.nextGeneration;
     });
   }
@@ -689,25 +751,25 @@ export function createRecordRepository({
   async function beginMigration({migrationId, accounts, skeleton, fingerprint, total, chunkSize, originals} = {}) {
     const id = requireText(migrationId, 'migrationId');
     if (!Array.isArray(accounts)) throw new Error('accounts must be an array');
-    return write(async tx => {
-      const checkpoints = tx.objectStore('migrations');
-      const manifests = tx.objectStore('migrationManifests');
-      const existing = await requestResult(checkpoints.get(id));
-      const existingManifest = await requestResult(manifests.get(id));
+    return write(RECORD_TRANSACTION_SCOPES.beginMigration, async tx => {
+      const checkpoints = tx.table('migrations');
+      const manifests = tx.table('migrationManifests');
+      const existing = await checkpoints.get(id);
+      const existingManifest = await manifests.get(id);
       if (existing) {
         if (!existingManifest || existingManifest.fingerprint !== fingerprint) throw new Error('migration snapshot does not match the checkpoint');
         return {...clone(existingManifest), ...clone(existing)};
       }
-      const metaStore = tx.objectStore('meta');
+      const metaStore = tx.table('meta');
       const generationByAccount = {};
       const baseByAccount = {};
       for (const accountId of accounts) {
         const account = requireId(accountId, 'accountId');
-        const meta = await requestResult(metaStore.get(account)) || blankMeta(account);
+        const meta = (await metaStore.get(account)) || blankMeta(account);
         baseByAccount[account] = {activeGeneration: meta.activeGeneration, revision: meta.revision || 0};
         meta.nextGeneration += 1;
         generationByAccount[account] = meta.nextGeneration;
-        await requestResult(metaStore.put(meta));
+        await metaStore.put(meta);
       }
       const manifest = {
         migrationId: id,
@@ -720,8 +782,8 @@ export function createRecordRepository({
         originals: clone(originals)
       };
       const checkpoint = {migrationId: id, status: 'importing', nextIndex: 0, error: null, sealedRevisions: null};
-      await requestResult(manifests.put(manifest));
-      await requestResult(checkpoints.put(checkpoint));
+      await manifests.put(manifest);
+      await checkpoints.put(checkpoint);
       return {...clone(manifest), ...clone(checkpoint)};
     });
   }
@@ -729,33 +791,33 @@ export function createRecordRepository({
   async function saveCheckpoint({migrationId, nextIndex, status} = {}) {
     const id = requireText(migrationId, 'migrationId');
     if (!Number.isInteger(nextIndex) || nextIndex < 0) throw new Error('nextIndex must be a non-negative integer');
-    return write(async tx => {
-      const checkpoints = tx.objectStore('migrations');
-      const checkpoint = await requestResult(checkpoints.get(id));
+    return write(RECORD_TRANSACTION_SCOPES.saveCheckpoint, async tx => {
+      const checkpoints = tx.table('migrations');
+      const checkpoint = await checkpoints.get(id);
       if (!checkpoint) throw new Error('migration was not found');
       if (checkpoint.status === 'active' || checkpoint.status === 'verified') return clone(checkpoint);
       checkpoint.nextIndex = nextIndex;
       if (status) checkpoint.status = status;
-      await requestResult(checkpoints.put(checkpoint));
+      await checkpoints.put(checkpoint);
       return clone(checkpoint);
     });
   }
 
   async function markMigrationVerified(migrationId, expectedRevisions) {
     const id = requireText(migrationId, 'migrationId');
-    return write(async tx => {
-      const checkpoints = tx.objectStore('migrations');
-      const manifests = tx.objectStore('migrationManifests');
-      const checkpoint = await requestResult(checkpoints.get(id));
-      const manifest = await requestResult(manifests.get(id));
+    return write(RECORD_TRANSACTION_SCOPES.markMigrationVerified, async tx => {
+      const checkpoints = tx.table('migrations');
+      const manifests = tx.table('migrationManifests');
+      const checkpoint = await checkpoints.get(id);
+      const manifest = await manifests.get(id);
       if (!checkpoint || !manifest) throw new Error('migration was not found');
       if (checkpoint.status === 'active' || checkpoint.status === 'verified') return {...clone(manifest), ...clone(checkpoint)};
       if (!expectedRevisions || typeof expectedRevisions !== 'object') throw new Error('expected generation revisions are required');
       if (checkpoint.nextIndex !== manifest.total) throw new Error('migration import is incomplete');
-      const metaStore = tx.objectStore('meta');
+      const metaStore = tx.table('meta');
       const sealedRevisions = {};
       for (const [accountId, generation] of Object.entries(manifest.generationByAccount)) {
-        const meta = await requestResult(metaStore.get(accountId));
+        const meta = await metaStore.get(accountId);
         if (!meta) throw new Error('migration account is missing');
         generationMaps(meta);
         const key = String(generation);
@@ -763,43 +825,43 @@ export function createRecordRepository({
         if (revision !== expectedRevisions[accountId]) throw new Error('staging generation changed during verification');
         meta.sealedGenerations[key] = revision;
         sealedRevisions[accountId] = revision;
-        await requestResult(metaStore.put(meta));
+        await metaStore.put(meta);
       }
       checkpoint.status = 'verified';
       checkpoint.error = null;
       checkpoint.sealedRevisions = sealedRevisions;
-      await requestResult(checkpoints.put(checkpoint));
+      await checkpoints.put(checkpoint);
       return {...clone(manifest), ...clone(checkpoint)};
     });
   }
 
   async function markMigrationFailed(migrationId, error) {
     const id = requireText(migrationId, 'migrationId');
-    return write(async tx => {
-      const checkpoints = tx.objectStore('migrations');
-      const checkpoint = await requestResult(checkpoints.get(id));
+    return write(RECORD_TRANSACTION_SCOPES.markMigrationFailed, async tx => {
+      const checkpoints = tx.table('migrations');
+      const checkpoint = await checkpoints.get(id);
       if (!checkpoint) return null;
       if (checkpoint.status === 'active') return clone(checkpoint);
       checkpoint.status = 'failed';
       checkpoint.error = error instanceof Error ? error.message : String(error || 'migration failed');
-      await requestResult(checkpoints.put(checkpoint));
+      await checkpoints.put(checkpoint);
       return clone(checkpoint);
     });
   }
 
   async function activateMigration(migrationId) {
     const id = requireText(migrationId, 'migrationId');
-    return write(async tx => {
-      const checkpoints = tx.objectStore('migrations');
-      const manifests = tx.objectStore('migrationManifests');
-      const checkpoint = await requestResult(checkpoints.get(id));
-      const manifest = await requestResult(manifests.get(id));
+    return write(RECORD_TRANSACTION_SCOPES.activateMigration, async tx => {
+      const checkpoints = tx.table('migrations');
+      const manifests = tx.table('migrationManifests');
+      const checkpoint = await checkpoints.get(id);
+      const manifest = await manifests.get(id);
       if (!checkpoint || !manifest) throw new Error('migration was not found');
       if (checkpoint.status === 'active') return {...clone(manifest), ...clone(checkpoint)};
       if (checkpoint.status !== 'verified') throw new Error('generation is not verified');
-      const metaStore = tx.objectStore('meta');
+      const metaStore = tx.table('meta');
       for (const [accountId, generation] of Object.entries(manifest.generationByAccount)) {
-        const meta = await requestResult(metaStore.get(accountId));
+        const meta = await metaStore.get(accountId);
         if (!meta) throw new Error('migration account is missing');
         generationMaps(meta);
         const key = String(generation);
@@ -815,11 +877,11 @@ export function createRecordRepository({
         if (meta.nextGeneration < generation) throw new Error('generation is not allocated');
         meta.activeGeneration = generation;
         delete meta.sealedGenerations[key];
-        await requestResult(metaStore.put(meta));
+        await metaStore.put(meta);
       }
       checkpoint.status = 'active';
       checkpoint.activatedAt = now();
-      await requestResult(checkpoints.put(checkpoint));
+      await checkpoints.put(checkpoint);
       return {...clone(manifest), ...clone(checkpoint)};
     });
   }

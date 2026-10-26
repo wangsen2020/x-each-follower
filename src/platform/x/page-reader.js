@@ -66,10 +66,13 @@ export function readProfileBundle(handle, recentLimit = 8) {
     window.scrollBy(0, 700);
   }
   const posts = articles.slice(0, recentLimit).map(article => {
-    const text = (article.innerText || '').replace(/\s+/g, ' ').trim();
+    const body = article.querySelector('[data-testid="tweetText"]');
+    const text = (body?.innerText || article.innerText || '').replace(/\s+/g, ' ').trim();
+    const showMore = article.querySelector('[data-testid="tweet-text-show-more-link"]');
+    const textComplete = Boolean(body) && !showMore;
     const time = article.querySelector('time')?.getAttribute('datetime') || '';
     const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
-    return {text, time, url: link ? new URL(link.href, location.origin).href : ''};
+    return {text, textComplete, time, url: link ? new URL(link.href, location.origin).href : ''};
   });
   return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts, relationship, ...(id ? {id} : {})};
 }
@@ -224,7 +227,8 @@ export function setQuoteFrameFallbackOnPage(enabled) {
   };
   window[key] = {restore};
   window.requestAnimationFrame = function(callback) {
-    if (!document.hidden) return request.call(window, callback);
+    // Occluded popup windows can report hidden=false while Chrome still
+    // suspends frames. Race every frame while this temporary fallback is on.
     let done = false;
     const finish = time => {
       if (done) return;

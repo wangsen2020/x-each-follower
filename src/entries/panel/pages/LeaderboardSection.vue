@@ -10,7 +10,7 @@
     <div class="lb-head">
       <div class="lb-heading">
         <div class="lb-title-row">
-          <h2>X 榜单</h2>
+
           <span
             class="lb-owner-badge"
             :title="ownerId ? `当前登录账号 ID: ${ownerId}` : '待识别账号'"
@@ -26,9 +26,7 @@
             {{ scanStatusLabel }}
           </span>
         </div>
-        <p class="lb-subtitle">
-          按昨日净增排名 · 定时采集与日报分析
-        </p>
+
       </div>
 
       <!-- Icon-only actions with hover tips in header -->
@@ -109,7 +107,7 @@
     </div>
     <div v-if="notice" class="lb-alert lb-alert-info" role="status">
       <span>{{ notice }}</span>
-      <button type="button" class="secondary lb-close-notice" @click="notice = ''">×</button>
+      <PanelCloseButton label="关闭提示" @click="notice = ''" />
     </div>
 
     <!-- Table Container -->
@@ -360,10 +358,8 @@
 
       <!-- Empty State -->
       <div v-if="!loading && sortedMembers.length === 0" class="lb-empty-state">
-        <p class="lb-empty-title">{{ searchQuery ? '未找到匹配的作者' : '暂无榜单成员' }}</p>
-        <p class="lb-empty-desc">
-          {{ searchQuery ? '请尝试更换搜索词。' : '在 X.com 任意帖子的操作栏点击灰色的 X 图标，即可将作者加入榜单监控。' }}
-        </p>
+        <p class="lb-empty-title">{{ searchQuery ? '无匹配作者' : '暂无榜单成员' }}</p>
+
       </div>
 
       <!-- Loading State -->
@@ -375,24 +371,27 @@
 
     <ActionSettingsDrawer ref="settingsDrawer" title="榜单监控设置" @close="settingsError = ''">
       <div class="lb-setting-card">
-        <label class="lb-setting-row">
-          <span class="lb-setting-copy"><strong>自动监控</strong><small>定时更新作者快照与帖子数据</small></span>
-          <input v-model="settingsDraft.enabled" type="checkbox" :disabled="savingSettings" aria-label="自动监控">
-        </label>
-        <label class="lb-setting-row">
-          <span class="lb-setting-copy"><strong>扫描间隔</strong><small>每次自动扫描之间的时间</small></span>
-          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings" aria-label="扫描间隔分钟">分钟</span>
-        </label>
-        <label class="lb-setting-row">
-          <span class="lb-setting-copy"><strong>每轮人数</strong><small>自动扫描每轮 1–50 位作者</small></span>
-          <span class="lb-setting-number"><input v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="50" step="1" :disabled="savingSettings" aria-label="每轮扫描人数">位</span>
-        </label>
-        <label class="lb-setting-row">
-          <span class="lb-setting-copy"><strong>自动日报</strong><small>扫描后继续生成昨日 Grok 分析</small></span>
-          <input v-model="settingsDraft.autoAnalyze" type="checkbox" :disabled="savingSettings" aria-label="自动生成日报">
-        </label>
+        <div class="lb-setting-row">
+          <label for="lb-auto-monitor">自动监控</label>
+          <button type="button" class="lb-setting-help" aria-label="定时更新作者与帖子数据；关闭后仍可手动扫描。" data-tooltip="定时更新作者与帖子数据；关闭后仍可手动扫描。">?</button>
+          <input id="lb-auto-monitor" v-model="settingsDraft.enabled" type="checkbox" :disabled="savingSettings">
+        </div>
+        <div class="lb-setting-row">
+          <label for="lb-scan-interval">扫描间隔</label>
+          <button type="button" class="lb-setting-help" aria-label="两次自动扫描的间隔，可设为 15–360 分钟。" data-tooltip="两次自动扫描的间隔，可设为 15–360 分钟。">?</button>
+          <span class="lb-setting-number"><input id="lb-scan-interval" v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings">分钟</span>
+        </div>
+        <div class="lb-setting-row">
+          <label for="lb-scan-batch">每轮人数</label>
+          <button type="button" class="lb-setting-help" aria-label="每轮自动扫描 1–50 位作者。" data-tooltip="每轮自动扫描 1–50 位作者。">?</button>
+          <span class="lb-setting-number"><input id="lb-scan-batch" v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="50" step="1" :disabled="savingSettings">位</span>
+        </div>
+        <div class="lb-setting-row">
+          <label for="lb-auto-report">自动日报</label>
+          <button type="button" class="lb-setting-help" aria-label="扫描后生成昨日 Grok 分析。设置仅用于当前账号。" data-tooltip="扫描后生成昨日 Grok 分析。设置仅用于当前账号。">?</button>
+          <input id="lb-auto-report" v-model="settingsDraft.autoAnalyze" type="checkbox" :disabled="savingSettings">
+        </div>
       </div>
-      <p class="lb-setting-note">暂停后仍可手动扫描和分析；设置仅用于当前登录账号。</p>
       <p v-if="settingsError" class="lb-alert lb-alert-error" role="alert">{{ settingsError }}</p>
       <template #footer>
         <button type="button" class="secondary" :disabled="savingSettings" @click="settingsDrawer?.close()">取消</button>
@@ -610,6 +609,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
+import PanelCloseButton from '../components/PanelCloseButton.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 
 const { activeTab } = panelNavigationController;
@@ -1170,41 +1170,85 @@ onMounted(() => {
 
 .lb-setting-row {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  min-height: 34px;
-  padding: 4px 0;
+  justify-content: flex-start;
+  min-height: 44px;
+  padding: 6px 0;
+  text-align: start;
   box-sizing: border-box;
 }
 
 .lb-setting-row:not(:last-child) {
   border-bottom: 1px solid #e7eee8;
-  margin-bottom: 4px;
-  padding-bottom: 8px;
 }
 
-.lb-setting-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-  margin-right: 12px;
-}
-
-.lb-setting-copy strong {
-  font-size: 12px;
-  line-height: 18px;
+.lb-setting-row > label {
+  display: block;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 7em;
+  max-width: calc(100% - 150px);
+  margin: 0 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: start;
+  overflow-wrap: anywhere;
   color: #18302e;
 }
-
-.lb-setting-copy small {
-  color: #63766a;
-  font-size: 11px;
-  line-height: 15px;
+.leaderboard-panel .lb-setting-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+  margin: 0 10px 0 0;
+  border: 0;
+  border-radius: 50%;
+  background: #769287;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
 }
+.lb-setting-help::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  left: -80px;
+  width: 220px;
+  max-width: calc(100vw - 60px);
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #18302e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+}
+.lb-setting-help:hover::after,
+.lb-setting-help:focus::after { opacity: 1; visibility: visible; }
+.lb-setting-help:focus-visible { outline: 2px solid #14744c; outline-offset: 3px; }
 
 .lb-setting-number {
   display: inline-flex;
+  flex-direction: row;
   align-items: center;
   flex-shrink: 0;
   color: #63766a;
@@ -1213,9 +1257,11 @@ onMounted(() => {
 }
 
 .lb-setting-number input {
+  box-sizing: border-box;
   width: 72px;
-  margin-right: 6px;
-  text-align: right;
+  height: 30px;
+  margin: 0 8px 0 0;
+  text-align: start;
 }
 
 .lb-setting-row input[type="checkbox"] {
@@ -1226,12 +1272,6 @@ onMounted(() => {
   accent-color: #14744c;
 }
 
-.lb-setting-note {
-  margin: 10px 0;
-  color: #63766a;
-  font-size: 11px;
-  line-height: 1.5;
-}
 
 @keyframes lb-pulse {
   0% { opacity: 0.4; }
@@ -1369,15 +1409,6 @@ onMounted(() => {
   background: #eef6f2;
   color: #245b45;
   border: 1px solid #d6eadc;
-}
-
-.lb-close-notice {
-  background: transparent;
-  border: 0;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
 }
 
 /* Table Wrap */

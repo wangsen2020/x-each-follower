@@ -7,6 +7,7 @@ import {
   badgePresentation,
   applyModuleView,
   migrationProgressView,
+  replayDiagnosticText,
   paintMigrationProgress,
   hideMigrationProgress,
   recoveryModuleForKey,
@@ -14,6 +15,27 @@ import {
   preserveReadError,
   settleRecoveredModule
 } from '../src/entries/panel/dashboard-load-ui.js';
+
+test('migration display separates journal progress from baseline counts and exposes a blocked step', () => {
+  const replay = {seq: 5, completed: 4, total: 9, step: 'read-entry', stepElapsedMs: 12345,
+    elapsedMs: 15000, steps: {'read-entry': {count: 4, totalMs: 100, lastMs: 25, maxMs: 40}},
+    recent: [{seq: 4, step: 'read-entry', ms: 25}]};
+  const view = migrationProgressView({stage: '正在回放增量记录', completed: 17076, total: 17076, replay});
+  assert.equal(view.completed, 4);
+  assert.equal(view.total, 9);
+  assert.match(view.label, /增量日志 4\/9/);
+  assert.match(view.label, /基线记录 17076\/17076/);
+  const text = replayDiagnosticText(replay);
+  assert.match(text, /当前序号：5/);
+  assert.match(text, /读取增量记录/);
+  assert.match(text, /12.35 秒/);
+  assert.match(text, /尚未返回/);
+  assert.match(text, /0.10 秒 \/ 0.03 秒 \/ 0.04 秒 \/ 4/);
+  assert.match(text, /#4/);
+  const unknown = migrationProgressView({stage: '回放', completed: 17076, total: 17076, replay: {...replay, total: null}});
+  assert.equal(unknown.total, null);
+  assert.match(unknown.label, /读取中/);
+});
 
 const panelHtml = readFileSync(new URL('../src/panel.html', import.meta.url), 'utf8');
 const pageMarkup = ['MonitorSection', 'CandidatesSection', 'CommentsSection', 'FollowQueueSection', 'UnreciprocatedSection']
@@ -78,7 +100,7 @@ test('slow read keeps the skeleton and withholds the empty state', async () => {
   const doc = fakeDocument();
   applyModuleView(doc, 'monitor', registry.get('monitor'), 0);
   assert.equal(doc.nodes.get('monitorLoad').hidden, false);
-  assert.equal(doc.nodes.get('monitorLoad').textContent.includes('正在加载粉丝管理'), true);
+  assert.equal(doc.nodes.get('monitorLoad').textContent.includes('正在加载粉丝跟进'), true);
   const done = (async () => {
     await read;
     registry.succeed('monitor');

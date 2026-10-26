@@ -22,21 +22,7 @@
           <button id="mutualSearchBtn" type="button" class="secondary search-btn">搜索</button>
         </div>
       </div>
-      <div id="mutualPagination" class="monitor-pagination" hidden>
-          <label>
-            <span>每页</span>
-            <select id="mutualPageSize">
-              <option value="20">20</option>
-              <option value="50" selected>50</option>
-              <option value="100">100</option>
-            </select>
-          </label>
-          <span id="mutualPageSummary" class="page-summary">第 1 / 1 页</span>
-          <div class="page-actions">
-            <button id="mutualPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button>
-            <button id="mutualNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button>
-          </div>
-        </div>
+      <PanelPagination id="mutualPagination" select-id="mutualPageSize" summary-id="mutualPageSummary" prev-id="mutualPrevPage" next-id="mutualNextPage" :default-size="50" initial-summary="第 1 / 1 页" initially-hidden icon-buttons />
     </div>
     <div id="mutualLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载互关追踪…</span></div>
     <div id="mutualLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="mutual">重试</button></div>
@@ -83,6 +69,7 @@
   </div>
 </template>
 <script setup>
+import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
 </script>

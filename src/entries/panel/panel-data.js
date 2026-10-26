@@ -39,7 +39,8 @@ export {
   applyRelationshipSnapshot,
   snapshotMutualUsers,
   deriveNotMutualUsers,
-  deriveTrackerUsers
+  deriveTrackerUsers,
+  inactiveFollowingHandles
 } from '../../features/relationships/relationship-rules.js';
 
 export function shouldPaintLogs(modalHidden) {

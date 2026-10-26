@@ -1,7 +1,7 @@
 // Dashboard projection. The lossless record archive stays in its own database.
 // A normal page reads limit+1 index entries, then only those row payloads.
 
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 function requestResult(request) {
   return new Promise((resolve, reject) => {
@@ -11,6 +11,7 @@ function requestResult(request) {
 }
 
 function install(db) {
+  if (!db.objectStoreNames.contains('backupReceipts')) db.createObjectStore('backupReceipts', {keyPath: 'operationId'});
   if (!db.objectStoreNames.contains('rows')) {
     const rows = db.createObjectStore('rows', {keyPath: ['accountId', 'module', 'userKey']});
     rows.createIndex('moduleSort', ['accountId', 'module', 'sortKey', 'userKey'], {unique: true});
@@ -63,7 +64,7 @@ function isClosingError(error) {
   return name === 'InvalidStateError' || /closing/i.test(message);
 }
 
-export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: keyRangeImpl, dbName, now = () => Date.now()} = {}) {
+export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: keyRangeImpl, dbName, now = () => Date.now(), blockedTimeoutMs = 5000} = {}) {
   if (!indexedDBImpl || !keyRangeImpl) throw new Error('IndexedDB is required');
   if (!dbName) throw new Error('dbName is required');
   let opening = null;
@@ -90,6 +91,12 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   function openOnce() {
     return new Promise((resolve, reject) => {
       let request;
+      let finished = false, blockedTimer;
+      const fail = error => {
+        if (finished) return;
+        finished = true; clearTimeout(blockedTimer);
+        reject(error || new Error('projection open failed'));
+      };
       try {
         request = indexedDBImpl.open(dbName, DB_VERSION);
       } catch (error) {
@@ -97,6 +104,8 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
         return;
       }
       request.onupgradeneeded = () => {
+        if (finished) { request.transaction.abort(); return; }
+        clearTimeout(blockedTimer); blockedTimer = undefined;
         install(request.result);
         const rows = request.transaction.objectStore('rows');
         if (rows.indexNames.contains('sourceOrder')) rows.deleteIndex('sourceOrder');
@@ -108,7 +117,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
           rows.createIndex('byExternalId', ['sourceKey', 'externalId'], {unique: false});
         }
         const backfill = rows.openCursor();
-        backfill.onerror = () => reject(backfill.error || new Error('externalId backfill failed'));
+        backfill.onerror = () => fail(backfill.error || new Error('externalId backfill failed'));
         backfill.onsuccess = () => {
           const cursor = backfill.result;
           if (!cursor) return;
@@ -121,11 +130,16 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
       };
       request.onsuccess = () => {
         const db = request.result;
+        if (finished) { db.close(); return; }
+        finished = true; clearTimeout(blockedTimer);
         bind(db);
         resolve(db);
       };
       request.onerror = () => {
-        reject(request.error || new Error('projection open failed'));
+        fail(request.error || new Error('projection open failed'));
+      };
+      request.onblocked = () => {
+        if (!finished && !blockedTimer) blockedTimer = setTimeout(() => fail(new Error('看板数据库升级被旧连接阻塞，请关闭旧看板后重试')), blockedTimeoutMs);
       };
     });
   }
@@ -486,7 +500,38 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function getBackup(operationId) {
-    return await requestResult((await begin('backups', 'readonly')).objectStore('backups').get(operationId)) || null;
+    const entry = await requestResult((await begin('backups', 'readonly')).objectStore('backups').get(operationId));
+    if (entry) return entry;
+    const receipt = await requestResult((await begin('backupReceipts', 'readonly')).objectStore('backupReceipts').get(operationId));
+    if (!receipt) return null;
+    const result = receipt.result;
+    if (result?.userKey && result?.module) {
+      const row = await getRow(result.accountId || 'unassigned', result.module, result.userKey);
+      if (row) return {...receipt, result: {...result, payload: row.payload}};
+    }
+    return receipt;
+  }
+
+  async function compactBackups(through) {
+    const tx = await begin(['backups', 'backupReceipts'], 'readwrite');
+    let deleted = 0;
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('local backup compaction failed'));
+      const request = tx.objectStore('backups').openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const entry = cursor.value;
+        if (entry.status === 'stored' && entry.seq <= through) {
+          const {payload, ...result} = entry.result || {};
+          tx.objectStore('backupReceipts').put({operationId: entry.operationId, status: 'stored', seq: entry.seq, result, compacted: true});
+          cursor.delete(); deleted++;
+        }
+        cursor.continue();
+      };
+    });
+    return deleted;
   }
 
   async function putBackup(entry) {
@@ -616,10 +661,41 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
     });
   }
 
+  const snapshotStores = ['rows', 'membership', 'relations', 'summaries', 'state'];
+  async function exportSnapshot() {
+    const tx = await begin(snapshotStores, 'readonly');
+    const result = {};
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('snapshot read failed'));
+      for (const name of snapshotStores) {
+        const request = tx.objectStore(name).getAll();
+        request.onsuccess = () => { result[name] = request.result; };
+      }
+    });
+    return result;
+  }
+
+  async function importSnapshot(image) {
+    if (snapshotStores.some(name => !Array.isArray(image?.[name]))) throw new Error('incomplete snapshot');
+    const tx = await begin(snapshotStores, 'readwrite');
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('snapshot restore failed'));
+      for (const name of snapshotStores) {
+        const store = tx.objectStore(name);
+        store.clear();
+        for (const row of image[name]) store.put(row);
+      }
+    });
+  }
+
+  async function close() { const db = await open(); db.close(); dropConnection(db); }
+
   return {
-    open, readState, writeState, replaceModuleRows, putRelations, upsertRelation, getSummary, getRelations,
+    open, close, exportSnapshot, importSnapshot, readState, writeState, replaceModuleRows, putRelations, upsertRelation, getSummary, getRelations,
     queryPage, scanBatches, scanBySource, getRow, rowsByHandle, rowsByHandleAll, rowsByHandleKey,
     mutateRow, commitWithBackup, clearSource, deleteRelation,
-    getBackup, putBackup, pendingBackups, rowsByExternalId
+    getBackup, putBackup, pendingBackups, rowsByExternalId, compactBackups
   };
 }

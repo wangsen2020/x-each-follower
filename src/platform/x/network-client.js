@@ -24,7 +24,7 @@ export function redactNetworkError(value,headers={}) {
   return text.replace(/Bearer\s+[\w.\-/+=]+/gi,'Bearer [redacted]').slice(0,240);
 }
 export function buildXRequest(operation,template,variables={}) {
-  if(!X_QUERY_OPERATIONS.includes(operation)&&!FORMS[operation]&&operation!=='DeleteTweet')throw new Error('不支持的 X 网络操作');
+  if(!X_QUERY_OPERATIONS.includes(operation)&&!FORMS[operation]&&!['DeleteTweet','RemoveFollower'].includes(operation))throw new Error('不支持的 X 网络操作');
   if(!template||!['https://x.com','https://twitter.com'].includes(template.origin))throw new Error('X 请求模板来源无效');
   const lower=prepareNetworkHeaders(template.headers);
   if(!lower.authorization||!lower['x-csrf-token'])throw new Error('当前 X 会话模板尚未就绪');
@@ -34,6 +34,10 @@ export function buildXRequest(operation,template,variables={}) {
     if(!/^\d+$/.test(id)&&!/^\w{1,15}$/.test(handle))throw new Error('用户 ID 或账号名无效');
     const params={skip_status:'true'};if(/^\d+$/.test(id))params.user_id=id;if(/^\w{1,15}$/.test(handle))params.screen_name=handle;
     return {operation,origin:template.origin,path:`/i/api/1.1/${FORMS[operation]}`,method:'POST',kind:'form',headers,body:new URLSearchParams(params).toString()};
+  }
+  if(operation==='RemoveFollower') {
+    if(typeof variables.target_user_id!=='string'||!/^\d+$/.test(variables.target_user_id))throw new Error('移除关注者ID必须是字符串');
+    return {operation,origin:template.origin,method:'POST',kind:'mutation',headers,variables:{target_user_id:variables.target_user_id}};
   }
   if(operation==='DeleteTweet') {
     if(typeof variables.tweet_id!=='string'||!/^\d+$/.test(variables.tweet_id))throw new Error('删除帖子 ID 必须是字符串');
@@ -46,6 +50,14 @@ export function buildXRequest(operation,template,variables={}) {
 
 // Self-contained: Chrome serializes this function into the authenticated X MAIN world.
 export async function executeXRequestOnPage(request) {
+  // One page/session owns pending reads. Never retain completed responses.
+  const pending = window.__xefPendingReads ||= new Map();
+  const readable = request.kind === 'query' && request.method === 'GET';
+  const key = readable ? JSON.stringify([request.origin,request.operation,request.path,
+    Object.entries(request.headers || {}).sort(([a],[b])=>a.localeCompare(b))]) : null;
+  if (key && pending.has(key)) return structuredClone(await pending.get(key));
+  if (!readable) {pending.clear();window.__xefNativeProfile=null;}
+  const execute = async () => {
   let attempted=false;const started=Date.now(),timings={metadataMs:0,signatureMs:0,requestMs:0};
   const redact=value=> {
     let text=String(value||'');for(const key of ['authorization','x-csrf-token','x-client-transaction-id'])if(request.headers[key])text=text.split(request.headers[key]).join('[redacted]');
@@ -63,19 +75,21 @@ export async function executeXRequestOnPage(request) {
     } else if(request.kind!=='mutation')throw new Error('不支持的 X 请求类型');
     let path=request.path;
     if(request.kind==='mutation') {
-      if(request.operation!=='DeleteTweet'||request.method!=='POST'||typeof request.variables?.tweet_id!=='string'||!/^\d+$/.test(request.variables.tweet_id))throw new Error('不支持的写入操作');
+      const variable=request.operation==='RemoveFollower'?'target_user_id':'tweet_id';
+      if(!['DeleteTweet','RemoveFollower'].includes(request.operation)||request.method!=='POST'||typeof request.variables?.[variable]!=='string'||!/^\d+$/.test(request.variables[variable]))throw new Error('不支持的写入操作');
       const script=[...document.scripts].map(s=>s.src).find(u=>/^https:\/\/abs\.twimg\.com\/responsive-web\/client-web\/main\.[\w]+\.js$/.test(u));
-      if(!script)throw new Error('找不到当前 X 客户端，未执行删除');
-      const metadataStarted=Date.now(),cached=window.__XEF_DELETE_QUERY_CACHE;
+      if(!script)throw new Error('找不到当前 X 客户端，未执行写入');
+      const metadataStarted=Date.now(),cacheKey=request.operation==='DeleteTweet'?'__XEF_DELETE_QUERY_CACHE':'__XEF_REMOVE_FOLLOWER_QUERY_CACHE',cached=window[cacheKey];
       let queryId=cached?.script===script&&/^[\w-]+$/.test(cached.queryId||'')?cached.queryId:null;
       if(!queryId){
         const response=await fetch(script,{signal:AbortSignal.timeout(25000)});if(!response.ok)throw new Error('X 客户端元数据读取失败');
-        queryId=(await response.text()).match(/queryId:"([\w-]+)",operationName:"DeleteTweet",operationType:"mutation"/)?.[1];
-        if(!queryId)throw new Error('当前 X 删除接口元数据不可用');
-        window.__XEF_DELETE_QUERY_CACHE={script,queryId};
+        const pattern=new RegExp('queryId:"([\\w-]+)",operationName:"'+request.operation+'",operationType:"mutation"');
+        queryId=(await response.text()).match(pattern)?.[1];
+        if(!queryId)throw new Error('当前 X 写入接口元数据不可用');
+        window[cacheKey]={script,queryId};
       }
       timings.metadataMs=Date.now()-metadataStarted;
-      path=`/i/api/graphql/${queryId}/DeleteTweet`;request.body=JSON.stringify({variables:request.variables,queryId});
+      path=`/i/api/graphql/${queryId}/${request.operation}`;request.body=JSON.stringify({variables:request.variables,queryId});
     }
     if(typeof window.__XEF_GENERATE_TRANSACTION_ID!=='function')throw new Error('X 请求签名器尚未加载');
     const headers={...request.headers,'content-type':request.kind==='form'?'application/x-www-form-urlencoded;charset=UTF-8':'application/json'};
@@ -93,19 +107,49 @@ export async function executeXRequestOnPage(request) {
     const gqlError=json?.errors?.map(e=>e.message).filter(Boolean).join('；');
     const retryHeader=response.headers?.get?.('retry-after');
     const retryAfterSeconds=retryHeader ? (/^\d+$/.test(retryHeader)?Number(retryHeader):Math.max(0,(Date.parse(retryHeader)-Date.now())/1000)) : null;
-    return {timings:{...timings,totalMs:Date.now()-started},status:response.status,json,error:redact(gqlError||(!response.ok?text||`HTTP ${response.status}`:(!json?'X 返回了无效数据':''))),attempted,retryAfterSeconds:Number.isFinite(retryAfterSeconds)?retryAfterSeconds:null};
+    const rateLimit={};
+    for(const [key,header] of Object.entries({limit:'x-rate-limit-limit',remaining:'x-rate-limit-remaining',resetAt:'x-rate-limit-reset'})) {
+      const value=response.headers?.get?.(header);
+      if(value!==null && value!==undefined && /^\d+$/.test(value))rateLimit[key]=Number(value)*(key==='resetAt'?1000:1);
+    }
+    return {operation:request.operation,rateLimit,timings:{...timings,totalMs:Date.now()-started},status:response.status,json,error:redact(gqlError||(!response.ok?text||`HTTP ${response.status}`:(!json?'X 返回了无效数据':''))),attempted,retryAfterSeconds:Number.isFinite(retryAfterSeconds)?retryAfterSeconds:null};
   }catch(error){return {timings:{...timings,totalMs:Date.now()-started},status:0,json:null,error:redact(error?.message||error),attempted};}
+  };
+  const task = execute();
+  if (key) pending.set(key,task);
+  try {return structuredClone(await task);}
+  finally {
+    if (key && pending.get(key) === task) pending.delete(key);
+    if (!readable) {pending.clear();window.__xefNativeProfile=null;}
+  }
+
+}
+
+// Opt-in for a newly opened queue profile only; verification reads stay fresh.
+export function readNativeProfileResponse(handle) {
+  const cached = window.__xefNativeProfile;
+  const key = String(handle || '').toLowerCase();
+  const route=location.pathname.toLowerCase().split('/').filter(Boolean);
+  const matches=route[0]===key && (route.length===1 || route.length===2 && ['followers','following','verified_followers','with_replies'].includes(route[1]));
+  if (!cached || cached.handle !== key || !matches ||
+      cached.path !== location.pathname || Date.now()-cached.at < 0 || Date.now()-cached.at > 30000 ||
+      !cached.json || cached.json.errors?.length) return null;
+  return {status:200,json:cached.json,error:'',attempted:false,source:'native-page',observedAt:cached.at};
 }
 
 export function createXNetworkClient(api=globalThis.chrome) {
-  async function request(tabId,operation,variables={}) {
+  async function request(tabId,operation,variables={},options={}) {
     let template,dispatched=false;
     const handle=operation==='UserByScreenName'?variables.screen_name:null;
     if(handle)await assertProfileAvailable(api,handle,'profile-network');
     try {
+      if (handle && options.preferPageResponse === true) {
+        const cached = await api.scripting.executeScript({target:{tabId},world:'MAIN',func:readNativeProfileResponse,args:[handle]});
+        if (cached?.[0]?.result?.status === 200) return cached[0].result;
+      }
       const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
-      if(FORMS[operation]||operation==='DeleteTweet')template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
+      if(FORMS[operation]||['DeleteTweet','RemoveFollower'].includes(operation))template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
       if(!template)return {status:0,json:null,error:`未捕获 ${operation} 模板`,attempted:false};
       const prepared=buildXRequest(operation,template,variables);
       const [{result:loaded}={}]=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>typeof window.__XEF_GENERATE_TRANSACTION_ID==='function'});
@@ -119,7 +163,8 @@ export function createXNetworkClient(api=globalThis.chrome) {
   }
   return {
     query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
-    profile:(tabId,handle)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')}),
+    removeFollower:(tabId,targetId)=>request(tabId,'RemoveFollower',{target_user_id:targetId}),
+    profile:(tabId,handle,options)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')},options),
     userPosts:(tabId,userId,variables={})=>request(tabId,'UserTweets',{...variables,userId}),
     userOriginals:(tabId,userId,variables={})=>request(tabId,'UserOriginalsTimeline',{...variables,userId}),
     userReplies:(tabId,userId,variables={})=>request(tabId,'UserRepliesTimeline',{...variables,userId}),

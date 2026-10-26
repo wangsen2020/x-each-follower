@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
 
+test('read-only run check ignores legacy cooldown and still checks account identity',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true};
+  let pause=new Date(Date.now()+3600000).toISOString(),currentViewer='viewer';
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:currentViewer}]}};
+  const runtime=createFollowQueueRuntime({api,store:{},records:{metadata:async()=>({pausedUntil:pause})}});
+  const check=()=>runtime.handle({cmd:'followQueueRunCheck'});
+  let result=await check();
+  assert.equal(result.allowed,true);
+  assert.equal(result.blockReason,null);
+  pause=new Date(Date.now()-1000).toISOString();
+  result=await check();
+  assert.equal(result.allowed,true);
+  assert.equal(result.blockReason,null);
+  currentViewer='other';
+  assert.equal((await check()).blockReason.code,'viewer-mismatch');
+  currentViewer='';
+  assert.equal((await check()).blockReason.code,'viewer-unavailable');
+});
+
 test('queue eligibility uses configured ratio instead of the legacy 80 percent veto',()=>{
   const profile={handle:'example',bio:'分享技术',followersText:'100',followingText:'70'};
   const settings={minFollowers:50,ratioThreshold:.6,onlyRecommended:true};
@@ -26,7 +46,7 @@ test('worker recovery preserves queued alarm deadline and clears only old follow
   const runtime=createFollowQueueRuntime({api,store:{getSettings:async()=>({enabled:true,every:8,jitter:2})}});
   await runtime.schedule({preserve:true});
   assert.deepEqual(clears,['x-mutual-auto-follow','x-comment-auto-follow']);
-  assert.deepEqual(creates,[]);
+  assert.deepEqual(creates,[['x-independent-comments',{periodInMinutes:1}]]);
 });
 
 test('queue does not open tabs, create a database or migrate before explicit activation',async()=>{
@@ -68,6 +88,19 @@ test('candidate synchronization preserves an active successful follow against st
   assert.equal(imports,0);
 });
 
+test('candidate synchronization does not restore an old followed import after X verified not-following',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
+  const source={module:'mutual',url:'',enabled:true};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding,mutualNetwork:{users:[{handle:'target',relationship:{following:true}}]}})}},
+    tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let imported=0, enqueued=0;
+  const prior={handle:'target',state:'uncertain',sources:[source],followResult:{following:false,verifiedAt:Date.now()}};
+  const store={lookup:async()=>prior,getSettings:async()=>({}),importOutcome:async()=>{imported++;},enqueue:async()=>{enqueued++;}};
+  await createFollowQueueRuntime({api,store}).syncCandidates();
+  assert.equal(imported,0);
+  assert.equal(enqueued,0);
+});
+
 test('followQueueVerify resolves uncertain job to followed or pending or excluded without blind re-follow',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
   const resolved=[];
@@ -84,7 +117,7 @@ test('followQueueVerify resolves uncertain job to followed or pending or exclude
   const runtime=createFollowQueueRuntime({
     api,
     store,
-    fetchUser:async()=>({id:'42',handle:'target_user',relationship:{following:remoteFollowing}})
+    fetchUser:async()=>({id:'42',handle:'target_user',relationship:{following:remoteFollowing,followedBy:false}})
   });
   const res1=await runtime.handle({cmd:'followQueueVerify',accountId:'123',jobId:'123:id:42',mode:'check'});
   assert.equal(res1.ok,true);
@@ -258,6 +291,53 @@ test('fresh install bootstraps identity with an owned profile tab when old X tab
  assert.equal(events[0][1].active,false);
  assert.deepEqual(events.at(-1),['remove',2]);
  assert.equal(events[1][2].url,'https://x.com/viewer');
+});
+
+test('activated queue reuses its stable account ID when the live viewer handle matches despite a changed display name',async()=>{
+ const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+ let networkCalls=0,created=0;
+ const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{
+  query:async()=>[{id:1,url:'https://x.com/home'}],create:async()=>{created++;return{id:2};}},
+  scripting:{executeScript:async()=>[{result:'Viewer'}]}};
+ const runtime=createFollowQueueRuntime({api,fetchIdentity:async()=>{networkCalls++;throw new Error('unneeded network lookup');}});
+ const result=await runtime.handle({cmd:'followQueueIdentity'});
+ assert.equal(result.accountId,'123');assert.equal(result.handle,'viewer');
+ assert.equal(result.binding, binding);
+ assert.equal(networkCalls,0);assert.equal(created,0);
+});
+
+test('activated queue returns from an owned X home tab without entering profile initialization',async()=>{
+ const binding={accountId:'123',handle:'viewer',activated:true};
+ const created=[],removed=[],updates=[];
+ const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{
+  query:async()=>[],create:async options=>{created.push(options);return{id:2};},
+  update:async(id,options)=>updates.push({id,options}),remove:async id=>removed.push(id)},
+  scripting:{executeScript:async()=>[{result:'viewer'}]}};
+ const runtime=createFollowQueueRuntime({api,fetchIdentity:async()=>{throw new Error('unneeded network lookup');}});
+ const result=await runtime.handle({cmd:'followQueueIdentity'});
+ assert.equal(result.accountId,'123');
+ assert.deepEqual(created,[{url:'https://x.com/home',active:false}]);
+ assert.deepEqual(removed,[2]);assert.deepEqual(updates,[]);
+});
+
+test('a different live handle requires the X account ID and cannot inherit the old queue binding',async()=>{
+ const binding={accountId:'123',handle:'viewer',activated:true};
+ let lookups=0;
+ const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},
+  scripting:{executeScript:async()=>[{result:'other'}]}};
+ const runtime=createFollowQueueRuntime({api,fetchIdentity:async()=>{lookups++;return{status:200,json:{rest_id:'456',legacy:{screen_name:'other'}}};}});
+ const result=await runtime.handle({cmd:'followQueueIdentity'});
+ assert.equal(result.accountId,'456');assert.equal(result.binding.accountId,'123');assert.equal(lookups,1);
+});
+
+test('a changed X handle updates the binding only after the same stable account ID is confirmed',async()=>{
+ let binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+ const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async patch=>{binding=patch.followQueueBinding;}}},
+  tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'new_viewer'}]}};
+ const runtime=createFollowQueueRuntime({api,fetchIdentity:async()=>({status:200,json:{rest_id:'123',legacy:{screen_name:'new_viewer'}}})});
+ const result=await runtime.handle({cmd:'followQueueIdentity'});
+ assert.equal(result.accountId,'123');assert.equal(result.handle,'new_viewer');
+ assert.equal(binding.handle,'new_viewer');assert.deepEqual(binding.sources,{fans:true});
 });
 
 test('identity bootstrap times out cleanly and closes only its own tab when logged out',async()=>{

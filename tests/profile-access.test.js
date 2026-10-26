@@ -27,3 +27,38 @@ test('profile fallback reuses its supplied background tab instead of opening the
  const lease=await acquireProfileTab(api,'writer','profile-fallback',12);assert.equal(lease.owned,false);assert.equal(lease.tab.id,12);assert.equal(calls.length,1);assert.equal(calls[0][0],'update');
  await observeProfile(api,'writer',{status:'not_found'},'profile-fallback');await assert.rejects(acquireProfileTab(api,'writer','profile-fallback',12),/不可用/);assert.equal(calls.length,1);
 });
+
+test('availability trace write failures preserve DOM results and cached terminal decisions',async()=>{
+ const {api,values}=fixture();
+ api.storage.local.set=async()=>{throw Error('trace storage quota exceeded');};
+ const result=await readProfileOnTab(api,12,'writer',5,'profile-detail');
+ assert.equal(result.status,'not_found');
+ values[PROFILE_ACCESS_PREFIX+'writer']={status:'suspended',reason:'账号已停用',expiresAt:Date.now()+60000};
+ await assert.rejects(createProfileTab(api,{url:'https://x.com/writer'},'detail'),e=>e.code==='X_PROFILE_UNAVAILABLE'&&e.availability==='suspended');
+});
+
+for(const response of [
+ {status:200,json:{data:{user:{result:{__typename:'User',rest_id:'123'}}}}},
+ {status:200,json:{errors:[{code:63}]}}
+])test(`trace failure preserves profile network outcome ${response.json.errors?'suspended':'ok'}`,async()=>{
+ const {api,values}=fixture();
+ values.networkTemplates={UserByScreenName:{origin:'https://x.com',queryId:'fixture',headers:{authorization:'Bearer fixture','x-csrf-token':'fixture'},variables:{}}};
+ api.storage.local.set=async()=>{throw Error('trace storage quota exceeded');};
+ api.scripting.executeScript=async options=>[{result:options.args?response:true}];
+ const request=createXNetworkClient(api).profile(12,'writer');
+ if(response.json.errors)await assert.rejects(request,e=>e.code==='X_PROFILE_UNAVAILABLE'&&e.availability==='suspended');
+ else assert.deepEqual(await request,response);
+});
+
+test('unresolved identity persists across clients and blocks requests until a verified ID is observed',async()=>{
+ const {api,values,calls}=fixture();
+ await observeProfile(api,'target',{status:'identity_unresolved',reason:'无法确认用户 ID'},'greeting-identity');
+ const client=createXNetworkClient(api);
+ await assert.rejects(client.profile(12,'target'),{code:'X_PROFILE_IDENTITY_UNRESOLVED'});
+ await assert.rejects(createProfileTab(api,{url:'https://x.com/target'},'follow-queue'),{code:'X_PROFILE_IDENTITY_UNRESOLVED'});
+ assert.equal(calls.length,0);
+ await observeProfile(api,'target',{status:'ok'},'incomplete-dom');
+ assert.equal(values[PROFILE_ACCESS_PREFIX+'target'].status,'identity_unresolved');
+ await observeProfile(api,'target',{status:'ok',id:'123'},'manual-check');
+ await createProfileTab(api,{url:'https://x.com/target'},'follow-queue');assert.equal(calls.length,1);
+});

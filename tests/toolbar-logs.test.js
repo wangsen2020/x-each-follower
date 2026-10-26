@@ -10,7 +10,7 @@ test('execution logs remain reachable from all source pages and the queue',()=>{
  }
  const queue=readFileSync(new URL('../src/entries/panel/follow-queue-panel.js',import.meta.url),'utf8');
  const vueEntry=readFileSync(new URL('../src/entries/panel/main.js',import.meta.url),'utf8');
- assert.ok(queue.includes("new CustomEvent('open-execution-logs', {bubbles:true})"));
+ assert.ok(queue.includes("new CustomEvent('open-execution-logs', {bubbles:true, detail:{scope:'queue'}})"));
  assert.ok(vueEntry.includes("document.addEventListener('open-execution-logs'"));
  assert.equal(panel.includes("document.addEventListener('open-execution-logs'"),false);
  assert.equal(html.includes('id="commentBatchAddToQueue"'),false);

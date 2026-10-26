@@ -1,17 +1,17 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝管理</title><link rel="stylesheet" href="./entries/panel/styles/panel.css"><link rel="stylesheet" href="./entries/panel/styles/admin.css"><link rel="stylesheet" href="./entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="./entries/panel/styles/follow-queue-panel.css"><link rel="stylesheet" href="./entries/panel/styles/dashboard-load.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>XFollower · 粉丝跟进</title><link rel="stylesheet" href="./entries/panel/styles/panel.css"><link rel="stylesheet" href="./entries/panel/styles/admin.css"><link rel="stylesheet" href="./entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="./entries/panel/styles/follow-queue-panel.css"><link rel="stylesheet" href="./entries/panel/styles/dashboard-load.css"></head>
 <body>
 <main>
   <div id="panel-vue-root">
-    <aside class="sidebar" aria-label="主导航"><div class="brand-mark"><div class="brand-name">XFollower</div><span>粉丝管理</span></div>
-      <button class="nav-tab active" type="button" disabled>粉丝管理 <span id="queueCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+    <aside class="sidebar" aria-label="主导航"><div class="brand-mark"><div class="brand-name">XFollower</div></div>
+      <button class="nav-tab active" type="button" disabled>粉丝跟进 <span id="queueCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
       <button class="nav-tab" type="button" disabled>互关追踪 <span id="mutualNetworkCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
       <button class="nav-tab" type="button" disabled>评论追踪 <span id="commentTrackingCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
       <button class="nav-tab" type="button" disabled>关注队列</button>
-      <button class="nav-tab" type="button" disabled>回关监测 <span id="unreciprocatedCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+      <button class="nav-tab" type="button" disabled>回关监控 <span id="unreciprocatedCount" class="nav-count nav-count-loading" role="status" aria-label="加载中" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span></span></button>
+      <button class="nav-tab" type="button" disabled>知识库</button>
     </aside>
-    <header class="vue-panel-header"><span class="eyebrow">XFollower · 加载中</span><h1>粉丝管理</h1></header>
   </div>
   <div id="profileDrawerMask" class="profile-drawer-mask" hidden></div>
   <!-- profileDrawer is reactively mounted by Vue 3 in #panel-vue-root -->

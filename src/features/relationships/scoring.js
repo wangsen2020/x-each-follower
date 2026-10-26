@@ -98,8 +98,27 @@ export const TAG_DEFINITIONS = {
   'custom:starred': { namespace: 'custom', key: 'starred', label: '⭐ 重点', colorClass: 'tag-custom-star', desc: '用户标星重点跟进' },
   'custom:whitelist': { namespace: 'custom', key: 'whitelist', label: '🛡️ 白名单', colorClass: 'tag-custom-white', desc: '白名单受保护账号（免取关）' },
 
+  'language:zh': { namespace: 'language', key: 'zh', label: '🇨🇳 中文', colorClass: 'tag-lang-zh', desc: '主要使用中文交流' },
+  'language:en': { namespace: 'language', key: 'en', label: '🌐 英文', colorClass: 'tag-lang-en', desc: '主要使用英文（或非中文）交流' },
+
   ...RISK_DEFINITIONS
 };
+
+export function detectAccountLanguage(profile = {}) {
+  const explicitTags = Array.isArray(profile?.tags) ? profile.tags : (profile?.multiTags?.tagIds || []);
+  for (const t of explicitTags) {
+    const id = typeof t === 'string' ? t : (t?.id || '');
+    if (id === 'language:zh') return 'zh';
+    if (id === 'language:en') return 'en';
+  }
+  const bio = String(profile?.bio || profile?.description || '');
+  const name = String(profile?.name || '');
+  const posts = Array.isArray(profile?.posts) ? profile.posts : Array.isArray(profile?.recentPosts) ? profile.recentPosts : [];
+  const postsText = posts.map(p => typeof p === 'string' ? p : (p?.text || p?.content || '')).join(' ');
+  const combined = `${name} ${bio} ${postsText}`;
+  const hasChinese = /[\u4e00-\u9fa5\u3400-\u4dbf]/.test(combined);
+  return hasChinese ? 'zh' : 'en';
+}
 
 export function computeMultiDimensionTags(profile = {}) {
   const followers = typeof profile.followers === 'number' && Number.isFinite(profile.followers)
@@ -228,6 +247,10 @@ export function computeMultiDimensionTags(profile = {}) {
       addTag(tagId, '由 Grok 深度语义识别并打标');
     }
   }
+
+  const lang = detectAccountLanguage(profile);
+  if (lang === 'zh') addTag('language:zh', '检测到博主资料或推文含中文');
+  else addTag('language:en', '未检测到中文字符，识别为英文/外语博主');
 
   return {
     tags,

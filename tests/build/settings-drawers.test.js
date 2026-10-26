@@ -17,6 +17,7 @@ test('useSettingsDrawer initializes with clean default state and computed checkp
   assert.equal(drawer.checkpointTimeText.value, '');
 });
 
+
 test('useSettingsDrawer validates intervals strictly', () => {
   const drawer = useSettingsDrawer();
   drawer.open({ every: 5, jitter: 15 }); // every < 10
@@ -68,21 +69,34 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.every, 60);
   assert.equal(empty.jitter, 10);
   assert.equal(empty.overdueDays, 14);
-  assert.equal(empty.batchLimit, 10);
-  assert.equal(empty.unfollowDelay, 3);
+  assert.equal(empty.autoUnfollowEvery, 10);
+  assert.equal(empty.autoUnfollowJitter, 0);
+  assert.equal(empty.batchLimit, 1);
+  assert.equal(empty.dailyLimit, 100);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 24}).dailyLimit, 100);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 5, dailyLimit: 24}).dailyLimit, 24);
+  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [10, 100]);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 3, dailyLimit: 12}).dailyLimit, 100);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 12}).dailyLimit, 12);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).autoUnfollowEvery, 90);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).dailyLimit, 6);
+  assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, dailyLimit: 100}).dailyLimit, 100);
+  assert.equal(empty.unfollowDelay, 15);
   assert.equal(empty.whitelist, '');
 
   const bounded = normalizeUnreciprocatedConfig({
     every: 2, // below min 5
     jitter: 100, // above max 60
     overdueDays: 120, // above max 90
-    batchLimit: 999, // above max 50
+    batchLimit: 999,
+    dailyLimit: 999,
     whitelist: '  elonmusk, OpenAI  '
   });
   assert.equal(bounded.every, 5);
   assert.equal(bounded.jitter, 60);
   assert.equal(bounded.overdueDays, 90);
-  assert.equal(bounded.batchLimit, 50);
+  assert.equal(bounded.batchLimit, 1);
+  assert.equal(bounded.dailyLimit, 400);
   assert.equal(bounded.whitelist, 'elonmusk, OpenAI');
 });
 
@@ -107,7 +121,7 @@ test('useUnreciprocatedSettings handles open, save and close reactively', async 
   assert.equal(drawer.jitter.value, 5);
   assert.equal(drawer.overdueDays.value, 7);
   assert.equal(drawer.autoUnfollow.value, true);
-  assert.equal(drawer.batchLimit.value, 15);
+  assert.equal(drawer.batchLimit.value, 1);
   assert.equal(drawer.whitelist.value, 'vitalik');
 
   const ok = await drawer.save();
@@ -119,4 +133,24 @@ test('useUnreciprocatedSettings handles open, save and close reactively', async 
 
   drawer.close();
   assert.equal(drawer.isOpen.value, false);
+});
+
+test('automatic reminder configuration can wait longer than the unfollow deadline',async()=>{
+ const drawer=useUnreciprocatedSettings();let saved;drawer.setSaveHandler(async cfg=>{saved=cfg;});
+ drawer.open({autoGreeting:true,greetingAfterDays:20,overdueDays:14});assert.equal(await drawer.save(),true);assert.equal(saved.autoGreeting,true);assert.equal(saved.greetingAfterDays,20);
+});
+
+test('five-minute automatic unfollow setting survives save and reopening',async()=>{
+ const c=useUnreciprocatedSettings();c.open({settingsSchemaVersion:5,autoUnfollowEvery:30,autoUnfollowJitter:3});
+ let saved;c.setSaveHandler(async cfg=>{saved=cfg;});c.autoUnfollowEvery.value=5;c.autoUnfollowJitter.value=0;
+ assert.equal(await c.save(),true);assert.equal(saved.autoUnfollowEvery,5);assert.equal(saved.autoUnfollowJitter,0);
+ c.open(saved);assert.equal(c.autoUnfollowEvery.value,5);
+});
+
+test('one-minute interval saves while invalid inputs remain visible',async()=>{
+ const c=useUnreciprocatedSettings();c.open({});assert.equal(c.autoUnfollowEvery.value,10);
+ let saved,calls=0;c.setSaveHandler(async cfg=>{saved=cfg;calls++;});
+ for(const v of ['',0,-1,1441,1.5]){c.autoUnfollowEvery.value=v;assert.equal(await c.save(),false);assert.equal(c.autoUnfollowEvery.value,v);assert.match(c.errorMessage.value,/1–1440/);}
+ assert.equal(calls,0);c.autoUnfollowEvery.value=1;c.autoUnfollowJitter.value=0;assert.equal(await c.save(),true);c.open(saved);assert.equal(c.autoUnfollowEvery.value,1);
+ c.open({settingsSchemaVersion:5,autoUnfollowEvery:5});assert.equal(c.autoUnfollowEvery.value,5);
 });
