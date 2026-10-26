@@ -11,8 +11,8 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     greetingText: '你好！刚刚关注了你，期待互关交流！',
     greetingTextEn: 'Hi there! Just followed you, looking forward to connecting and following back!',
     autoUnfollow: false,
-    autoUnfollowEvery: 45,
-    autoUnfollowJitter: 15,
+    autoUnfollowEvery: 10,
+    autoUnfollowJitter: 0,
     batchLimit: 1,
     settingsSchemaVersion: 5,
     dailyLimit: 100,
@@ -26,8 +26,8 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   };
   const res = { ...defaults, ...(cfg || {}) };
   if (Number(cfg?.settingsSchemaVersion || 0) < 3) {
-    if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 45;
-    if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 15;
+    if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 10;
+    if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 0;
   }
   if (Number(cfg?.settingsSchemaVersion || 0) < 4 && [null, 12, 400].includes(cfg?.dailyLimit == null ? null : Number(cfg.dailyLimit))) res.dailyLimit = 100;
   if (Number(cfg?.settingsSchemaVersion || 0) < 5 && Number(cfg?.dailyLimit) === 24) res.dailyLimit = 100;
@@ -42,8 +42,8 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   if (res.greetingText === '你好，刚关注了你，期待交流！') res.greetingText = defaults.greetingText;
   res.greetingTextEn = String(res.greetingTextEn || defaults.greetingTextEn).trim().slice(0, 1000);
   res.autoUnfollow = Boolean(res.autoUnfollow);
-  res.autoUnfollowEvery = Math.max(5, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
-  res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 15));
+  res.autoUnfollowEvery = Math.max(1, Math.min(1440, Number(res.autoUnfollowEvery) || 10));
+  res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 0));
   res.batchLimit = 1;
   res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 100));
   res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
@@ -69,8 +69,8 @@ export function useUnreciprocatedSettings() {
   const greetingText = ref('你好！刚刚关注了你，期待互关交流！');
   const greetingTextEn = ref('Hi there! Just followed you, looking forward to connecting and following back!');
   const autoUnfollow = ref(false);
-  const autoUnfollowEvery = ref(45);
-  const autoUnfollowJitter = ref(15);
+  const autoUnfollowEvery = ref(10);
+  const autoUnfollowJitter = ref(0);
   const batchLimit = ref(1);
   const dailyLimit = ref(100);
   const unfollowDelay = ref(15);
@@ -85,6 +85,11 @@ export function useUnreciprocatedSettings() {
   const errorMessage = ref('');
   const successMessage = ref('');
 
+  const intervalError = computed(() => {
+    const value = Number(autoUnfollowEvery.value);
+    return autoUnfollowEvery.value === '' || !Number.isInteger(value) || value < 1 || value > 1440
+      ? '请输入 1–1440 的整数分钟，默认 10 分钟。' : '';
+  });
   let saveHandler = null;
   let runHandler = null;
 
@@ -166,6 +171,10 @@ export function useUnreciprocatedSettings() {
     if(saving.value)return false;
     errorMessage.value = '';
     successMessage.value = '';
+    if (intervalError.value) {
+      errorMessage.value = intervalError.value;
+      return false;
+    }
     const cfg = toConfig();
 
 
@@ -219,6 +228,7 @@ export function useUnreciprocatedSettings() {
     greetingTextEn,
     autoUnfollow,
     autoUnfollowEvery,
+    intervalError,
     autoUnfollowJitter,
     batchLimit,
     dailyLimit,

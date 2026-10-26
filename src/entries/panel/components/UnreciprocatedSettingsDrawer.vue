@@ -86,7 +86,7 @@
         <div class="drawer-section-heading">私信提醒</div>
         <div class="drawer-setting-group drawer-setting-switch">
           <label class="drawer-switch-label"><input id="unreciprocatedAutoGreeting" type="checkbox" v-model="unreciprocatedSettingsController.autoGreeting.value" /><span>启用自动私信</span>
-          <InfoTip text="保存后绑定当前 X 账号，每 5 分钟检查，每轮最多处理 5 人。关注满等待天数仍未回关便发送一次，超过当天仍会补发；已发或结果待确认不重复发。需要保留已登录 X 页面。" label="自动私信提醒说明" /></label>
+          <InfoTip text="保存后绑定当前 X 账号，每轮结束后随机间隔 4–6 分钟再检查，每轮最多处理 5 人。关注满等待天数仍未回关便发送一次，超过当天仍会补发。明确未发送的留待下一轮重新核验，没有额外冷却期；已发或结果待确认不重复发。需要保留已登录 X 页面。" label="自动私信提醒说明" /></label>
         </div>
         <div class="drawer-setting-group">
           <label for="unreciprocatedGreetingAfterDays" class="drawer-setting-label">
@@ -139,14 +139,18 @@
           <label for="unreciprocatedAutoUnfollowEvery" class="drawer-setting-label"><span>取关执行周期（分）</span></label>
           <input
             id="unreciprocatedAutoUnfollowEvery"
+            :aria-invalid="Boolean(unreciprocatedSettingsController.intervalError.value)"
+            aria-describedby="unfollowIntervalHelp unfollowIntervalError"
             v-model.number="unreciprocatedSettingsController.autoUnfollowEvery.value"
             type="number"
-            min="5"
+            min="1"
             max="1440"
           />
-          <span class="info-tip" tabindex="0" role="note" data-tip="支持 5–1440 分钟，每轮最多处理 1 人。实际间隔按周期与浮动计算，最短 5 分钟；设为 5 分钟且浮动为 0，即按每 5 分钟安排一轮。此值不是 X 官方安全频率。" aria-label="取关执行周期说明">?</span>
+          <span class="info-tip" tabindex="0" role="note" data-tip="支持 1–1440 分钟，默认 10 分钟，每轮最多处理 1 人。实际间隔按周期与浮动计算，最短 1 分钟；设为 1 分钟且浮动为 0，即按每 1 分钟安排一轮。此值不是 X 官方安全频率。" aria-label="取关执行周期说明">?</span>
         </div>
 
+        <p id="unfollowIntervalHelp">1–1440 分钟，默认 10 分钟；每轮最多 1 人。固定间隔请将周期浮动设为 0。</p>
+        <p v-if="unreciprocatedSettingsController.intervalError.value" id="unfollowIntervalError" role="alert" style="color: #b42318">{{ unreciprocatedSettingsController.intervalError.value }}</p>
         <div class="drawer-setting-group">
           <label for="unreciprocatedAutoUnfollowJitter" class="drawer-setting-label">
             <span>周期浮动（±分）</span>
@@ -158,7 +162,7 @@
             min="0"
             max="15"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="取关检查周期随机浮动，默认 ±15 分钟。" aria-label="取关周期浮动说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="取关检查周期随机浮动，默认 0，即按固定周期安排；已有自定义浮动保持不变。" aria-label="取关周期浮动说明">?</span>
         </div>
 
         <div class="drawer-setting-group">
@@ -172,7 +176,7 @@
             min="1"
             max="400"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 5 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。" aria-label="单日取关上限说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" data-tip="默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 1 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。" aria-label="单日取关上限说明">?</span>
         </div>
 
         <div class="drawer-setting-group drawer-setting-time">

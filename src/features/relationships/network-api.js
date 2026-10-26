@@ -12,7 +12,8 @@ function collectUsers(value, out = new Map()) {
   const relationship = value.relationship_perspectives || value.relationship || {};
   const followers = legacy?.followers_count ?? value.relationship_counts?.followers ?? value.followers_count;
   const following = legacy?.friends_count ?? value.relationship_counts?.following ?? value.friends_count;
-  const followsYou = relationship.followed_by ?? legacy?.followed_by ?? value.followed_by;
+  const incoming = [relationship.followed_by, legacy?.followed_by, value.followed_by];
+  const followsYou = incoming.includes(true) ? true : incoming.includes(false) ? false : null;
   const followsAccount = legacy?.following ?? relationship.following ?? value.following;
   const relationshipKnown = typeof followsYou === 'boolean' && typeof followsAccount === 'boolean';
   if (restId && handle && /^[A-Za-z0-9_]{1,15}$/.test(handle)) out.set(handle.toLowerCase(), {

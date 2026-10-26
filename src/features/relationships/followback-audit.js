@@ -5,7 +5,11 @@ export function createFollowbackAudit(action,write,now=Date.now){
  return {
   stage(value,fields={}){stage=value;Object.assign(context,fields);},
   skip(reason,user){reasons[reason]=(reasons[reason]||0)+1;if(samples.length<20&&user?.handle)samples.push(`@${user.handle}：${reason}`);},
-  event(entry,fields={}){return write({...entry,runId,action,details:{'轮次编号':runId,'阶段':stage,'耗时毫秒':now()-startedAt,...context,...fields,'跳过原因统计':{...reasons},'跳过账号示例-最多20个':[...samples]}});}
+  event(entry,fields={}){
+   const details={'轮次编号':runId,'阶段':stage,'耗时毫秒':now()-startedAt,...context,...fields,'跳过原因统计':{...reasons},'跳过账号示例-最多20个':[...samples]};
+   const handle=entry.handle||details['目标账号'];
+   return write({...entry,...(handle?{handle,target:{handle,id:String(details['目标账号ID']||''),name:details['目标昵称']||''}}:{}),runId,action,details});
+  }
  };
 }
 export function reminderSkipReason(user,days,now=Date.now()){

@@ -69,13 +69,13 @@ test('normalizeUnreciprocatedConfig applies robust safe bounds', () => {
   assert.equal(empty.every, 60);
   assert.equal(empty.jitter, 10);
   assert.equal(empty.overdueDays, 14);
-  assert.equal(empty.autoUnfollowEvery, 45);
-  assert.equal(empty.autoUnfollowJitter, 15);
+  assert.equal(empty.autoUnfollowEvery, 10);
+  assert.equal(empty.autoUnfollowJitter, 0);
   assert.equal(empty.batchLimit, 1);
   assert.equal(empty.dailyLimit, 100);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 24}).dailyLimit, 100);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 5, dailyLimit: 24}).dailyLimit, 24);
-  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [45, 100]);
+  assert.deepEqual([normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).autoUnfollowEvery, normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 30, autoUnfollowJitter: 5, batchLimit: 20, dailyLimit: 400}).dailyLimit], [10, 100]);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 3, dailyLimit: 12}).dailyLimit, 100);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 4, dailyLimit: 12}).dailyLimit, 12);
   assert.equal(normalizeUnreciprocatedConfig({settingsSchemaVersion: 2, autoUnfollowEvery: 90, dailyLimit: 6}).autoUnfollowEvery, 90);
@@ -145,4 +145,12 @@ test('five-minute automatic unfollow setting survives save and reopening',async(
  let saved;c.setSaveHandler(async cfg=>{saved=cfg;});c.autoUnfollowEvery.value=5;c.autoUnfollowJitter.value=0;
  assert.equal(await c.save(),true);assert.equal(saved.autoUnfollowEvery,5);assert.equal(saved.autoUnfollowJitter,0);
  c.open(saved);assert.equal(c.autoUnfollowEvery.value,5);
+});
+
+test('one-minute interval saves while invalid inputs remain visible',async()=>{
+ const c=useUnreciprocatedSettings();c.open({});assert.equal(c.autoUnfollowEvery.value,10);
+ let saved,calls=0;c.setSaveHandler(async cfg=>{saved=cfg;calls++;});
+ for(const v of ['',0,-1,1441,1.5]){c.autoUnfollowEvery.value=v;assert.equal(await c.save(),false);assert.equal(c.autoUnfollowEvery.value,v);assert.match(c.errorMessage.value,/1–1440/);}
+ assert.equal(calls,0);c.autoUnfollowEvery.value=1;c.autoUnfollowJitter.value=0;assert.equal(await c.save(),true);c.open(saved);assert.equal(c.autoUnfollowEvery.value,1);
+ c.open({settingsSchemaVersion:5,autoUnfollowEvery:5});assert.equal(c.autoUnfollowEvery.value,5);
 });

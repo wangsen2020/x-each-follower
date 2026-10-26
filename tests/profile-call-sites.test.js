@@ -38,7 +38,7 @@ test('every production profile-tab call forwards valid native arguments without 
    nativeCalls.push(options);return {id:17,...options};
   };
   const api={tabs:{create:async options=>validate(options),update:async(id,options)=>{assert.ok(Number.isInteger(id));return validate(options);}}};
-  const context={api,chrome:api,sourceTab,handle:'writer',url:'https://x.com/writer',targetUrl:'https://x.com/writer',source:'fixture',suffix:'following',operation:'UserRepliesTimeline',job:{id:'job-1',handle:'writer'},binding:{handle:'viewer'},control:{runId:'run-1'},win:{id:42},tabId:17,targetId:17,inspectionTab:17,tab:{id:17},existing:{id:17},temporary:{id:17}};
+  const context={api,chrome:api,user:{handle:'writer'},sourceTab,handle:'writer',url:'https://x.com/writer',targetUrl:'https://x.com/writer',source:'fixture',suffix:'following',operation:'UserRepliesTimeline',job:{id:'job-1',handle:'writer'},binding:{handle:'viewer'},control:{runId:'run-1'},win:{id:42},tabId:17,targetId:17,inspectionTab:17,tab:{id:17},existing:{id:17},temporary:{id:17}};
   for(const [name,fn] of Object.entries({createProfileTab,updateProfileTab}))context[name]=async(...args)=>{
    const options=args[name==='createProfileTab'?1:2],origin=args[name==='createProfileTab'?2:3];
    assert.equal(typeof origin,'string');

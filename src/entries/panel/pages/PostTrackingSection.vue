@@ -8,7 +8,7 @@
     <div class="post-filters">
       <input v-model="options.search" class="post-search" type="search" placeholder="正文或帖子 ID" aria-label="搜索帖子" @input="search">
       <label>范围 <select v-model.number="options.days" :disabled="busy" @change="rangeChanged"><option :value="7">7天</option><option :value="14">14天</option><option :value="28">28天</option><option :value="90">90天</option></select></label>
-      <label>类型 <select v-model="options.type" @change="loadFirst"><option value="all">帖子及回复</option><option value="post">仅帖子</option><option value="reply">仅回复</option><option value="auto-quote">自动引用</option></select></label>
+      <label>类型 <select v-model="options.type" @change="loadFirst"><option value="all">帖子及回复</option><option value="post">仅帖子</option><option value="reply">仅回复</option><option value="auto-quote">自动引用</option><option value="auto-original">自动新帖</option></select></label>
       <label>排序 <select v-model="options.sort" @change="loadFirst"><option value="date">发布时间</option><option value="impressions">曝光</option><option value="likes">点赞</option><option value="replies">评论</option><option value="reposts">转帖</option></select></label>
       <button class="secondary" :aria-label="options.direction==='desc'?'改为升序':'改为降序'" @click="toggleDirection">{{ options.direction==='desc'?'降序 ↓':'升序 ↑' }}</button>
       <label><input v-model="options.onlyMonitored" type="checkbox" @change="loadFirst">仅监控中</label>
@@ -77,9 +77,9 @@
       </template>
       <template v-if="selected" #footer><span class="post-review-state">{{ selected.protected?'已保护':selected.retained?'已保留':'' }}</span><button class="secondary" :disabled="busy || (selected.deletion && selected.deletion.status!=='failed')" @click="retain(selected)">{{ selected.retained?'取消保留':'保留' }}</button><button class="secondary" :disabled="busy || (selected.deletion && selected.deletion.status!=='failed')" @click="protect(selected)">{{ selected.protected?'解除保护':'保护保留' }}</button><button class="secondary post-batch-delete" :disabled="busy || selected.protected || (selected.deletion && selected.deletion.status!=='failed')" @click="prepareFromDetail(selected)">删除…</button></template>
     </ActionSettingsDrawer>
-    <div v-if="batchApproval" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-batch-delete-title"><h2 id="post-batch-delete-title">永久删除所选 {{ batchApproval.items.length }} 条帖子？</h2><p>账号 @{{ batchApproval.owner.handle }}</p><ol class="post-batch-delete-list"><li v-for="item in batchApproval.items" :key="item.postId"><a :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.postId }}</a><p class="post-fulltext">{{ item.text }}</p></li></ol><p class="post-error">帖子和互动无法恢复。逐条核验并删除；遇到失败或结果待核验时停止，其余帖子不继续删除。</p><div class="post-actions"><button class="secondary" :disabled="busy" @click="batchApproval=null">取消</button><button class="post-delete" :disabled="busy" @click="confirmBatchDeletion">{{ busy?'正在逐条删除…':'确认批量删除' }}</button></div><p v-if="error" class="post-error" role="alert">{{ error }}</p></section></div>
-    <div v-if="batchResult" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-batch-result-title"><h2 id="post-batch-result-title">{{ batchResult.status==='completed'?'批量删除完成':'批量删除已停止' }}</h2><p>已核验删除 {{ batchResult.results.filter(r=>r.status==='verified').length }} 条 · 未继续执行 {{ batchResult.remaining }} 条</p><ul class="post-batch-delete-list"><li v-for="item in batchResult.results" :key="item.postId">{{ item.postId }} · {{ item.status==='verified'?'已核验删除':item.status==='not-sent'||item.status==='failed'?'未发出删除':'待核验' }}<p v-if="item.error" class="post-error">{{ item.error }}</p></li></ul><div class="post-actions"><button class="secondary" @click="batchResult=null">关闭</button></div></section></div>
-    <div v-if="approval" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-delete-title"><h2 id="post-delete-title">确认永久删除这条帖子？</h2><p>账号 @{{ approval.owner.handle }} · {{ approval.postId }}</p><p class="post-fulltext">{{ approval.text }}</p><p class="post-error">原帖链接和互动无法恢复。仅删除上面这条自己的帖子，不删除引用的原帖。</p><div class="post-actions"><button class="secondary" :disabled="busy" @click="approval=null">取消</button><button class="post-delete" :disabled="busy" @click="confirmDeletion">{{ busy?'正在核验…':'确认永久删除' }}</button></div></section></div>
+    <div v-if="batchApproval" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-batch-delete-title"><h2 id="post-batch-delete-title">永久删除所选 {{ batchApproval.items.length }} 条帖子？</h2><p>账号 @{{ batchApproval.owner.handle }}</p><ol class="post-batch-delete-list"><li v-for="item in batchApproval.items" :key="item.postId"><a :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.postId }}</a><p class="post-fulltext">{{ item.text }}</p></li></ol><p class="post-error">帖子和互动无法恢复。按所选帖子逐条提交删除；个别失败不影响其余条目，结束后统一显示结果。</p><div class="post-actions"><button class="secondary" :disabled="busy" @click="batchApproval=null">取消</button><button class="post-delete" :disabled="busy" @click="confirmBatchDeletion">{{ busy ? (batchProgress?.current ? `正在删除 ${batchProgress.current}/${batchProgress.total}` : `准备删除 0/${batchApproval.items.length}`) : '确认批量删除' }}</button></div><p v-if="error" class="post-error" role="alert">{{ error }}</p></section></div>
+    <div v-if="batchResult" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-batch-result-title"><h2 id="post-batch-result-title">{{ batchResult.status==='completed'?'批量删除完成':batchResult.status==='completed-with-errors'?'批量处理完成，部分未成功':'批量处理完成' }}</h2><p>已删除 {{ batchResult.results.filter(r=>r.status==='verified').length }} 条 · 未成功 {{ batchResult.results.filter(r=>r.status!=='verified').length }} 条 · 未执行 {{ batchResult.remaining }} 条</p><ul class="post-batch-delete-list"><li v-for="item in batchResult.results" :key="item.postId">{{ item.postId }} · {{ item.status==='verified'?'已删除':item.status==='not-sent'?'未发出删除':item.status==='failed'?'删除失败':'结果待确认' }}<p v-if="item.error" class="post-error">{{ item.error }}</p></li></ul><div class="post-actions"><button class="secondary" @click="batchResult=null">关闭</button></div></section></div>
+    <div v-if="approval" class="post-overlay"><section class="post-dialog" role="dialog" aria-modal="true" aria-labelledby="post-delete-title"><h2 id="post-delete-title">确认永久删除这条帖子？</h2><p>账号 @{{ approval.owner.handle }} · {{ approval.postId }}</p><p class="post-fulltext">{{ approval.text }}</p><p class="post-error">原帖链接和互动无法恢复。仅删除上面这条自己的帖子，不删除引用的原帖。</p><div class="post-actions"><button class="secondary" :disabled="busy" @click="approval=null">取消</button><button class="post-delete" :disabled="busy" @click="confirmDeletion">{{ busy?'正在删除…':'确认永久删除' }}</button></div></section></div>
   </section>
 </template>
 
@@ -97,7 +97,19 @@ const views=[{key:'latest',label:'最新帖子'},{key:'low',label:'低价值'},{
 const busy=ref(false),loading=ref(false),error=ref(''),notice=ref(''),selected=ref(null),approval=ref(null);
 const detailDrawer=ref(null);
 const jumpPage=ref(1),helpDialog=ref(null),clockNow=ref(Date.now()),scanning=ref(false);
-const batchApproval=ref(null),batchResult=ref(null);
+const batchApproval=ref(null),batchResult=ref(null),batchProgress=ref(null);
+let batchProgressTimer,batchProgressGeneration=0;
+function stopBatchProgress(){batchProgressGeneration++;clearTimeout(batchProgressTimer);}
+function startBatchProgress(batchApprovalId,total){
+  stopBatchProgress();const generation=batchProgressGeneration;
+  batchProgress.value={current:0,total};
+  const poll=async()=>{
+    try{const progress=await request('batchDeleteProgress',{batchApprovalId});if(generation===batchProgressGeneration)batchProgress.value=progress;}
+    catch{/* Keep the last known progress; the deletion response owns error reporting. */}
+    finally{if(generation===batchProgressGeneration)batchProgressTimer=setTimeout(poll,500);}
+  };
+  batchProgressTimer=setTimeout(poll,200);
+}
 const selectedIds=ref([]),memoryDrawer=ref(null),memoryDraft=ref({ownerId:'',revision:0,rules:[]});
 const learningRunning=computed(()=>data.value.learning?.job?.status==='running');
 const selectedAnalyzing=computed(()=>learningRunning.value&&data.value.learning?.job?.samples?.some(p=>p.postId===selected.value?.postId));
@@ -154,16 +166,16 @@ async function retain(post){return decide(post,'retained',!post.retained,post.re
 async function analyzePost(post){await work(async()=>{await request('learn',{ownerId:data.value.config.ownerId,kind:'low',postIds:[post.postId]});await load();notice.value='已提交 Grok二审';});}
 async function prepareFromDetail(post){detailDrawer.value.close();selected.value=null;await prepare(post);}
 async function prepareBatch(){await work(async()=>{const before=[...selectedIds.value];await load();if(before.length!==selectedIds.value.length){notice.value='勾选中有帖子已不可删除，请重新核对';return;}if(!selectedIds.value.length)return;batchApproval.value=await request('prepareBatchDelete',{postIds:[...selectedIds.value]});batchResult.value=null;});}
-async function confirmBatchDeletion(){if(!batchApproval.value)return;const id=batchApproval.value.batchApprovalId;await work(async()=>{const result=await request('confirmBatchDelete',{batchApprovalId:id,confirmed:true});batchResult.value=result;batchApproval.value=null;selectedIds.value=[];await load();});}
+async function confirmBatchDeletion(){if(!batchApproval.value)return;const id=batchApproval.value.batchApprovalId,total=batchApproval.value.items.length;await work(async()=>{startBatchProgress(id,total);try{const result=await request('confirmBatchDelete',{batchApprovalId:id,confirmed:true});batchResult.value=result;batchApproval.value=null;selectedIds.value=[];await load();}finally{stopBatchProgress();batchProgress.value=null;}});}
 async function prepare(post){await work(async()=>{approval.value=await request('prepareDelete',{postId:post.postId});});}
-async function confirmDeletion(){if(!approval.value)return;const id=approval.value.approvalId;await work(async()=>{const result=await request('confirmDelete',{approvalId:id,confirmed:true});approval.value=null;notice.value=result.deletion.status==='verified'?'已核验删除完成':result.deletion.status==='failed'?'删除未发出':'删除待核验';await load();});}
+async function confirmDeletion(){if(!approval.value)return;const id=approval.value.approvalId;await work(async()=>{const result=await request('confirmDelete',{approvalId:id,confirmed:true});approval.value=null;notice.value=result.deletion.status==='verified'?'已删除':result.deletion.status==='failed'?result.deletion.error||'删除失败':'删除结果待确认';await load();});}
 async function verify(post){await work(async()=>{await request('verify',{postId:post.postId});await load();notice.value='核验已更新';});}
 async function enterTracking(){await load();if(activeTab.value==='postTracking'&&!initialAttempted&&!data.value.config?.ownerId&&!data.value.meta?.error&&manualBlockedUntil.value<=Date.now()){initialAttempted=true;await refresh(true);}}
 watch(activeTab,tab=>{if(tab==='postTracking')enterTracking();else {helpDialog.value?.close();settingsDrawer.value?.close();memoryDrawer.value?.close();detailDrawer.value?.close();}},{immediate:true});
 watch(()=>data.value.learning?.job?.status,(status,previous)=>{if(previous==='running'&&status!=='running')notice.value=status==='completed'?'Grok结果已更新':'分析未完成，查看写作记忆';});
 watch(notice,()=>{clearTimeout(noticeTimer);if(notice.value)noticeTimer=setTimeout(()=>{notice.value='';},5000);});
 onMounted(()=>{clockTimer=setInterval(()=>{clockNow.value=Date.now();},1000);let ticks=0;timer=setInterval(()=>{ticks++;if(activeTab.value==='postTracking'&&!document.hidden&&!busy.value&&!loading.value&&(learningRunning.value||ticks%15===0))load();},2000);});
-onUnmounted(()=>{clearInterval(timer);clearInterval(clockTimer);clearTimeout(noticeTimer);clearTimeout(searchTimer);generation++;});
+onUnmounted(()=>{stopBatchProgress();clearInterval(timer);clearInterval(clockTimer);clearTimeout(noticeTimer);clearTimeout(searchTimer);generation++;});
 </script>
 
 <style scoped>

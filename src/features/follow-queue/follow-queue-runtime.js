@@ -7,14 +7,18 @@ import {createCommentWorker, COMMENT_ALARM} from './comment-worker.js';
 export {COMMENT_ALARM};
 import {isPageFailure} from '../../platform/page-failure.js';
 import {appendQuoteTags} from '../grok/quote-tags.js';
+import {quotePublishIssue,quoteInputComplete,readQuoteSourceOnPage} from '../grok/quote-quality.js';
+import {generateOriginalPost} from '../publishing/post-writer.js';
+import {createPostPublisher} from '../publishing/post-publisher.js';
+import {originalQualityIssue,originalTextIssue} from '../publishing/original-quality.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from '../../platform/x/page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from '../relationships/scoring.js';
-import {requestGrokComment, requestGrokText, postQuoteOnTab, resolveCommentLanguage} from '../grok/grok-comment.js';
-import {evaluateProfileGrokRisk, interactionSkipReason} from '../relationships/content-risk.js';
+import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from '../grok/grok-comment.js';
+import {interactionSkipReason} from '../relationships/content-risk.js';
 import {randomizedSeconds, randomizedInteger} from '../../shared/timing.js';
 import {appendExecutionLog, normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {readAutoFollowAttempts} from '../../shared/auto-follow-history.js';
@@ -106,7 +110,8 @@ export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, o
   return null;
 }
 
-export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, fetchProfile=networkGetUserProfile, performFollow=networkFollow, generateComment=requestGrokComment, wait = sleep, records = null} = {}) {
+export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, fetchProfile=networkGetUserProfile, performFollow=networkFollow, generateComment=requestGrokComment, generatePost=generateOriginalPost, postPublisher, wait = sleep, records = null} = {}) {
+  const publishing=postPublisher || createPostPublisher({api});
   if (!store) {
     let opened;
     store = new Proxy({}, {get(_target, key) { opened ||= createFollowQueueStore(); return opened[key]?.bind(opened); }});
@@ -556,10 +561,16 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       // Only persist intent here: comments have their own worker and deadline.
       const post = eligiblePosts[0];
       const originalPostId = post.url.match(/\/status\/(\d+)/)[1];
+      const sampled = await store.ensureQuoteDecision({accountId:job.accountId,id:job.id,rate:settings.quoteParticipationRate ?? 60});
+      if (!sampled.ok) throw new Error('引用抽样结果未能保存，已停止引用流程');
+      const quoteDecision = sampled.decision;
+      const creationForm=settings.publicationMode==='original'?'新帖':'引用评价';
       evaluations.push({taskId:job.accountId+':'+originalPostId, followJobId:job.id,
         targetUserId:target.id, originalAuthorId:target.id, originalPostId,
-        originalPostUrl:post.url, originalPostText:post.text, status:'pending',
-        automaticComment:true, candidatePosts:eligiblePosts, reason:'等待独立评论任务执行'});
+        originalPostUrl:post.url, originalPostText:post.text,
+        automaticComment:true, candidatePosts:eligiblePosts,quoteDecision,grokCalls:0,publicationMode:settings.publicationMode || 'quote',
+        status:quoteDecision.selected ? 'pending' : 'skipped',reasonCode:quoteDecision.selected ? 'probability_selected' : 'probability_skip',
+        reason:quoteDecision.selected ? `已抽中${creationForm}（概率 ${quoteDecision.rate}%），等待质量判断` : `未抽中${creationForm}（概率 ${quoteDecision.rate}%），未调用 Grok`});
       return {state:'followed',followResult,evaluations};
     } catch (error) {
       if(error.code==='QUEUE_BUDGET_EXHAUSTED' || (control.signal.aborted && Date.now()>=control.deadline)) return {state:followResult.succeeded?'followed':attemptedFollow?'uncertain':'retry',budgetExhausted:true,followResult,evaluations,reason:'本轮时间已用完，留待下轮继续'};
@@ -788,7 +799,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     try { return await performEvaluation(binding, {...options,signal:options.signal || controller.signal}); }
     finally { clearTimeout(timer); commentLocks.delete(key); }
   }
-  async function performEvaluation(binding, {jobId, taskId, publish = false, signal} = {}) {
+  async function performEvaluation(binding, {jobId, taskId, publish = false, signal, automatic = false} = {}) {
     let tab;
     async function guardComment() {
       if (signal?.aborted) throw new Error('评论任务超时，关注结果不受影响');
@@ -797,6 +808,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (tab && await viewer(tab.id) !== canonical(binding.handle)) throw new Error('当前 X 登录账号发生变化');
       const latest = await readJob(binding.accountId, jobId);
       if (!latest || latest.state !== 'followed') throw new Error('评论对应的关注记录已移除或变化');
+      if (automatic) {
+        const settings = await store.getSettings(binding.accountId);
+        if (!settings.grokEnabled || settings.quoteParticipationRate === 0) throw new Error('自动引用已暂停，未继续生成或提交');
+      }
       if (signal?.aborted) throw new Error('评论任务超时，关注结果不受影响');
     }
     await guardComment();
@@ -805,6 +820,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     if (job.state !== 'followed') throw new Error('仅已关注成功的任务支持独立重试引用评价，禁止回退关注步骤');
     const existingEvals = Array.isArray(job.evaluations) ? job.evaluations : [];
     const targetEval = (taskId ? existingEvals.find(e => e.taskId === taskId) : existingEvals[0]) || null;
+    let publicationMode=targetEval?.publicationMode || 'quote';
+    let form=publicationMode==='original'?'新帖':'引用评价';
     if (targetEval && (targetEval.status === 'posted' || targetEval.status === 'published')) {
       return {ok:true,job,evaluation:targetEval,summary:'该引用评价已发布，无需重复执行'};
     }
@@ -821,20 +838,19 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const hadPinnedEvaluation = Boolean(ev?.originalPostUrl);
       // Step 1: If uncertain or draft, verify on viewer's profile page first before any re-publish
       if (ev && ev.originalPostId && ev.text) {
-        const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
-          originalId:ev.originalPostId,text:ev.text,after:0});
+        const proof = publicationMode==='original'
+          ? await publishing.verify({owner:binding.handle,text:ev.text,after:ev.publishedAttemptedAt || ev.generationAttemptedAt || 0})
+          : await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,originalId:ev.originalPostId,text:ev.text,after:0});
         if (proof) {
           ev = {...ev, status:'posted', publishedPostId:proof.id, publishedPostUrl:proof.url, reason:''};
           const saved = await store.resolveJob({accountId:binding.accountId, id:job.id, evaluations:[ev]});
-          await safeLog({scope:'comment', accountId:binding.accountId, jobId:job.id, handle:job.handle, at:new Date().toISOString(), result:'posted', detail:`主页核实 @${job.handle} 的引用评价已发布`});
-          return {ok:true, job:saved.job, evaluation:ev, summary:'主页已确认该引用评价发布成功'};
+          await safeLog({scope:'comment', accountId:binding.accountId, jobId:job.id, handle:job.handle, at:new Date().toISOString(), result:'posted', detail:`主页核实 ${form} 已发布`});
+          return {ok:true, job:saved.job, evaluation:ev, summary:`主页已确认${form}发布成功`};
         }
         if (ev.status === 'uncertain') {
-          ev = {...ev, status:ev.text ? 'draft' : 'failed', reason:'主页未发现已发布引用帖，已转为草稿可重试发布'};
+          ev = {...ev, status:'uncertain', reason:`主页暂未确认${form}已发布；结果仍待核实，未重复提交`};
           await store.resolveJob({accountId:binding.accountId, id:job.id, evaluations:[ev]});
-          if (!publish) {
-            return {ok:true, job:job, evaluation:ev, summary:ev.reason};
-          }
+          return {ok:true, job:job, evaluation:ev, summary:ev.reason};
         }
       }
       // Step 2: Locate post if needed
@@ -879,6 +895,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!originalPostId) throw new Error('原帖链接缺少有效推文 ID');
       const prevAttempts = Array.isArray(ev?.attempts) ? ev.attempts.length : (Number(ev?.attempts) || 0);
       ev = {
+        ...ev,
+        publicationMode,
         taskId: ev?.taskId || `${binding.accountId}:${originalPostId}`,
         followJobId: job.id,
         targetUserId: job.targetUserId || '',
@@ -907,25 +925,60 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       }
       await guardComment();
       const commentSettings = await store.getSettings(binding.accountId);
-      if (commentSettings.skipRiskContent !== false && commentSettings.grokProfileAssessment !== false) {
-        const assessment = await evaluateProfileGrokRisk(safetyProfile, {
-          sleep, runner:prompt => requestGrokText(prompt, {sleep, timeoutMs:60000})
-        });
-        await guardComment();
-        if (assessment.quotaExhausted) return {ok:false, ...assessment};
-        if (assessment.evaluated && !assessment.safe) {
-          ev.status = 'skipped'; ev.reason = '评论风险审核未通过';
-          await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
-          return {ok:true,evaluation:ev};
-        }
-      }
+      if(!targetEval){publicationMode=commentSettings.publicationMode || 'quote';ev.publicationMode=publicationMode;form=publicationMode==='original'?'新帖':'引用评价';}
+      // Local gates above remain mandatory; model risk review, selection and
+      // writing share one request rather than a second per-user Grok call.
       // Reuse existing draft text if available; only call Grok when draft text is empty
       if (!ev.text) {
-        const candidates = targetEval?.automaticComment && targetEval.candidatePosts?.length
+        if (ev.generationAttemptedAt && ev.reasonCode !== 'quota_not_sent') {
+          ev.status = 'uncertain'; ev.reason = '上次 Grok 请求结果待核实，未重复调用';
+          const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+        }
+        const initialCandidates = targetEval?.automaticComment && targetEval.candidatePosts?.length
           ? targetEval.candidatePosts : hadPinnedEvaluation ? post : cachedPosts.slice(0, 5);
-        const generated = await generateComment(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId});
-        await guardComment();
-        if (generated.quotaExhausted) return {ok:false, ...generated};
+        const candidates=[];
+        for (const candidate of (Array.isArray(initialCandidates) ? initialCandidates : [initialCandidates]).slice(0,5)) {
+          if (quoteInputComplete(candidate)) { candidates.push(candidate); continue; }
+          await guardComment();
+          const url=String(candidate?.url || '');
+          if (!/^https:\/\/(?:x\.com|twitter\.com)\/[a-zA-Z0-9_]+\/status\/\d+(?:[/?#]|$)/.test(url)) continue;
+          await updateProfileTab(api,tab.id,{url},'follow-queue');
+          let full;
+          for (let i=0;i<12;i++) {
+            await guardComment();
+            full=await script(tab.id,readQuoteSourceOnPage,[url]);
+            if (full) break;
+            await sleep(500);
+          }
+          if (full?.textComplete) candidates.push({...candidate,...full});
+        }
+        if (!candidates.length) {
+          ev.status='skipped';ev.reasonCode='context_incomplete';ev.grokCalls=0;
+          ev.reason='未能获取完整原创正文，未调用 Grok';
+          const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,result:'skipped',detail:ev.reason});
+          return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+        }
+        ev.generationAttemptedAt = Date.now();
+        ev.reasonCode = 'generation_started';
+        const started = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        if (!started.ok) throw new Error('未能保存 Grok 请求状态，未发送请求');
+        const generate=publicationMode==='original'?generatePost:generateComment;
+        const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,
+          qualityFirst:true,lengthMode:commentSettings.quoteLengthMode || 'adaptive'});
+        if (generated.quotaExhausted) {
+          // Only an explicit pre-submit quota check authorizes a future request.
+          const unsent = generated.generationAttempted === false;
+          ev.reasonCode = unsent ? 'quota_not_sent' : 'generation_uncertain';
+          ev.status = unsent ? 'pending' : 'uncertain';
+          ev.reason = unsent ? 'Grok 额度不足，未发送生成请求' : 'Grok 提交后触发额度限制，结果待核实，未重复请求';
+          ev.grokCalls=(Number(ev.grokCalls)||0)+(generated.grokCalls || 0);
+          await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:false, ...generated,evaluation:ev};
+        }
+        Object.assign(ev,{quality:generated.quality || null,lengthPolicy:generated.lengthPolicy || null,
+          grokCalls:(Number(ev.grokCalls)||0)+(generated.grokCalls ?? 1),reasonCode:generated.reasonCode || ''});
         ev.text = generated.reply || '';
         ev.language = generated.language || 'und';
         ev.channel = generated.channel || ev.channel || '';
@@ -934,45 +987,73 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         ev.reason = generated.reason || '';
         if (!generated.ok) {
           const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),
+            result:ev.status,reasonCode:ev.reasonCode,grokCalls:ev.grokCalls,detail:ev.reason || 'Grok 未生成有效评价'});
           return {ok:Boolean(generated.skipped),error:generated.skipped ? '' : ev.reason || 'Grok 生成评价失败',summary:ev.reason,job:saved.job,evaluation:ev};
         }
         post = generated.post;
         originalPostId = post.url.match(/\/status\/(\d+)/)?.[1] || '';
         if (!originalPostId) throw new Error('Grok 选中的帖子缺少有效推文 ID');
         Object.assign(ev,{taskId:targetEval?.automaticComment ? targetEval.taskId : `${binding.accountId}:${originalPostId}`,originalPostId,originalPostUrl:post.url,originalPostText:post.text});
+        // Preserve paid-for output even if a user pauses while Grok is replying.
+        const drafted = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        if (!drafted.ok) throw new Error('评价草稿未能保存，已停止发布');
+        await guardComment();
       } else {
         ev.status = 'draft';
       }
       const settings = await store.getSettings(binding.accountId);
       ev.baseText ||= ev.text;
       ev.language = resolveCommentLanguage(ev.baseText, ev.language);
-      ev.text = appendQuoteTags(ev.baseText, settings, ev.language || 'und', {previousText: ev.text});
+      ev.text = publicationMode==='original' ? ev.baseText : appendQuoteTags(ev.baseText, settings, ev.language || 'und', {previousText: ev.text,lengthPolicy:ev.lengthPolicy});
+      const reviewIssue = ev.reasonCode === 'draft_too_long' || ev.quality?.reviewRequired ? ev.reason || '质量判断待复核'
+        : publicationMode==='original' ? originalQualityIssue(ev.quality) || originalTextIssue(ev.text,ev.originalPostText) : quotePublishIssue(ev.text);
+      if (reviewIssue) {
+        ev.status = 'draft'; ev.reason = reviewIssue;
+        const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:reviewIssue});
+        return {ok:true,job:saved.job,evaluation:ev,summary:reviewIssue};
+      }
       if (!publish && !settings.autoPublish) {
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
-        await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`已为 @${job.handle} 生成评价草稿（未开启自动发布）`});
-        return {ok:true,job:saved.job,evaluation:ev,summary:'评价草稿已就绪（未自动发布）'};
+        await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`${form}草稿已就绪（未开启自动发布）`});
+        return {ok:true,job:saved.job,evaluation:ev,summary:`${form}草稿已就绪（未自动发布）`};
       }
       await guardComment();
+      if (automatic && !(await store.getSettings(binding.accountId)).autoPublish) {
+        ev.status = 'draft'; ev.reason = '自动发布已关闭，草稿已保留';
+        const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+      }
       ev.status = 'publishing';
+      ev.publishedAttemptedAt=Date.now();
       await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
       const submittedAt = Date.now();
-      const published = await postQuoteOnTab(tab.id,post,ev.text,publishQuotePostOnPage,sleep,{beforePublish:guardComment});
-      ev.status = quotePublicationState(published);
-      ev.reason = published.reason || '等待主页确认引用发布';
-      if (published.ok) {
+      const beforePublish=async()=>{
+        await guardComment();
+        if (automatic && !(await store.getSettings(binding.accountId)).autoPublish) throw new Error('自动发布已关闭，未提交');
+      };
+      const published = publicationMode==='original'
+        ? await publishing.publish({owner:binding.handle,text:ev.text,sourceText:ev.originalPostText,canPublish:async()=>{await beforePublish();return true;}})
+        : await postQuoteOnTab(tab.id,post,ev.text,publishQuotePostOnPage,sleep,{beforePublish});
+      ev.status = publicationMode==='original' ? published.status || 'uncertain' : quotePublicationState(published);
+      ev.reason = published.reason || `等待主页确认${form}发布`;
+      if(publicationMode==='original' && published.status==='posted')Object.assign(ev,{publishedPostId:published.publishedPostId,publishedPostUrl:published.publishedPostUrl,reason:''});
+      if (published.ok && publicationMode!=='original') {
         const proof = await confirmPublishedQueueQuote({api,tabId:tab.id,handle:binding.handle,
           originalId:originalPostId,text:ev.text,after:submittedAt});
         if (proof) Object.assign(ev,{status:'posted',publishedPostId:proof.id,publishedPostUrl:proof.url,reason:''});
       }
       const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
-      await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:ev.status,detail:ev.status === 'posted' ? `已发布 @${job.handle} 的引用评价` : (ev.reason || '引用评价重试结束')});
-      return {ok:true,job:saved.job,evaluation:ev,summary:ev.status === 'posted' ? '引用评价已发布并核验' : ev.reason};
+      await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:ev.status,detail:ev.status === 'posted' ? `${form}已发布并核验` : (ev.reason || `${form}处理结束`)});
+      return {ok:true,job:saved.job,evaluation:ev,summary:ev.status === 'posted' ? `${form}已发布并核验` : ev.reason};
     } finally {
       if (tab) await api.tabs.remove(tab.id).catch(() => {});
     }
   }
   const commentWorker = createCommentWorker({store, storage:api.storage.local,
     readBinding, execute:retryEvaluation,
+    onSkip:entry=>safeLog({...entry,scope:'comment',result:'skipped',detail:entry.reason,at:new Date().toISOString()}),
     isBusy:job => commentLocks.has(job.accountId+':'+job.id)});
   async function schedule({preserve = false} = {}) {
     const binding = await readBinding();

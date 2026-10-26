@@ -1,5 +1,6 @@
 import {APP_VERSION} from '../../../shared/version.js';
 import { ref, computed, reactive } from 'vue';
+import {logsModalController} from './useExecutionLogs.js';
 
 export const TAB_TITLES = {
   monitor: '粉丝跟进',
@@ -48,6 +49,7 @@ export function usePanelNavigation() {
 
   function setTab(tab) {
     if (!TAB_TITLES[tab]) return;
+    if (tab !== activeTab.value) logsModalController.close();
     activeTab.value = tab;
     if (typeof document !== 'undefined') {
       document.dispatchEvent(new CustomEvent('panel-tab-changed', { detail: { tab } }));

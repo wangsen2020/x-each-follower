@@ -1057,6 +1057,28 @@ test('identical batch writes create no extra backup and still recover an earlier
   assert.equal(durable.saved.get('recordIncremental:v1:head').seq,1);
 });
 
+test('auto-unfollow candidate traversal survives concurrent revisions and includes derived tracking rows',async()=>{
+  const {readAutoUnfollowCandidates}=await import('../src/features/relationships/auto-unfollow-adapter.js');
+  const users=Array.from({length:205},(_,i)=>({handle:`tracked${String(i).padStart(3,'0')}`,status:'overdue',followedAt:'2026-09-01T00:00:00Z',relationship:{following:true,followedBy:false}}));
+  const followingUsers=['deriveda','derivedb'].map(handle=>({handle,relationship:{following:true,followedBy:false},followedAt:'2026-09-01T00:00:00Z'}));
+  const service=runtime('unfollow-candidate-revision',memoryStorage({unreciprocatedTracker:{users},monitor:{followingUsers},commentTracking:{users:[{handle:'commenter',bio:'old'}]}}),memoryDurable());
+  await service.migrate();
+  const comment=(await service.lookupAll({sourceKey:'commentTracking',handle:'commenter'}))[0];
+  let writes=0;
+  const mutate=()=>service.patchRecord({module:'comments',userKey:comment.userKey,patch:{bio:`edit${++writes}`},operationId:`interleaved-${writes}`});
+  const before=await service.query({module:'unreciprocated',limit:100,filter:{tab:'all'}});
+  await mutate();
+  await assert.rejects(service.query({module:'unreciprocated',limit:100,filter:{tab:'all'},cursor:before.nextCursor}),{name:'RecordCursorInvalidError'});
+  const scanService={summary:r=>service.summary(r),sourcePage:async r=>{const page=await service.sourcePage(r);await mutate();return page;}};
+  const found=await readAutoUnfollowCandidates({records:{ready:async()=>{}},service:scanService});
+  assert.equal(found.length,207);
+  assert.equal(new Set(found.map(u=>u.handle)).size,207);
+  assert.ok(found.some(u=>u.handle==='deriveda'));
+  assert.ok(found.some(u=>u.handle==='derivedb'));
+  assert.ok(found.some(u=>u.handle==='tracked204'));
+  assert.ok(writes>=5);
+});
+
 for(const persistedTracker of [true,false]) test(`automatic unfollow history survives reopen with persisted tracker=${persistedTracker}`,async()=>{
   const {createBackgroundAutoUnfollow}=await import('../src/features/relationships/auto-unfollow-adapter.js');
   const {createBackgroundRecords}=await import('../src/features/records/background-record-data.js');
@@ -1068,7 +1090,7 @@ for(const persistedTracker of [true,false]) test(`automatic unfollow history sur
   const data={unreciprocatedSettings:{autoUnfollow:true,autoUnfollowAccount:{id:'999',handle:'owner'},overdueDays:14,batchLimit:1,dailyLimit:400,autoUnfollowEvery:30,activeTimeStart:'09:00',activeTimeEnd:'21:00'}};
   let followed=true,calls=0;
   const api={storage:{local:{get:async k=>structuredClone({[k]:data[k]}),set:async x=>Object.assign(data,structuredClone(x))}},alarms:{create:async()=>{},clear:async()=>{}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:{handle:'owner'}}]}};
-  const runner=createBackgroundAutoUnfollow({api,service,records,normalize:x=>x,now:()=>t,sleep:async()=>{},writeLog:async()=>{},fetchProfile:async(tab,handle)=>({status:200,json:{rest_id:handle==='owner'?'999':'123',legacy:{screen_name:handle,following:followed,followed_by:false}}}),sendUnfollow:async(tab,id)=>{assert.equal(id,'123');calls++;followed=false;return {status:200};}});
+  const runner=createBackgroundAutoUnfollow({api,service,records,normalize:x=>x,inspectProfile:async(api,target)=>target,now:()=>t,sleep:async()=>{},writeLog:async()=>{},fetchProfile:async(tab,handle)=>({status:200,json:{rest_id:handle==='owner'?'999':'123',legacy:{screen_name:handle,following:followed,followed_by:false}}}),sendUnfollow:async(tab,id)=>{assert.equal(id,'123');calls++;followed=false;return {status:200};}});
   const result=await runner.run();assert.equal(result.error,undefined);assert.equal(result.completed,1);assert.equal(calls,1);
   for(const sourceKey of ['monitor','mutualNetwork','unreciprocatedTracker']){
     const rows=await service.lookupAll({sourceKey,handle:'autotarget'});assert.ok(rows.length);for(const row of rows){assert.equal(row.payload.relationship.following,false);assert.equal(row.payload.status,'unfollowed');}
@@ -1081,4 +1103,13 @@ for(const persistedTracker of [true,false]) test(`automatic unfollow history sur
   assert.equal((await reopened.summary({module:'unreciprocated'})).tabs.unfollowed,1);
   assert.equal((await reopened.query({module:'unreciprocated',limit:10,filter:{tab:'all'}})).records.length,0);
   await runner.run();assert.equal(calls,1);
+});
+
+test('unfollow history uses descending unfollow time before pagination and search',async()=>{
+ const users=[{handle:'old',unfollowedAt:'2026-10-23T00:00:00Z',followedAt:'2026-10-25T00:00:00Z'},{handle:'new',unfollowedAt:'2026-10-26T00:00:00Z',followedAt:'2026-10-01T00:00:00Z'},{handle:'missing'}].map(u=>({...u,status:'unfollowed',relationship:{following:false,followedBy:false}}));
+ const storage=memoryStorage({unreciprocatedTracker:{users}}),service=runtime('history-date-paging',storage,memoryDurable());await service.migrate();
+ const first=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed'}});assert.equal(first.records[0].handle,'new');
+ const second=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed'},cursor:first.nextCursor});assert.equal(second.records[0].handle,'old');
+ const third=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed'},cursor:second.nextCursor});assert.equal(third.records[0].handle,'missing');assert.equal(third.nextCursor,null);
+ const search=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed',search:'old'}});assert.equal(search.records[0].handle,'old');
 });

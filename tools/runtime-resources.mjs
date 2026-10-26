@@ -5,6 +5,8 @@ export const RUNTIME_RESOURCES = {
   "bridge.js": "src/entries/content/bridge.js",
   "tweet-comment-button.js": "src/entries/content/tweet-comment-button.js",
   "tweet-comment-button.css": "src/entries/content/tweet-comment-button.css",
+  "profile-followback-badge.js": "src/entries/content/profile-followback-badge.js",
+  "profile-followback-badge.css": "src/entries/content/profile-followback-badge.css",
   "net-hook.js": "src/entries/main-world/net-hook.js",
   "transaction-id.bundle.js": "src/vendor/transaction-id.bundle.js",
   "page-reader.js": "src/platform/x/page-reader.js",

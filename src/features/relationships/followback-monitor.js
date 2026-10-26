@@ -41,7 +41,7 @@ export function compareFollowback({followingUsers = [], followerUsers = [], prev
     const old = previous.get(key) || previousByHandle.get(String(user.handle).replace(/^@/, '').toLowerCase()) || {};
     const member = followers.has(key) || handles.has(String(user.handle).toLowerCase());
     const explicit = user.relationship?.followedBy;
-    const followedBy = explicit === false ? false : member ? true : explicit === true ? true : followersComplete ? false : null;
+    const followedBy = member || explicit === true ? true : explicit === false || followersComplete ? false : null;
     const date = resolveFollowedAt([user, old], now);
     const age = Math.max(0, now - Date.parse(date.followedAt));
     const status = followedBy === true ? 'mutual' : followedBy === null ? 'unknown' : age !== null && age >= overdueDays * DAY ? 'overdue' : 'pending';
@@ -74,8 +74,9 @@ export function compareFollowback({followingUsers = [], followerUsers = [], prev
   return users;
 }
 
-export function sortFollowbackUsers(users) {
+export function sortFollowbackUsers(users, tab) {
   return [...users].sort((a, b) => {
+    if (tab === 'unfollowed') return (validDate(b.unfollowedAt) || 0) - (validDate(a.unfollowedAt) || 0) || followbackKey(a).localeCompare(followbackKey(b));
     const left = validDate(a.followedAt) ?? Number.POSITIVE_INFINITY;
     const right = validDate(b.followedAt) ?? Number.POSITIVE_INFINITY;
     return left - right || followbackKey(a).localeCompare(followbackKey(b));

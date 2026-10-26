@@ -105,6 +105,34 @@ test('a newly mounted recipient header is not mistaken for a ready encrypted con
 });
 
 
+test('X Chat dollar identifiers prepare without sending and submit through the same sender', async () => {
+  const oldLocation = globalThis.location;
+  const oldDocument = globalThis.document;
+  const calls = [];
+  const $Pl = (...args) => calls.push(args);
+  const sender = Object.create({send: eval('(function(e,t,n,r,i){return $Pl(this.$controller,e,t,n,r,i)})')});
+  sender.$controller = {};
+  const state = {isLegacy: true, currentText: '', attachments: {asJsReadonlyArrayView: () => []}};
+  const composer = {state: {state}, sender};
+  const input = {value: '', disabled: false, '__reactFiber$test': {memoizedProps: {component: {composer}}}};
+  const root = {querySelector: selector => selector.includes('password') ? null : selector.includes('dm-composer-textarea') ? input : {}, querySelectorAll: () => []};
+  globalThis.location = {origin: 'https://x.com', pathname: '/i/chat/1-2'};
+  globalThis.document = {querySelector: selector => selector.includes('AppTabBar_Profile_Link') ? {getAttribute: () => '/owner'} : {shadowRoot: root}};
+  const args = {ownerHandle: 'owner', ownerId: '1', targetHandle: 'recipient', targetId: '2', text: 'test'};
+  try {
+    assert.deepEqual(await operateGreetingChatOnPage({...args, action: 'prepare'}), {prepared: true, priorRows: []});
+    assert.equal(calls.length, 0);
+    assert.deepEqual(await operateGreetingChatOnPage({...args, action: 'send'}), {submitted: true});
+    assert.deepEqual(calls, [[sender.$controller, 'test', state.attachments, null, null, null]]);
+    input.value = 'existing draft';
+    assert.equal((await operateGreetingChatOnPage({...args, action: 'send'})).blocked, true);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.location = oldLocation;
+    globalThis.document = oldDocument;
+  }
+});
+
 test('a conversation with closed inbox or passcode requirement directly returns blocked', async () => {
   const oldLocation = globalThis.location;
   const oldDocument = globalThis.document;

@@ -1,0 +1,893 @@
+{
+  "at": "2026-10-26T02:47:30.698Z",
+  "total": {
+    "n": 3120,
+    "mutual": 2300,
+    "pending": 395,
+    "overdue": 389,
+    "unknown": 4,
+    "unfollowed": 32,
+    "everMutual": 2341,
+    "confirmed": 1596
+  },
+  "unique": 3120,
+  "dates": {
+    "2026-10-22": 1503,
+    "2026-10-20": 17,
+    "2026-10-23": 234,
+    "2026-10-24": 152,
+    "2026-10-25": 271,
+    "2026-10-17": 711,
+    "2026-10-18": 73,
+    "2026-10-21": 12,
+    "2026-10-19": 37,
+    "2026-10-16": 105,
+    "undefined": 5
+  },
+  "availability": {
+    "missing": 1814,
+    "ok": 1306
+  },
+  "groups": [
+    {
+      "label": "全部",
+      "all": {
+        "n": 3120,
+        "mutual": 2300,
+        "pending": 395,
+        "overdue": 389,
+        "unknown": 4,
+        "unfollowed": 32,
+        "everMutual": 2341,
+        "confirmed": 1596
+      },
+      "mature": {
+        "n": 889,
+        "mutual": 469,
+        "overdue": 389,
+        "pending": 2,
+        "unfollowed": 27,
+        "unknown": 2,
+        "everMutual": 473,
+        "confirmed": 889
+      },
+      "confirmed": {
+        "n": 1596,
+        "mutual": 1093,
+        "pending": 85,
+        "overdue": 389,
+        "unfollowed": 27,
+        "unknown": 2,
+        "everMutual": 1115,
+        "confirmed": 1596
+      }
+    },
+    {
+      "label": "关注/粉丝<0.2",
+      "all": {
+        "n": 277,
+        "mutual": 25,
+        "pending": 13,
+        "overdue": 239,
+        "everMutual": 30,
+        "confirmed": 255
+      },
+      "mature": {
+        "n": 241,
+        "overdue": 239,
+        "mutual": 2,
+        "everMutual": 2,
+        "confirmed": 241
+      },
+      "confirmed": {
+        "n": 255,
+        "mutual": 14,
+        "pending": 2,
+        "overdue": 239,
+        "everMutual": 16,
+        "confirmed": 255
+      }
+    },
+    {
+      "label": "关注/粉丝0.2–0.5",
+      "all": {
+        "n": 93,
+        "mutual": 59,
+        "pending": 9,
+        "overdue": 25,
+        "everMutual": 63,
+        "confirmed": 65
+      },
+      "mature": {
+        "n": 31,
+        "overdue": 25,
+        "mutual": 6,
+        "everMutual": 6,
+        "confirmed": 31
+      },
+      "confirmed": {
+        "n": 65,
+        "mutual": 36,
+        "pending": 4,
+        "overdue": 25,
+        "everMutual": 40,
+        "confirmed": 65
+      }
+    },
+    {
+      "label": "关注/粉丝0.5–0.8",
+      "all": {
+        "n": 289,
+        "mutual": 242,
+        "pending": 25,
+        "overdue": 21,
+        "unfollowed": 1,
+        "everMutual": 249,
+        "confirmed": 149
+      },
+      "mature": {
+        "n": 54,
+        "mutual": 31,
+        "overdue": 21,
+        "pending": 1,
+        "unfollowed": 1,
+        "everMutual": 32,
+        "confirmed": 54
+      },
+      "confirmed": {
+        "n": 149,
+        "mutual": 122,
+        "pending": 5,
+        "overdue": 21,
+        "unfollowed": 1,
+        "everMutual": 126,
+        "confirmed": 149
+      }
+    },
+    {
+      "label": "关注/粉丝0.8–1.2",
+      "all": {
+        "n": 1825,
+        "mutual": 1505,
+        "pending": 230,
+        "overdue": 67,
+        "unfollowed": 23,
+        "everMutual": 1525,
+        "confirmed": 834
+      },
+      "mature": {
+        "n": 455,
+        "mutual": 367,
+        "overdue": 67,
+        "pending": 1,
+        "unfollowed": 20,
+        "everMutual": 370,
+        "confirmed": 455
+      },
+      "confirmed": {
+        "n": 834,
+        "mutual": 698,
+        "pending": 49,
+        "overdue": 67,
+        "unfollowed": 20,
+        "everMutual": 708,
+        "confirmed": 834
+      }
+    },
+    {
+      "label": "关注/粉丝≥1.2",
+      "all": {
+        "n": 629,
+        "mutual": 466,
+        "pending": 118,
+        "overdue": 37,
+        "unfollowed": 8,
+        "everMutual": 471,
+        "confirmed": 291
+      },
+      "mature": {
+        "n": 106,
+        "mutual": 63,
+        "overdue": 37,
+        "unfollowed": 6,
+        "everMutual": 63,
+        "confirmed": 106
+      },
+      "confirmed": {
+        "n": 291,
+        "mutual": 223,
+        "pending": 25,
+        "overdue": 37,
+        "unfollowed": 6,
+        "everMutual": 225,
+        "confirmed": 291
+      }
+    },
+    {
+      "label": "粉丝<500",
+      "all": {
+        "n": 232,
+        "pending": 46,
+        "mutual": 150,
+        "overdue": 33,
+        "unfollowed": 3,
+        "everMutual": 157,
+        "confirmed": 115
+      },
+      "mature": {
+        "n": 50,
+        "mutual": 15,
+        "overdue": 33,
+        "pending": 1,
+        "unfollowed": 1,
+        "everMutual": 16,
+        "confirmed": 50
+      },
+      "confirmed": {
+        "n": 115,
+        "mutual": 78,
+        "pending": 3,
+        "overdue": 33,
+        "unfollowed": 1,
+        "everMutual": 81,
+        "confirmed": 115
+      }
+    },
+    {
+      "label": "粉丝500–2000",
+      "all": {
+        "n": 474,
+        "mutual": 335,
+        "pending": 76,
+        "overdue": 51,
+        "unfollowed": 12,
+        "everMutual": 340,
+        "confirmed": 228
+      },
+      "mature": {
+        "n": 132,
+        "mutual": 71,
+        "overdue": 51,
+        "unfollowed": 10,
+        "everMutual": 71,
+        "confirmed": 132
+      },
+      "confirmed": {
+        "n": 228,
+        "mutual": 161,
+        "pending": 6,
+        "overdue": 51,
+        "unfollowed": 10,
+        "everMutual": 164,
+        "confirmed": 228
+      }
+    },
+    {
+      "label": "粉丝2000–5000",
+      "all": {
+        "n": 985,
+        "mutual": 802,
+        "pending": 122,
+        "overdue": 46,
+        "unfollowed": 15,
+        "everMutual": 804,
+        "confirmed": 529
+      },
+      "mature": {
+        "n": 282,
+        "mutual": 222,
+        "overdue": 46,
+        "unfollowed": 14,
+        "everMutual": 224,
+        "confirmed": 282
+      },
+      "confirmed": {
+        "n": 529,
+        "mutual": 412,
+        "pending": 57,
+        "overdue": 46,
+        "unfollowed": 14,
+        "everMutual": 413,
+        "confirmed": 529
+      }
+    },
+    {
+      "label": "粉丝5000–10000",
+      "all": {
+        "n": 672,
+        "mutual": 544,
+        "pending": 84,
+        "overdue": 42,
+        "unfollowed": 2,
+        "everMutual": 559,
+        "confirmed": 283
+      },
+      "mature": {
+        "n": 163,
+        "mutual": 118,
+        "overdue": 42,
+        "pending": 1,
+        "unfollowed": 2,
+        "everMutual": 119,
+        "confirmed": 163
+      },
+      "confirmed": {
+        "n": 283,
+        "mutual": 229,
+        "pending": 10,
+        "overdue": 42,
+        "unfollowed": 2,
+        "everMutual": 237,
+        "confirmed": 283
+      }
+    },
+    {
+      "label": "粉丝≥10000",
+      "all": {
+        "n": 750,
+        "mutual": 466,
+        "pending": 67,
+        "overdue": 217,
+        "everMutual": 478,
+        "confirmed": 439
+      },
+      "mature": {
+        "n": 260,
+        "mutual": 43,
+        "overdue": 217,
+        "everMutual": 43,
+        "confirmed": 260
+      },
+      "confirmed": {
+        "n": 439,
+        "mutual": 213,
+        "pending": 9,
+        "overdue": 217,
+        "everMutual": 220,
+        "confirmed": 439
+      }
+    },
+    {
+      "label": "蓝V",
+      "all": {
+        "n": 2591,
+        "mutual": 1970,
+        "pending": 328,
+        "overdue": 286,
+        "unfollowed": 7,
+        "everMutual": 2000,
+        "confirmed": 1301
+      },
+      "mature": {
+        "n": 739,
+        "mutual": 444,
+        "overdue": 286,
+        "pending": 2,
+        "unfollowed": 7,
+        "everMutual": 448,
+        "confirmed": 739
+      },
+      "confirmed": {
+        "n": 1301,
+        "mutual": 930,
+        "pending": 78,
+        "overdue": 286,
+        "unfollowed": 7,
+        "everMutual": 948,
+        "confirmed": 1301
+      }
+    },
+    {
+      "label": "非蓝V",
+      "all": {
+        "n": 440,
+        "mutual": 293,
+        "pending": 63,
+        "overdue": 84,
+        "everMutual": 300,
+        "confirmed": 242
+      },
+      "mature": {
+        "n": 98,
+        "mutual": 14,
+        "overdue": 84,
+        "everMutual": 14,
+        "confirmed": 98
+      },
+      "confirmed": {
+        "n": 242,
+        "mutual": 152,
+        "pending": 6,
+        "overdue": 84,
+        "everMutual": 155,
+        "confirmed": 242
+      }
+    },
+    {
+      "label": "🤝 诚信互关",
+      "all": {
+        "n": 2448,
+        "mutual": 1965,
+        "pending": 348,
+        "overdue": 104,
+        "unfollowed": 31,
+        "everMutual": 1990,
+        "confirmed": 1121
+      },
+      "mature": {
+        "n": 559,
+        "mutual": 428,
+        "overdue": 104,
+        "pending": 1,
+        "unfollowed": 26,
+        "everMutual": 431,
+        "confirmed": 559
+      },
+      "confirmed": {
+        "n": 1121,
+        "mutual": 917,
+        "pending": 74,
+        "overdue": 104,
+        "unfollowed": 26,
+        "everMutual": 929,
+        "confirmed": 1121
+      }
+    },
+    {
+      "label": "🔷 蓝V",
+      "all": {
+        "n": 2605,
+        "mutual": 1974,
+        "pending": 329,
+        "overdue": 292,
+        "unfollowed": 10,
+        "everMutual": 2005,
+        "confirmed": 1314
+      },
+      "mature": {
+        "n": 752,
+        "mutual": 448,
+        "overdue": 292,
+        "pending": 2,
+        "unfollowed": 10,
+        "everMutual": 452,
+        "confirmed": 752
+      },
+      "confirmed": {
+        "n": 1314,
+        "mutual": 934,
+        "pending": 78,
+        "overdue": 292,
+        "unfollowed": 10,
+        "everMutual": 952,
+        "confirmed": 1314
+      }
+    },
+    {
+      "label": "🌱 新苗",
+      "all": {
+        "n": 1424,
+        "mutual": 1129,
+        "pending": 193,
+        "overdue": 75,
+        "unfollowed": 27,
+        "everMutual": 1136,
+        "confirmed": 727
+      },
+      "mature": {
+        "n": 390,
+        "mutual": 291,
+        "overdue": 75,
+        "unfollowed": 24,
+        "everMutual": 293,
+        "confirmed": 390
+      },
+      "confirmed": {
+        "n": 727,
+        "mutual": 565,
+        "pending": 63,
+        "overdue": 75,
+        "unfollowed": 24,
+        "everMutual": 569,
+        "confirmed": 727
+      }
+    },
+    {
+      "label": "🇨🇳 中文",
+      "all": {
+        "n": 1716,
+        "mutual": 1336,
+        "pending": 135,
+        "overdue": 212,
+        "unknown": 2,
+        "unfollowed": 31,
+        "everMutual": 1350,
+        "confirmed": 937
+      },
+      "mature": {
+        "n": 648,
+        "mutual": 409,
+        "overdue": 212,
+        "pending": 1,
+        "unfollowed": 26,
+        "everMutual": 412,
+        "confirmed": 648
+      },
+      "confirmed": {
+        "n": 937,
+        "mutual": 671,
+        "pending": 28,
+        "overdue": 212,
+        "unfollowed": 26,
+        "everMutual": 682,
+        "confirmed": 937
+      }
+    },
+    {
+      "label": "💻 AI/科技",
+      "all": {
+        "n": 1215,
+        "mutual": 856,
+        "pending": 140,
+        "overdue": 203,
+        "unfollowed": 16,
+        "everMutual": 872,
+        "confirmed": 672
+      },
+      "mature": {
+        "n": 438,
+        "mutual": 222,
+        "overdue": 203,
+        "unfollowed": 13,
+        "everMutual": 223,
+        "confirmed": 438
+      },
+      "confirmed": {
+        "n": 672,
+        "mutual": 427,
+        "pending": 29,
+        "overdue": 203,
+        "unfollowed": 13,
+        "everMutual": 435,
+        "confirmed": 672
+      }
+    },
+    {
+      "label": "🌟 KOL",
+      "all": {
+        "n": 750,
+        "mutual": 466,
+        "pending": 67,
+        "overdue": 217,
+        "everMutual": 478,
+        "confirmed": 439
+      },
+      "mature": {
+        "n": 260,
+        "mutual": 43,
+        "overdue": 217,
+        "everMutual": 43,
+        "confirmed": 260
+      },
+      "confirmed": {
+        "n": 439,
+        "mutual": 213,
+        "pending": 9,
+        "overdue": 217,
+        "everMutual": 220,
+        "confirmed": 439
+      }
+    },
+    {
+      "label": "🌐 英文",
+      "all": {
+        "n": 1404,
+        "mutual": 964,
+        "pending": 260,
+        "overdue": 177,
+        "unfollowed": 1,
+        "unknown": 2,
+        "everMutual": 991,
+        "confirmed": 659
+      },
+      "mature": {
+        "n": 241,
+        "mutual": 60,
+        "overdue": 177,
+        "pending": 1,
+        "unfollowed": 1,
+        "unknown": 2,
+        "everMutual": 61,
+        "confirmed": 241
+      },
+      "confirmed": {
+        "n": 659,
+        "mutual": 422,
+        "pending": 57,
+        "overdue": 177,
+        "unfollowed": 1,
+        "unknown": 2,
+        "everMutual": 433,
+        "confirmed": 659
+      }
+    },
+    {
+      "label": "⚠️ 骗关风险",
+      "all": {
+        "n": 636,
+        "mutual": 322,
+        "pending": 41,
+        "overdue": 272,
+        "unfollowed": 1,
+        "everMutual": 334,
+        "confirmed": 452
+      },
+      "mature": {
+        "n": 311,
+        "mutual": 38,
+        "overdue": 272,
+        "unfollowed": 1,
+        "everMutual": 38,
+        "confirmed": 311
+      },
+      "confirmed": {
+        "n": 452,
+        "mutual": 170,
+        "pending": 9,
+        "overdue": 272,
+        "unfollowed": 1,
+        "everMutual": 178,
+        "confirmed": 452
+      }
+    },
+    {
+      "label": "🪙 Web3",
+      "all": {
+        "n": 606,
+        "mutual": 498,
+        "pending": 67,
+        "overdue": 33,
+        "unfollowed": 8,
+        "everMutual": 509,
+        "confirmed": 290
+      },
+      "mature": {
+        "n": 128,
+        "mutual": 88,
+        "overdue": 33,
+        "unfollowed": 7,
+        "everMutual": 88,
+        "confirmed": 128
+      },
+      "confirmed": {
+        "n": 290,
+        "mutual": 229,
+        "pending": 21,
+        "overdue": 33,
+        "unfollowed": 7,
+        "everMutual": 237,
+        "confirmed": 290
+      }
+    },
+    {
+      "label": "📈 跨境电商",
+      "all": {
+        "n": 59,
+        "pending": 6,
+        "mutual": 43,
+        "overdue": 8,
+        "unfollowed": 2,
+        "everMutual": 44,
+        "confirmed": 30
+      },
+      "mature": {
+        "n": 21,
+        "mutual": 11,
+        "overdue": 8,
+        "unfollowed": 2,
+        "everMutual": 11,
+        "confirmed": 21
+      },
+      "confirmed": {
+        "n": 30,
+        "mutual": 18,
+        "pending": 2,
+        "overdue": 8,
+        "unfollowed": 2,
+        "everMutual": 19,
+        "confirmed": 30
+      }
+    },
+    {
+      "label": "⚡ 秒回关",
+      "all": {
+        "n": 137,
+        "mutual": 109,
+        "overdue": 14,
+        "unfollowed": 14,
+        "everMutual": 110,
+        "confirmed": 94
+      },
+      "mature": {
+        "n": 86,
+        "mutual": 62,
+        "overdue": 14,
+        "unfollowed": 10,
+        "everMutual": 63,
+        "confirmed": 86
+      },
+      "confirmed": {
+        "n": 94,
+        "mutual": 70,
+        "overdue": 14,
+        "unfollowed": 10,
+        "everMutual": 71,
+        "confirmed": 94
+      }
+    },
+    {
+      "label": "💬 互动达人",
+      "all": {
+        "n": 4,
+        "pending": 1,
+        "mutual": 2,
+        "unfollowed": 1,
+        "everMutual": 2,
+        "confirmed": 3
+      },
+      "mature": {
+        "n": 1,
+        "unfollowed": 1,
+        "everMutual": 0,
+        "confirmed": 1
+      },
+      "confirmed": {
+        "n": 3,
+        "pending": 1,
+        "mutual": 1,
+        "unfollowed": 1,
+        "everMutual": 1,
+        "confirmed": 3
+      }
+    },
+    {
+      "label": "🎨 创意设计",
+      "all": {
+        "n": 17,
+        "mutual": 14,
+        "pending": 1,
+        "overdue": 2,
+        "everMutual": 14,
+        "confirmed": 9
+      },
+      "mature": {
+        "n": 5,
+        "mutual": 3,
+        "overdue": 2,
+        "everMutual": 3,
+        "confirmed": 5
+      },
+      "confirmed": {
+        "n": 9,
+        "mutual": 7,
+        "overdue": 2,
+        "everMutual": 7,
+        "confirmed": 9
+      }
+    },
+    {
+      "label": "⏳ 慢热回关",
+      "all": {
+        "n": 8,
+        "pending": 2,
+        "mutual": 1,
+        "overdue": 5,
+        "everMutual": 3,
+        "confirmed": 6
+      },
+      "mature": {
+        "n": 6,
+        "pending": 1,
+        "overdue": 5,
+        "everMutual": 1,
+        "confirmed": 6
+      },
+      "confirmed": {
+        "n": 6,
+        "pending": 1,
+        "overdue": 5,
+        "everMutual": 1,
+        "confirmed": 6
+      }
+    },
+    {
+      "label": "📢 营销号",
+      "all": {
+        "n": 23,
+        "pending": 4,
+        "mutual": 14,
+        "overdue": 5,
+        "everMutual": 14,
+        "confirmed": 15
+      },
+      "mature": {
+        "n": 8,
+        "mutual": 3,
+        "overdue": 5,
+        "everMutual": 3,
+        "confirmed": 8
+      },
+      "confirmed": {
+        "n": 15,
+        "mutual": 10,
+        "overdue": 5,
+        "everMutual": 10,
+        "confirmed": 15
+      }
+    },
+    {
+      "label": "🚫 暴力",
+      "all": {
+        "n": 1,
+        "mutual": 1,
+        "everMutual": 1,
+        "confirmed": 0
+      },
+      "mature": {
+        "n": 0,
+        "everMutual": 0,
+        "confirmed": 0
+      },
+      "confirmed": {
+        "n": 0,
+        "everMutual": 0,
+        "confirmed": 0
+      }
+    },
+    {
+      "label": "🏛️ 涉政",
+      "all": {
+        "n": 3,
+        "mutual": 1,
+        "overdue": 2,
+        "everMutual": 1,
+        "confirmed": 3
+      },
+      "mature": {
+        "n": 3,
+        "mutual": 1,
+        "overdue": 2,
+        "everMutual": 1,
+        "confirmed": 3
+      },
+      "confirmed": {
+        "n": 3,
+        "mutual": 1,
+        "overdue": 2,
+        "everMutual": 1,
+        "confirmed": 3
+      }
+    },
+    {
+      "label": "🔞 色情",
+      "all": {
+        "n": 3,
+        "mutual": 3,
+        "everMutual": 3,
+        "confirmed": 2
+      },
+      "mature": {
+        "n": 1,
+        "mutual": 1,
+        "everMutual": 1,
+        "confirmed": 1
+      },
+      "confirmed": {
+        "n": 2,
+        "mutual": 2,
+        "everMutual": 2,
+        "confirmed": 2
+      }
+    }
+  ]
+}

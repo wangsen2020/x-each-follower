@@ -30,8 +30,14 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   skipRiskContent: true,
   grokProfileAssessment: true,
   grokEnabled: false,
-  autoPublish: false
+  autoPublish: false,
+  publicationMode: 'quote',
+  quoteParticipationRate: 60,
+  quoteLengthMode: 'adaptive'
 });
+
+export const PUBLICATION_MODES = Object.freeze(['quote', 'original']);
+export const QUOTE_LENGTH_MODES = Object.freeze(['adaptive', 'concise', 'deep']);
 
 const SETTING_BOUNDS = {
   every: [1, 240],
@@ -92,6 +98,19 @@ function clone(value) {
   return value == null ? value : structuredClone(value);
 }
 
+function cloneJob(job) {
+  if (!job || typeof job !== 'object') return clone(job);
+  const copy = clone(job);
+  if (Array.isArray(copy.evaluations)) {
+    copy.evaluations = copy.evaluations.map(ev => (
+      ev && typeof ev === 'object'
+        ? {...ev, publicationMode: resolveEvaluationPublicationMode(ev.publicationMode, undefined)}
+        : ev
+    ));
+  }
+  return copy;
+}
+
 function sourceKey(source) {
   return `${source.module}\0${source.url || ''}`;
 }
@@ -129,6 +148,83 @@ function mergeAliases(existing, handle, canonical, seenAt) {
   return aliases;
 }
 
+function hasQuoteDecision(decision) {
+  return Boolean(
+    decision &&
+    typeof decision === 'object' &&
+    !Array.isArray(decision) &&
+    typeof decision.selected === 'boolean' &&
+    Number.isFinite(decision.rate) &&
+    Number.isFinite(decision.roll)
+  );
+}
+
+function defaultQuoteRandom() {
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function') {
+    throw new Error('crypto.getRandomValues is required for quote sampling');
+  }
+  const buf = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(buf);
+  return buf[0] / (2 ** 32);
+}
+
+function isMeaningfulObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
+function isMeaningfulValue(value) {
+  if (value == null || value === '') return false;
+  if (typeof value === 'object') {
+    return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function nonEmptyString(next, prev) {
+  if (next != null && String(next) !== '') return String(next);
+  if (prev != null && String(prev) !== '') return String(prev);
+  return '';
+}
+
+function mergeGrokCalls(prevCalls, nextCalls) {
+  if (nextCalls == null) return clone(prevCalls);
+  if (typeof nextCalls === 'number' && Number.isFinite(nextCalls)) {
+    if (nextCalls > 0) {
+      return typeof prevCalls === 'number' && Number.isFinite(prevCalls)
+        ? Math.max(prevCalls, nextCalls)
+        : nextCalls;
+    }
+    return prevCalls !== undefined ? clone(prevCalls) : 0;
+  }
+  if (typeof nextCalls === 'object' && !Array.isArray(nextCalls)) {
+    const keys = Object.keys(nextCalls);
+    if (keys.length === 0) return clone(prevCalls);
+    if (prevCalls && typeof prevCalls === 'object' && !Array.isArray(prevCalls)) {
+      const merged = {...clone(prevCalls)};
+      for (const key of keys) {
+        const nextVal = nextCalls[key];
+        const prevVal = prevCalls[key];
+        if (typeof nextVal === 'number' && Number.isFinite(nextVal)) {
+          merged[key] = (nextVal === 0 && typeof prevVal === 'number' && prevVal > 0) ? prevVal : nextVal;
+        } else if (nextVal != null && nextVal !== '') {
+          merged[key] = clone(nextVal);
+        }
+      }
+      return merged;
+    }
+    const hasPositive = keys.some(k => typeof nextCalls[k] === 'number' ? nextCalls[k] > 0 : Boolean(nextCalls[k]));
+    if (!hasPositive && prevCalls !== undefined) return clone(prevCalls);
+    return clone(nextCalls);
+  }
+  return prevCalls !== undefined ? clone(prevCalls) : undefined;
+}
+
+function resolveEvaluationPublicationMode(prevMode, nextMode) {
+  if (PUBLICATION_MODES.includes(prevMode)) return prevMode;
+  if (PUBLICATION_MODES.includes(nextMode)) return nextMode;
+  return FOLLOW_QUEUE_DEFAULT_SETTINGS.publicationMode;
+}
+
 function mergeEvaluations(existing, incoming, followJobId) {
   const map = new Map();
   for (const item of existing || []) {
@@ -139,31 +235,81 @@ function mergeEvaluations(existing, incoming, followJobId) {
     const prev = map.get(item.taskId) || {};
     let attempts;
     if (typeof item.attempts === 'number' && item.attempts > 0) attempts = item.attempts;
-    else if (Array.isArray(item.attempts)) attempts = item.attempts.map(attempt => clone(attempt));
+    else if (Array.isArray(item.attempts) && item.attempts.length > 0) attempts = item.attempts.map(attempt => clone(attempt));
     else if (typeof prev.attempts === 'number' && prev.attempts > 0) attempts = prev.attempts;
-    else if (Array.isArray(prev.attempts)) attempts = prev.attempts;
+    else if (Array.isArray(prev.attempts) && prev.attempts.length > 0) attempts = prev.attempts.map(attempt => clone(attempt));
+    else if (Array.isArray(item.attempts)) attempts = [];
+    else if (Array.isArray(prev.attempts)) attempts = [];
     else attempts = [];
-    map.set(item.taskId, {
+
+    const candidatePosts = Array.isArray(item.candidatePosts) && item.candidatePosts.length > 0
+      ? clone(item.candidatePosts)
+      : (Array.isArray(prev.candidatePosts) && prev.candidatePosts.length > 0 ? clone(prev.candidatePosts) : []);
+
+    const automaticComment = item.automaticComment === true || prev.automaticComment === true;
+
+    const merged = {
       taskId: String(item.taskId),
       followJobId: item.followJobId || prev.followJobId || followJobId,
       targetUserId: item.targetUserId || prev.targetUserId || '',
       originalAuthorId: item.originalAuthorId || prev.originalAuthorId || '',
       originalPostId: item.originalPostId || prev.originalPostId || '',
       originalPostUrl: item.originalPostUrl || prev.originalPostUrl || '',
-      language: item.language != null ? String(item.language) : (prev.language || ''),
-      baseText: item.baseText != null ? String(item.baseText) : (prev.baseText || ''),
-      text: item.text != null ? String(item.text) : (prev.text || ''),
+      publicationMode: resolveEvaluationPublicationMode(prev.publicationMode, item.publicationMode),
+      language: nonEmptyString(item.language, prev.language),
+      baseText: nonEmptyString(item.baseText, prev.baseText),
+      text: nonEmptyString(item.text, prev.text),
       reason: item.reason != null ? String(item.reason) : (prev.reason || ''),
       channel: item.channel || prev.channel || '',
       status: item.status || prev.status || '',
-      automaticComment: item.automaticComment ?? prev.automaticComment ?? false,
+      automaticComment,
       retryAt: item.retryAt ?? prev.retryAt ?? 0,
-      originalPostText: item.originalPostText ?? prev.originalPostText ?? '',
-      candidatePosts: clone(item.candidatePosts ?? prev.candidatePosts ?? []),
+      originalPostText: nonEmptyString(item.originalPostText, prev.originalPostText),
+      candidatePosts,
       publishedPostId: item.publishedPostId || prev.publishedPostId || '',
       publishedPostUrl: item.publishedPostUrl || prev.publishedPostUrl || '',
       attempts
-    });
+    };
+
+    const quoteDecision = hasQuoteDecision(prev.quoteDecision)
+      ? clone(prev.quoteDecision)
+      : (isMeaningfulObject(item.quoteDecision)
+        ? clone(item.quoteDecision)
+        : (isMeaningfulObject(prev.quoteDecision) ? clone(prev.quoteDecision) : undefined));
+    if (quoteDecision !== undefined) merged.quoteDecision = quoteDecision;
+
+    const reasonCode = nonEmptyString(item.reasonCode, prev.reasonCode);
+    if (reasonCode !== '') merged.reasonCode = reasonCode;
+
+    const quality = isMeaningfulValue(item.quality)
+      ? clone(item.quality)
+      : (isMeaningfulValue(prev.quality) ? clone(prev.quality) : undefined);
+    if (quality !== undefined) merged.quality = quality;
+
+    const lengthPolicy = isMeaningfulValue(item.lengthPolicy)
+      ? clone(item.lengthPolicy)
+      : (isMeaningfulValue(prev.lengthPolicy) ? clone(prev.lengthPolicy) : undefined);
+    if (lengthPolicy !== undefined) merged.lengthPolicy = lengthPolicy;
+
+    const grokCalls = mergeGrokCalls(prev.grokCalls, item.grokCalls);
+    if (grokCalls !== undefined) merged.grokCalls = grokCalls;
+
+    const generationAttemptedAt = (typeof item.generationAttemptedAt === 'number' && item.generationAttemptedAt > 0)
+      ? item.generationAttemptedAt
+      : ((typeof prev.generationAttemptedAt === 'number' && prev.generationAttemptedAt > 0)
+        ? prev.generationAttemptedAt
+        : (item.generationAttemptedAt === 0 || prev.generationAttemptedAt === 0 ? 0 : undefined));
+    if (generationAttemptedAt !== undefined) merged.generationAttemptedAt = generationAttemptedAt;
+    if (Number.isFinite(item.publishedAttemptedAt) || Number.isFinite(prev.publishedAttemptedAt)) {
+      merged.publishedAttemptedAt=Number.isFinite(item.publishedAttemptedAt)?item.publishedAttemptedAt:prev.publishedAttemptedAt;
+    }
+
+    map.set(item.taskId, merged);
+  }
+  for (const entry of map.values()) {
+    if (entry && typeof entry === 'object') {
+      entry.publicationMode = resolveEvaluationPublicationMode(entry.publicationMode, undefined);
+    }
   }
   return [...map.values()];
 }
@@ -172,6 +318,29 @@ function clampInt(value, min, max, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function isValidQuoteRate(value) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 100;
+}
+
+function validateExplicitQuoteSettings(input) {
+  if (!input || typeof input !== 'object') return;
+  if (Object.prototype.hasOwnProperty.call(input, 'publicationMode')) {
+    if (!PUBLICATION_MODES.includes(input.publicationMode)) {
+      throw new Error('发帖形式仅支持引用评论（quote）或新帖（original）');
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'quoteParticipationRate')) {
+    if (!isValidQuoteRate(input.quoteParticipationRate)) {
+      throw new Error('引用概率请输入 0—100 的整数');
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'quoteLengthMode')) {
+    if (!QUOTE_LENGTH_MODES.includes(input.quoteLengthMode)) {
+      throw new Error('篇幅仅支持自适应（adaptive）、精简（concise）或深入（deep）');
+    }
+  }
 }
 
 function normalizeSettings(input, base) {
@@ -184,12 +353,27 @@ function normalizeSettings(input, base) {
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
+  next.publicationMode = PUBLICATION_MODES.includes(merged.publicationMode)
+    ? merged.publicationMode
+    : (PUBLICATION_MODES.includes(base?.publicationMode)
+      ? base.publicationMode
+      : FOLLOW_QUEUE_DEFAULT_SETTINGS.publicationMode);
   for (const [key, [min, max]] of Object.entries(SETTING_BOUNDS)) {
     next[key] = clampInt(merged[key], min, max, FOLLOW_QUEUE_DEFAULT_SETTINGS[key]);
   }
   if (next.jitter > next.every) next.jitter = Math.max(1, next.every);
   next.ratioThreshold = Math.max(0, Math.min(1, Number(merged.ratioThreshold)));
   if (!Number.isFinite(next.ratioThreshold)) next.ratioThreshold = FOLLOW_QUEUE_DEFAULT_SETTINGS.ratioThreshold;
+  next.quoteParticipationRate = isValidQuoteRate(merged.quoteParticipationRate)
+    ? merged.quoteParticipationRate
+    : (isValidQuoteRate(base?.quoteParticipationRate)
+      ? base.quoteParticipationRate
+      : FOLLOW_QUEUE_DEFAULT_SETTINGS.quoteParticipationRate);
+  next.quoteLengthMode = QUOTE_LENGTH_MODES.includes(merged.quoteLengthMode)
+    ? merged.quoteLengthMode
+    : (QUOTE_LENGTH_MODES.includes(base?.quoteLengthMode)
+      ? base.quoteLengthMode
+      : FOLLOW_QUEUE_DEFAULT_SETTINGS.quoteLengthMode);
   Object.assign(next, normalizeQuoteTags(merged));
   validateQuoteTags(next);
   return next;
@@ -253,6 +437,9 @@ async function rememberOutcome(outcomes, record) {
   const key = outcomeKey(record.accountId, record.targetKey);
   const existing = await requestResult(outcomes.get(key));
   if (existing && (IMPORT_RANK[existing.state] || 0) > (IMPORT_RANK[record.state] || 0)) return;
+  const quoteDecision = hasQuoteDecision(record.quoteDecision)
+    ? clone(record.quoteDecision)
+    : (hasQuoteDecision(existing?.quoteDecision) ? clone(existing.quoteDecision) : undefined);
   outcomes.put({
     key,
     accountId: record.accountId,
@@ -261,7 +448,8 @@ async function rememberOutcome(outcomes, record) {
     handleCanonical: record.handleCanonical || '',
     state: record.state,
     followResult: clone(record.followResult),
-    evaluations: clone(record.evaluations || []),
+    evaluations: mergeEvaluations(existing?.evaluations, record.evaluations, record.id),
+    ...(quoteDecision ? {quoteDecision} : {}),
     updatedAt: record.updatedAt
   });
 }
@@ -275,6 +463,7 @@ function outcomeFromJob(job) {
     state: job.state,
     followResult: job.followResult,
     evaluations: job.evaluations,
+    ...(hasQuoteDecision(job.quoteDecision) ? {quoteDecision: clone(job.quoteDecision)} : {}),
     updatedAt: job.updatedAt
   };
 }
@@ -417,6 +606,9 @@ function applyDurableState(job, outcome) {
   job.stage = outcome.state === 'uncertain' ? 'verify' : outcome.state;
   job.followResult = clone(outcome.followResult);
   job.evaluations = mergeEvaluations(job.evaluations, outcome.evaluations, job.id);
+  if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(outcome.quoteDecision)) {
+    job.quoteDecision = clone(outcome.quoteDecision);
+  }
   delete job.importedHold;
   return true;
 }
@@ -481,6 +673,9 @@ function absorbProvenance(target, extra, shown, canonical, seenAt, normalizedSou
   target.aliases = mergeAliases(target.aliases, extra?.handle, extra?.handleCanonical, seenAt);
   target.aliases = mergeAliases(target.aliases, shown, canonical, seenAt);
   target.evaluations = mergeEvaluations(target.evaluations, extra?.evaluations, target.id);
+  if (!hasQuoteDecision(target.quoteDecision) && hasQuoteDecision(extra?.quoteDecision)) {
+    target.quoteDecision = clone(extra.quoteDecision);
+  }
   if (!target.followResult && extra?.followResult) target.followResult = clone(extra.followResult);
   if (shown) target.handle = shown;
   if (canonical && !target.handleCanonical) target.handleCanonical = canonical;
@@ -588,6 +783,31 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
     });
     return databasePromise;
   };
+
+  async function withJobsTransaction(mode, work) {
+    const db = await open();
+    const tx = db.transaction(['jobs'], mode);
+    const jobs = tx.objectStore('jobs');
+    let settled = false;
+    const done = new Promise((resolve, reject) => {
+      tx.oncomplete = () => { settled = true; resolve(); };
+      tx.onabort = () => { settled = true; reject(tx.error || new Error('follow queue transaction aborted')); };
+      tx.onerror = () => { settled = true; reject(tx.error || new Error('follow queue transaction failed')); };
+    });
+    const rawJobPut = jobs.put.bind(jobs);
+    jobs.put = value => rawJobPut(projectJob(value));
+    try {
+      const value = await work({jobs});
+      await done;
+      return value;
+    } catch (error) {
+      if (!settled) {
+        try { tx.abort(); } catch { /* already finished or aborted */ }
+        await done.catch(() => {});
+      }
+      throw error;
+    }
+  }
 
   async function withTransaction(mode, work) {
     const db = await open();
@@ -740,7 +960,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           mergeStoredProfile(provisional, {profile});
           jobs.put(primary);
           jobs.put(provisional);
-          return clone(leaseHeld(provisional) ? provisional : primary);
+          return cloneJob(leaseHeld(provisional) ? provisional : primary);
         }
 
         if (primary && provisional && primary.id !== provisional.id) {
@@ -808,6 +1028,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           // waits on importedHold so renew cannot extend work the outcome already closed.
           writeImportedHold(primary, durableHit.state, durableHit.followResult);
           primary.evaluations = mergeEvaluations(primary.evaluations, durableHit.evaluations, primary.id);
+          if (!hasQuoteDecision(primary.quoteDecision) && hasQuoteDecision(durableHit.quoteDecision)) {
+            primary.quoteDecision = clone(durableHit.quoteDecision);
+          }
         }
         if (DURABLE_STATES.includes(initialState) && leaseHeld(primary)) {
           if (writeImportedHold(primary, initialState, followResult)) {
@@ -836,13 +1059,13 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         jobs.put(primary);
         if (DURABLE_STATES.includes(primary.state)) rememberOutcome(outcomes, primary);
         await bumpRevision(meta);
-        return clone(primary);
+        return cloneJob(primary);
       });
     },
 
     async get(id) {
       if (typeof id !== 'string' || id === '') throw new Error('job id is required');
-      return withTransaction('readonly', async ({jobs}) => clone(await requestResult(jobs.get(id))) || null);
+      return withTransaction('readonly', async ({jobs}) => cloneJob(await requestResult(jobs.get(id))) || null);
     },
 
     async lookup({accountId, handle, targetUserId, id} = {}) {
@@ -856,7 +1079,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           ? await collectKeyed(jobs.index('accountUser'), keyRange().only([account, userId]))
           : await collectKeyed(jobs.index('accountHandle'), keyRange().only([account, canonical]));
         const visible = rows.filter(job => job.accountId === account && !job.redirectTo);
-        return clone(sortJobs(visible).at(-1) || null);
+        return cloneJob(sortJobs(visible).at(-1) || null);
       });
     },
 
@@ -865,7 +1088,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       const userId = userIdString(targetUserId);
       return withTransaction('readonly', async ({jobs}) => {
         const rows = await collectKeyed(jobs.index('accountUser'), keyRange().only([account, userId]));
-        return sortJobs(rows.filter(job => job.accountId === account)).map(job => clone(job));
+        return sortJobs(rows.filter(job => job.accountId === account)).map(job => cloneJob(job));
       });
     },
 
@@ -874,7 +1097,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       if (!JOB_STATES.includes(state)) throw new Error('invalid follow queue state');
       return withTransaction('readonly', async ({jobs}) => {
         const rows = await collectKeyed(jobs.index('accountStateCreated'), stateCreatedRange(account, state));
-        return rows.filter(job => job.accountId === account && job.state === state).map(job => clone(job));
+        return rows.filter(job => job.accountId === account && job.state === state).map(job => cloneJob(job));
       });
     },
 
@@ -965,7 +1188,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             return 'stop';
           }
         });
-        const pageRows = rows.slice(0, limit).map(job => clone(job));
+        const pageRows = rows.slice(0, limit).map(job => cloneJob(job));
         const hasMore = rows.length > limit || (hitBatch && lastSeen != null);
         const anchor = hitBatch && rows.length <= limit ? lastSeen : pageRows[pageRows.length - 1];
         const nextCursor = hasMore && anchor ? encodeCursor({
@@ -1059,7 +1282,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       const account = requireAccountId(accountId);
       return withTransaction('readonly', async ({jobs}) => {
         const rows = await collectKeyed(jobs.index('accountCreated'), accountCreatedRange(account));
-        return sortJobs(rows.filter(job => job.accountId === account)).map(job => clone(job));
+        return sortJobs(rows.filter(job => job.accountId === account)).map(job => cloneJob(job));
       });
     },
 
@@ -1126,7 +1349,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         };
         jobs.put(job);
         await bumpRevision(meta);
-        return clone(job);
+        return cloneJob(job);
       });
     },
 
@@ -1160,24 +1383,30 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             if (Array.isArray(changes.evaluations)) {
               job.evaluations = mergeEvaluations(job.evaluations, changes.evaluations, job.id);
             }
+            if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(changes.quoteDecision)) {
+              job.quoteDecision = clone(changes.quoteDecision);
+            }
             job.state = 'followed';
             job.updatedAt = seenAt;
             releaseLease(job);
             jobs.put(job);
             rememberOutcome(outcomes, job);
             await bumpRevision(meta);
-            return {ok: true, job: clone(job)};
+            return {ok: true, job: cloneJob(job)};
           }
           applyImportedHold(job);
           if (Array.isArray(changes.evaluations)) {
             job.evaluations = mergeEvaluations(job.evaluations, changes.evaluations, job.id);
+          }
+          if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(changes.quoteDecision)) {
+            job.quoteDecision = clone(changes.quoteDecision);
           }
           releaseLease(job);
           job.updatedAt = seenAt;
           jobs.put(job);
           rememberOutcome(outcomes, job);
           await bumpRevision(meta);
-          return {ok: false, reason: 'imported-hold', job: clone(job)};
+          return {ok: false, reason: 'imported-hold', job: cloneJob(job)};
         }
         if (typeof changes.stage === 'string') job.stage = changes.stage;
         if(changes.lastDiagnostic===null)delete job.lastDiagnostic;
@@ -1189,6 +1418,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         if (Array.isArray(changes.evaluations)) {
           job.evaluations = mergeEvaluations(job.evaluations, changes.evaluations, job.id);
         }
+        if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(changes.quoteDecision)) {
+          job.quoteDecision = clone(changes.quoteDecision);
+        }
         job.state = state;
         job.updatedAt = seenAt;
         if (state !== 'running') {
@@ -1198,7 +1430,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         jobs.put(job);
         rememberOutcome(outcomes, job);
         await bumpRevision(meta);
-        return {ok: true, job: clone(job)};
+        return {ok: true, job: cloneJob(job)};
       });
     },
 
@@ -1235,7 +1467,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       });
     },
 
-    async resolveJob({accountId, id, state, stage, followResult, nextEligibleAt, evaluations} = {}) {
+    async resolveJob({accountId, id, state, stage, followResult, nextEligibleAt, evaluations, quoteDecision} = {}) {
       const account = requireAccountId(accountId);
       if (typeof id !== 'string' || id === '') throw new Error('job id is required');
       if (state != null && (!Object.prototype.hasOwnProperty.call(STATE_RANK, state) || state === 'running')) {
@@ -1253,6 +1485,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         if (Array.isArray(evaluations)) {
           job.evaluations = mergeEvaluations(job.evaluations, evaluations, job.id);
         }
+        if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(quoteDecision)) {
+          job.quoteDecision = clone(quoteDecision);
+        }
         delete job.importedHold;
         releaseLease(job);
         job.updatedAt = seenAt;
@@ -1269,12 +1504,48 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             state: job.state,
             followResult: clone(job.followResult),
             evaluations: clone(job.evaluations || []),
+            ...(hasQuoteDecision(job.quoteDecision) ? {quoteDecision: clone(job.quoteDecision)} : {}),
             updatedAt: job.updatedAt
           });
         }
         jobs.put(job);
         await bumpRevision(meta);
-        return {ok: true, job: clone(job)};
+        return {ok: true, job: cloneJob(job)};
+      });
+    },
+
+    async ensureQuoteDecision({accountId, id, rate, random} = {}) {
+      const account = requireAccountId(accountId);
+      if (typeof id !== 'string' || id.trim() === '') throw new Error('job id is required');
+      if (!isValidQuoteRate(rate)) {
+        throw new Error('引用概率请输入 0—100 的整数');
+      }
+      if (random !== undefined && typeof random !== 'function') {
+        throw new Error('random must be a function');
+      }
+      const sampleFn = random || defaultQuoteRandom;
+      const seenAt = now();
+      return withJobsTransaction('readwrite', async ({jobs}) => {
+        const job = await requestResult(jobs.get(id));
+        if (!job || job.accountId !== account) return {ok: false, reason: 'missing'};
+        if (hasQuoteDecision(job.quoteDecision)) {
+          return {ok: true, decision: clone(job.quoteDecision), job: cloneJob(job)};
+        }
+        const roll = Number(sampleFn());
+        if (!Number.isFinite(roll) || roll < 0 || roll >= 1) {
+          throw new Error('random roll must be a finite number in [0, 1)');
+        }
+        const decision = {
+          version: 1,
+          rate,
+          roll,
+          selected: roll < (rate / 100),
+          decidedAt: seenAt
+        };
+        job.quoteDecision = decision;
+        job.updatedAt = seenAt;
+        jobs.put(job);
+        return {ok: true, decision: clone(decision), job: cloneJob(job)};
       });
     },
 
@@ -1304,7 +1575,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         job.updatedAt = seenAt;
         jobs.put(job);
         await bumpRevision(meta);
-        return {ok: true, job: clone(job)};
+        return {ok: true, job: cloneJob(job)};
       });
     },
 
@@ -1347,6 +1618,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
 
     async saveSettings(accountId, settings) {
       const account = requireAccountId(accountId);
+      validateExplicitQuoteSettings(settings);
       return withTransaction('readwrite', async ({settings: store, meta}) => {
         const stored = await requestResult(store.get(account));
         const next = normalizeSettings(settings, normalizeSettings(stored, FOLLOW_QUEUE_DEFAULT_SETTINGS));

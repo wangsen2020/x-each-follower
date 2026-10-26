@@ -74,7 +74,8 @@ export async function operateGreetingChatOnPage({ownerHandle, ownerId, targetHan
     const candidates = Object.getOwnPropertyNames(prototype).filter(name => {
       const method = value[name];
       return typeof method === 'function' && method.length === 5 &&
-        /^function\(e,t,n,r,i\)\{return \w+\(this\.\w+,e,t,n,r,i\)\}$/.test(String(method));
+        // X's minifier also emits valid identifiers containing $, such as $Pl.
+        /^function\(e,t,n,r,i\)\{return [A-Za-z_$][\w$]*\(this\.[A-Za-z_$][\w$]*,e,t,n,r,i\)\}$/.test(String(method));
     });
     matchedMethods+=candidates.length;
     if (candidates.length === 1) { sender = value; method = candidates[0]; break; }

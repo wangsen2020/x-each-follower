@@ -535,3 +535,35 @@ test('unfollow query supports an older running worker without filtering only its
  const result=await queryUnfollowLogs(send,{kind:'unfollow',scope:'unreciprocated',limit:10,cursor:null});
  assert.equal(result.total,1);assert.equal(result.entries[0].id,'u');assert.equal(result.nextCursor,null);
 });
+
+test('timeout categories partition legacy monitoring and handling before pagination',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'timeout-types');
+ const sources=['open','account-update','greeting-auto-start','greeting-auto-summary','greeting-auto','unfollow-auto','unfollow-manual','unfollow-batch'];
+ for(let i=0;i<sources.length;i++)await store.append({id:'type'+i,scope:'unreciprocated',source:sources[i],result:'skipped',at:new Date(1792900000000+i*1000).toISOString()});
+ const monitoring=await store.query({scope:'unreciprocated',kind:'timeout-monitoring',limit:2});
+ assert.equal(monitoring.total,2);assert.deepEqual(monitoring.entries.map(e=>e.source),['account-update','open']);
+ const first=await store.query({scope:'unreciprocated',kind:'timeout-handling',limit:2});assert.equal(first.total,6);assert.ok(first.nextCursor);
+ const second=await store.query({scope:'unreciprocated',kind:'timeout-handling',limit:2,cursor:first.nextCursor});assert.equal(second.total,6);assert.equal(second.entries.length,2);
+ assert.equal(new Set([...first.entries,...second.entries].map(e=>e.id)).size,4);
+});
+test('old workers classify both timeout categories across every page',async()=>{
+ const {queryUnfollowLogs}=await import('../src/shared/execution-log-select.js');
+ const send=async q=>q.cursor?{ok:true,entries:[{id:'g',at:'2026-10-24',source:'greeting-auto',result:'failed'}],nextCursor:null}:{ok:true,entries:[{id:'m',at:'2026-10-25',source:'open'}],nextCursor:{at:'2026-10-25',id:'m'}};
+ for(const [kind,id] of [['timeout-monitoring','m'],['timeout-handling','g']]){
+ const r=await queryUnfollowLogs(send,{kind,scope:'unreciprocated',limit:1});assert.equal(r.total,1);assert.equal(r.entries[0].id,id);assert.equal(r.nextCursor,null);
+ }
+});
+
+test('greeting and unfollow categories are mutually exclusive including failed and skipped logs',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'three-log-types');
+ for(const [id,source,result] of [['g','greeting-auto','failed'],['m','greeting-manual','success'],['u','unfollow-auto','skipped'],['b','unfollow-batch','success'],['c','open','success']])await store.append({id,scope:'unreciprocated',source,result,at:'2026-10-26T00:00:00.000Z'});
+ for(const [kind,ids] of [['greeting',['g','m']],['unfollow',['b','u']],['timeout-monitoring',['c']]]){const r=await store.query({scope:'unreciprocated',kind});assert.equal(r.total,ids.length);assert.deepEqual(r.entries.map(e=>e.id).sort(),ids);}
+});
+
+test('duplicate round summaries collapse across pages but orphan summaries and failures survive',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'dedupe-rounds');
+ const entries=[{id:'detail',at:'2026-10-26T00:00:01.000Z',handle:'target',runId:'r',details:{'阶段':'复查实际关注关系'}},{id:'summary',at:'2026-10-26T00:00:02.000Z',runId:'r',details:{'阶段':'本轮结束'}},{id:'orphan',at:'2026-10-26T00:00:03.000Z',runId:'other',details:{'阶段':'本轮结束'}}];
+ for(const e of entries)await store.append({scope:'unreciprocated',source:'unfollow-auto',result:'success',...e});
+ const r=await store.query({scope:'unreciprocated',kind:'unfollow',limit:1});assert.equal(r.total,2);assert.equal(r.entries[0].id,'orphan');
+ const next=await store.query({scope:'unreciprocated',kind:'unfollow',limit:1,cursor:r.nextCursor});assert.equal(next.entries[0].id,'detail');assert.equal(next.nextCursor,null);
+});

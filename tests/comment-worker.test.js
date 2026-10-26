@@ -11,11 +11,11 @@ globalThis.IDBKeyRange = IDBKeyRange;
 async function setup(execute, options = {}) {
   const store = createFollowQueueStore({indexedDB, dbName:'comments-'+crypto.randomUUID()});
   const accountId = '123';
-  await store.saveSettings(accountId,{enabled:true,grokEnabled:true,batchLimit:5});
+  await store.saveSettings(accountId,{enabled:true,grokEnabled:true,quoteParticipationRate:100,batchLimit:5});
   const job = await store.enqueue({accountId,handle:'done',targetUserId:'456',sources:[{module:'fans',enabled:true}]});
   await store.resolveJob({accountId,id:job.id,state:'followed',followResult:{succeeded:true},evaluations:[{
     taskId:'123:789',originalPostId:'789',originalPostText:'An original post',
-    candidatePosts:[{url:'https://x.com/done/status/789',text:'An original post'}],
+    candidatePosts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}],
     automaticComment:true,status:'pending'}]});
   const values = {};
   const storage = {get:async key=>({[key]:values[key]})};
@@ -91,6 +91,24 @@ test('deleted job and other account cannot be picked up by comment worker',async
   assert.equal((await env.worker.run()).idle,true);
 });
 
+test('probability zero pauses without opening tabs or spending Grok and keeps pending intent',async()=>{
+  const env=await setup(async()=>assert.fail('zero must not execute'));
+  await env.store.saveSettings(env.accountId,{quoteParticipationRate:0});
+  assert.equal((await env.worker.run()).paused,true);
+  assert.equal((await env.read()).evaluations[0].status,'pending');
+});
+
+test('legacy unselected tasks finish without Grok and restart never redraws',async()=>{
+  const env=await setup(async()=>assert.fail('not selected'));
+  await env.store.saveSettings(env.accountId,{quoteParticipationRate:60});
+  let rolls=0;
+  const args={...env.args,random:()=>{rolls++;return .6;}};
+  assert.equal((await createCommentWorker(args).run()).reasonCode,'probability_skip');
+  assert.equal((await env.read()).evaluations[0].grokCalls,0);
+  assert.equal((await createCommentWorker(args).run()).idle,true);
+  assert.equal(rolls,1);
+});
+
 test('follow execution has no Grok calls, comment execution or quota dependency',async()=>{
   const source=await readFile(new URL('../src/features/follow-queue/follow-queue-runtime.js',import.meta.url),'utf8');
   const execution=source.slice(source.indexOf('  async function execute('),source.indexOf('  const scheduler ='));
@@ -103,7 +121,7 @@ test('runtime rejects a late generated comment after timeout before any publish 
   await env.store.saveSettings(env.accountId,{skipRiskContent:false,autoPublish:true});
   const controller=new AbortController();
   const values={followQueueBinding:{accountId:env.accountId,handle:'viewer',activated:true},
-    profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post'}]}}};
+    profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}]}}};
   const removed=[];
   const api={storage:{local:{get:async key=>({[key]:values[key]}),set:async patch=>Object.assign(values,patch)}},
     tabs:{create:async()=>({id:999}),remove:async id=>removed.push(id)},

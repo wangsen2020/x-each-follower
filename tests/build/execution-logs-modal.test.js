@@ -51,8 +51,8 @@ test('useExecutionLogs initializes with robust default state and computed titles
 
   // Unreciprocated scope
   c.currentScope.value = 'unreciprocated';
-  assert.equal(c.title.value, '回关监控 · 执行日志');
-  assert.equal(c.emptyTitle.value, '暂无回关监控日志');
+  assert.equal(c.title.value, '回关监控 · 取消关注');
+  assert.equal(c.emptyTitle.value, '暂无取消关注日志');
 
   // Comment scope
   c.currentScope.value = 'comment';
@@ -198,7 +198,7 @@ test('clearLogs targets the current module and never clears fan scan records fro
   }
 });
 
-test('unfollow tab reads legacy backend pages and cannot clear all followback logs',async()=>{
+test('unfollow tab reads legacy backend pages',async()=>{
  const previous=globalThis.chrome,calls=[];
  globalThis.chrome={runtime:{sendMessage:async m=>{
   calls.push(m);
@@ -208,6 +208,6 @@ test('unfollow tab reads legacy backend pages and cannot clear all followback lo
  try{
   await c.open('unreciprocated');await c.setFollowbackSubTab('unfollow');
   assert.equal(c.total.value,1);assert.equal(c.entries.value[0].id,'u');
-  await c.clearLogs();assert.equal(calls.some(m=>m.cmd==='clearExecutionLogs'),false);
+
  }finally{c.close();globalThis.chrome=previous;}
 });

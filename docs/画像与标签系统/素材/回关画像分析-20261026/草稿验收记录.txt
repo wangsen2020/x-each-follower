@@ -1,0 +1,5 @@
+X Article draft: https://x.com/compose/articles/edit/2114551256136253440
+Account verified in UI: @WatsonTaylor23
+Status: draft, not published
+After reload: exact title matches; every authored text paragraph matches; 9 styled headings; 3 inline images after corresponding captions; cover dimensions 1200x480; inline images 1200x675; all images loaded.
+Source snapshot time: 2026-10-26 10:47 Asia/Shanghai.

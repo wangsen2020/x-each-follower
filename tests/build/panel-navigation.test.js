@@ -2,6 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import { usePanelNavigation, TAB_TITLES, NAV_TABS } from '../../src/entries/panel/composables/usePanelNavigation.js';
+import {logsModalController} from '../../src/entries/panel/composables/useExecutionLogs.js';
+
+test('switching modules closes logs and ignores a pending response from the previous module',async()=>{
+ const previous=globalThis.chrome;let finish;
+ globalThis.chrome={runtime:{sendMessage:()=>new Promise(resolve=>{finish=resolve})}};
+ const nav=usePanelNavigation();
+ try{
+  nav.setTab('unreciprocated');
+  const opening=logsModalController.open('unreciprocated');
+  while(!finish)await Promise.resolve();
+  assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('postTracking');
+  assert.equal(logsModalController.isOpen.value,false);
+  finish({ok:true,kind:'unfollow',presentationVersion:2,entries:[{id:'late-log'}],total:1});await opening;
+  assert.equal(logsModalController.isOpen.value,false);
+  assert.equal(logsModalController.rawEntries.value.length,0);
+  await logsModalController.refreshIfOpen('unreciprocated');
+  assert.equal(logsModalController.isOpen.value,false);
+ }finally{logsModalController.close();globalThis.chrome=previous;}
+});
+
+test('same-module selection and invalid navigation preserve deliberately opened logs',()=>{
+ const nav=usePanelNavigation();nav.setTab('unreciprocated');logsModalController.isOpen.value=true;
+ try{
+  nav.setTab('unreciprocated');assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('invalid');assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('postTracking');assert.equal(logsModalController.isOpen.value,false);
+ }finally{logsModalController.close();}
+});
 
 test('usePanelNavigation initializes with default tab and titles', () => {
   const nav = usePanelNavigation();

@@ -4,9 +4,18 @@ import assert from 'node:assert/strict';
 import {indexedDB} from 'fake-indexeddb';
 import {parseOwnAnalytics, mergePost, evaluatePost, selectPostPage, analyticsRange,dueReviewPosts} from '../src/features/post-tracking/post-model.js';
 import {createPostStore} from '../src/features/post-tracking/post-store.js';
-import {createPostRuntime} from '../src/features/post-tracking/post-runtime.js';
+import {createPostRuntime,publishedQueueSources} from '../src/features/post-tracking/post-runtime.js';
 
 const NOW=Date.UTC(2026,9,21,8);
+test('published new posts keep a separate tracking source and type filter from quotes',()=>{
+ const sources=publishedQueueSources([{evaluations:[{status:'posted',publishedPostId:'1',publicationMode:'original',originalPostId:'11'},
+  {status:'posted',publishedPostId:'2',originalPostId:'22'},{status:'draft',publishedPostId:'3',publicationMode:'original'}]}]);
+ assert.equal(sources.get('1').kind,'auto-original');assert.equal(sources.get('1').originalPostId,undefined);
+ assert.equal(sources.get('2').kind,'auto-quote');assert.equal(sources.has('3'),false);
+ const rows=[post({postId:'1',source:sources.get('1')}),post({postId:'2',source:sources.get('2')})];
+ assert.equal(selectPostPage(rows,{type:'auto-original'},NOW).total,1);
+ assert.equal(selectPostPage(rows,{type:'auto-quote'},NOW).total,1);
+});
 function payload({owner='123',id='2112818349029900798',text='具体正文',metrics=[{metric_type:'Impressions',metric_value:12},{metric_type:'Likes'}],createdAt=NOW-8*86400000}={}){
  return {data:{viewer_v2:{user_results:{result:{__typename:'User',rest_id:owner,core:{screen_name:'tester'},tweets_results:[{rest_id:id,result:{__typename:'Tweet',rest_id:id,details:{created_at_ms:createdAt,full_text:text},organic_metrics_total:metrics}}]}}}}};
 }
@@ -87,10 +96,11 @@ test('deletion requires a specific unexpired confirmation and protected posts ca
  f.advance(121000);await assert.rejects(f.runtime.handle({op:'confirmDelete',approvalId:approval.approvalId,confirmed:true}),/过期/);
  await f.runtime.handle({op:'mark',postId:approval.postId,protected:true});await assert.rejects(f.runtime.handle({op:'prepareDelete',postId:approval.postId}),/受保护/);assert.equal(f.deletes(),0);
 });
-test('live author or text changes block the mutation even after explicit confirmation',async()=>{
- const f=fixture();await f.runtime.sync();const a=await f.runtime.handle({op:'prepareDelete',postId:'2112818349029900798'});f.setLive(payload({text:'changed'}));
- await assert.rejects(f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true}),/核验不通过/);assert.equal(f.deletes(),0);
+test('deletion submits the approved ID regardless of analytics content or availability',async()=>{
+ const f=fixture();await f.runtime.sync();const a=await f.runtime.handle({op:'prepareDelete',postId:'2112818349029900798'});f.setFailure({status:403,error:'analytics unavailable'});f.setLive(payload({owner:'999',text:'changed'}));f.setCaptureFresh(false);f.settings.networkTemplates={UserByScreenName:{headers:{'x-csrf-token':'fixture'}}};
+ f.setMutation({status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});const r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.status,'verified');assert.equal(r.deletion.verification,'server-acknowledged');assert.equal(f.deletes(),1);assert.equal(f.requests.length,1);
 });
+
 test('switching away and back invalidates prepared approvals even for the same account',async()=>{
  const f=fixture();await f.runtime.sync();const a=await f.runtime.handle({op:'prepareDelete',postId:'2112818349029900798'});
  const oldIntent=await f.store.intent(a.approvalId);oldIntent.expiresAt=NOW+10*86400000;await f.store.putIntent(oldIntent);
@@ -123,11 +133,9 @@ test('exact empty focal entry requires the matching mutation receipt and reconci
  p.deletion.acknowledgedPostId=id;await f.store.put(p);await f.runtime.handle({op:'verify',postId:id});
  assert.equal((await f.store.get('123',id)).deletion.verification,'acknowledged-focal-empty');assert.equal((await f.store.intent(a.approvalId)).status,'verified');assert.equal(f.deletes(),1);
 });
-test('acknowledged mutation does not count another post empty entry as deletion proof',async()=>{
- const f=fixture();await f.runtime.sync();const id='2112818349029900798';const a=await f.runtime.handle({op:'prepareDelete',postId:id});
- f.setMutation({status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});
- f.setDetail({data:{entries:[{entryId:'tweet-99',content:{itemContent:{__typename:'TimelineTweet',tweet_results:{}}}}]}});
- const r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.serverAcknowledged,true);assert.equal(r.deletion.status,'uncertain');
+test('explicit deletion receipt completes without waiting for detail availability',async()=>{
+ const f=fixture();await f.runtime.sync();const id='2112818349029900798',a=await f.runtime.handle({op:'prepareDelete',postId:id});f.setMutation({status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});f.setDetail(()=>{throw Error('must not query detail')});
+ const r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.serverAcknowledged,true);assert.equal(r.deletion.status,'verified');assert.equal(f.requests.length,1);
 });
 
 test('one detection performs one bounded request and cooldown blocks repeated clicks and alarm delivery',async()=>{
@@ -258,6 +266,31 @@ async function deleteBatchFixture(){
  f.setMutation({status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});f.setDetail({data:{entries:[id1,id2].map(id=>({entryId:`tweet-${id}`,content:{__typename:'TweetTombstone',text:'This Post was deleted'}}))}});
  return {...f,ids:[id1,id2]};
 }
+
+test('batch progress remains readable during deletion and advances past failed items',async()=>{
+ const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});
+ const initial=await f.runtime.handle({op:'batchDeleteProgress',batchApprovalId:a.batchApprovalId});assert.equal(initial.current,0);assert.equal(initial.total,2);
+ let release,entered;let reached=new Promise(r=>{entered=r});let calls=0;
+ f.setMutation(async()=>{const n=++calls;await new Promise(r=>{release=r;entered()});return n===1?{status:403,error:'denied'}:{status:200,json:{data:{delete_tweet:{tweet_results:{}}}}};});
+ const running=f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});await reached;
+ const first=await f.runtime.handle({op:'batchDeleteProgress',batchApprovalId:a.batchApprovalId});assert.equal(first.current,1);assert.equal(first.processed,0);
+ reached=new Promise(r=>{entered=r});release();await reached;
+ const second=await f.runtime.handle({op:'batchDeleteProgress',batchApprovalId:a.batchApprovalId});assert.equal(second.current,2);assert.equal(second.processed,1);
+ release();await running;const done=await f.runtime.handle({op:'batchDeleteProgress',batchApprovalId:a.batchApprovalId});assert.equal(done.current,2);assert.equal(done.processed,2);assert.equal(done.status,'completed-with-errors');
+ f.settings.ownPostTracking.bindingNonce='changed';await assert.rejects(f.runtime.handle({op:'batchDeleteProgress',batchApprovalId:a.batchApprovalId}),/账号已切换/);
+});
+
+test('batch continues after rejected, uncertain and unsent individual requests',async()=>{
+ for(const failure of [{status:403,json:{errors:[{message:'not your post'}]}},{status:404,error:'missing'},{status:429,error:'limited'},{status:200,json:{errors:[{message:'permission denied'}]}},{status:0,error:'timeout'},{status:0,attempted:false,error:'not sent'}]){
+  const f=await deleteBatchFixture();let attempts=0;f.setMutation(()=>++attempts===1?failure:{status:200,json:{data:{delete_tweet:{tweet_results:{}}}}});
+  const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed-with-errors');assert.equal(r.remaining,0);assert.equal(r.results.length,2);assert.equal(r.results[1].status,'verified');assert.equal(f.deletes(),2);assert.ok(r.results[0].error);assert.notEqual(r.results[0].status,'verified');
+ }
+});
+
+test('thrown deletion error is isolated and never causes replay of an uncertain item',async()=>{
+ const f=await deleteBatchFixture();let attempts=0;f.setMutation(()=>{if(++attempts===1)throw Error('connection lost');return {status:200,json:{data:{delete_tweet:{tweet_results:{}}}}};});const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.results[0].status,'uncertain');assert.equal(r.results[1].status,'verified');assert.equal(f.deletes(),2);await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true}),/已使用/);assert.equal(f.deletes(),2);
+});
+
 test('page reconciles batch selections across filters and removes protected or deleted posts',async()=>{
  const f=await deleteBatchFixture();
  const first=await f.runtime.handle({op:'page',options:{view:'low',selectedPostIds:f.ids}});
@@ -283,21 +316,17 @@ test('batch preparation rejects invalid sets, foreign, protected and pending pos
  const p=await f.store.get('123',f.ids[1]);p.protected=true;await f.store.put(p);await assert.rejects(f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),/受保护/);
  p.protected=false;p.deletion={status:'uncertain'};await f.store.put(p);await assert.rejects(f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),/删除任务/);assert.equal(f.deletes(),0);
 });
-test('batch validates the whole set before first delete and rejects account changes and expired approvals',async()=>{
- const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const p=await f.store.get('123',f.ids[1]);p.text='正文已变更';await f.store.put(p);
- await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true}),/已变更/);assert.equal(f.deletes(),0);
- const b=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const old=f.settings.ownPostTracking.bindingNonce;f.settings.ownPostTracking.bindingNonce='different';
- await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:b.batchApprovalId,confirmed:true}),/账号已切换/);f.settings.ownPostTracking.bindingNonce=old;f.advance(600001);
- await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:b.batchApprovalId,confirmed:true}),/过期/);assert.equal(f.deletes(),0);
+test('batch isolates a newly protected item while retaining account-bound expiring approval',async()=>{
+ const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const p=await f.store.get('123',f.ids[1]);p.protected=true;await f.store.put(p);const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.results[0].status,'verified');assert.equal(r.results[1].status,'not-sent');assert.equal(f.deletes(),1);assert.equal(r.remaining,0);
+ const g=await deleteBatchFixture(),b=await g.runtime.handle({op:'prepareBatchDelete',postIds:g.ids});const old=g.settings.ownPostTracking.bindingNonce;g.settings.ownPostTracking.bindingNonce='different';await assert.rejects(g.runtime.handle({op:'confirmBatchDelete',batchApprovalId:b.batchApprovalId,confirmed:true}),/账号已切换/);g.settings.ownPostTracking.bindingNonce=old;g.advance(600001);await assert.rejects(g.runtime.handle({op:'confirmBatchDelete',batchApprovalId:b.batchApprovalId,confirmed:true}),/过期/);assert.equal(g.deletes(),0);
 });
-test('an uncertain or unsent first deletion stops the batch and leaves other posts intact',async()=>{
- for(const mutation of [{status:429,error:'rate limit'},{status:0,attempted:false,error:'not sent'}]){
- const f=await deleteBatchFixture();f.setMutation(mutation);const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'stopped');assert.equal(r.results.length,1);assert.equal(r.remaining,1);assert.equal(f.deletes(),1);assert.equal((await f.store.get('123',f.ids[1])).deletion,undefined);
- await assert.rejects(f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true}),/已使用/);assert.equal(f.deletes(),1);
- }
+
+test('all failed requests are reported separately after processing the whole batch',async()=>{
+ const f=await deleteBatchFixture();f.setMutation({status:403,json:{errors:[{message:'permission denied'}]}});const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed-with-errors');assert.equal(r.results.length,2);assert.equal(r.remaining,0);assert.equal(f.deletes(),2);assert.ok(r.results.every(x=>x.status==='failed'&&x.error==='permission denied'));
 });
-test('live identity or text mismatch stops a batch without sending any deletion',async()=>{
- const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});f.setLive(payload({owner:'456'}));const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'stopped');assert.equal(r.remaining,1);assert.equal(r.results[0].status,'not-sent');assert.equal(f.deletes(),0);
+
+test('analytics account mismatch and missing posts cannot block batch deletion',async()=>{
+ const f=await deleteBatchFixture();const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});f.setLive(payload({owner:'456'}));f.setFailure({status:403,error:'analytics denied'});const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');assert.equal(r.remaining,0);assert.equal(f.deletes(),2);assert.equal(f.requests.length,1);
 });
 
 test('three deletes succeed with cached templates and no repeated native analytics capture',async()=>{
@@ -305,22 +334,22 @@ test('three deletes succeed with cached templates and no repeated native analyti
  for(const value of Object.values(f.settings.networkTemplates))value.at=NOW-86400000;f.setCaptureFresh(false);
  const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});
  assert.equal(r.status,'completed');assert.equal(r.results.length,3);assert.equal(f.deletes(),3);assert.ok(r.results.every(p=>p.status==='verified'));
- assert.equal(f.tabs.filter(t=>t.url.includes('/i/account_analytics/')).length,0);assert.equal(f.requests.length,4);
+ assert.equal(f.tabs.filter(t=>t.url.includes('/i/account_analytics/')).length,0);assert.equal(f.requests.length,1);
 });
-test('cached request shape never bypasses live account checks or permits missing templates',async()=>{
- const f=await deleteBatchFixture();f.setCaptureFresh(false);f.settings.networkTemplates={};const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'stopped');assert.equal(f.deletes(),0);assert.match(r.results[0].error,/未取得/);
+test('deletion page does not require an analytics request template',async()=>{
+ const f=await deleteBatchFixture();f.setCaptureFresh(false);f.settings.networkTemplates={};const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids});const r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');assert.equal(f.deletes(),2);assert.equal(f.requests.length,1);assert.equal(f.tabs.some(t=>t.url.includes('/i/account_analytics/')),false);
 });
 
-test('acknowledged deletion rechecks delayed visibility without resending mutation',async()=>{
- const f=await deleteBatchFixture();const id=f.ids[0];let calls=0;f.setDetail(()=>++calls===1?{data:{rest_id:id,__typename:'Tweet'}}:{data:{entries:[{entryId:`tweet-${id}`,content:{itemContent:{__typename:'TimelineTweet',tweet_results:{}}}}]}});
- const a=await f.runtime.handle({op:'prepareDelete',postId:id}),r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.status,'verified');assert.equal(f.deletes(),1);assert.equal(calls,2);
+test('acknowledged deletion needs no additional detail requests or retry delays',async()=>{
+ const f=await deleteBatchFixture();let calls=0;f.setDetail(()=>{calls++;throw Error('detail unavailable')});const a=await f.runtime.handle({op:'prepareDelete',postId:f.ids[0]}),r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.status,'verified');assert.equal(f.deletes(),1);assert.equal(calls,0);assert.equal(f.sleeps.includes(2000),false);assert.equal(f.sleeps.includes(5000),false);
 });
-test('detail rechecks are bounded and keep unresolved deletion uncertain',async()=>{
- const f=await deleteBatchFixture();let calls=0;f.setDetail(()=>{calls++;return {data:{}};});const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'stopped');assert.equal(f.deletes(),1);assert.equal(calls,3);assert.equal(r.results[0].status,'uncertain');
+
+test('ambiguous receipts stay uncertain while subsequent approved requests still execute',async()=>{
+ const f=await deleteBatchFixture();f.setMutation({status:200,json:{data:{}}});let calls=0;f.setDetail(()=>{calls++;return {data:{}};});const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed-with-errors');assert.equal(f.deletes(),2);assert.equal(calls,0);assert.ok(r.results.every(x=>x.status==='uncertain'));assert.equal(r.remaining,0);
 });
 
 test('one batch reuses one execution page for all preflights, mutations and detail checks',async()=>{
- const f=await deleteBatchFixture(),before=f.tabs.length;const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');assert.equal(f.tabs.length-before,1);assert.equal(f.requests.length,3);assert.equal(f.deletes(),2);assert.ok(r.results.every(p=>Number.isFinite(p.timings.totalMs)));assert.equal(f.sleeps.filter(x=>x===3000).length,1);
+ const f=await deleteBatchFixture(),before=f.tabs.length;const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');assert.equal(f.tabs.length-before,1);assert.equal(f.requests.length,1);assert.equal(f.deletes(),2);assert.ok(r.results.every(p=>Number.isFinite(p.timings.totalMs)));assert.equal(f.sleeps.filter(x=>x===3000).length,1);
 });
 test('batch pacing counts time spent processing instead of adding three seconds after every item',async()=>{
  const f=await deleteBatchFixture();f.setMutation(()=>{f.advance(3500);return {status:200,json:{data:{delete_tweet:{tweet_results:{}}}}};});const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');assert.equal(f.sleeps.includes(3000),false);assert.equal(r.results[0].timings.mutationMs,3500);assert.equal((await f.store.get('123',f.ids[0])).deletion.timings.mutationMs,3500);
@@ -331,8 +360,8 @@ test('single and batch deletion borrow a loaded X page without navigation or clo
  if(batch){const a=await f.runtime.handle({op:'prepareBatchDelete',postIds:f.ids}),r=await f.runtime.handle({op:'confirmBatchDelete',batchApprovalId:a.batchApprovalId,confirmed:true});assert.equal(r.status,'completed');}else{const a=await f.runtime.handle({op:'prepareDelete',postId:f.ids[0]}),r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.status,'verified');}
  assert.equal(f.tabs.length,before);assert.deepEqual(removed,[]);}
 });
-test('borrowed pages are preserved on validation failure and no deletion is sent',async()=>{
- const f=await deleteBatchFixture(),removed=[];f.api.tabs.query=async()=>[{id:42,url:'https://x.com/home',status:'complete',active:false}];f.api.tabs.get=async()=>({status:'complete'});f.api.tabs.remove=async id=>removed.push(id);f.setLive(payload({owner:'999'}));const a=await f.runtime.handle({op:'prepareDelete',postId:f.ids[0]});await assert.rejects(f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true}),/核验不通过/);assert.equal(f.deletes(),0);assert.deepEqual(removed,[]);
+test('borrowed pages are preserved when X rejects deletion',async()=>{
+ const f=await deleteBatchFixture(),removed=[];f.api.tabs.query=async()=>[{id:42,url:'https://x.com/home',status:'complete',active:false}];f.api.tabs.get=async()=>({status:'complete'});f.api.tabs.remove=async id=>removed.push(id);f.setMutation({status:403,error:'X rejected deletion'});const a=await f.runtime.handle({op:'prepareDelete',postId:f.ids[0]}),r=await f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true});assert.equal(r.deletion.status,'failed');assert.equal(f.deletes(),1);assert.deepEqual(removed,[]);
 });
 
 test('configured 300 and 1000 limits persist and reach actual batch request variables',async()=>{

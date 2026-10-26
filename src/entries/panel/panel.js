@@ -1,3 +1,5 @@
+import {inspectOrActOnProfile} from '../../platform/x/guarded-relationship.js';
+import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
 import {followerEmptyView} from './follower-empty-view.js';
 import {shouldEnqueueFan} from '../../features/relationships/fan-followback-policy.js';
 import {saveFollowbackSettings, withFollowbackProgress} from '../../features/relationships/followback-settings.js';
@@ -13,7 +15,7 @@ import {normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {createLogPager, LOG_PAGE_SIZE} from '../../shared/execution-log-store.js';
 import {readAutoFollowAttempts, wasAutoFollowAttempted, recordAutoFollowAttempt, mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import { collectVisible, readProfile, readProfileBundle, scanFollowers, simulateProfileScrollStep, clickAnyFollowOnProfile, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
-import { networkFetch, networkGetUserProfile, networkFollow, networkUnfollow, parseNetworkUsers, nextUserListPage, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
+import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, nextUserListPage, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, addUniqueUsersUpTo, mergeRecentPosts, isUsableNetworkTemplate as templateIsUsable } from '../../features/relationships/network-api.js';
 import {acceptRollingPage, changedFollowBackRows} from '../../features/relationships/rolling-scan.js';
 import { durableGet, durableSet } from '../../platform/persistent-db.js';
 import { STARTUP_DURABLE_KEYS, buildRelationshipIndex, inactiveFollowingHandles, monitorUserStatus as monitorUserStatusFromIndex, commentRelationshipLabel, applyRelationshipSnapshot, recoveredValueIfStillMissing, localKeyPresent, shouldRescanMojibake, tabRenderTargets, localStorageChangePlan, loadDurableLogBuffer, takeLogBufferTask } from './panel-data.js';
@@ -190,8 +192,8 @@ let unreciprocatedTracker = {
     greetingText: '你好！刚刚关注了你，期待互关交流！',
     greetingTextEn: 'Hi there! Just followed you, looking forward to connecting and following back!',
     autoUnfollow: false,
-    autoUnfollowEvery: 45,
-    autoUnfollowJitter: 15,
+    autoUnfollowEvery: 10,
+    autoUnfollowJitter: 0,
     batchLimit: 1,
     settingsSchemaVersion: 5,
     dailyLimit: 100,
@@ -3199,7 +3201,9 @@ async function unfollowViaNetwork(tabId, user) {
     userId = target.id;
     user.id = target.id;
   }
-  const result = await networkUnfollow(tabId, userId);
+  const owner=(await chrome.scripting.executeScript({target:{tabId},func:readSidebarViewerOnPage}))[0]?.result?.handle;
+  if(!owner)return {ok:false,error:'当前登录账号无法核实'};
+  const result = await inspectOrActOnProfile(chrome,{...user,id:userId},owner,'unfollow');
   if (result.status >= 200 && result.status < 300) return {ok:true};
   return {ok:false, reason:'unfollow_failed', error:result.error || `取关接口返回 ${result.status}`};
 }
@@ -5404,8 +5408,8 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
     greetingText: '你好！刚刚关注了你，期待互关交流！',
     greetingTextEn: 'Hi there! Just followed you, looking forward to connecting and following back!',
     autoUnfollow: false,
-    autoUnfollowEvery: 45,
-    autoUnfollowJitter: 15,
+    autoUnfollowEvery: 10,
+    autoUnfollowJitter: 0,
     batchLimit: 1,
     dailyLimit: 100,
     unfollowDelay: 15,
@@ -5418,8 +5422,8 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   };
   const res = { ...defaults, ...(cfg || {}) };
   if (Number(cfg?.settingsSchemaVersion || 0) < 3) {
-    if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 45;
-    if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 15;
+    if (cfg?.autoUnfollowEvery == null || Number(cfg.autoUnfollowEvery) === 30) res.autoUnfollowEvery = 10;
+    if (cfg?.autoUnfollowJitter == null || Number(cfg.autoUnfollowJitter) === 5) res.autoUnfollowJitter = 0;
   }
   if (Number(cfg?.settingsSchemaVersion || 0) < 4 && [null, 12, 400].includes(cfg?.dailyLimit == null ? null : Number(cfg.dailyLimit))) res.dailyLimit = 100;
   if (Number(cfg?.settingsSchemaVersion || 0) < 5 && Number(cfg?.dailyLimit) === 24) res.dailyLimit = 100;
@@ -5433,7 +5437,7 @@ function normalizeUnreciprocatedConfig(cfg = {}) {
   if (res.greetingText === '你好，刚关注了你，期待交流！') res.greetingText = defaults.greetingText;
   res.greetingTextEn = String(res.greetingTextEn || defaults.greetingTextEn).trim().slice(0, 1000);
   res.autoUnfollow = Boolean(res.autoUnfollow);
-  res.autoUnfollowEvery = Math.max(5, Math.min(1440, Number(res.autoUnfollowEvery) || 45));
+  res.autoUnfollowEvery = Math.max(1, Math.min(1440, Number(res.autoUnfollowEvery) || 10));
   res.autoUnfollowJitter = Math.max(0, Math.min(15, Number(res.autoUnfollowJitter) || 0));
   res.batchLimit = 1;
   res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 100));
@@ -5483,8 +5487,8 @@ function registerTrackedFollow(user) {
       followedAt: now,
       followedAtSource: 'confirmed',
       followBackAt: null,
-      relationship: { following: true, followedBy: false },
-      status: 'pending',
+      relationship: { following: true, followedBy: user.relationship?.followedBy ?? null },
+      status: user.relationship?.followedBy === true ? 'mutual' : user.relationship?.followedBy === false ? 'pending' : 'unknown',
       lastCheckedAt: now,
       exempt: false
     };
@@ -5492,7 +5496,7 @@ function registerTrackedFollow(user) {
   } else {
     item.followedAt = item.followedAt || now;
     item.relationship = { ...(item.relationship || {}), following: true, followedBy: false };
-    if (item.status !== 'mutual') item.status = 'pending';
+    item.status = item.relationship.followedBy === true ? 'mutual' : item.relationship.followedBy === false ? 'pending' : 'unknown';
     item.lastCheckedAt = now;
   }
   saveUnreciprocatedTracker();
@@ -5962,7 +5966,7 @@ function getFilteredUnreciprocatedUsers() {
       if (!h.includes(keyword) && !n.includes(keyword) && !b.includes(keyword)) return false;
     }
     return true;
-  }));
+  }), activeUnreciprocatedTab);
 }
 
 function renderUnreciprocatedUI() {

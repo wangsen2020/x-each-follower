@@ -1,0 +1,221 @@
+{
+  "block": {
+    "version": "2.18.1",
+    "handle": "xiang60527",
+    "usedBefore": 45,
+    "usedAfter": 45,
+    "pendingAfter": null,
+    "queueHeadAfter": "csccbt5",
+    "settingsUnchanged": true,
+    "terminal": {
+      "at": "2026-10-26T05:22:41.731Z",
+      "runId": "0cabeb20-8879-4026-9e9d-0e93d2c682cd",
+      "result": "failed",
+      "summary": "自动取关 @xiang60527已停止：取关页面操作未确认成功（409）：取关确认未通过，本轮已停止",
+      "processed": 0,
+      "success": 0,
+      "submission": "明确未提交，已释放本轮预留额度"
+    },
+    "traces": [
+      {
+        "at": 1792992160349,
+        "target": "0AEDBE5546E1E17A08278011C66F7F54",
+        "kind": "click",
+        "label": "正在关注 @xiang60527",
+        "text": "正在关注",
+        "testId": "1848333921500774400-unfollow",
+        "subscription": false,
+        "blocked": true,
+        "url": "https://x.com/xiang60527"
+      }
+    ]
+  },
+  "realUnfollow": {
+    "version": "2.18.1",
+    "handle": "csccbt5",
+    "usedBefore": 45,
+    "usedAfter": 46,
+    "pendingAfter": null,
+    "queueHeadAfter": "pmoindia",
+    "settingsUnchanged": true,
+    "terminal": {
+      "at": "2026-10-26T05:23:55.174Z",
+      "runId": "6888bd4b-b57a-42cc-bdf8-425221b25b1c",
+      "result": "success",
+      "summary": "自动取关 @csccbt5 成功",
+      "processed": 1,
+      "success": 1,
+      "submission": "已确认取关并回写本地"
+    },
+    "traces": []
+  },
+  "pageVerification": [
+    {
+      "name": "cscc",
+      "url": "https://x.com/Csccbt5",
+      "real": {
+        "ready": true,
+        "following": false,
+        "followedBy": false,
+        "handle": "csccbt5",
+        "id": "1284002961329319943"
+      },
+      "controls": [
+        {
+          "text": "",
+          "label": "返回",
+          "id": "app-bar-back"
+        },
+        {
+          "text": "",
+          "label": "个人资料概要",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "搜索",
+          "id": null
+        },
+        {
+          "text": "查看新帖子",
+          "label": "有新的帖子。按句点键即可前往查看它们。",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "更多",
+          "id": "userActions"
+        },
+        {
+          "text": "",
+          "label": "私信",
+          "id": "sendDMFromProfile"
+        },
+        {
+          "text": "关注",
+          "label": "关注 @Csccbt5",
+          "id": "1284002961329319943-follow"
+        },
+        {
+          "text": "",
+          "label": "提供已验证账号的详细信息。",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "上一个",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "下一步",
+          "id": null
+        }
+      ]
+    },
+    {
+      "name": "xl",
+      "url": "https://x.com/xluchuan",
+      "real": {
+        "ready": true,
+        "following": false,
+        "followedBy": false,
+        "handle": "xluchuan",
+        "id": "2093616361599799296"
+      },
+      "controls": [
+        {
+          "text": "",
+          "label": "返回",
+          "id": "app-bar-back"
+        },
+        {
+          "text": "",
+          "label": "个人资料概要",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "搜索",
+          "id": null
+        },
+        {
+          "text": "查看新帖子",
+          "label": "有新的帖子。按句点键即可前往查看它们。",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "更多",
+          "id": "userActions"
+        },
+        {
+          "text": "",
+          "label": "私信",
+          "id": "sendDMFromProfile"
+        },
+        {
+          "text": "",
+          "label": "订阅 @xluchuan",
+          "id": null
+        },
+        {
+          "text": "关注",
+          "label": "关注 @xluchuan",
+          "id": "2093616361599799296-follow"
+        },
+        {
+          "text": "",
+          "label": "提供已验证账号的详细信息。",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "上一个",
+          "id": null
+        },
+        {
+          "text": "",
+          "label": "下一步",
+          "id": null
+        }
+      ],
+      "collisionFixture": {
+        "result": {
+          "ready": true,
+          "following": true,
+          "followedBy": false,
+          "handle": "xluchuan",
+          "id": "2093616361599799296",
+          "clicked": true
+        },
+        "subscriptionClicks": 0,
+        "unfollowClicks": 1,
+        "detachedDocument": true
+      }
+    }
+  ],
+  "followingScheduledRound": [
+    {
+      "at": "2026-10-26T05:27:11.206Z",
+      "handle": "pmoindia",
+      "result": "success",
+      "summary": "自动取关 @pmoindia 成功",
+      "used": 47,
+      "pendingStatus": "已确认取关并回写本地"
+    }
+  ],
+  "finalObservedState": {
+    "at": 1792992518266,
+    "version": "2.18.1",
+    "used": 47,
+    "pending": null,
+    "nextAlarm": [
+      {
+        "name": "x-auto-unfollow",
+        "persistAcrossSessions": true,
+        "scheduledTime": 1792992594255.908
+      }
+    ]
+  }
+}

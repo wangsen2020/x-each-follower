@@ -19,11 +19,11 @@ test('local comparison separates our nonfollowers from people awaiting our follo
   assert.deepEqual(sortFollowbackUsers(users).map(user => user.id), ['1', '2', '3']);
 });
 
-test('new explicit negative evidence supersedes an old mutual status', () => {
+test('follower membership overrides stale negative evidence', () => {
   const users = compareFollowback({followingUsers: [follow('1', 20)], followerUsers: [{id: '1', handle: 'user1'}], previousUsers: [{id: '1', handle: 'user1', status: 'mutual', everMutual: true}], overdueDays: 14, now});
-  assert.equal(users[0].status, 'overdue');
+  assert.equal(users[0].status, 'mutual');
   assert.equal(users[0].everMutual, true);
-  assert.equal(users[0].lostMutualDetectedAt, new Date(now).toISOString());
+  assert.equal(users[0].lostMutualDetectedAt, null);
 });
 
 test('unknown relation and unknown follow date do not trigger overdue', () => {
@@ -158,3 +158,5 @@ test('comparison retains unfollow history without duplicating newly followed acc
   assert.equal(followed.length,1);
   assert.equal(followed[0].status,'pending');
 });
+
+test('unfollowed history sorts by newest unfollow date, missing dates last',()=>{const users=[{handle:'old',followedAt:'2026-10-25',unfollowedAt:'2026-10-23'},{handle:'new',followedAt:'2026-10-01',unfollowedAt:'2026-10-26'},{handle:'unknown'}];assert.deepEqual(sortFollowbackUsers(users,'unfollowed').map(e=>e.handle),['new','old','unknown']);});

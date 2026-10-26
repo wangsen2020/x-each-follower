@@ -45,10 +45,10 @@
             class="secondary danger-btn"
             type="button"
             :title="isFansScope && fansSubTab === 'followBack' ? '队列回关记录由关注队列统一管理' : '清空当前范围的执行日志'"
-            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack') || (currentScope === 'unreciprocated' && followbackSubTab === 'unfollow')"
+            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack')"
             style="margin-right: 10px"
             @click="clearLogs"
-          >清空日志</button>
+          >{{ currentScope === 'unreciprocated' ? '清空全部分类' : '清空日志' }}</button>
           <PanelCloseButton
             id="closeLogsModal"
             @click="close"
@@ -57,9 +57,11 @@
       </div>
 
       <div v-if="currentScope === 'unreciprocated'" class="logs-modal-subtabs">
-        <button type="button" class="subtab-btn" :class="{active: followbackSubTab === 'all'}" @click="setFollowbackSubTab('all')">全部</button>
-        <button id="subtabUnfollowLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'unfollow'}" @click="setFollowbackSubTab('unfollow')">取关</button>
+        <button type="button" class="subtab-btn" :class="{active: followbackSubTab === 'timeout-monitoring'}" @click="setFollowbackSubTab('timeout-monitoring')">超时监测</button>
+        <button id="subtabGreetingLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'greeting'}" @click="setFollowbackSubTab('greeting')">私信提醒</button>
+        <button id="subtabUnfollowLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'unfollow'}" @click="setFollowbackSubTab('unfollow')">取消关注</button>
       </div>
+      <p v-if="currentScope === 'unreciprocated'" style="margin: 0; padding: 8px 16px; color: #52655e; font-size: 12px">{{ followbackSubTab === 'timeout-monitoring' ? '关系比对与超时判定，不执行提醒或取关。' : followbackSubTab === 'greeting' ? '私信提醒及发送结果；待确认不代表已送达。' : '自动、手动取关的账号及结果；跳过或待确认不代表已取关。' }}</p>
       <!-- Sub-tabs for Fans Scope (Scan vs Queue Follow-back) -->
       <div v-if="isFansScope" class="logs-modal-subtabs">
         <button
@@ -186,8 +188,16 @@
                 </span>
               </div>
               <div v-if="rawLog.summary" class="log-summary-row">{{ rawLog.summary }}</div>
+              <div class="followback-log-key-info">
+                <div v-if="followbackLogContext(rawLog).handle || followbackLogPresentation(rawLog).source.includes('取关')" class="log-card-target">
+                  <strong>目标账号：</strong>
+                  <a v-if="followbackLogContext(rawLog).handle" class="log-target-link" :href="'https://x.com/' + encodeURIComponent(followbackLogContext(rawLog).handle)" target="_blank" rel="noopener noreferrer">@{{ followbackLogContext(rawLog).handle }}</a>
+                  <span v-else>{{ rawLog.result === 'started' ? '尚未选择' : '未记录' }}</span>
+                  <span v-if="followbackLogContext(rawLog).name" class="log-target-name">{{ followbackLogContext(rawLog).name }}</span>
+                </div>
+                <dl class="followback-log-key-fields"><template v-for="field in followbackLogContext(rawLog).rows" :key="field.label"><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></template></dl>
+              </div>
               <div v-if="rawLog.details" class="followback-log-context">
-                <span>阶段：{{ rawLog.details['阶段'] }}</span><span v-if="rawLog.details['提交状态']"> · {{ rawLog.details['提交状态'] }}</span>
                 <div v-if="Object.keys(rawLog.details['跳过原因统计'] || {}).length">跳过：{{ Object.entries(rawLog.details['跳过原因统计']).map(([reason, count]) => `${reason} ${count}`).join('；') }}</div>
               </div>
               <details v-if="rawLog.details" class="followback-log-details">
@@ -340,7 +350,7 @@
 
 <script setup>
 import {unfollowLogHandles} from '../../../shared/execution-log-select.js';
-import {followbackLogPresentation} from '../../../features/relationships/followback-log.js';
+import {followbackLogPresentation,followbackLogContext} from '../../../features/relationships/followback-log.js';
 import { logsModalController } from '../composables/useExecutionLogs.js';
 import PanelCloseButton from './PanelCloseButton.vue';
 import { repairMojibake } from '../../../features/relationships/scoring.js';
@@ -664,6 +674,10 @@ async function copyText(text, event) {
 
 <style scoped>
 .followback-log-context { margin-top: 6px; font-size: 12px; color: #60776c; line-height: 1.6; overflow-wrap: anywhere; }
+.followback-log-key-info { margin-top: 10px; padding: 10px 12px; background: #f4f8f6; border-radius: 6px; font-size: 12px; }
+.followback-log-key-fields { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; line-height: 1.5; }
+.followback-log-key-fields dt { color: #60776c; }
+.followback-log-key-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .followback-log-details { margin: 8px 0 0; font-size: 12px; }
 .followback-log-details summary { cursor: pointer; color: #356451; padding: 4px 0; }
 .followback-log-details summary:focus-visible { outline: 2px solid #769287; outline-offset: 2px; }

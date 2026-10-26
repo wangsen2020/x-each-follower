@@ -1,7 +1,7 @@
 // Indexed execution logs. Writes are serialized on one promise chain.
 // Scope rows support newest-first [at, id] cursors. Legacy chrome.storage arrays are imported once and left in place.
 import {durableGetStrict as persistentDurableGet, durableSet as persistentDurableSet} from '../platform/persistent-db.js';
-import {selectExecutionLogs, isUnfollowLog} from './execution-log-select.js';
+import {selectExecutionLogs, matchesFollowbackLogKind, collapseUnfollowSummaries} from './execution-log-select.js';
 
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
@@ -617,9 +617,9 @@ export function createExecutionLogStore(options = {}) {
         const db = await database();
         const size = Math.max(1, Math.min(50, Number(limit) || LOG_PAGE_SIZE));
         const tx = db.transaction(['scopeRows', 'logs'], 'readonly');
-        if (kind === 'unfollow' && scope === 'unreciprocated') {
+        if (['unfollow','greeting','timeout-monitoring','timeout-handling'].includes(kind) && scope === 'unreciprocated') {
           const matches = [];
-          let count = 0;
+
           await new Promise((resolve, reject) => {
             const request = tx.objectStore('scopeRows').openCursor(scopeBound(scope, null, since), 'prev');
             request.onerror = () => reject(request.error);
@@ -630,18 +630,19 @@ export function createExecutionLogStore(options = {}) {
               const get = tx.objectStore('logs').get(row.logId);
               get.onerror = () => reject(get.error);
               get.onsuccess = () => {
-                if (isUnfollowLog(get.result)) {
-                  count++;
-                  const after = !bound || row.at < bound.at || (row.at === bound.at && row.id < bound.id);
-                  if (after && matches.length <= size) matches.push({row, record: get.result});
+                if (matchesFollowbackLogKind(get.result, kind)) {
+
+                  matches.push(get.result);
                 }
                 current.continue();
               };
             };
           });
           await transactionDone(tx);
-          const page = matches.slice(0, size), last = page.at(-1)?.row;
-          return {kind:'unfollow', entries: page.map(item => item.record), total: count, nextCursor: matches.length > size && last ? {at:last.at,id:last.id} : null};
+          const visible = collapseUnfollowSummaries(matches);
+          const remaining = visible.filter(row => !bound || row.at < bound.at || (row.at === bound.at && row.id < bound.id));
+          const page = remaining.slice(0, size), last = page.at(-1);
+          return {kind, presentationVersion:2, entries:page, total:visible.length, nextCursor:remaining.length > size && last ? {at:last.at,id:last.id} : null};
         }
         const rows = [];
         await new Promise((resolve, reject) => {

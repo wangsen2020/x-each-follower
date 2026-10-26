@@ -43,11 +43,15 @@ test('concurrent claims allow only one winner and disk failure prevents submissi
  const f=fixture();const results=await Promise.all([f.ledger.claim({ownerId:'1',targetId:'2',once:true}),f.ledger.claim({ownerId:'1',targetId:'2',once:true})]);assert.equal(results.filter(r=>r.ok).length,1);
  const g=fixture();g.deps.ledger=createGreetingLedger({storage:g.storage,write:async()=>{throw new Error('disk failure');}});await g.run();assert.equal(g.calls.length,0);
 });
-test('known unsent failures cool down without starving later eligible users',async()=>{
- const f=fixture();f.data['autoGreetingRetry:1:2']=time+3600000;const other={...f.user,id:'3',handle:'other'};f.deps.candidates=async()=>[f.user,other];f.deps.refresh=async u=>u;await f.run();assert.deepEqual(f.calls,['3']);
+test('legacy retry timestamps and recent not_sent records do not block the next scheduled attempt',async()=>{
+ const f=fixture();f.data['autoGreetingRetry:1:2']=time+3600000;
+ f.data['firstGreeting:1:2']={status:'not_sent',completedAt:new Date(time-1000).toISOString()};
+ const other={...f.user,id:'3',handle:'other'};f.deps.candidates=async()=>[f.user,other];f.deps.refresh=async u=>u;
+ await f.run();assert.deepEqual(f.calls,['2','3']);
+ assert.ok(!JSON.stringify(f.logs).includes('冷却'));
 });
 test('automatic reminder alarm is independent from local comparison and cancels on disable',async()=>{
- const f=fixture(),runner=createAutoGreeting(f.deps);await runner.schedule();assert.equal(f.alarms.get(AUTO_GREETING_ALARM).periodInMinutes,5);f.data.unreciprocatedSettings.autoGreeting=false;await runner.schedule();assert.equal(f.alarms.size,0);
+ const f=fixture(),runner=createAutoGreeting({...f.deps,random:()=>0});await runner.schedule();assert.deepEqual(f.alarms.get(AUTO_GREETING_ALARM),{delayInMinutes:4});f.data.unreciprocatedSettings.autoGreeting=false;await runner.schedule();assert.equal(f.alarms.size,0);
 });
 
 test('message results have distinct labels rather than being mistaken for failed comparison',async()=>{
@@ -63,5 +67,28 @@ test('summary groups skip reasons and links all events to one run',async()=>{
 });
 test('failed delivery records stage, submission state, chat diagnostics and retry rule',async()=>{
  const f=fixture();f.deps.send=async()=>({ok:false,submitted:false,reason:'sender unavailable',diagnostics:{code:'CHAT_SENDER_NOT_FOUND',matchedMethods:0}});
- await f.run();const failure=f.logs.find(l=>l.result==='failed');assert.equal(failure.details['提交状态'],'未提交');assert.equal(failure.details['聊天诊断'].code,'CHAT_SENDER_NOT_FOUND');assert.match(failure.details['重试策略'],/一小时/);assert.equal(failure.details['阶段'],'打开聊天并准备发送');
+ await f.run();const failure=f.logs.find(l=>l.result==='failed');assert.equal(failure.details['提交状态'],'未提交');assert.equal(failure.details['聊天诊断'].code,'CHAT_SENDER_NOT_FOUND');assert.match(failure.details['重试策略'],/下轮调度/);assert.equal(failure.details['阶段'],'打开聊天并准备发送');
+});
+
+test('known unsent delivery retries on the next round but never loops within the round',async()=>{
+ const f=fixture();let attempts=0;
+ f.deps.send=async(u,t,a,c,before)=>{await before();attempts++;return {ok:false,submitted:false,reason:'X rejected before submission'};};
+ await f.run();assert.equal(attempts,1);assert.equal((await f.ledger.read('1','2')).status,'not_sent');
+ await f.run();assert.equal(attempts,2);assert.equal(Object.keys(f.data).some(k=>k.startsWith('autoGreetingRetry:')),false);
+});
+
+test('legacy periodic alarms migrate once, settings saves preserve the plan and completed rounds randomize again',async()=>{
+ const f=fixture();let draws=0;const runner=createAutoGreeting({...f.deps,random:()=>draws++ ? 0.75 : 0.25});
+ f.alarms.set(AUTO_GREETING_ALARM,{periodInMinutes:5,scheduledTime:time+10000});
+ await runner.schedule();assert.deepEqual(f.alarms.get(AUTO_GREETING_ALARM),{delayInMinutes:4.5});
+ await runner.schedule();assert.equal(draws,1,'unrelated saves must not postpone the alarm');
+ await runner.run();assert.deepEqual(f.alarms.get(AUTO_GREETING_ALARM),{delayInMinutes:5.5});
+});
+
+test('pre-submit lookup errors replan without creating a cooldown or clearing duplicate protection',async()=>{
+ const f=fixture();f.deps.profile=async()=>{throw Object.assign(Error('HTTP 429'),{status:429});};
+ await f.run();await f.run();assert.equal(f.calls.length,0);
+ assert.equal(Object.keys(f.data).some(k=>k.startsWith('autoGreetingRetry:')),false);
+ assert.ok(f.alarms.has(AUTO_GREETING_ALARM));
+ assert.ok(f.logs.some(l=>l.details?.['HTTP状态']===429));
 });

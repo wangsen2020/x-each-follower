@@ -16,7 +16,7 @@ export function planBatch(previous,posts,days,now,settings={}) {
   const sorted=posts.filter(eligible).sort(comparePosts);
   const recent=sorted.filter(p=>p.availability!=='unavailable').slice(0,30);
   const recentFrom=Math.max(now-90*DAY,Math.min(now-DAY,...recent.map(p=>p.createdAt)));
-  const due=sorted.filter(p=>!p.protected&&now-p.createdAt>=normalizeLowRules(settings.lowRules).matureHours*3600000&&now-p.createdAt<=90*DAY&&now-p.capturedAt>=reviewInterval(settings.reviewIntervalHours)*3600000&&(p.source?.kind==='auto-quote'||evaluatePost(p,sorted,now,undefined,settings.lowRules).low)).sort((a,b)=>a.capturedAt-b.capturedAt);
+  const due=sorted.filter(p=>!p.protected&&now-p.createdAt>=normalizeLowRules(settings.lowRules).matureHours*3600000&&now-p.createdAt<=90*DAY&&now-p.capturedAt>=reviewInterval(settings.reviewIntervalHours)*3600000&&(['auto-quote','auto-original'].includes(p.source?.kind)||evaluatePost(p,sorted,now,undefined,settings.lowRules).low)).sort((a,b)=>a.capturedAt-b.capturedAt);
   let lane=['recent','review','history','head'][state.phase%4];
   if(lane==='review'&&!due.length&&!state.lanes.review?.pending?.length)lane='history';
   let scan=state.lanes[lane];

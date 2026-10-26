@@ -11,9 +11,9 @@ import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-sto
 export function useExecutionLogs() {
   const isOpen = ref(false);
   const currentScope = ref('queue');
-  const followbackSubTab = ref('all');
+  const followbackSubTab = ref('unfollow');
   async function setFollowbackSubTab(tab) {
-    if (!['all','unfollow'].includes(tab)) return;
+    if (!['timeout-monitoring','greeting','unfollow'].includes(tab)) return;
     followbackSubTab.value = tab; logPager.reset();
     if (isOpen.value) await loadPage();
   }
@@ -83,7 +83,7 @@ export function useExecutionLogs() {
       return '粉丝跟进 · 全部执行日志';
     }
     if (scope === 'unreciprocated') {
-      return '回关监控 · 执行日志';
+      return `回关监控 · ${followbackSubTab.value === 'timeout-monitoring' ? '超时监测' : followbackSubTab.value === 'greeting' ? '私信提醒' : '取消关注'}`;
     }
     const prefix = scope === 'comment' ? '评论追踪' : scope === 'mutual' ? '互关追踪' : '关注队列';
     return `${prefix} · 执行日志`;
@@ -115,7 +115,7 @@ export function useExecutionLogs() {
       if (fansSubTab.value === 'followBack') return '暂无队列回关日志';
       return '暂无粉丝跟进执行日志';
     }
-    if (scope === 'unreciprocated') return '暂无回关监控日志';
+    if (scope === 'unreciprocated') return followbackSubTab.value === 'timeout-monitoring' ? '暂无超时监测日志' : followbackSubTab.value === 'greeting' ? '暂无私信提醒日志' : '暂无取消关注日志';
     return '暂无执行日志记录';
   });
 
@@ -131,7 +131,7 @@ export function useExecutionLogs() {
       return '点击“↻ 增量同步关注与粉丝数据”或关注队列执行回关后，相关明细将显示在此。';
     }
     if (scope === 'unreciprocated') {
-      return '点击“开始检测”或开启定时取关后，检测与取关记录将显示在此。';
+      return followbackSubTab.value === 'timeout-monitoring' ? '查看关系比对、等待天数和超时判定；监测本身不会发送提醒或取关。' : followbackSubTab.value === 'greeting' ? '查看私信提醒及发送结果；待确认的私信不会重复发送。' : '查看自动和手动取关的账号及结果；跳过或待确认不代表已取关。';
     }
     return '开启定时看帖关注或点击“立即执行”后，访问的主页、扫描的帖子及关注结果将记录在此。';
   });
@@ -158,12 +158,12 @@ export function useExecutionLogs() {
         const query = {
           cmd: 'queryExecutionLogs',
           scope: queryScope,
-          ...(queryScope === 'unreciprocated' && followbackSubTab.value === 'unfollow' ? {kind:'unfollow'} : {}),
+          ...(queryScope === 'unreciprocated' ? {kind:followbackSubTab.value} : {}),
           limit: pageSize,
           since,
           cursor: logPager.cursor()
         };
-        saved = query.kind === 'unfollow'
+        saved = Boolean(query.kind)
           ? await queryUnfollowLogs(message => chrome.runtime.sendMessage(message), query)
           : await chrome.runtime.sendMessage(query);
       } else {
@@ -239,7 +239,8 @@ export function useExecutionLogs() {
   }
 
   async function clearLogs() {
-    if (currentScope.value === 'unreciprocated' && followbackSubTab.value === 'unfollow') return;
+
+
     const scope = currentScope.value;
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       if (typeof window !== 'undefined' && window.alert) {
@@ -251,7 +252,7 @@ export function useExecutionLogs() {
     const label = scope === 'fans' || scope === 'monitor'
       ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝跟进全部日志')
       : scope === 'unreciprocated'
-        ? '回关监控执行日志'
+        ? '超时监测、私信提醒和取消关注的全部日志'
         : '当前范围的执行日志';
 
     if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`)) {

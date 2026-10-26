@@ -33,7 +33,7 @@ export function validateQuoteTags(settings) {
   const longest=eligibleTags(settings).map(t=>tweetWeight('#'+t)).sort((a,b)=>b-a).slice(0,2);
   if(longest.reduce((a,b)=>a+b,0)+1>180) throw new Error('候选标签过长，请缩短标签，为评价正文保留空间。');
 }
-export function appendQuoteTags(text, settings, language, {random = Math.random, previousText = text} = {}) {
+export function appendQuoteTags(text, settings, language, {random = Math.random, previousText = text, lengthPolicy} = {}) {
   const suffix=quoteTagSuffix(settings, language ? resolveCommentLanguage(text,language) : undefined, random, previousText);let base=String(text||'').trim();
   if(!base)return base;
   if(!normalizeQuoteTags(settings).quoteTagsEnabled)return base;
@@ -47,7 +47,8 @@ export function appendQuoteTags(text, settings, language, {random = Math.random,
   let appended=false;
   for(const tag of suffix.split(' ')) {
     const candidate=result+(appended?' ':'\n\n')+tag;
-    if(tweetWeight(candidate)<=280){result=candidate;appended=true;}
+    const fits = lengthPolicy ? Array.from(candidate).length <= lengthPolicy.maxDraftCharacters : tweetWeight(candidate)<=280;
+    if(fits){result=candidate;appended=true;}
   }
   return result;
 }

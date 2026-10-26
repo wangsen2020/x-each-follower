@@ -140,6 +140,10 @@ function sortKeyFor(moduleName, payload, path, index) {
   if (moduleName === 'fans') return dated(payload?.discoveredAt);
   if (moduleName === 'logs') return dated(payload?.at);
   if (moduleName === 'unreciprocated') {
+    if (payload?.status === 'unfollowed') {
+      const at = Date.parse(payload.unfollowedAt);
+      return `0|${String(Number.isFinite(at) ? 999999999999999 - at : 999999999999999).padStart(15, '0')}|${tie}|${handle}`;
+    }
     const followedAt = Date.parse(payload?.followedAt);
     return `${Number.isFinite(followedAt) ? '0' : '1'}|${Number.isFinite(followedAt) ? String(followedAt).padStart(15, '0') : '999999999999999'}|${tie}|${handle}`;
   }
@@ -1136,6 +1140,20 @@ export function createRecordRuntime({
     const stamp = cursor => cursor ? encodeCursor({
       v: 1, accountId, module: moduleName, tab, complex, filterHash, revision, sortKey: cursor.sortKey, userKey: cursor.userKey
     }) : null;
+    // Historical rows may have been indexed by followedAt in an older version.
+    // Sort the history subset before pagination without rewriting source records.
+    if(moduleName==='unreciprocated' && tab==='unfollowed'){
+      const history=[];let cursor=null,scanned=0;
+      do{
+        const page=await projection.queryPage({accountId,module:moduleName,tab,limit:100,cursor});
+        scanned+=page.scanned;history.push(...page.records.filter(row=>matches(moduleName,row,filter)));cursor=page.nextCursor;
+      }while(cursor);
+      for(const row of history){const at=Date.parse(row.payload?.unfollowedAt);row.sortKey=String(Number.isFinite(at)?999999999999999-at:999999999999999).padStart(15,'0');}
+      history.sort((a,b)=>a.sortKey.localeCompare(b.sortKey)||a.userKey.localeCompare(b.userKey));
+      const remaining=history.filter(row=>!parsed||row.sortKey>parsed.sortKey||(row.sortKey===parsed.sortKey&&row.userKey>parsed.userKey));
+      const records=remaining.slice(0,limit);
+      return {records:records.map(present),nextCursor:remaining.length>limit?stamp(records.at(-1)):null,scanned,matched:history.length,revision};
+    }
     const onStep = hooks.onCursorStep;
     if (!complex) {
       const page = await projection.queryPage({
