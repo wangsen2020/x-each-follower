@@ -850,7 +850,7 @@
   display: inline-flex !important;
   flex-direction: row !important;
   align-items: center !important;
-  gap: 4px;
+  gap: 0;
   font-size: 12px;
   white-space: nowrap;
   color: #4b5563;
@@ -1049,8 +1049,16 @@
 .fq-drawer-body .fq-setting-input { width: 80px; flex: 0 0 80px; margin: 0; text-align: start; }
 .fq-drawer-body .fq-switch-label { flex-wrap: nowrap; justify-content: flex-start; line-height: 20px; }
 .fq-drawer-body .fq-switch-label > span:not(.info-tip) { min-width: 0; overflow-wrap: anywhere; }
-.fq-drawer-body .fq-publication-mode-setting { flex-direction: column; align-items: flex-start; gap: 8px; }
-.fq-drawer-body .fq-publication-mode-setting > .fq-setting-label { min-width: 0; max-width: 100%; margin: 0; }
-.fq-publication-mode-group { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; width: 100%; }
+.fq-drawer-body .fq-publication-mode-setting { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; column-gap: 10px; row-gap: 8px; }
+.fq-drawer-body .fq-publication-mode-setting > .fq-setting-label { min-width: 0; max-width: none; margin: 0; }
+.fq-publication-mode-group { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; }
+.fq-publication-mode-setting > .fq-setting-error { grid-column: 2; }
 .fq-radio-label { display: inline-flex; flex-direction: row; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer; font-size: 13px; }
 .fq-radio-input { margin: 0; accent-color: #245c48; }
+.fq-evaluation-feedback {
+  margin-top: 5px;
+  max-width: 300px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

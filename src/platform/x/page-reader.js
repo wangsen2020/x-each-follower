@@ -227,7 +227,8 @@ export function setQuoteFrameFallbackOnPage(enabled) {
   };
   window[key] = {restore};
   window.requestAnimationFrame = function(callback) {
-    if (!document.hidden) return request.call(window, callback);
+    // Occluded popup windows can report hidden=false while Chrome still
+    // suspends frames. Race every frame while this temporary fallback is on.
     let done = false;
     const finish = time => {
       if (done) return;

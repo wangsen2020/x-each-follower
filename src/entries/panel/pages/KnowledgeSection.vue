@@ -89,7 +89,7 @@
     <nav class="kb-pagination" aria-label="知识分页">
       <span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span>
       <div class="kb-page-controls">
-        <label class="kb-select-field">每页<select v-model.number="pageSize" aria-label="知识每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select>条</label>
+        <label class="kb-select-field"><span>每页</span><select v-model.number="pageSize" aria-label="知识每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select>条</label>
         <button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--" aria-label="知识上一页" title="上一页">‹</button>
         <button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++" aria-label="知识下一页" title="下一页">›</button>
       </div>
@@ -216,7 +216,7 @@
 
 
     <ActionSettingsDrawer ref="settingsDrawerRef" title="知识库设置">
-      <label class="kb-select-field">每页条数<select v-model.number="settingsPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
+      <label class="kb-select-field"><span>每页条数</span><select v-model.number="settingsPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
       <p class="kb-hint">与列表分页同步，保存在当前浏览器。自动分析尚未接入。</p>
       <p v-if="settingsError" class="kb-form-error" role="alert">{{ settingsError }}</p>
       <template #footer><button type="button" class="secondary" @click="settingsDrawerRef?.close()">取消</button><button type="button" class="kb-btn-primary" @click="saveSettings">保存</button></template>
@@ -922,7 +922,7 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
   font-size: 13px;
   font-weight: 600;
 }
-.kb-select-field > :not(:last-child) { margin-right: 10px; }
+.kb-select-field > :not(:last-child) { margin: 0 10px 0 0; }
 
 .kb-select-field select {
   font: inherit;
@@ -1403,7 +1403,6 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 .kb-filter-controls { margin-left: 0; }
 .kb-status-tabs, .kb-filter-controls, .kb-card-meta, .kb-card-actions { }
 .kb-select-field { flex-direction: row; margin: 0; white-space: nowrap; flex-shrink: 0; }
-.kb-select-field .kb-field-label { margin: 0 10px 0 0; }
 .kb-select-field select { width: auto; margin: 0; }
 .kb-status-tab, .kb-head-actions button, .kb-card-actions button, .kb-page-controls button { white-space: nowrap; flex-shrink: 0; }
 .kb-head-actions button, .kb-filter-row button, .kb-filter-row input, .kb-filter-row select,
@@ -1413,7 +1412,7 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 .kb-pagination, .kb-page-controls { display: flex; align-items: center; }
 .kb-pagination { justify-content: space-between; font-size: 13px; }
 .kb-page-controls > :not(:last-child) { margin-right: 10px; }
-.kb-page-controls label select { margin: 0 10px; }
+.kb-page-controls label select { margin: 0 10px 0 0; }
 .kb-empty-box { min-height: 120px; padding: 10px; box-sizing: border-box; }
 .kb-drawer-form { padding: 0; }
 @media (max-width: 1100px) {

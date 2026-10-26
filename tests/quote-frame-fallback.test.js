@@ -28,10 +28,11 @@ test('hidden quote frames progress once, support cancellation and restore native
     assert.equal(count, 2, 'native frame and timeout must not both invoke callback');
     document.hidden = false;
     const visible = window.requestAnimationFrame(() => count++);
+    const lateFrame = callbacks.get(visible);
     t.mock.timers.tick(100);
-    assert.equal(count, 2, 'visible pages use normal animation frames');
-    callbacks.get(visible)(456);
-    assert.equal(count, 3);
+    assert.equal(count, 3, 'occluded popup may report visible while native frames are suspended');
+    lateFrame(456);
+    assert.equal(count, 3, 'late native frame must not execute a second time');
     setQuoteFrameFallbackOnPage(false);
     assert.equal(window.requestAnimationFrame, request);
     assert.equal(window.cancelAnimationFrame, cancel);

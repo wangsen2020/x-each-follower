@@ -15,12 +15,14 @@
     <UnreciprocatedSettingsDrawer />
     <ExecutionLogsModal />
     <InfoTipLayer />
+    <CloudflareImageSettings />
   </div>
 </template>
 
 <script setup>
 import ExecutionLogsModal from './components/ExecutionLogsModal.vue';
 import InfoTipLayer from './components/InfoTipLayer.vue';
+import CloudflareImageSettings from './components/CloudflareImageSettings.vue';
 import ProfileDrawer from './components/ProfileDrawer.vue';
 import SettingsDrawer from './components/SettingsDrawer.vue';
 import UnreciprocatedSettingsDrawer from './components/UnreciprocatedSettingsDrawer.vue';

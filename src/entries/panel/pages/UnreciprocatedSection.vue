@@ -41,11 +41,7 @@
           <button id="unreciprocatedSearchBtn" type="button" class="secondary search-btn">搜索</button>
         </div>
       </div>
-      <div id="unreciprocatedPagination" class="monitor-pagination">
-        <label class="unreciprocated-pagesize-label"><span>每页</span><select id="unreciprocatedPageSize"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select></label>
-        <span id="unreciprocatedPageSummary" class="page-summary">第 1 / 1 页</span>
-        <div class="page-actions"><button id="unreciprocatedPrevPage" class="icon-button secondary" title="上一页" aria-label="上一页">‹</button><button id="unreciprocatedNextPage" class="icon-button secondary" title="下一页" aria-label="下一页">›</button></div>
-      </div>
+      <PanelPagination id="unreciprocatedPagination" select-id="unreciprocatedPageSize" summary-id="unreciprocatedPageSummary" prev-id="unreciprocatedPrevPage" next-id="unreciprocatedNextPage" :default-size="50" initial-summary="第 1 / 1 页" icon-buttons />
     </div>
     <div id="unreciprocatedLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载回关监控…</span></div>
     <div id="unreciprocatedLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="unreciprocated">重试</button></div>
@@ -87,6 +83,7 @@
 </template>
 
 <script setup>
+import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
 </script>
@@ -118,10 +115,20 @@ const { activeTab } = panelNavigationController;
 
 #unreciprocatedSection .subbar-left > :not(:last-child) {
   margin-right: 10px;
+  margin-bottom: 0;
 }
 
 #unreciprocatedSection .unreciprocated-tabs > :not(:last-child) {
   margin-right: 4px;
+}
+
+@media (max-width: 600px) {
+  #unreciprocatedSection .unreciprocated-tabs {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
 }
 
 .unreciprocated-filter-select {
@@ -172,17 +179,6 @@ const { activeTab } = panelNavigationController;
   margin-right: 10px;
 }
 
-#unreciprocatedSection #unreciprocatedPagination label.unreciprocated-pagesize-label {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  white-space: nowrap;
-  margin: 0;
-}
-#unreciprocatedSection #unreciprocatedPagination label.unreciprocated-pagesize-label > span {
-  margin-right: 10px;
-  font-size: 12px;
-}
 #unreciprocatedSection #unreciprocatedPageSize {
   height: 30px;
   min-height: 30px;

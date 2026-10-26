@@ -340,9 +340,10 @@ test('concurrent claims grant one global lease', async () => {
 
 test('expired running becomes uncertain and a stale settle cannot overwrite a new lease', async () => {
   const {store, clock} = storeFor();
-  await store.enqueue({accountId: 'acc-1', targetUserId: '9', handle: 'nine', sources: [{module: 'mutual', url: 'm', enabled: true}]});
-  await store.enqueue({accountId: 'acc-1', targetUserId: '8', handle: 'eight', sources: [{module: 'fans', url: 'f', enabled: true}]});
+  await store.enqueue({accountId: 'acc-1', targetUserId: '9', handle: 'nine', followResult:{attemptedAt:999}, sources: [{module: 'mutual', url: 'm', enabled: true}]});
+  await store.enqueue({accountId: 'acc-1', targetUserId: '8', handle: 'eight', followResult:{attemptedAt:999}, sources: [{module: 'fans', url: 'f', enabled: true}]});
   const first = await store.claim({accountId: 'acc-1', owner: 'old', leaseMs: 20});
+  await store.settle({id:first.id,owner:'old',version:first.lease.version,state:'running',patch:{stage:'following',followResult:{attemptedAt:999}}});
   clock.t = 1_030;
   const second = await store.claim({accountId: 'acc-1', owner: 'new', leaseMs: 20});
   assert.ok(second);
@@ -379,7 +380,7 @@ test('expired running becomes uncertain and a stale settle cannot overwrite a ne
   assert.equal(fresh.job.followResult.unknown, true);
   const still = await store.list({accountId: 'acc-1'});
   assert.equal(still.find(job => job.id === first.id).state, 'uncertain');
-  assert.equal(still.find(job => job.id === first.id).followResult, null);
+  assert.equal(still.find(job => job.id === first.id).followResult.attemptedAt, 999);
 });
 
 test('durable followed outcome survives job deletion and blocks rediscovery', async () => {
@@ -1531,15 +1532,16 @@ test('publicationMode settings roundtrip, legacy migration, and strict explicit-
   assert.equal(partialSaved.publicationMode, 'original');
   assert.equal((await store.getSettings('acc-1')).publicationMode, 'original');
 
+  for(const mode of ['reply','article']){await store.saveSettings('acc-1',{publicationMode:mode});assert.equal((await store.getSettings('acc-1')).publicationMode,mode);}
   const savedQuote = await store.saveSettings('acc-1', {publicationMode: 'quote'});
   assert.equal(savedQuote.publicationMode, 'quote');
   assert.equal((await store.getSettings('acc-1')).publicationMode, 'quote');
 
   await store.saveSettings('acc-1', {publicationMode: 'original'});
-  for (const invalidMode of ['', 'reply', 'repost', 'standalone', null, undefined, 123, {}]) {
+  for (const invalidMode of ['', 'repost', 'standalone', null, undefined, 123, {}]) {
     await assert.rejects(
       () => store.saveSettings('acc-1', {publicationMode: invalidMode}),
-      /发帖形式仅支持引用评论（quote）或新帖（original）/
+      /发帖形式请选择评论、引用评论或文章/
     );
   }
   assert.equal((await store.getSettings('acc-1')).publicationMode, 'original');
@@ -1687,4 +1689,26 @@ test('evaluations.publicationMode is persisted as immutable publication intent a
   assert.deepEqual(mergedOrig.grokCalls, grokCalls);
   assert.equal(mergedOrig.generationAttemptedAt, 6000);
 
+});
+
+
+test('expired pre-action lease resumes the same job and fences the abandoned worker',async()=>{
+  const {store,clock}=storeFor();
+  await store.enqueue({accountId:'acc-1',targetUserId:'42',handle:'target',sources:[{module:'fans',enabled:true}]});
+  const first=await store.claim({accountId:'acc-1',owner:'abandoned',leaseMs:20});
+  clock.t+=30;
+  const resumed=await store.claim({accountId:'acc-1',owner:'new',leaseMs:20});
+  assert.equal(resumed.id,first.id);assert.equal(resumed.state,'running');assert.ok(resumed.lease.version>first.lease.version);
+  assert.equal((await store.settle({id:first.id,owner:'abandoned',version:first.lease.version,state:'followed',patch:{}})).ok,false);
+  const done=await store.settle({id:resumed.id,owner:'new',version:resumed.lease.version,state:'followed',patch:{followResult:{succeeded:true}}});
+  assert.equal(done.ok,true);assert.equal(done.job.state,'followed');
+});
+
+test('expired removal intent stays uncertain and cannot be replayed as a follow',async()=>{
+  const {store,clock}=storeFor();
+  await store.enqueue({accountId:'acc-1',targetUserId:'42',handle:'target',sources:[{module:'fans',enabled:true}],followResult:{followerRemoval:{attemptedAt:999}}});
+  const first=await store.claim({accountId:'acc-1',owner:'abandoned',leaseMs:20});
+  await store.settle({id:first.id,owner:'abandoned',version:first.lease.version,state:'running',patch:{followResult:{followerRemoval:{attemptedAt:999}}}});clock.t+=30;
+  assert.equal(await store.claim({accountId:'acc-1',owner:'new',leaseMs:20}),null);
+  assert.equal((await store.list({accountId:'acc-1'})).find(j=>j.id===first.id).state,'uncertain');
 });

@@ -36,7 +36,7 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   quoteLengthMode: 'adaptive'
 });
 
-export const PUBLICATION_MODES = Object.freeze(['quote', 'original']);
+export const PUBLICATION_MODES = Object.freeze(['reply', 'quote', 'article', 'original']);
 export const QUOTE_LENGTH_MODES = Object.freeze(['adaptive', 'concise', 'deep']);
 
 const SETTING_BOUNDS = {
@@ -256,6 +256,9 @@ function mergeEvaluations(existing, incoming, followJobId) {
       originalPostId: item.originalPostId || prev.originalPostId || '',
       originalPostUrl: item.originalPostUrl || prev.originalPostUrl || '',
       publicationMode: resolveEvaluationPublicationMode(prev.publicationMode, item.publicationMode),
+      article: isMeaningfulObject(item.article) ? clone(item.article) : (prev.article ? clone(prev.article) : null),
+      coverAttemptedAt: item.coverAttemptedAt ?? prev.coverAttemptedAt ?? 0,
+      articleDraftUrl: item.articleDraftUrl || prev.articleDraftUrl || '',
       language: nonEmptyString(item.language, prev.language),
       baseText: nonEmptyString(item.baseText, prev.baseText),
       text: nonEmptyString(item.text, prev.text),
@@ -328,7 +331,7 @@ function validateExplicitQuoteSettings(input) {
   if (!input || typeof input !== 'object') return;
   if (Object.prototype.hasOwnProperty.call(input, 'publicationMode')) {
     if (!PUBLICATION_MODES.includes(input.publicationMode)) {
-      throw new Error('发帖形式仅支持引用评论（quote）或新帖（original）');
+      throw new Error('发帖形式请选择评论、引用评论或文章');
     }
   }
   if (Object.prototype.hasOwnProperty.call(input, 'quoteParticipationRate')) {
@@ -1286,7 +1289,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       });
     },
 
-    async claim({accountId, owner, leaseMs} = {}) {
+    async claim({accountId, owner, leaseMs, excludeIds = []} = {}) {
       const account = requireAccountId(accountId);
       if (typeof owner !== 'string' || owner === '') throw new Error('lease owner is required');
       if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('leaseMs must be a positive number');
@@ -1302,8 +1305,16 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             return;
           }
           if (!applyImportedHold(job)) {
-            job.state = 'uncertain';
-            job.stage = 'verify';
+            const result = job.followResult || {};
+            const safeBeforeAction = ['queued','claimed','pending','retry'].includes(job.stage)
+              && !result.attemptedAt && !result.followerRemoval?.attemptedAt && !succeededFollowResult(result)
+              && !(job.evaluations || []).some(ev => ev.generationAttemptedAt || ev.publishedPostId || ev.publishedPostUrl || ['generating','publishing','published','posted','uncertain'].includes(ev.status));
+            job.state = safeBeforeAction ? 'retry' : 'uncertain';
+            job.stage = safeBeforeAction ? 'queued' : 'verify';
+            if (safeBeforeAction) {
+              job.nextEligibleAt = seenAt;
+              job.followResult = {...result, reason:'执行中断，尚未发送关注操作，自动恢复执行'};
+            }
           }
           job.updatedAt = seenAt;
           releaseLease(job);
@@ -1326,7 +1337,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             [account, state], [account, state, []], false, true
           ), cursor => {
             const candidate = cursor.value;
-            if (candidate.accountId !== account || candidate.redirectTo) return;
+            if (candidate.accountId !== account || candidate.redirectTo || excludeIds.includes(candidate.id)) return;
             if (candidate.state !== state || !sourceAuthorized(candidate)) return;
             if (candidate.nextEligibleAt > seenAt) return;
             if (!job || compareFollowQueuePriority(candidate, job) < 0) job = candidate;

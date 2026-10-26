@@ -311,6 +311,7 @@ export function createFollowQueueScheduler({
         deadline: cycleDeadline
       });
 
+      const inspectedJobIds = [];
       while (
         !state.paused &&
         !state.rateLimited &&
@@ -349,12 +350,13 @@ export function createFollowQueueScheduler({
         const claimed = await store.claim({
           accountId: account,
           owner: workerOwner,
-          leaseMs: claimLeaseMs
+          leaseMs: claimLeaseMs, excludeIds: inspectedJobIds
         });
         if (!claimed) {
           break;
         }
 
+        inspectedJobIds.push(claimed.id);
         counters.inspected += 1;
         state.jobId = claimed.id;
         state.stage = claimed.stage || 'claimed';
@@ -430,6 +432,7 @@ export function createFollowQueueScheduler({
     let hasExternalEffect = Boolean(
       currentJob.followResult?.succeeded ||
       currentJob.followResult?.attemptedAt ||
+      currentJob.followResult?.followerRemoval?.attemptedAt ||
       currentJob.stage === 'following' ||
       currentJob.stage === 'followed' ||
       currentJob.stage === 'evaluating' ||
@@ -621,6 +624,7 @@ export function createFollowQueueScheduler({
           patch.stage === 'evaluated' ||
           patch.stage === 'publishing' ||
           patch.followResult?.attemptedAt ||
+          patch.followResult?.followerRemoval?.attemptedAt ||
           patch.followResult?.succeeded ||
           hasEvaluationExternalEffect(patch.evaluations)
         ) {
@@ -715,7 +719,7 @@ export function createFollowQueueScheduler({
           followSucceeded = true;
           hasExternalEffect = true;
         }
-        if (latestFollowResult.attemptedAt) {
+        if (latestFollowResult.attemptedAt || latestFollowResult.followerRemoval?.attemptedAt) {
           hasExternalEffect = true;
         }
       }

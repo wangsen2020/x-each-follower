@@ -930,8 +930,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 .mutual-subbar > :not(:last-child){margin-right:12px}
 .mutual-subbar .subbar-left > :not(:last-child){margin-right:10px}
 .mutual-subbar .subbar-left > :not(:last-child){margin-bottom:10px}
-.mutual-subbar #mutualPagination > :not(:last-child){margin-right:6px}
-.mutual-subbar #mutualPagination label > :not(:last-child){margin-right:4px}
+.mutual-subbar #mutualPagination > :not(:last-child){margin-right:10px}
 .monitor-head > :not(:last-child){margin-right:12px}
 .monitor-head-right > :not(:last-child){margin-right:10px}
 .monitor-head-right > :not(:last-child){margin-bottom:10px}
@@ -944,10 +943,8 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 .subbar-left > :not(:last-child){margin-bottom:8px}
 .search-wrap > :not(:last-child){margin-right:4px}
 .select-all-wrap > :not(:last-child){margin-right:5px}
-.selection-bar .monitor-pagination > :not(:last-child){margin-right:6px}
-#monitorPagination > :not(:last-child){margin-right:6px}
-.selection-bar .monitor-pagination label > :not(:last-child){margin-right:4px}
-#monitorPagination label > :not(:last-child){margin-right:4px}
+.selection-bar .monitor-pagination > :not(:last-child){margin-right:10px}
+#monitorPagination > :not(:last-child){margin-right:10px}
 .page-actions > :not(:last-child){margin-right:3px}
 .monitor-actions > :not(:last-child){margin-right:5px}
 #monitorSection .monitor-head-right > :not(:last-child){margin-right:12px}
@@ -957,10 +954,8 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 #monitorSection .subbar-left > :not(:last-child){margin-right:8px}
 #monitorSection .subbar-left > :not(:last-child){margin-bottom:8px}
 #monitorSection .search-wrap > :not(:last-child){margin-right:4px}
-#monitorSection .selection-bar .monitor-pagination > :not(:last-child){margin-right:6px}
-#monitorSection #monitorPagination > :not(:last-child){margin-right:6px}
-#monitorSection #monitorPagination label > :not(:last-child){margin-right:4px}
-#commentsSection #commentPagination label > :not(:last-child){margin-right:5px}
+#monitorSection .selection-bar .monitor-pagination > :not(:last-child){margin-right:10px}
+#monitorSection #monitorPagination > :not(:last-child){margin-right:10px}
 .mutual-subbar .subbar-right > :not(:last-child){margin-right:10px}
 .drawer-head-actions > :not(:last-child){margin-right:8px}
 .logs-modal-title-box > :not(:last-child){margin-right:10px}
@@ -987,15 +982,34 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 #unreciprocatedSection .unreciprocated-subbar > :not(:last-child){margin-right:10px}
 #unreciprocatedSection .unreciprocated-subbar .subbar-left > :not(:last-child){margin-right:8px}
 #unreciprocatedSection .unreciprocated-subbar .subbar-left > :not(:last-child){margin-bottom:8px}
-#unreciprocatedSection #unreciprocatedPagination > :not(:last-child){margin-right:6px}
-#unreciprocatedSection #unreciprocatedPagination label > :not(:last-child){margin-right:4px}
+#unreciprocatedSection #unreciprocatedPagination > :not(:last-child){margin-right:10px}
 #unreciprocatedSection #unreciprocatedPagination .page-actions > :not(:last-child){margin-right:3px}
 .badge-status > :not(:last-child){margin-right:4px}
 main > :not(.sidebar){margin-left:20px}
 @media(max-width:900px){main > :not(.sidebar){margin-left:16px}}
 @media(max-width:600px){main > :not(.sidebar){margin-left:0}}
 .drawer-facts{grid-template-columns:calc(50% - 4px) calc(50% + 4px)}.drawer-facts > :nth-child(even){margin-left:8px}.drawer-facts > :nth-child(n + 3){margin-top:8px}
-.monitor-list-header{margin-bottom:10px}.monitor-list-header,.monitor-item{grid-template-columns:18px minmax(0,1fr) 154px 102px 108px}.monitor-list-header > :not(:first-child),.monitor-item > :not(:first-child){margin-left:12px}
+.monitor-list-header{margin-bottom:10px}.monitor-list-header,.monitor-item{grid-template-columns:18px minmax(0,1fr) 130px 154px 102px 108px}.monitor-list-header > :not(:first-child),.monitor-item > :not(:first-child){margin-left:12px}
+.monitor-list-header .col-counts{white-space:nowrap}
+.monitor-counts{min-width:0;display:grid;gap:2px;color:#60756a;font-size:11px}
+.monitor-counts > span{min-width:0;display:flex;align-items:baseline;gap:6px}
+.monitor-counts strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#234b3a;font-size:12px;font-weight:600}
+@media(max-width:700px){
+  #monitorSection .monitor-list-header{grid-template-columns:18px minmax(0,1fr)}
+  #monitorSection .monitor-list-header .col-counts,#monitorSection .monitor-list-header .col-tag,#monitorSection .monitor-list-header .col-status,#monitorSection .monitor-list-header .col-actions{display:none}
+  #monitorSection .monitor-item{grid-template-columns:18px minmax(0,1fr) auto;grid-template-areas:'check profile actions' 'check counts counts' 'check tags tags' 'check status status';gap:6px 10px}
+  #monitorSection .monitor-item > :not(:first-child){margin-left:0}
+  #monitorSection .monitor-item > input[type="checkbox"]{grid-area:check}
+  #monitorSection .monitor-info{grid-area:profile}
+  #monitorSection .monitor-counts{grid-area:counts}
+  #monitorSection .col-tag-cell{grid-area:tags}
+  #monitorSection .monitor-badge{grid-area:status;justify-self:start}
+  #monitorSection .monitor-actions{grid-area:actions}
+}
+@media(max-width:600px){
+  #monitorSection.monitor-card.monitor-panel{height:calc(100vh - 71px);max-height:none}
+  #monitorSection .monitor-list{overflow-x:hidden}
+}
 #monitorSection .monitor-head > :not(:last-child){margin-right:0}#monitorSection .monitor-head > :nth-child(2){margin-left:16px}
 #monitorSection .monitor-subbar > :not(:last-child){margin-right:0}#monitorSection .monitor-subbar > :nth-child(2){margin-left:12px}
 .mutual-network-head label{display:flex;align-items:center}.mutual-network-head label > input,.mutual-network-head label > select{margin-top:0;margin-left:7px}
@@ -1031,8 +1045,13 @@ label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; 
 #commentsSection #commentPagination { display:flex; align-items:center; gap:0; }
 #commentsSection #commentPagination > :not(:last-child) { margin-right:10px; }
 #commentsSection #commentPagination .page-summary { margin-left:0; }
-#commentsSection #commentPagination label > select { margin:0 0 0 5px; }
+#commentsSection #commentPagination label > select { margin:0; }
 #commentsSection #commentPagination label > * { margin-bottom:0; }
+
+/* Shared page-size label for panel lists and the queue pager. */
+.monitor-pagination .page-size-label { display:inline-flex; flex-direction:row; align-items:center; white-space:nowrap; margin:0; }
+.monitor-pagination .page-size-label > * { margin-top:0; margin-bottom:0; }
+.monitor-pagination .page-size-label > span { margin-right:10px; }
 
 #grokVerificationNotice {position:fixed;top:16px;right:20px;z-index:2000;display:flex;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 40px);box-sizing:border-box;padding:10px;margin:0;background:#fff4d6;border:1px solid #e5c373;border-radius:6px;box-shadow:0 4px 16px #18302e26;}
 #grokVerificationNotice > :not(:last-child) {margin-right:10px;}

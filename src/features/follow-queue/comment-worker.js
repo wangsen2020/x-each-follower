@@ -37,7 +37,7 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
         if (!sampled.ok) return {skipped:true};
         ev.quoteDecision = sampled.decision;
         if (!sampled.decision.selected) {
-          const form=ev.publicationMode==='original'?'新帖':'引用评价';
+          const form=({reply:'评论',quote:'引用评价',article:'文章',original:'旧版新帖'}[ev.publicationMode]||'引用评价');
           await save(accountId,job,{...ev,status:'skipped',reasonCode:'probability_skip',grokCalls:0,
             reason:`未抽中${form}（概率 ${sampled.decision.rate}%），未调用 Grok`});
           await onSkip({accountId,jobId:job.id,handle:job.handle,reasonCode:'probability_skip',grokCalls:0,

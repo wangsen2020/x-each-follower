@@ -1,4 +1,6 @@
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
+import {cloudflareImagesController} from './composables/useCloudflareImages.js';
+import {watch} from 'vue';
 import {quotePublishIssue} from '../../features/grok/quote-quality.js';
 import {originalQualityIssue,originalTextIssue} from '../../features/publishing/original-quality.js';
 import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffix, validateQuoteTags} from '../../features/grok/quote-tags.js';
@@ -17,8 +19,10 @@ import {displayFollowLimitError, isAccountFollowLimit} from '../../shared/follow
 export const PUBLICATION_MODES = STORE_PUBLICATION_MODES || Object.freeze(['quote', 'original']);
 
 export const PUBLICATION_MODE_LABELS = Object.freeze({
+  reply: '评论',
   quote: '引用评论',
-  original: '新帖'
+  article: '文章',
+  original: '旧版新帖'
 });
 
 export const QUOTE_LENGTH_MODES = STORE_QUOTE_LENGTH_MODES || Object.freeze(['adaptive', 'concise', 'deep']);
@@ -286,6 +290,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let settingsFieldErrors = {};
   let isExecuting = false;
   const busyJobIds = new Set();
+  const evaluationFeedback = new Map();
+  const activeEvaluations = new Set();
 
   const cleanups = [];
 
@@ -312,6 +318,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     jobs = [];
     selectedJobIds.clear();
     busyJobIds.clear();
+    evaluationFeedback.clear();
+    activeEvaluations.clear();
     settings = { ...DEFAULT_SETTINGS };
     settingsLoaded = false;
     inspectingJob = null;
@@ -612,6 +620,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     if (!currentAccountId || !job?.id || busyJobIds.has(job.id) || isDestroyed || typeof request !== 'function') return;
     const reqAccount = currentAccountId;
     busyJobIds.add(job.id);
+    evaluationFeedback.set(job.id,'正在开始处理评价…');
+    activeEvaluations.add(job.id);
     error = null;
     render();
     try {
@@ -622,16 +632,21 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         taskId: ev?.taskId || '',
         publish
       });
+      activeEvaluations.delete(job.id);
       if (isDestroyed || currentAccountId !== reqAccount) return;
       if (!res || !res.ok) {
         error = res?.error || res?.reason || '重试引用评价失败';
+        evaluationFeedback.set(job.id,error);
         render();
         return;
       }
+      evaluationFeedback.set(job.id,res.summary||res.evaluation?.reason||'评价处理完成');
       await fetchAll();
     } catch (err) {
       if (isDestroyed || currentAccountId !== reqAccount) return;
       error = err?.message || '重试引用评价异常';
+      activeEvaluations.delete(job.id);
+      evaluationFeedback.set(job.id,error);
       render();
     } finally {
       busyJobIds.delete(job.id);
@@ -702,7 +717,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         : DEFAULT_SETTINGS.publicationMode);
     const nextFieldErrors = {};
     if (!PUBLICATION_MODES.includes(rawPublicationMode)) {
-      nextFieldErrors.publicationMode = '发帖形式仅支持引用评论（quote）或新帖（original）';
+      nextFieldErrors.publicationMode = '发帖形式请选择评论、引用评论或文章';
     }
     if (parsedRate === null) {
       nextFieldErrors.quoteParticipationRate = '请输入 0—100 的整数';
@@ -713,7 +728,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     settingsFieldErrors = nextFieldErrors;
     if (Object.keys(nextFieldErrors).length > 0) {
       if (nextFieldErrors.publicationMode) {
-        settingsError = '发帖形式仅支持引用评论（quote）或新帖（original）';
+        settingsError = '发帖形式请选择评论、引用评论或文章';
       } else if (nextFieldErrors.quoteParticipationRate) {
         settingsError = '引用概率请输入 0—100 的整数';
       } else {
@@ -986,7 +1001,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       ? `第 ${currentPage} 页 · 共 ${serverTotal} 条`
       : `第 ${currentPage} 页 · 总数未知${scanStatus ? ` · ${scanStatus}` : ''}`;
     return el('div', { className: 'monitor-pagination fq-pagination' }, [
-      el('label', { className: 'fq-pagesize-label' }, [
+      el('label', { className: 'fq-pagesize-label page-size-label' }, [
         el('span', {}, '每页'),
         el('select', {
           className: 'fq-select fq-pagesize-select',
@@ -1112,7 +1127,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }
 
     return el('div', { className: 'monitor-pagination fq-pagination' }, [
-      el('label', { className: 'fq-pagesize-label' }, [
+      el('label', { className: 'fq-pagesize-label page-size-label' }, [
         el('span', {}, '每页'),
         pageSizeSelect
       ]),
@@ -1410,7 +1425,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             return el('div', { className: 'fq-eval-row' }, [modeBadge, statusBadge, postLink]);
           }));
         }
-        const evalCell = el('td', { className: 'fq-col-eval' }, [evalCellContent]);
+        const feedback=evaluationFeedback.get(job.id)||evals.find(ev=>ev.reason)?.reason;
+        const evalCell = el('td', { className: 'fq-col-eval' }, [
+          busyJobIds.has(job.id)&&evaluationFeedback.has(job.id)?null:evalCellContent,
+          feedback?el('div',{className:'fq-evaluation-feedback',role:'status','aria-live':'polite',title:feedback},feedback):null
+        ].filter(Boolean));
 
         // Actions cell
         const isJobBusy = busyJobIds.has(job.id);
@@ -1431,7 +1450,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           if (pendingEval && !['pending','processing','publishing'].includes(pendingEval.status)) {
             const retryLabel = pendingEval.status === 'uncertain'
               ? '核对评价'
-              : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : '重试评价');
+              : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : pendingEval.reasonCode==='quality_skip'?'重新评估':'重试评价');
             actionButtons.push(el('button', {
               className: 'fq-btn fq-btn-sm fq-btn-primary',
               disabled: isJobBusy,
@@ -1452,7 +1471,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           title: job.state === 'running' ? '任务正在执行，结束后可删除' : '删除队列记录并阻止旧来源重新加入',
           disabled: isJobBusy || job.state === 'running',
           onClick: () => handleDeleteJob(job)
-        }, isJobBusy ? '处理中…' : '删除'));
+        }, '删除'));
         const actionsCell = el('td', { className: 'fq-col-actions' }, [
           el('div', { className: 'fq-actions-group' }, actionButtons)
         ]);
@@ -1630,10 +1649,10 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             const evalModeLabel = PUBLICATION_MODE_LABELS[evalMode] || PUBLICATION_MODE_LABELS.quote;
             const evalModeDesc = evalMode === 'original'
               ? `${evalModeLabel}（独立发帖，不附带引用卡片）`
-              : `${evalModeLabel}（附带引用卡片）`;
+              : (evalMode==='quote'?`${evalModeLabel}（附带引用卡片）`:evalMode==='reply'?`${evalModeLabel}（原帖下回复）`:`${evalModeLabel}（X 长文与配图）`);
             const attemptCount = Array.isArray(ev.attempts) ? ev.attempts.length : (ev.attempts || 0);
             const draftIssue = ev.text ? (ev.quality?.reviewRequired ? '草稿质量判断待复核'
-              : ev.publicationMode==='original' ? originalQualityIssue(ev.quality) || originalTextIssue(ev.text,ev.originalPostText) : quotePublishIssue(ev.text)) : '';
+              : ev.publicationMode==='article' ? originalQualityIssue(ev.quality) : ev.publicationMode==='original' ? originalQualityIssue(ev.quality) || originalTextIssue(ev.text,ev.originalPostText) : quotePublishIssue(ev.text)) : '';
             const canRetryEval = job.state === 'followed' && ev.status !== 'posted' && ev.status !== 'published';
             const evalActions = canRetryEval
               ? el('div', { className: 'fq-trace-actions' }, [
@@ -1857,8 +1876,10 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       ]);
     }
 
-    const publicationModeHelpText = '引用评论附带原帖引用卡片；新帖为独立发帖（不附带引用卡片），要求具备更强的独立信息价值，价值不足时可能跳过。切换发帖形式仅对新创建的任务生效，已有草稿与待处理评价保持原定发帖形式不变。';
+    const publicationModeHelpText = '评论直接回复原帖；引用评论附带原帖卡片；文章发布为 X 长文。默认引用评论，创作概率统一适用于三种形式。切换仅影响新任务，旧任务保持原定形式。';
     const publicationModeOptionHelp = {
+      reply: '直接在原帖下发表评论，使用独立评论提示词。',
+      article: '发布 X 长文，包含标题、分节正文、短描述和至少一张 5:2 封面；独立生成提示词，缺少封面时保留草稿。',
       quote: '附带原帖引用卡片发布评论；切换发帖形式仅影响新创建的任务。',
       original: '作为独立新帖发布（不附带引用卡片），要求具备更强的独立价值，不足时可能跳过；切换发帖形式仅影响新创建的任务。'
     };
@@ -1885,7 +1906,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         radioNode.setAttribute('aria-checked', isChecked ? 'true' : 'false');
       }
       if (!PUBLICATION_MODES.includes(rawStr)) {
-        settingsFieldErrors.publicationMode = '发帖形式仅支持引用评论（quote）或新帖（original）';
+        settingsFieldErrors.publicationMode = '发帖形式请选择评论、引用评论或文章';
         if (publicationModeRadiogroup) publicationModeRadiogroup.setAttribute('aria-invalid', 'true');
         publicationModeError.textContent = settingsFieldErrors.publicationMode;
         publicationModeError.style.display = 'block';
@@ -1896,7 +1917,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         publicationModeError.style.display = 'none';
       }
     };
-    const radioOptions = PUBLICATION_MODES.map(mode => {
+    const radioOptions = PUBLICATION_MODES.filter(mode=>mode!=='original').map(mode => {
       const radioId = `fq_publicationMode_${mode}`;
       const isChecked = publicationModeValue === mode;
       const radioInput = el('input', {
@@ -1934,13 +1955,13 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const publicationModeGroup = el('div', { className: 'fq-setting-group fq-publication-mode-setting' }, [
       el('div', { id: 'fq_publicationMode_label', className: 'fq-setting-label' }, [
         el('span', {}, '发帖形式'),
-        settingHelp(publicationModeHelpText)
+        settingHelp(publicationModeHelpText + (publicationModeValue==='original' ? ' 当前仍使用旧版新帖，请选择一种形式并保存，已有任务不变。' : ''))
       ]),
       publicationModeRadiogroup,
       publicationModeError
     ]);
 
-    const quoteRateHelpText = '每个任务在调用 Grok 创作前只抽取一次，抽中后仍可能因内容质量不足而跳过；设为 0% 会暂停所有未提交的自动创作（引用评论与新帖）任务。适用于新成功关注任务中的合格候选；修改比例仅影响尚未抽取的任务，不重抽已有结果，关注动作不受影响。';
+    const quoteRateHelpText = '每个任务在调用 Grok 创作前只抽取一次，抽中后仍可能因内容质量不足而跳过；设为 0% 会暂停所有未提交的自动创作（评论、引用评论与文章）任务。适用于新成功关注任务中的合格候选；修改比例仅影响尚未抽取的任务，不重抽已有结果，关注动作不受影响。';
     const quoteRateError = el('p', {
       id: 'fq_quoteParticipationRate_error',
       role: 'alert',
@@ -2107,15 +2128,15 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         el('h4', { className: 'fq-setting-section-title' }, '🛡️ 筛选过滤与意向门槛'),
         createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
         createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
-        createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过关注筛选；不影响采集、入队与评论审核。', 'followBackAllowAll'),
+        createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过普通关注筛选。例外：关注数超过粉丝数10倍时不回关，通过X接口移除此关注者；移除前再次核验，关系或数据不明时待核实。不影响采集、入队与评论审核。', 'followBackAllowAll'),
         createSwitchGroup('fq_onlyRecommended', '仅推荐或互粉账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, ['🤖 Grok 创作与发布', settingHelp('仅使用 X 内置 Grok；失败时跳过本次任务，不会打开 grok.com。')]),
-        el('p', { className: 'fq-setting-desc fq-quote-policy-note' }, '抽中后仍会筛选，内容不值得分析或独立价值不足就跳过。未抽中不调用 Grok。'),
-        createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '关注成功后自动提取原帖，调用 Grok 生成引用评论或新帖草稿。', 'grokEnabled'),
+        createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '关注成功后自动提取原帖，调用 Grok 按选定形式生成评论、引用评论或文章草稿。', 'grokEnabled'),
         publicationModeGroup,
+        el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),
         quoteRateGroup,
         quoteLengthGroup,
         createSwitchGroup('fq_autoPublish', '自动公开发布', '如开启，创作草稿就绪后将按所选发帖形式直接公开发布。未开启则仅存草稿。', 'autoPublish')
@@ -2213,7 +2234,23 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }
   };
   document.addEventListener('keydown', onKeydown);
+  const onEvaluationProgress=message=>{
+    if(message?.cmd!=='followQueueEvaluationProgress'||message.accountId!==currentAccountId||!activeEvaluations.has(message.jobId)||isDestroyed)return;
+    evaluationFeedback.set(message.jobId,String(message.label||'正在处理评价…'));render();
+  };
+  globalThis.chrome?.runtime?.onMessage?.addListener(onEvaluationProgress);
+  cleanups.push(()=>globalThis.chrome?.runtime?.onMessage?.removeListener(onEvaluationProgress));
   cleanups.push(() => document.removeEventListener('keydown', onKeydown));
+  // This panel renders native DOM outside Vue. Update only the connection
+  // button, preserving unsaved settings and the drawer's scroll position.
+  cleanups.push(watch(cloudflareImagesController.connected,connected=>{
+    const button=root.querySelector('#fq_cloudflare_connection');
+    if(button)button.textContent=connected?'Cloudflare 已绑定 · 管理':'连接文章配图服务';
+  }));
+  const refreshImageConnection=()=>cloudflareImagesController.refreshStatus().catch(()=>{});
+  refreshImageConnection();
+  globalThis.window?.addEventListener?.('focus',refreshImageConnection);
+  cleanups.push(()=>globalThis.window?.removeEventListener?.('focus',refreshImageConnection));
 
   const applyPagePreference=async(initial=false)=>{
     const preference=await readSystemSettings('pagination');

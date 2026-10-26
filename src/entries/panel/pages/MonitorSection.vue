@@ -24,11 +24,7 @@
         <button id="analyzeSelected" class="secondary" disabled>Grok 分析</button>
         <button id="batchUnfollow" class="secondary danger-btn" disabled title="批量取消关注选中的账号">批量取关</button>
       </div>
-      <div id="monitorPagination" class="monitor-pagination">
-        <label>每页<select id="followerPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
-        <span id="followerPageSummary" class="page-summary"></span>
-        <div class="page-actions"><button id="followerPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="followerNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
-      </div>
+      <PanelPagination id="monitorPagination" select-id="followerPageSize" summary-id="followerPageSummary" prev-id="followerPrevPage" next-id="followerNextPage" />
     </div>
     <div id="monitorLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载粉丝跟进…</span></div>
     <div id="monitorLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="monitor">重试</button></div>
@@ -42,6 +38,7 @@
         <span>粉丝画像</span>
         <span class="selected-count-badge">已选 <b id="selectedCount">0</b> / <span id="totalVisibleCount">0</span></span>
       </span>
+      <span class="col-counts">关注 / 粉丝</span>
       <span class="col-tag">标签 <span class="info-tip" data-tip="互粉标签：有互粉意向且推荐互关标为“互粉”，否则为“无”；关注量不少于粉丝数 4/5（差额 1/5 以内）标为“推荐”，否则标为“不推荐”。悬停标签可查看推荐原因或不推荐原因。" aria-label="标签说明">?</span></span>
       <span class="col-status">关系状态</span>
       <span class="col-actions">操作</span>
@@ -50,6 +47,7 @@
   </section>
 </template>
 <script setup>
+import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
 </script>

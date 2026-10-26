@@ -1,6 +1,7 @@
 import {inspectOrActOnProfile} from '../../platform/x/guarded-relationship.js';
 import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
 import {followerEmptyView} from './follower-empty-view.js';
+import {refreshCompletedUnfollow} from './followback-live-refresh.js';
 import {shouldEnqueueFan} from '../../features/relationships/fan-followback-policy.js';
 import {saveFollowbackSettings, withFollowbackProgress} from '../../features/relationships/followback-settings.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
@@ -395,6 +396,21 @@ function paintFollowerCount(id, value) {
   node.removeAttribute('aria-busy');
 }
 window.setTab = setTab;
+function loadFollowQueue() {
+  loadRegistry.begin('followQueue');
+  applyModuleView(document, 'followQueue', loadRegistry.get('followQueue'), 0);
+  return openFollowQueue($('followQueueSection')).then(result => {
+    if (!result) return result;
+    if (result.ok) loadRegistry.succeed('followQueue');
+    else loadRegistry.fail('followQueue', result.error || '关注队列加载失败');
+    applyModuleView(document, 'followQueue', loadRegistry.get('followQueue'), result.ok ? 1 : 0);
+    return result;
+  }).catch(error => {
+    loadRegistry.fail('followQueue', error.message);
+    applyModuleView(document, 'followQueue', loadRegistry.get('followQueue'), 0);
+    return {ok:false, error:error.message};
+  });
+}
 function setTab(tab) {
   const targets = tabRenderTargets(activeDashboardTab, tab);
   activeDashboardTab = tab;
@@ -402,12 +418,7 @@ function setTab(tab) {
   if (recordBootAttempted && !recordPaging) return;
   if (!targets.length) return;
   if (targets.includes('followQueue')) {
-    loadRegistry.begin('followQueue');
-    applyModuleView(document, 'followQueue', loadRegistry.get('followQueue'), 0);
-    openFollowQueue($('followQueueSection')).then(result => {
-      if (result?.ok) loadRegistry.succeed('followQueue');
-      else loadRegistry.fail('followQueue', result?.error || '关注队列加载失败');
-    }).catch(error => loadRegistry.fail('followQueue', error.message));
+    loadFollowQueue();
   }
   if (recordPaging && recordPages) {
     const moduleName = panelModuleForTab(tab);
@@ -845,8 +856,20 @@ for (const id of ['commentAutoEvery', 'commentAutoJitter', 'commentAutoBatchSize
 }
 $('saveCommentAutoSettings')?.addEventListener('click', () => saveCommentAutoFollowSettings().then(() => { $('commentTrackingStatus').textContent = '评论追踪自动关注配置已保存。'; }).catch(error => { $('commentTrackingStatus').textContent = error.message; }));
 $('runCommentAutoNow')?.addEventListener('click', runCommentAutoFollowNow);
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if(area==='local' && Object.keys(changes).every(key=>key.startsWith('systemSettings:') || key==='unreciprocatedSettings'))return;
+  if (area === 'local' && unreciprocatedLocalReady) {
+    try {
+      const refreshed = await refreshCompletedUnfollow(changes, {
+        lookup: handle => chrome.runtime.sendMessage({cmd:'recordData',op:'lookupAll',sourceKey:'unreciprocatedTracker',handle}),
+        getUsers: () => unreciprocatedTracker.users || [],
+        setUsers: users => { unreciprocatedTracker = {...unreciprocatedTracker, users}; }
+      });
+      if (refreshed) renderUnreciprocatedUI();
+    } catch (error) {
+      if ($('unreciprocatedStatus')) $('unreciprocatedStatus').textContent = `取关记录已写入，列表刷新失败：${error.message}`;
+    }
+  }
   const plan = localStorageChangePlan(changes, area);
   if (recordPaging && recordPages) {
     if (plan.commentAuto) commentTracking.autoFollow = normalizeAutoFollowConfig(mergeAutoFollowProgress(plan.commentAuto, commentTracking.autoFollow));
@@ -1085,6 +1108,26 @@ function renderMonitorList() {
     detail.textContent = cleanFollowerBio(user).slice(0, 160);
     info.append(link, detail);
 
+    const counts = document.createElement('div');
+    counts.className = 'monitor-counts';
+    for (const [label, candidates] of [
+      ['关注', [cached?.followingText, user.followingText, user.following]],
+      ['粉丝', [cached?.followersText, user.followersText, user.followers]]
+    ]) {
+      const value = candidates.find(candidate =>
+        candidate != null && parseCount(String(candidate)) != null
+      );
+      const line = document.createElement('span');
+      const name = document.createElement('span');
+      name.textContent = label;
+      const number = document.createElement('strong');
+      const count = value == null ? null : parseCount(String(value));
+      number.textContent = count == null ? '—' : count.toLocaleString('zh-CN');
+      number.title = value == null ? `${label}未读取` : `${label} ${value}`;
+      line.append(name, number);
+      counts.append(line);
+    }
+
     const tagCell = createMutualTagCell(user, 'div');
 
     const badge = document.createElement('span');
@@ -1129,7 +1172,7 @@ function renderMonitorList() {
     action.addEventListener('click', () => openProfileDrawer(user));
     actions.append(action);
 
-    item.append(select, info, tagCell, badge, actions);
+    item.append(select, info, counts, tagCell, badge, actions);
     fragment.append(item);
   }
   list.append(fragment);
@@ -4386,13 +4429,13 @@ document.querySelectorAll('[data-load-retry]').forEach(button => {
       mutual: () => reloadRecordModule('mutual', renderMutualNetwork),
       comments: () => reloadRecordModule('comments', renderCommentTracking),
       unreciprocated: () => reloadRecordModule('unreciprocated', renderUnreciprocatedUI),
-      followQueue: () => openFollowQueue($('followQueueSection'))
+      followQueue: loadFollowQueue
     }[moduleId] : {
       monitor: loadMonitorModule,
       mutual: loadMutualModule,
       comments: loadCommentModule,
       unreciprocated: loadUnreciprocatedModule,
-      followQueue: () => openFollowQueue($('followQueueSection'))
+      followQueue: loadFollowQueue
     }[moduleId];
     Promise.resolve(retry?.()).then(() => {
       if (!recordPaging && moduleId && moduleId !== 'followQueue') return recoverMissingStartupBackups();

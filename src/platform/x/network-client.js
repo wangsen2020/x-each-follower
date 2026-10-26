@@ -24,7 +24,7 @@ export function redactNetworkError(value,headers={}) {
   return text.replace(/Bearer\s+[\w.\-/+=]+/gi,'Bearer [redacted]').slice(0,240);
 }
 export function buildXRequest(operation,template,variables={}) {
-  if(!X_QUERY_OPERATIONS.includes(operation)&&!FORMS[operation]&&operation!=='DeleteTweet')throw new Error('不支持的 X 网络操作');
+  if(!X_QUERY_OPERATIONS.includes(operation)&&!FORMS[operation]&&!['DeleteTweet','RemoveFollower'].includes(operation))throw new Error('不支持的 X 网络操作');
   if(!template||!['https://x.com','https://twitter.com'].includes(template.origin))throw new Error('X 请求模板来源无效');
   const lower=prepareNetworkHeaders(template.headers);
   if(!lower.authorization||!lower['x-csrf-token'])throw new Error('当前 X 会话模板尚未就绪');
@@ -34,6 +34,10 @@ export function buildXRequest(operation,template,variables={}) {
     if(!/^\d+$/.test(id)&&!/^\w{1,15}$/.test(handle))throw new Error('用户 ID 或账号名无效');
     const params={skip_status:'true'};if(/^\d+$/.test(id))params.user_id=id;if(/^\w{1,15}$/.test(handle))params.screen_name=handle;
     return {operation,origin:template.origin,path:`/i/api/1.1/${FORMS[operation]}`,method:'POST',kind:'form',headers,body:new URLSearchParams(params).toString()};
+  }
+  if(operation==='RemoveFollower') {
+    if(typeof variables.target_user_id!=='string'||!/^\d+$/.test(variables.target_user_id))throw new Error('移除关注者ID必须是字符串');
+    return {operation,origin:template.origin,method:'POST',kind:'mutation',headers,variables:{target_user_id:variables.target_user_id}};
   }
   if(operation==='DeleteTweet') {
     if(typeof variables.tweet_id!=='string'||!/^\d+$/.test(variables.tweet_id))throw new Error('删除帖子 ID 必须是字符串');
@@ -71,19 +75,21 @@ export async function executeXRequestOnPage(request) {
     } else if(request.kind!=='mutation')throw new Error('不支持的 X 请求类型');
     let path=request.path;
     if(request.kind==='mutation') {
-      if(request.operation!=='DeleteTweet'||request.method!=='POST'||typeof request.variables?.tweet_id!=='string'||!/^\d+$/.test(request.variables.tweet_id))throw new Error('不支持的写入操作');
+      const variable=request.operation==='RemoveFollower'?'target_user_id':'tweet_id';
+      if(!['DeleteTweet','RemoveFollower'].includes(request.operation)||request.method!=='POST'||typeof request.variables?.[variable]!=='string'||!/^\d+$/.test(request.variables[variable]))throw new Error('不支持的写入操作');
       const script=[...document.scripts].map(s=>s.src).find(u=>/^https:\/\/abs\.twimg\.com\/responsive-web\/client-web\/main\.[\w]+\.js$/.test(u));
-      if(!script)throw new Error('找不到当前 X 客户端，未执行删除');
-      const metadataStarted=Date.now(),cached=window.__XEF_DELETE_QUERY_CACHE;
+      if(!script)throw new Error('找不到当前 X 客户端，未执行写入');
+      const metadataStarted=Date.now(),cacheKey=request.operation==='DeleteTweet'?'__XEF_DELETE_QUERY_CACHE':'__XEF_REMOVE_FOLLOWER_QUERY_CACHE',cached=window[cacheKey];
       let queryId=cached?.script===script&&/^[\w-]+$/.test(cached.queryId||'')?cached.queryId:null;
       if(!queryId){
         const response=await fetch(script,{signal:AbortSignal.timeout(25000)});if(!response.ok)throw new Error('X 客户端元数据读取失败');
-        queryId=(await response.text()).match(/queryId:"([\w-]+)",operationName:"DeleteTweet",operationType:"mutation"/)?.[1];
-        if(!queryId)throw new Error('当前 X 删除接口元数据不可用');
-        window.__XEF_DELETE_QUERY_CACHE={script,queryId};
+        const pattern=new RegExp('queryId:"([\\w-]+)",operationName:"'+request.operation+'",operationType:"mutation"');
+        queryId=(await response.text()).match(pattern)?.[1];
+        if(!queryId)throw new Error('当前 X 写入接口元数据不可用');
+        window[cacheKey]={script,queryId};
       }
       timings.metadataMs=Date.now()-metadataStarted;
-      path=`/i/api/graphql/${queryId}/DeleteTweet`;request.body=JSON.stringify({variables:request.variables,queryId});
+      path=`/i/api/graphql/${queryId}/${request.operation}`;request.body=JSON.stringify({variables:request.variables,queryId});
     }
     if(typeof window.__XEF_GENERATE_TRANSACTION_ID!=='function')throw new Error('X 请求签名器尚未加载');
     const headers={...request.headers,'content-type':request.kind==='form'?'application/x-www-form-urlencoded;charset=UTF-8':'application/json'};
@@ -143,7 +149,7 @@ export function createXNetworkClient(api=globalThis.chrome) {
       }
       const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
-      if(FORMS[operation]||operation==='DeleteTweet')template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
+      if(FORMS[operation]||['DeleteTweet','RemoveFollower'].includes(operation))template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
       if(!template)return {status:0,json:null,error:`未捕获 ${operation} 模板`,attempted:false};
       const prepared=buildXRequest(operation,template,variables);
       const [{result:loaded}={}]=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>typeof window.__XEF_GENERATE_TRANSACTION_ID==='function'});
@@ -157,6 +163,7 @@ export function createXNetworkClient(api=globalThis.chrome) {
   }
   return {
     query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
+    removeFollower:(tabId,targetId)=>request(tabId,'RemoveFollower',{target_user_id:targetId}),
     profile:(tabId,handle,options)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')},options),
     userPosts:(tabId,userId,variables={})=>request(tabId,'UserTweets',{...variables,userId}),
     userOriginals:(tabId,userId,variables={})=>request(tabId,'UserOriginalsTimeline',{...variables,userId}),

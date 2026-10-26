@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {nextTick} from 'vue';
+import {cloudflareImagesController} from '../src/entries/panel/composables/useCloudflareImages.js';
 import {
   DEFAULT_SETTINGS,
   SETTINGS_BOUNDS,
@@ -11,6 +13,41 @@ import {
   normalizeSettings,
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
+
+test('evaluation retry displays progress and the returned skip reason instead of silently refreshing',async()=>{
+  const prior=globalThis.chrome;let listener,finish;
+  globalThis.chrome={runtime:{onMessage:{addListener:fn=>{listener=fn;},removeListener:()=>{listener=null;}}}};
+  const root=createMockElement('div');
+  const job={id:'retry-feedback',handle:'author',accountId:'owner',state:'followed',sources:[],evaluations:[{taskId:'task',status:'skipped',reasonCode:'quality_skip',reason:'上次内容不足'}]};
+  const request=async m=>m.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:m.cmd==='followQueueRetryEvaluation'?new Promise(r=>{finish=r;}):{ok:true,jobs:[job]};
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request});
+  try{
+    await new Promise(r=>setTimeout(r,15));
+    root.querySelectorAll('button').find(b=>b.textContent==='重新评估').click();
+    assert.match(root.querySelector('.fq-evaluation-feedback').textContent,/正在开始/);
+    listener({cmd:'followQueueEvaluationProgress',accountId:'owner',jobId:job.id,label:'正在读取原帖 2…'});
+    assert.equal(root.querySelector('.fq-evaluation-feedback').textContent,'正在读取原帖 2…');
+    finish({ok:true,summary:'本次内容未达到创作质量要求，未发布'});
+    await new Promise(r=>setTimeout(r,15));
+    assert.equal(root.querySelector('.fq-evaluation-feedback').textContent,'本次内容未达到创作质量要求，未发布');
+  }finally{panel.destroy();globalThis.chrome=prior;}
+  assert.equal(listener,null);
+});
+
+test('image binding updates the settings entry without recreating unsaved controls',async()=>{
+  const c=cloudflareImagesController,refresh=c.refreshStatus,previous=c.connected.value;
+  c.refreshStatus=async()=>{c.connected.value=true;};
+  const root=createMockElement('div');
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async message=>message.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:{ok:true,jobs:[]}});
+  try{
+    await new Promise(r=>setTimeout(r,15));root.querySelector('[aria-label="关注队列设置"]').click();
+    const button=root.querySelector('#fq_cloudflare_connection'),control=root.querySelector('#fq_publicationMode_article');
+    assert.match(button.textContent,/已绑定/);
+    c.connected.value=false;await nextTick();assert.equal(button.textContent,'连接文章配图服务');
+    c.connected.value=true;await nextTick();assert.match(button.textContent,/已绑定/);
+    assert.equal(root.querySelector('#fq_publicationMode_article'),control);
+  }finally{panel.destroy();c.refreshStatus=refresh;c.connected.value=previous;}
+});
 
 test('settings cannot snapshot defaults before the account settings finish loading',async()=>{
   const root=createMockElement('div');let release, saved;
@@ -28,9 +65,9 @@ test('settings cannot snapshot defaults before the account settings finish loadi
     assert.equal(initial.disabled,true);initial.click();assert.equal(root.querySelector('.fq-drawer'),null);
     release({ok:true,settings:loaded});await new Promise(r=>setTimeout(r,15));
     const ready=root.querySelector('[aria-label="关注队列设置"]');assert.equal(ready.disabled,false);ready.click();
-    root.querySelector('#fq_publicationMode_original').click();
+    root.querySelector('#fq_publicationMode_article').click();
     root.querySelector('.fq-drawer-footer .fq-btn-primary').click();await new Promise(r=>setTimeout(r,15));
-    assert.equal(saved.publicationMode,'original');
+    assert.equal(saved.publicationMode,'article');
     for(const key of ['every','jitter','batchLimit','inspectLimit','followBackAllowAll','quoteTagsEnabled'])assert.equal(saved[key],loaded[key]);
   }finally{release({ok:true,settings:loaded});panel.destroy();}
 });
@@ -1809,7 +1846,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     assert.ok(drawer);
     const radioGroup = drawer.querySelector('#fq_publicationMode');
     const quoteRadio = drawer.querySelector('#fq_publicationMode_quote');
-    const originalRadio = drawer.querySelector('#fq_publicationMode_original');
+    const originalRadio = drawer.querySelector('#fq_publicationMode_article');
     assert.ok(radioGroup);
     assert.equal(radioGroup.getAttribute('role'), 'radiogroup');
     assert.ok(quoteRadio);
@@ -1817,7 +1854,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     assert.equal(quoteRadio.type, 'radio');
     assert.equal(originalRadio.type, 'radio');
     assert.equal(quoteRadio.value, 'quote');
-    assert.equal(originalRadio.value, 'original');
+    assert.equal(originalRadio.value, 'article');
 
     // Default selection is 引用评论 (quote)
     assert.equal(quoteRadio.checked, true);
@@ -1827,13 +1864,14 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
 
     // Keyboard accessible tips explain standalone original post without quote card, independent value & skip, and new tasks only
     const tips = drawer.querySelectorAll('.info-tip');
-    const modeTip = [...tips].find(node => (node.getAttribute('aria-label') || '').includes('不附带引用卡片'));
+    const modeTip = [...tips].find(node => (node.getAttribute('aria-label') || '').includes('5:2 封面'));
     assert.ok(modeTip, 'Publication mode help tip must explain standalone post without quote card');
     assert.equal(modeTip.getAttribute('tabindex'), '0');
     assert.match(modeTip.getAttribute('aria-label'), /独立/);
-    assert.match(modeTip.getAttribute('aria-label'), /价值/);
-    assert.match(modeTip.getAttribute('aria-label'), /跳过/);
-    assert.match(modeTip.getAttribute('aria-label'), /新创建的任务/);
+    assert.match(modeTip.getAttribute('aria-label'), /短描述/);
+    assert.match(modeTip.getAttribute('aria-label'), /保留草稿/);
+    assert.ok(drawer.querySelector('#fq_publicationMode_reply'));
+    assert.equal(drawer.querySelectorAll('input[name="publicationMode"]').length,3);
 
     // Radio mutual exclusivity: selecting 新帖 unchecks 引用评论, and selecting 引用评论 unchecks 新帖
     originalRadio.click();
@@ -1854,11 +1892,11 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     drawer = root.querySelector('.fq-drawer');
     assert.ok(drawer);
     assert.equal(drawer.querySelector('#fq_publicationMode').getAttribute('aria-invalid'), 'true');
-    assert.match(drawer.querySelector('#fq_publicationMode_error').textContent, /发帖形式仅支持引用评论（quote）或新帖（original）/);
-    assert.match(drawer.textContent, /发帖形式仅支持引用评论（quote）或新帖（original）/);
+    assert.match(drawer.querySelector('#fq_publicationMode_error').textContent, /发帖形式请选择评论、引用评论或文章/);
+    assert.match(drawer.textContent, /发帖形式请选择评论、引用评论或文章/);
 
     // Select 新帖 (original) and save
-    const refreshedOriginalRadio = drawer.querySelector('#fq_publicationMode_original');
+    const refreshedOriginalRadio = drawer.querySelector('#fq_publicationMode_article');
     const refreshedQuoteRadio = drawer.querySelector('#fq_publicationMode_quote');
     refreshedOriginalRadio.click();
     assert.equal(refreshedOriginalRadio.checked, true);
@@ -1868,13 +1906,13 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     await new Promise(r => setTimeout(r, 15));
 
     assert.equal(saveCalls.length, 1);
-    assert.equal(saveCalls[0].publicationMode, 'original');
-    assert.match(root.textContent, /发帖形式 新帖/);
+    assert.equal(saveCalls[0].publicationMode, 'article');
+    assert.match(root.textContent, /发帖形式 文章/);
 
     // Reopen settings drawer and verify 新帖 remains selected
     settingsBtn.click();
     drawer = root.querySelector('.fq-drawer');
-    assert.equal(drawer.querySelector('#fq_publicationMode_original').checked, true);
+    assert.equal(drawer.querySelector('#fq_publicationMode_article').checked, true);
     assert.equal(drawer.querySelector('#fq_publicationMode_quote').checked, false);
     drawer.querySelector('.panel-close-button').click();
 
@@ -1893,7 +1931,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     origTraceBtn.click();
     const origDrawer = root.querySelector('.fq-drawer');
     assert.ok(origDrawer);
-    assert.match(origDrawer.textContent, /发帖形式:新帖（独立发帖，不附带引用卡片）/);
+    assert.match(origDrawer.textContent, /发帖形式:旧版新帖（独立发帖，不附带引用卡片）/);
 
   } finally {
     panel.destroy();

@@ -17,7 +17,7 @@ for(const relation of [{following:false,followedBy:true},{following:false,follow
   const store=createFollowQueueStore({indexedDB,dbName:'relationship-executor-'+crypto.randomUUID()});
   await store.saveSettings('1',{enabled:true,batchLimit:1,inspectLimit:1,grokEnabled:false,followBackAllowAll:true});
   await store.enqueue({accountId:'1',handle:'candidate',targetUserId:'42',sources:[{module:'fans',enabled:true}]});
-  const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async()=>({status:200,json:{rest_id:'42',core:{screen_name:'candidate'},relationship_perspectives:{following:relation.following,followed_by:relation.followedBy}}}),performFollow:async()=>{follows++;return{status:200}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
+  const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async()=>({status:200,json:{rest_id:'42',core:{screen_name:'candidate'},relationship_counts:{followers:1000,following:1},relationship_perspectives:{following:relation.following,followed_by:relation.followedBy}}}),performFollow:async()=>{follows++;return{status:200}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
   await runtime.run();
   const row=(await store.list({accountId:'1'}))[0];
   const unknown=relation.following===null||relation.followedBy===null;
@@ -51,7 +51,7 @@ test('X error 161 stops this batch after one follow attempt without a global coo
  await store.saveSettings('1',{enabled:true,batchLimit:2,inspectLimit:2,grokEnabled:false,followBackAllowAll:true});
  for(const handle of ['first','second'])await store.enqueue({accountId:'1',handle,targetUserId:handle==='first'?'42':'43',sources:[{module:'fans',enabled:true}]});
  let attempts=0;
- const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async(_,handle)=>({status:200,json:{rest_id:handle==='first'?'42':'43',core:{screen_name:handle},relationship_perspectives:{following:false,followed_by:true}}}),performFollow:async()=>{attempts++;return{status:403,json:{errors:[{code:161}]},error:'You are unable to follow more people at this time.'}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
+ const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},fetchProfile:async(_,handle)=>({status:200,json:{rest_id:handle==='first'?'42':'43',core:{screen_name:handle},relationship_counts:{followers:1000,following:1},relationship_perspectives:{following:false,followed_by:true}}}),performFollow:async()=>{attempts++;return{status:403,json:{errors:[{code:161}]},error:'You are unable to follow more people at this time.'}},records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
  const result=await runtime.run();
  assert.equal(attempts,1);
  assert.match(result.summary,/错误 161/);

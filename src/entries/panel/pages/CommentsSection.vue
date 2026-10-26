@@ -16,11 +16,7 @@
     </div>
     <div class="comments-toolbar">
       <div class="search-wrap"><input id="commentSearch" type="search" placeholder="账号、评论或链接" autocomplete="off"><button id="commentSearchBtn" class="secondary search-btn" type="button">搜索</button></div>
-      <div id="commentPagination" class="monitor-pagination">
-        <label>每页<select id="commentPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
-        <span id="commentPageSummary" class="page-summary">0 条</span>
-        <div class="page-actions"><button id="commentPrevPage" class="secondary" title="上一页" aria-label="上一页">‹</button><button id="commentNextPage" class="secondary" title="下一页" aria-label="下一页">›</button></div>
-      </div>
+      <PanelPagination id="commentPagination" select-id="commentPageSize" summary-id="commentPageSummary" prev-id="commentPrevPage" next-id="commentNextPage" initial-summary="0 条" />
     </div>
     <div id="commentsLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载评论追踪…</span></div>
     <div id="commentsLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="comments">重试</button></div>
@@ -46,6 +42,7 @@
   </section>
 </template>
 <script setup>
+import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
 </script>

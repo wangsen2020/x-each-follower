@@ -44,6 +44,17 @@ test('mutation discovers current operation ID and only sends one POST JSON',asyn
 test('missing mutation metadata never sends a deletion and cannot invent an operation ID',async()=>{
  await page(async({calls})=>{const r=await executeXRequestOnPage(buildXRequest('DeleteTweet',template,{tweet_id:'123'}));assert.equal(r.status,0);assert.equal(r.attempted,false);assert.equal(calls.length,1);},()=>new Response('no supported mutation'));
 });
+
+test('RemoveFollower discovers its own runtime ID, posts exact User Rest ID once and signs the mutation',async()=>{
+ assert.throws(()=>buildXRequest('RemoveFollower',template,{target_user_id:123}),/字符串/);
+ await page(async({calls,signatures})=>{
+  const r=await executeXRequestOnPage(buildXRequest('RemoveFollower',template,{target_user_id:'2114587898162950144'}));
+  assert.equal(r.status,200);assert.equal(calls.length,2);
+  assert.equal(calls[1].url,'https://x.com/i/api/graphql/runtime-remove-id/RemoveFollower');
+  assert.deepEqual(JSON.parse(calls[1].init.body),{queryId:'runtime-remove-id',variables:{target_user_id:'2114587898162950144'}});
+  assert.equal(signatures[0].method,'POST');
+ },url=>url.includes('main.')?new Response('queryId:"runtime-remove-id",operationName:"RemoveFollower",operationType:"mutation"'):new Response('{"data":{"remove_follower":true}}'));
+});
 test('write timeouts do not retry and never expose captured auth in errors',async()=>{
  await page(async({calls})=>{const r=await executeXRequestOnPage(buildXRequest('Block',template,{id:'123'}));assert.equal(r.status,0);assert.equal(r.attempted,true);assert.equal(calls.length,1);assert.equal(r.error.includes('fixture-secret'),false);assert.equal(r.error.includes('fixture-csrf'),false);},()=>{throw Error('timeout Bearer fixture-secret fixture-csrf');});
  assert.equal(redactNetworkError('fixture-csrf Bearer fixture-secret',headers).includes('fixture'),false);

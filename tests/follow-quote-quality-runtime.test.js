@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {indexedDB,IDBKeyRange} from 'fake-indexeddb';
 import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
-import {createFollowQueueRuntime} from '../src/features/follow-queue/follow-queue-runtime.js';
+import {createFollowQueueRuntime,waitForQueueViewer} from '../src/features/follow-queue/follow-queue-runtime.js';
 import {quoteLengthPolicy} from '../src/features/grok/quote-quality.js';
 globalThis.IDBKeyRange=IDBKeyRange;
 
-async function setup(generator,settings={},postPublisher) {
+async function setup(generator,settings={},postPublisher,hooks={}) {
   const store=createFollowQueueStore({indexedDB,dbName:'quote-runtime-'+crypto.randomUUID()});
   await store.saveSettings('123',{grokEnabled:true,quoteParticipationRate:100,autoPublish:false,...settings});
   const job=await store.enqueue({accountId:'123',handle:'author',targetUserId:'456',sources:[{module:'fans',enabled:true}]});
@@ -23,10 +23,35 @@ async function setup(generator,settings={},postPublisher) {
   const generate=async(...args)=>{
     generated++;return generator({store,post,args});
   };
-  const runtime=createFollowQueueRuntime({api,store,generateComment:generate,generatePost:generate,postPublisher});
-  return {store,runtime,job,read:async()=> (await store.listByState({accountId:'123',state:'followed'})).find(j=>j.id===job.id),
+  const runtime=createFollowQueueRuntime({api,store,generateComment:generate,generatePost:generate,generateReply:generate,generateArticle:generate,postPublisher,...hooks});
+  return {store,runtime,job,api,read:async()=> (await store.listByState({accountId:'123',state:'followed'})).find(j=>j.id===job.id),
     counts:()=>({generated,removed})};
 }
+
+test('viewer guard waits for missing identity but immediately blocks a different logged-in account',async()=>{
+  const values=['','','Viewer'];let waits=0;
+  assert.equal(await waitForQueueViewer({read:async()=>values.shift(),expected:'viewer',wait:async()=>waits++}),'viewer');
+  assert.equal(waits,2);
+  await assert.rejects(waitForQueueViewer({read:async()=>'other',expected:'viewer',wait:async()=>assert.fail('must not wait on mismatch')}),/@other.*@viewer/);
+  await assert.rejects(waitForQueueViewer({read:async()=>'',expected:'viewer',attempts:2,wait:async()=>{}}),/暂未读到登录账号/);
+  await assert.rejects(waitForQueueViewer({read:async()=>'',expected:'viewer',check:async()=>{throw Error('cancelled');},wait:async()=>{}}),/cancelled/);
+});
+
+test('retrying an incomplete source survives empty viewer during navigation and generates only once',async()=>{
+  const env=await setup(async({post})=>({ok:true,reply:'A useful independent observation.',post,quality:{passed:true,total:8},grokCalls:1}),{},undefined,{wait:async()=>{}});
+  const job=await env.read();
+  await env.store.resolveJob({accountId:'123',id:job.id,evaluations:[{...job.evaluations[0],candidatePosts:[{url:'https://x.com/author/status/789',text:'short incomplete',textComplete:false}]}]});
+  let loading=0,navigations=0;
+  env.api.tabs.update=async()=>{loading=2;navigations++;return {id:900};};
+  env.api.scripting.executeScript=async({func})=>{
+    if(func.name==='readQueueViewerOnPage')return [{result:loading-->0?'':'viewer'}];
+    if(func.name==='readQuoteSourceOnPage')return [{result:{url:'https://x.com/author/status/789',text:'Complete source about measured cache latency with stated conditions.',textComplete:true}}];
+    assert.fail('Unexpected external action: '+func.name);
+  };
+  const result=await env.runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id,taskId:'123:789'});
+  assert.equal(result.ok,true);assert.equal(navigations,1);assert.equal(env.counts().generated,1);
+  const saved=await env.read();assert.equal(saved.state,'followed');assert.equal(saved.evaluations[0].status,'draft');
+});
 test('selected task generates one quality-first long draft, persists diagnostics and keeps follow success',async()=>{
   const text='分析缓存命中条件和冷启动差异。'.repeat(40);
   const env=await setup(async({post,args})=>{
@@ -48,6 +73,9 @@ test('quality skip is terminal and does not regenerate or affect following',asyn
   const saved=await env.read();assert.equal(saved.evaluations[0].status,'skipped');
   assert.equal(saved.evaluations[0].reasonCode,'quality_skip');assert.equal(saved.state,'followed');
   assert.equal(env.counts().generated,1);
+  await env.runtime.handle({cmd:'followQueueRetryEvaluation',jobId:env.job.id,taskId:'123:789'});
+  assert.equal(env.counts().generated,2,'an explicit retry may reassess a confirmed quality skip');
+  assert.equal((await env.read()).evaluations[0].status,'skipped');
 });
 test('automatic pause during generation prevents submission and retains the generated draft',async()=>{
   const env=await setup(async({store,post})=>{
@@ -98,4 +126,18 @@ test('a quote-grade draft cannot pass the stricter original publishing gate',asy
     {publish:async()=>assert.fail('must not publish weak original'),verify:async()=>null});
   await env.runtime.runComments();const saved=await env.read();
   assert.equal(saved.evaluations[0].status,'draft');assert.match(saved.evaluations[0].reason,/独立分析/);
+});
+
+for(const mode of ['reply','article'])test(mode+' uses its publisher, preserves metadata and shared probability pause',async()=>{
+ const article={title:'Fixed incentives',body:'The base rate and reward rules must be distinguished.',description:'A closer look at reward rules.',coverPrompt:'abstract 5:2 network'};
+ let images=0,published=0;
+ const publisher={verify:async()=>null,publish:async options=>{published++;assert.equal(await options.canPublish(),true);if(mode==='article'){assert.equal(options.article.description,article.description);assert.equal(options.article.cover.width,1200);}else assert.equal(options.sourcePostUrl,'https://x.com/author/status/789');return {ok:true,status:'posted',publishedPostId:'9010',publishedPostUrl:'https://x.com/viewer/status/9010'};}};
+ const env=await setup(async({post})=>({ok:true,reply:article.body,article:mode==='article'?article:undefined,post,quality:{passed:true,scores:[2,2,2,1],total:7},grokCalls:1}),{publicationMode:mode,autoPublish:true},undefined,{replyPublisher:publisher,articlePublisher:publisher,generateCover:async()=>{images++;return {ok:true,cover:{dataUrl:'data:image/png;base64,AAAA',width:1200,height:480}};}});
+ await env.store.saveSettings('123',{quoteParticipationRate:0});await env.runtime.runComments();assert.equal(env.counts().generated,0);
+ await env.store.saveSettings('123',{quoteParticipationRate:100});await env.runtime.runComments();const ev=(await env.read()).evaluations[0];assert.equal(ev.publicationMode,mode);assert.equal(ev.status,'posted');assert.equal(published,1);assert.equal(images,mode==='article'?1:0);if(mode==='article')assert.equal(ev.article.cover.width,1200);await env.runtime.runComments();assert.equal(published,1);assert.equal(env.counts().generated,1);
+});
+test('article image failure retains generated body and does not auto-regenerate or submit',async()=>{
+ const article={title:'Reward rules',body:'A standalone explanation of fixed reward rates.',description:'Read the rules.',coverPrompt:'5:2 abstract network'};let images=0;
+ const env=await setup(async({post})=>({ok:true,reply:article.body,article,post,quality:{passed:true,scores:[2,2,2,1],total:7}}),{publicationMode:'article',autoPublish:true},undefined,{articlePublisher:{verify:async()=>null,publish:async()=>assert.fail('no image: no publication')},generateCover:async()=>{images++;return {ok:false,reason:'额度不足'};}});
+ await env.runtime.runComments();await env.runtime.runComments();const ev=(await env.read()).evaluations[0];assert.equal(ev.status,'draft');assert.equal(ev.article.body,article.body);assert.match(ev.reason,/额度不足/);assert.equal(images,1);assert.equal(env.counts().generated,1);
 });

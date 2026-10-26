@@ -1,0 +1,44 @@
+{
+  "target": {
+    "handle": "KYCGoat123",
+    "userRestId": "2114587898162950144"
+  },
+  "threshold": {
+    "expression": "following > followers * 10",
+    "following": "320",
+    "followers": "12"
+  },
+  "attemptedAt": 1793006545056,
+  "operation": "RemoveFollower",
+  "removed": true,
+  "before": {
+    "blocking": false,
+    "followedBy": true,
+    "following": false
+  },
+  "after": {
+    "blocking": false,
+    "followedBy": false,
+    "following": false
+  },
+  "profile": {
+    "button": "关注",
+    "header": "KYC 专家\n↔\n@KYCGoat123"
+  },
+  "queue": {
+    "jobId": "fq_1e48b55a-68d1-4c47-a101-2983c7cd39a4",
+    "state": "excluded",
+    "removed": true
+  },
+  "deployment": {
+    "manifest": "3.1.0",
+    "background": "3.1.0",
+    "settingsPreserved": true,
+    "otherSettingsPreserved": true
+  },
+  "validation": {
+    "worktreeTests": 995,
+    "integrationTests": 1002,
+    "buildTests": 54
+  }
+}

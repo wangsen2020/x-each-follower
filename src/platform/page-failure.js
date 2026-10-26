@@ -18,7 +18,7 @@ export async function capturePageFailure(api,error,context={}) {
   const tab=tabId!=null&&api.tabs?.get?await api.tabs.get(tabId).catch(()=>null):null;
   const inherited=error?.pageContext||{};
   const stage=inherited.stage||context.stage||'unknown';
-  const labels={'check-account':'校验当前登录账号','open-profile':'打开并读取主页','resolve-user':'核验用户身份','read-posts':'滚动读取帖子','save-profile':'保存账号资料','following':'发送关注','evaluating':'生成引用评价','publishing':'发布引用评价','verify-publication':'核验发布结果','bootstrap':'准备登录页面','sync-candidates':'同步候选账号','run-queue':'执行队列','reflect-results':'同步处理结果','schedule-next':'安排下轮任务','x-storage':'读写X本地备份'};
+  const labels={'check-account':'校验当前登录账号','open-profile':'打开并读取主页','resolve-user':'核验用户身份','read-posts':'滚动读取帖子','save-profile':'保存账号资料','following':'发送关注','remove-follower':'移除异常比例关注者','evaluating':'生成引用评价','publishing':'发布引用评价','verify-publication':'核验发布结果','bootstrap':'准备登录页面','sync-candidates':'同步候选账号','run-queue':'执行队列','reflect-results':'同步处理结果','schedule-next':'安排下轮任务','x-storage':'读写X本地备份'};
   return {id:crypto.randomUUID(),at:new Date().toISOString(),code:isPageFailure(error)?'X_PAGE_UNAVAILABLE':['X_PROFILE_READ_TIMEOUT','X_PROFILE_READ_LIMIT'].includes(error?.code)?error.code:'QUEUE_STEP_FAILED',
     stage,stageLabel:context.stageLabel||labels[stage]||stage,
     operation:inherited.operation||context.operation||'',handle:context.handle||'',accountId:context.accountId||'',targetUserId:context.targetUserId||'',jobId:context.jobId||'',runId:context.runId||'',tabId:tabId??null,
