@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, computeMultiDimensionTags, TAG_DEFINITIONS, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake} from '../src/features/relationships/scoring.js';
+import {parseCount, normalizeHandle, assess, riskAssess, matchMutualKeywords, evaluateMutualProfile, computeMultiDimensionTags, TAG_DEFINITIONS, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake, detectAccountLanguage} from '../src/features/relationships/scoring.js';
 
 test('formatPageSummary formats exact pagination summary', () => {
   assert.equal(formatPageSummary(1, 3, 42), '1 / 3 · 42');
@@ -275,5 +275,18 @@ test('computeMultiDimensionTags correctly identifies multi-dimensional tags acro
   assert.ok(customTags.tagIds.includes('custom:starred'));
 });
 
+test('detectAccountLanguage differentiates Chinese vs English (fallback) and integrates tags', () => {
+  assert.equal(detectAccountLanguage({bio: '专注AI出海与独立开发'}), 'zh');
+  assert.equal(detectAccountLanguage({name: '李小龙', bio: 'Builder'}), 'zh');
+  assert.equal(detectAccountLanguage({name: 'John Doe', bio: 'Software engineer building web apps'}), 'en');
+  assert.equal(detectAccountLanguage({name: 'Alex', bio: 'Building cool tools'}), 'en');
+  // 显式标签优先
+  assert.equal(detectAccountLanguage({bio: '中文简介', tags: ['language:en']}), 'en');
+  assert.equal(detectAccountLanguage({bio: 'English bio', tags: ['language:zh']}), 'zh');
 
+  const zhProfile = computeMultiDimensionTags({name: '小明', bio: 'AI产品'});
+  assert.ok(zhProfile.tagIds.includes('language:zh'));
 
+  const enProfile = computeMultiDimensionTags({name: 'Alex', bio: 'Web3 developer'});
+  assert.ok(enProfile.tagIds.includes('language:en'));
+});

@@ -117,6 +117,12 @@ test('startup queries only the visible module and reports real progress', async 
   assert.equal(trackerBatch.changes[0].patch.note, 'from-mutual');
   assert.equal(trackerBatch.changes[0].patch.status, 'followed');
   assert.equal(Object.hasOwn(trackerBatch.changes[0].patch, '__userKey'), false);
+  await tracker.bridgeWrite('unreciprocatedTracker', {users: [{handle: 'ada', status: 'unfollowed', unfollowedAt: '2026-10-25T10:00:00Z', __userKey: 'derived:tracker/ada', __sourceBucket: 'synthetic'}]});
+  const historyBatch = trackerSent.filter(message => message.op === 'batch').at(-1);
+  assert.equal(historyBatch.changes[0].sourceBucket, 'users');
+  assert.equal(historyBatch.changes[0].create, true);
+  assert.equal(historyBatch.changes[0].patch.unfollowedAt, '2026-10-25T10:00:00Z');
+  assert.equal(historyBatch.changes[0].userKey, undefined);
   const memory = createSelectionMemory();
   memory.retain('fans', 'ada', {handle: 'ada', bio: 'page-1'});
   memory.retain('fans', 'bob', {handle: 'bob', bio: 'page-2'});
@@ -157,4 +163,40 @@ test('search rejects a failed query and a later search succeeds', async () => {
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }
+});
+
+test('a late previous page-size request cannot overwrite the newer preference',async()=>{
+ const pending=[];
+ const pages=createPanelPages({request:message=>new Promise(resolve=>pending.push({message,resolve}))});
+ const old=pages.open('fans',{pageSize:20});const newer=pages.open('fans',{pageSize:10});
+ pending[1].resolve({ok:true,page:{records:[{userKey:'new',payload:{handle:'new'}}],nextCursor:null}});
+ await newer;
+ pending[0].resolve({ok:true,page:{records:[{userKey:'old',payload:{handle:'old'}}],nextCursor:null}});
+ assert.equal(await old,null);assert.equal(pages.window('fans').filter.pageSize,10);assert.equal(pages.window('fans').records[0].userKey,'new');
+});
+
+test('complete tracker comparison loads every history page as well as active following', async () => {
+  const {compareFollowback}=await import('../src/features/relationships/followback-monitor.js');
+  const calls=[];
+  const pages=createPanelPages({request:async message=>{
+    calls.push([message.filter.tab,message.cursor]);
+    const active={userKey:'active',payload:{handle:'active',relationship:{following:true,followedBy:false}}};
+    const past=n=>({userKey:'past'+n,payload:{handle:'past'+n,status:'unfollowed',unfollowedAt:'2026-10-25T14:40:41Z',relationship:{following:false}}});
+    if(message.filter.tab==='all')return {ok:true,page:{records:[active],nextCursor:null}};
+    return {ok:true,page:{records:message.cursor?[past(2)]:[past(1)],nextCursor:message.cursor?null:'history-2'}};
+  }});
+  const loaded=await pages.loadComplete('unreciprocated','unreciprocatedTracker');
+  assert.deepEqual(calls,[['all',null],['unfollowed',null],['unfollowed','history-2']]);
+  assert.equal(pages.isComplete('unreciprocatedTracker'),true);
+  const compared=compareFollowback({followingUsers:[loaded[0].payload],previousUsers:loaded.map(r=>r.payload)});
+  assert.deepEqual(compared.filter(u=>u.status==='unfollowed').map(u=>u.handle),['past1','past2']);
+});
+
+test('failed history loading must not mark a partial tracker complete',async()=>{
+  const pages=createPanelPages({request:async m=>{
+    if(m.filter.tab==='unfollowed')throw Error('history unavailable');
+    return {ok:true,page:{records:[],nextCursor:null}};
+  }});
+  await assert.rejects(pages.loadComplete('unreciprocated','unreciprocatedTracker'),/history unavailable/);
+  assert.equal(pages.isComplete('unreciprocatedTracker'),false);
 });

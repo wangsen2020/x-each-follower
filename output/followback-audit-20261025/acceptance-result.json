@@ -1,0 +1,68 @@
+{
+  "results": [
+    {
+      "case": "indexeddb-priority",
+      "handle": "confirmed",
+      "priority": 200
+    },
+    {
+      "case": "confirmed",
+      "handle": "Gradjanin5",
+      "state": "uncertain",
+      "guardedSubmissions": 1,
+      "decision": {
+        "following": false,
+        "followedBy": true,
+        "fanSource": true,
+        "code": "follow-back",
+        "reason": "确认待回关，跳过比例和互粉意向筛选",
+        "checkedAt": 1792904285295,
+        "targetUserId": "1122869763766616066",
+        "source": "captured-native-audit",
+        "allowAll": true,
+        "screening": "allowed",
+        "screeningReason": "待回关放行"
+      },
+      "detail": "CDP 验收已拦截关注提交，未发送网络请求 确认待回关，跳过比例和互粉意向筛选；对方关注我：是，我关注对方：否；筛选：待回关放行"
+    },
+    {
+      "case": "ordinary",
+      "handle": "web3usb",
+      "state": "skipped",
+      "guardedSubmissions": 0,
+      "decision": {
+        "following": false,
+        "followedBy": false,
+        "fanSource": true,
+        "code": "ordinary",
+        "reason": "对方当前未关注我，不满足待回关条件，按普通候选筛选",
+        "checkedAt": 1792904287434,
+        "targetUserId": "1819236845429182465",
+        "source": "captured-native-audit",
+        "allowAll": false,
+        "screening": "blocked",
+        "screeningReason": "关注/粉丝比例低于 80%"
+      },
+      "detail": "关注/粉丝比例低于 80% 对方当前未关注我，不满足待回关条件，按普通候选筛选；对方关注我：否，我关注对方：否；筛选：关注/粉丝比例低于 80%"
+    },
+    {
+      "case": "unknown",
+      "handle": "Gradjanin5",
+      "state": "uncertain",
+      "guardedSubmissions": 0,
+      "decision": {
+        "following": false,
+        "followedBy": null,
+        "fanSource": true,
+        "code": "relationship-unknown",
+        "reason": "关系待核实：对方是否关注我未明确，未发送关注请求",
+        "checkedAt": 1792904289422,
+        "targetUserId": "1122869763766616066",
+        "source": "captured-native-audit"
+      },
+      "detail": "关系待核实：对方是否关注我未明确，未发送关注请求 关系待核实：对方是否关注我未明确，未发送关注请求；对方关注我：未知，我关注对方：否"
+    }
+  ],
+  "externalRequests": 0,
+  "version": "2.15.1"
+}

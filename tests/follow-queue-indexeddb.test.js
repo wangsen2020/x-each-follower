@@ -13,6 +13,37 @@ function storeFor(name, clock = {t: 5_000}) {
   });
 }
 
+test('manual deletion removes rows, updates paging and suppresses stale sources after restart without blocking another account or reused handle', async () => {
+  const name = `delete-queue-${crypto.randomUUID()}`;
+  const store = storeFor(name);
+  const candidate = {accountId:'owner', targetUserId:'123', handle:'GoneUser', sources:[{module:'fans', enabled:true}], profile:{bio:'old profile'}};
+  const job = await store.enqueue(candidate);
+  await store.enqueue({accountId:'owner', handle:'KeepUser', sources:[{module:'fans', enabled:true}]});
+  assert.equal((await store.deleteJob({accountId:'other', id:job.id})).ok, false);
+  assert.equal((await store.deleteJob({accountId:'owner', id:job.id})).deleted, 1);
+  const restarted = storeFor(name);
+  assert.equal((await restarted.enqueue(candidate)).deleted, true);
+  assert.equal((await restarted.enqueue({...candidate, targetUserId:'', handle:'goneuser'})).deleted, true);
+  assert.equal((await restarted.enqueue({...candidate, handle:'NewName'})).deleted, true);
+  assert.equal((await restarted.list({accountId:'owner'})).length, 1);
+  assert.ok((await restarted.enqueue({...candidate, accountId:'other'})).id);
+  assert.ok((await restarted.enqueue({...candidate, targetUserId:'456'})).id);
+  const page = await restarted.queryPage({accountId:'owner', limit:20});
+  assert.equal(page.jobs.length, 2);
+  assert.equal(page.jobs.some(row => row.id === job.id), false);
+});
+
+test('delete refuses executing jobs and leaves their lease intact', async () => {
+  const store = storeFor(`delete-running-${crypto.randomUUID()}`);
+  await store.enqueue({accountId:'owner', handle:'BusyUser', sources:[{module:'fans', enabled:true}]});
+  const job = await store.claim({accountId:'owner', owner:'worker', leaseMs:60000});
+  assert.ok(job);
+  const result = await store.deleteJob({accountId:'owner', id:job.id});
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /正在执行/);
+  assert.equal((await store.list({accountId:'owner'}))[0].lease.owner, 'worker');
+});
+
 test('scheduler dispatches a fan arriving mid-run before remaining older ordinary candidates', async () => {
   const clock = {t: 1000};
   const store = storeFor(`priority-mid-run-${Date.now()}`, clock);
@@ -74,6 +105,56 @@ test('disabled fan source cannot boost an ordinary candidate; equal weights rema
   const job = await store.claim({accountId:'priority',owner:'test',leaseMs:1000});
   assert.equal(job.handle, 'first');
   assert.equal(job.priority, 10);
+});
+
+test('claim uses follower-count priority bands while keeping confirmed fans first', async () => {
+  const clock = {t: 7000};
+  const store = storeFor(`priority-followers-${crypto.randomUUID()}`, clock);
+  const add = async (handle, followersText, module = 'mutual') => {
+    const row = await store.enqueue({accountId:'weighted',handle,profile:{followersText},sources:[{module,enabled:true}]});
+    clock.t++;
+    return row;
+  };
+  await add('huge', '80K');
+  await add('small', '300');
+  await add('best_band', '2,500');
+  await add('unknown', '');
+  await add('confirmed_fan', '900K', 'fans');
+  const expected = [
+    ['confirmed_fan',100],
+    ['best_band',60],
+    ['small',20],
+    ['unknown',10],
+    ['huge',3]
+  ];
+  for (const [handle,priority] of expected) {
+    const job = await store.claim({accountId:'weighted',owner:'worker',leaseMs:1000});
+    assert.equal(job.handle,handle);
+    assert.equal(job.priority,priority);
+    await store.settle({id:job.id,owner:'worker',version:job.lease.version,state:'skipped'});
+  }
+});
+
+test('version 7 upgrade recalculates stored priorities from existing profiles', async () => {
+  const name = `priority-upgrade-${crypto.randomUUID()}`;
+  const request = globalThis.indexedDB.open(name, 4);
+  const db = await new Promise((resolve,reject) => {
+    request.onupgradeneeded = () => {
+      const jobs = request.result.createObjectStore('jobs',{keyPath:'id'});
+      jobs.createIndex('accountId','accountId',{unique:false});
+      request.result.createObjectStore('outcomes',{keyPath:'key'});
+      request.result.createObjectStore('settings',{keyPath:'accountId'});
+      request.result.createObjectStore('meta',{keyPath:'key'});
+      jobs.put({id:'legacy',accountId:'owner',targetKey:'handle:legacy',targetUserId:'',handle:'legacy',handleCanonical:'legacy',aliases:[],sources:[{module:'mutual',enabled:true}],state:'pending',stage:'queued',createdAt:1,updatedAt:1,nextEligibleAt:1,lease:{owner:'',version:0,expiresAt:0},followResult:null,evaluations:[],profile:{followersText:'4,500'},priority:10,priorityDescending:-10});
+    };
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+  });
+  db.close();
+  const store = storeFor(name,{t:10});
+  const [job] = await store.list({accountId:'owner'});
+  assert.equal(job.priority,45);
+  assert.equal(job.priorityDescending,-45);
 });
 
 async function seedVersion1(name) {
@@ -456,4 +537,11 @@ test('priority order spans pages, preserves FIFO ties and binds cursor to sort a
   assert.equal(filtered.total,1);
   const search=await store.queryPage({accountId:'sort',order:'desc',q:'fan',limit:10});
   assert.deepEqual(search.jobs.map(j=>j.handle),['fan1','fan2']);
+});
+
+test('unavailable handles without an existing job cannot enter later from old sources',async()=>{
+ const store=storeFor('terminal-empty-'+crypto.randomUUID());
+ await store.markDeletedHandle({accountId:'owner',handle:'GoneUser'});
+ assert.equal((await store.enqueue({accountId:'owner',handle:'GoneUser',targetUserId:'123',sources:[{module:'fans',enabled:true}]})).deleted,true);
+ assert.equal((await store.enqueue({accountId:'other',handle:'GoneUser',sources:[{module:'fans',enabled:true}]})).deleted,undefined);
 });

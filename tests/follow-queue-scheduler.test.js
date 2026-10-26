@@ -256,6 +256,76 @@ function setupEnv(clock = {t: 10_000}) {
   return {store, indexedDB, clock};
 }
 
+test('blocked run reports the specific cause and retry time without claiming jobs',async()=>{
+  const {store,clock}=setupEnv();
+  await store.saveSettings('acc-1',{enabled:true});
+  const blockReason={code:'follow-cooldown',retryAt:clock.t+3600000,message:'关注限流，暂停至指定时间后重试'};
+  const events=[];
+  const scheduler=createFollowQueueScheduler({store,now:()=>clock.t,canRun:async()=>false,
+    getBlockReason:()=>blockReason,execute:async()=>assert.fail('must not execute'),onEvent:async e=>events.push(e)});
+  const result=await scheduler.run({accountId:'acc-1'});
+  assert.equal(result.summary,blockReason.message);
+  assert.deepEqual(events.find(e=>e.type==='run-blocked').blockReason,blockReason);
+});
+
+test('follow HTTP 429 stops only this batch and the next scheduled run can claim another job',async()=>{
+  const {store,clock}=setupEnv();
+  await store.saveSettings('acc-1',{enabled:true,batchLimit:5,inspectLimit:5});
+  const first=await store.enqueue({accountId:'acc-1',handle:'first',sources:[{module:'fans',enabled:true}]});
+  const second=await store.enqueue({accountId:'acc-1',handle:'second',sources:[{module:'fans',enabled:true}]});
+  const calls=[];
+  const scheduler=createFollowQueueScheduler({store,now:()=>clock.t,owner:'worker',canRun:async()=>true,
+    execute:async job=>{
+      calls.push(job.id);
+      return job.id===first.id
+        ? {state:'uncertain',rateLimited:true,reason:'关注接口返回限流（HTTP 429）',followResult:{attemptedAt:clock.t,responseStatus:429}}
+        : {state:'followed',followResult:{succeeded:true}};
+    }});
+  const one=await scheduler.run({accountId:'acc-1'});
+  assert.deepEqual(calls,[first.id]);
+  assert.match(one.summary,/本轮遇到关注接口限流/);
+  assert.equal((await store.get(first.id)).state,'uncertain');
+  const two=await scheduler.run({accountId:'acc-1'});
+  assert.deepEqual(calls,[first.id,second.id]);
+  assert.equal((await store.get(second.id)).state,'followed');
+  assert.doesNotMatch(two.summary,/限流/);
+});
+
+test('comment quota metadata cannot stop subsequent automatic follows', async () => {
+  const {store, clock} = setupEnv();
+  await store.saveSettings('acc-1', {enabled:true,batchLimit:5,inspectLimit:10});
+  for (const handle of ['first','second']) await store.enqueue({accountId:'acc-1',handle,sources:[{module:'fans',enabled:true}]});
+  let calls=0;
+  const scheduler=createFollowQueueScheduler({store,now:()=>clock.t,owner:'worker',canRun:async()=>true,
+    execute:async()=>{calls++;return {state:'followed',followResult:{succeeded:true},quotaExhausted:true};}});
+  const result=await scheduler.run({accountId:'acc-1'});
+  assert.equal(calls,2);
+  assert.doesNotMatch(result.summary,/额度已耗尽/);
+  assert.ok((await store.list({accountId:'acc-1'})).every(job=>job.state==='followed'));
+});
+
+test('successful follow clears previous failure at checkpoint and final persistence',async()=>{
+  const {store,clock}=setupEnv();
+  await store.saveSettings('acc-1',{enabled:true});
+  const job=await store.enqueue({accountId:'acc-1',handle:'recovered',sources:[{module:'fans',enabled:true}]});
+  await store.resolveJob({accountId:'acc-1',id:job.id,state:'pending',followResult:{
+    retryCount:2,reason:'用户资料接口限流',error:'old error',responseStatus:429,exhaustedRetries:true}});
+  const events=[];
+  const scheduler=createFollowQueueScheduler({store,now:()=>clock.t,canRun:async()=>true,
+    onEvent:async event=>events.push(event),execute:async(_job,_settings,control)=>{
+      await control.checkpoint({stage:'followed',followResult:{succeeded:true,targetUserId:'123'}});
+      const current=(await store.list({accountId:'acc-1'}))[0];
+      assert.equal(current.followResult.reason,'');
+      assert.equal(current.followResult.responseStatus,undefined);
+      return {state:'followed',followResult:{succeeded:true,targetUserId:'123'}};
+    }});
+  await scheduler.run({accountId:'acc-1'});
+  const saved=(await store.list({accountId:'acc-1'}))[0];
+  assert.equal(saved.state,'followed');assert.equal(saved.followResult.reason,'');
+  assert.equal(saved.followResult.error,undefined);assert.equal(saved.followResult.exhaustedRetries,undefined);
+  assert.equal(events.find(e=>e.type==='job-complete').followResult.reason,'');
+});
+
 test('batchLimit counts only new follows while alreadyFollowing and skipped continue within inspectLimit', async () => {
   const {store, clock} = setupEnv();
   await store.saveSettings('acc-1', {enabled: true, batchLimit: 2, inspectLimit: 10, timeBudgetMinutes: 10});
@@ -976,8 +1046,10 @@ test('AbortController deadline aborts hung execution without infinite wait and s
   assert.equal(res.ok, true);
   assert.equal(res.counters.inspected, 1);
   assert.equal(res.counters.retried, 1);
+  assert.equal(res.counters.failed, 0, 'cycle budget is not a profile failure');
 
   const [settled] = await store.list({accountId: 'acc-1'});
   assert.equal(settled.id, hungJob.id);
   assert.equal(settled.state, 'retry');
+  assert.equal(settled.followResult?.retryCount || 0, 0, 'budget rollover must not consume retry allowance');
 });

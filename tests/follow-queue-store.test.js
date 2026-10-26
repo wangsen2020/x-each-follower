@@ -340,9 +340,10 @@ test('concurrent claims grant one global lease', async () => {
 
 test('expired running becomes uncertain and a stale settle cannot overwrite a new lease', async () => {
   const {store, clock} = storeFor();
-  await store.enqueue({accountId: 'acc-1', targetUserId: '9', handle: 'nine', sources: [{module: 'mutual', url: 'm', enabled: true}]});
-  await store.enqueue({accountId: 'acc-1', targetUserId: '8', handle: 'eight', sources: [{module: 'fans', url: 'f', enabled: true}]});
+  await store.enqueue({accountId: 'acc-1', targetUserId: '9', handle: 'nine', followResult:{attemptedAt:999}, sources: [{module: 'mutual', url: 'm', enabled: true}]});
+  await store.enqueue({accountId: 'acc-1', targetUserId: '8', handle: 'eight', followResult:{attemptedAt:999}, sources: [{module: 'fans', url: 'f', enabled: true}]});
   const first = await store.claim({accountId: 'acc-1', owner: 'old', leaseMs: 20});
+  await store.settle({id:first.id,owner:'old',version:first.lease.version,state:'running',patch:{stage:'following',followResult:{attemptedAt:999}}});
   clock.t = 1_030;
   const second = await store.claim({accountId: 'acc-1', owner: 'new', leaseMs: 20});
   assert.ok(second);
@@ -379,7 +380,7 @@ test('expired running becomes uncertain and a stale settle cannot overwrite a ne
   assert.equal(fresh.job.followResult.unknown, true);
   const still = await store.list({accountId: 'acc-1'});
   assert.equal(still.find(job => job.id === first.id).state, 'uncertain');
-  assert.equal(still.find(job => job.id === first.id).followResult, null);
+  assert.equal(still.find(job => job.id === first.id).followResult.attemptedAt, 999);
 });
 
 test('durable followed outcome survives job deletion and blocks rediscovery', async () => {
@@ -1293,4 +1294,421 @@ test('quote tag settings survive partial settings saves and custom tag removal',
  assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关','Amigos']);
  await store.saveSettings('123',{quoteCustomTags:[]});
  assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关']);
+});
+
+test('quoteParticipationRate and quoteLengthMode migrate missing legacy fields, save 0/60/100 boundaries, and reject invalid explicit saves', async () => {
+  const {store, indexedDB} = storeFor();
+  const db = await (async () => {
+    await store.getSettings('acc-init');
+    return indexedDB.databases.get('test-queue').db;
+  })();
+  db.data.settings.set('legacy-acc', {
+    accountId: 'legacy-acc',
+    enabled: true,
+    every: 10
+  });
+  const migrated = await store.getSettings('legacy-acc');
+  assert.equal(migrated.quoteParticipationRate, 60);
+  assert.equal(migrated.quoteLengthMode, 'adaptive');
+  assert.equal(migrated.grokEnabled, false);
+  assert.equal(migrated.autoPublish, false);
+
+  for (const rate of [0, 60, 100]) {
+    const saved = await store.saveSettings('acc-1', {quoteParticipationRate: rate});
+    assert.equal(saved.quoteParticipationRate, rate);
+    assert.equal((await store.getSettings('acc-1')).quoteParticipationRate, rate);
+  }
+  for (const mode of ['adaptive', 'concise', 'deep']) {
+    const saved = await store.saveSettings('acc-1', {quoteLengthMode: mode});
+    assert.equal(saved.quoteLengthMode, mode);
+    assert.equal((await store.getSettings('acc-1')).quoteLengthMode, mode);
+  }
+
+  await store.saveSettings('acc-1', {quoteParticipationRate: 25, quoteLengthMode: 'deep'});
+  for (const invalidRate of [-1, 101, 60.5, '', '60', null, undefined, NaN]) {
+    await assert.rejects(
+      () => store.saveSettings('acc-1', {quoteParticipationRate: invalidRate}),
+      /引用概率请输入 0—100 的整数/
+    );
+  }
+  for (const invalidMode of ['', 'long', 'short', null, undefined, 123]) {
+    await assert.rejects(
+      () => store.saveSettings('acc-1', {quoteLengthMode: invalidMode}),
+      /篇幅仅支持自适应/
+    );
+  }
+  const afterFailedSaves = await store.getSettings('acc-1');
+  assert.equal(afterFailedSaves.quoteParticipationRate, 25);
+  assert.equal(afterFailedSaves.quoteLengthMode, 'deep');
+});
+
+test('ensureQuoteDecision enforces boundaries, durability across concurrent calls and reopen, account isolation, and resolveJob/outcome preservation', async () => {
+  const clock = {t: 10_000};
+  const {store, indexedDB} = storeFor(clock);
+
+  const job0 = await store.enqueue({accountId: 'acc-1', targetUserId: '100', handle: 'u0', sources: [{module: 'fans', url: 'u', enabled: true}]});
+  const job100 = await store.enqueue({accountId: 'acc-1', targetUserId: '101', handle: 'u100', sources: [{module: 'fans', url: 'u', enabled: true}]});
+  const job60Hit = await store.enqueue({accountId: 'acc-1', targetUserId: '102', handle: 'u60h', sources: [{module: 'fans', url: 'u', enabled: true}]});
+  const job60Miss = await store.enqueue({accountId: 'acc-1', targetUserId: '103', handle: 'u60m', sources: [{module: 'fans', url: 'u', enabled: true}]});
+
+  // 0% rate never selects even when roll is 0
+  const dec0 = await store.ensureQuoteDecision({accountId: 'acc-1', id: job0.id, rate: 0, random: () => 0});
+  assert.equal(dec0.ok, true);
+  assert.deepEqual(dec0.decision, {version: 1, rate: 0, roll: 0, selected: false, decidedAt: 10_000});
+
+  // 100% rate always selects even when roll is 0.999999
+  const dec100 = await store.ensureQuoteDecision({accountId: 'acc-1', id: job100.id, rate: 100, random: () => 0.999999});
+  assert.equal(dec100.ok, true);
+  assert.deepEqual(dec100.decision, {version: 1, rate: 100, roll: 0.999999, selected: true, decidedAt: 10_000});
+
+  // 60% boundary: roll < 0.6 selects, roll === 0.6 skips
+  const dec60Hit = await store.ensureQuoteDecision({accountId: 'acc-1', id: job60Hit.id, rate: 60, random: () => 0.5999});
+  assert.equal(dec60Hit.decision.selected, true);
+  const dec60Miss = await store.ensureQuoteDecision({accountId: 'acc-1', id: job60Miss.id, rate: 60, random: () => 0.6});
+  assert.equal(dec60Miss.decision.selected, false);
+
+  // Default crypto.getRandomValues produces 0 <= roll < 1
+  const jobCrypto = await store.enqueue({accountId: 'acc-1', targetUserId: '105', handle: 'ucrypto', sources: [{module: 'fans', url: 'u', enabled: true}]});
+  const decCrypto = await store.ensureQuoteDecision({accountId: 'acc-1', id: jobCrypto.id, rate: 60});
+  assert.equal(decCrypto.ok, true);
+  assert.equal(decCrypto.decision.version, 1);
+  assert.ok(decCrypto.decision.roll >= 0 && decCrypto.decision.roll < 1);
+  assert.equal(decCrypto.decision.selected, decCrypto.decision.roll < 0.6);
+
+  // Concurrent calls and reopen never redraw persisted decision
+  const jobConcurrent = await store.enqueue({accountId: 'acc-1', targetUserId: '104', handle: 'uconc', sources: [{module: 'fans', url: 'u', enabled: true}]});
+  let randomCalls = 0;
+  const rolls = [0.25, 0.95];
+  const [first, second] = await Promise.all([
+    store.ensureQuoteDecision({accountId: 'acc-1', id: jobConcurrent.id, rate: 60, random: () => rolls[randomCalls++]}),
+    store.ensureQuoteDecision({accountId: 'acc-1', id: jobConcurrent.id, rate: 10, random: () => rolls[randomCalls++]})
+  ]);
+  assert.equal(randomCalls, 1);
+  assert.deepEqual(first.decision, second.decision);
+  assert.equal(second.decision.rate, 60);
+  assert.equal(second.decision.roll, 0.25);
+  assert.equal(second.decision.selected, true);
+
+  clock.t = 20_000;
+  const reopenedStore = createFollowQueueStore({indexedDB, dbName: 'test-queue', now: () => clock.t});
+  const afterReopen = await reopenedStore.ensureQuoteDecision({
+    accountId: 'acc-1',
+    id: jobConcurrent.id,
+    rate: 0,
+    random: () => { throw new Error('must not redraw after reopen'); }
+  });
+  assert.deepEqual(afterReopen.decision, first.decision);
+
+  // Account isolation and rate validation fail closed
+  await assert.rejects(() => store.ensureQuoteDecision({accountId: '', id: jobConcurrent.id, rate: 60}), /missing account/);
+  await assert.rejects(() => store.ensureQuoteDecision({accountId: 'acc-1', id: '', rate: 60}), /job id is required/);
+  await assert.rejects(() => store.ensureQuoteDecision({accountId: 'acc-1', id: jobConcurrent.id, rate: -1}), /引用概率请输入 0—100 的整数/);
+  await assert.rejects(() => store.ensureQuoteDecision({accountId: 'acc-1', id: jobConcurrent.id, rate: 101}), /引用概率请输入 0—100 的整数/);
+  await assert.rejects(() => store.ensureQuoteDecision({accountId: 'acc-1', id: jobConcurrent.id, rate: 55.5}), /引用概率请输入 0—100 的整数/);
+
+  const wrongAccount = await store.ensureQuoteDecision({accountId: 'acc-2', id: jobConcurrent.id, rate: 60, random: () => 0.1});
+  assert.equal(wrongAccount.ok, false);
+  const missingJob = await store.ensureQuoteDecision({accountId: 'acc-1', id: 'non-existent', rate: 60, random: () => 0.1});
+  assert.equal(missingJob.ok, false);
+
+  // quoteDecision survives resolveJob, list, queryPage, and outcome rediscovery
+  const resolved = await reopenedStore.resolveJob({
+    accountId: 'acc-1',
+    id: jobConcurrent.id,
+    state: 'followed',
+    stage: 'followed',
+    followResult: {following: true, added: true}
+  });
+  assert.equal(resolved.ok, true);
+  assert.deepEqual(resolved.job.quoteDecision, first.decision);
+
+  const listed = await reopenedStore.list({accountId: 'acc-1'});
+  assert.deepEqual(listed.find(j => j.id === jobConcurrent.id).quoteDecision, first.decision);
+  const paged = await reopenedStore.queryPage({accountId: 'acc-1', limit: 20});
+  assert.deepEqual(paged.jobs.find(j => j.id === jobConcurrent.id).quoteDecision, first.decision);
+
+  // Clear jobs and rediscover from durable outcome
+  indexedDB.databases.get('test-queue').db.data.jobs.delete(jobConcurrent.id);
+  const rediscovered = await reopenedStore.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '104',
+    handle: 'uconc',
+    sources: [{module: 'mutual', url: 'https://x.com/m', enabled: true}]
+  });
+  assert.equal(rediscovered.state, 'followed');
+  assert.deepEqual(rediscovered.quoteDecision, first.decision);
+});
+
+test('mergeEvaluations preserves quoteDecision, reasonCode, quality, lengthPolicy, grokCalls, and generationAttemptedAt without default erasure', async () => {
+  const {store} = storeFor();
+  const job = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '501',
+    handle: 'diag_user',
+    sources: [{module: 'fans', url: 'https://x.com/f', enabled: true}]
+  });
+  const decision = {version: 1, rate: 60, roll: 0.31, selected: true, decidedAt: 1000};
+  const quality = {score: 7, passed: true, dimensions: {evidence: 2, value: 2, relevance: 2, utility: 1}};
+  const lengthPolicy = {mode: 'adaptive', maxChars: 25000, longFormAllowed: true};
+  const grokCalls = {profile: 0, quote: 1, retry: 0};
+
+  await store.resolveJob({
+    accountId: 'acc-1',
+    id: job.id,
+    state: 'followed',
+    stage: 'followed',
+    followResult: {following: true},
+    evaluations: [{
+      taskId: 'eval-diag-1',
+      status: 'draft',
+      text: '有价值的深度补充观点',
+      language: 'zh',
+      quoteDecision: decision,
+      reasonCode: 'draft_ready',
+      quality,
+      lengthPolicy,
+      grokCalls,
+      generationAttemptedAt: 12345
+    }]
+  });
+
+  // Subsequent merge with empty/default fields must not erase persisted diagnostic metadata
+  const mergedRes = await store.resolveJob({
+    accountId: 'acc-1',
+    id: job.id,
+    evaluations: [{
+      taskId: 'eval-diag-1',
+      status: 'posted',
+      publishedPostId: '98765',
+      publishedPostUrl: 'https://x.com/i/status/98765',
+      text: '',
+      language: '',
+      quoteDecision: null,
+      reasonCode: '',
+      quality: null,
+      lengthPolicy: {},
+      grokCalls: 0,
+      generationAttemptedAt: 0
+    }]
+  });
+
+  const ev = mergedRes.job.evaluations[0];
+  assert.equal(ev.status, 'posted');
+  assert.equal(ev.publishedPostId, '98765');
+  assert.equal(ev.text, '有价值的深度补充观点');
+  assert.equal(ev.language, 'zh');
+  assert.deepEqual(ev.quoteDecision, decision);
+  assert.equal(ev.reasonCode, 'draft_ready');
+  assert.deepEqual(ev.quality, quality);
+  assert.deepEqual(ev.lengthPolicy, lengthPolicy);
+  assert.deepEqual(ev.grokCalls, grokCalls);
+  assert.equal(ev.generationAttemptedAt, 12345);
+});
+
+test('publicationMode settings roundtrip, legacy migration, and strict explicit-save validation', async () => {
+  const {store, indexedDB} = storeFor();
+  const defaults = await store.getSettings('acc-default');
+  assert.equal(defaults.publicationMode, 'quote');
+
+  const db = indexedDB.databases.get('test-queue').db;
+  db.data.settings.set('legacy-mode-acc', {
+    accountId: 'legacy-mode-acc',
+    enabled: true,
+    every: 12,
+    quoteParticipationRate: 80,
+    quoteLengthMode: 'concise'
+  });
+  const migrated = await store.getSettings('legacy-mode-acc');
+  assert.equal(migrated.publicationMode, 'quote');
+  assert.equal(migrated.quoteParticipationRate, 80);
+  assert.equal(migrated.quoteLengthMode, 'concise');
+
+  const savedOriginal = await store.saveSettings('acc-1', {publicationMode: 'original'});
+  assert.equal(savedOriginal.publicationMode, 'original');
+  assert.equal((await store.getSettings('acc-1')).publicationMode, 'original');
+
+  // Partial save preserves existing publicationMode
+  const partialSaved = await store.saveSettings('acc-1', {autoPublish: true});
+  assert.equal(partialSaved.publicationMode, 'original');
+  assert.equal((await store.getSettings('acc-1')).publicationMode, 'original');
+
+  for(const mode of ['reply','article']){await store.saveSettings('acc-1',{publicationMode:mode});assert.equal((await store.getSettings('acc-1')).publicationMode,mode);}
+  const savedQuote = await store.saveSettings('acc-1', {publicationMode: 'quote'});
+  assert.equal(savedQuote.publicationMode, 'quote');
+  assert.equal((await store.getSettings('acc-1')).publicationMode, 'quote');
+
+  await store.saveSettings('acc-1', {publicationMode: 'original'});
+  for (const invalidMode of ['', 'repost', 'standalone', null, undefined, 123, {}]) {
+    await assert.rejects(
+      () => store.saveSettings('acc-1', {publicationMode: invalidMode}),
+      /发帖形式请选择评论、引用评论或文章/
+    );
+  }
+  assert.equal((await store.getSettings('acc-1')).publicationMode, 'original');
+});
+
+test('evaluations.publicationMode is persisted as immutable publication intent and legacy evaluations read quote', async () => {
+  const {store, indexedDB} = storeFor();
+  const job = await store.enqueue({
+    accountId: 'acc-1',
+    targetUserId: '701',
+    handle: 'mode_user',
+    sources: [{module: 'fans', url: 'https://x.com/f', enabled: true}]
+  });
+
+  // 1. Legacy record in DB missing publicationMode reads quote
+  const db = indexedDB.databases.get('test-queue').db;
+  const rawJob = db.data.jobs.get(job.id);
+  rawJob.evaluations = [{
+    taskId: 'eval-legacy',
+    status: 'draft',
+    text: '旧版遗留草稿'
+  }];
+  db.data.jobs.set(job.id, rawJob);
+
+  const fetchedLegacy = await store.get(job.id);
+  assert.equal(fetchedLegacy.evaluations[0].publicationMode, 'quote');
+  const listedLegacy = await store.list({accountId: 'acc-1'});
+  assert.equal(listedLegacy[0].evaluations[0].publicationMode, 'quote');
+  const pagedLegacy = await store.queryPage({accountId: 'acc-1', limit: 10});
+  assert.equal(pagedLegacy.jobs[0].evaluations[0].publicationMode, 'quote');
+
+  // 2. If a raw record has an invalid previous publicationMode, a valid incoming publicationMode wins
+  rawJob.evaluations = [{
+    taskId: 'eval-invalid-prev',
+    publicationMode: 'bad-mode',
+    status: 'pending',
+    text: '草稿'
+  }];
+  db.data.jobs.set(job.id, rawJob);
+  const repairedRes = await store.resolveJob({
+    accountId: 'acc-1',
+    id: job.id,
+    evaluations: [{
+      taskId: 'eval-invalid-prev',
+      publicationMode: 'original',
+      status: 'draft'
+    }]
+  });
+  assert.equal(repairedRes.job.evaluations.find(e => e.taskId === 'eval-invalid-prev').publicationMode, 'original');
+
+  // 3. Persist quote and original evaluations with full metadata
+  const decision = {version: 1, rate: 75, roll: 0.2, selected: true, decidedAt: 2000};
+  const quality = {score: 8, passed: true, reason: '独立信息密度高'};
+  const lengthPolicy = {mode: 'deep', maxDraftCharacters: 25000};
+  const grokCalls = {profile: 1, quote: 1, retry: 0};
+
+  await store.resolveJob({
+    accountId: 'acc-1',
+    id: job.id,
+    state: 'followed',
+    stage: 'followed',
+    followResult: {following: true},
+    evaluations: [
+      {
+        taskId: 'eval-quote-1',
+        publicationMode: 'quote',
+        status: 'draft',
+        text: '引用评论草稿',
+        quoteDecision: decision,
+        reasonCode: 'draft_ready',
+        quality,
+        lengthPolicy,
+        grokCalls,
+        generationAttemptedAt: 5000
+      },
+      {
+        taskId: 'eval-orig-1',
+        publicationMode: 'original',
+        status: 'pending',
+        text: '独立新帖草稿',
+        quoteDecision: decision,
+        reasonCode: 'draft_ready',
+        quality,
+        lengthPolicy,
+        grokCalls,
+        generationAttemptedAt: 6000
+      },
+      {
+        taskId: 'eval-fallback-1',
+        publicationMode: 'invalid-mode',
+        status: 'draft',
+        text: '缺省回退草稿'
+      }
+    ]
+  });
+
+  // 4. Changing account settings.publicationMode MUST NOT alter existing evaluations
+  await store.saveSettings('acc-1', {publicationMode: 'original'});
+  const afterSettingsToOriginal = await store.get(job.id);
+  assert.equal(afterSettingsToOriginal.evaluations.find(e => e.taskId === 'eval-quote-1').publicationMode, 'quote');
+  assert.equal(afterSettingsToOriginal.evaluations.find(e => e.taskId === 'eval-orig-1').publicationMode, 'original');
+  assert.equal(afterSettingsToOriginal.evaluations.find(e => e.taskId === 'eval-fallback-1').publicationMode, 'quote');
+
+  await store.saveSettings('acc-1', {publicationMode: 'quote'});
+  const afterSettingsToQuote = await store.get(job.id);
+  assert.equal(afterSettingsToQuote.evaluations.find(e => e.taskId === 'eval-orig-1').publicationMode, 'original');
+
+  // 5. Subsequent merges attempting to flip publicationMode preserve valid previous value
+  const afterMergeAttempt = await store.resolveJob({
+    accountId: 'acc-1',
+    id: job.id,
+    evaluations: [
+      {
+        taskId: 'eval-quote-1',
+        publicationMode: 'original',
+        status: 'posted',
+        publishedPostId: '1001',
+        publishedPostUrl: 'https://x.com/i/status/1001'
+      },
+      {
+        taskId: 'eval-orig-1',
+        publicationMode: 'quote',
+        status: 'posted',
+        publishedPostId: '1002',
+        publishedPostUrl: 'https://x.com/i/status/1002'
+      }
+    ]
+  });
+
+  const mergedQuote = afterMergeAttempt.job.evaluations.find(e => e.taskId === 'eval-quote-1');
+  const mergedOrig = afterMergeAttempt.job.evaluations.find(e => e.taskId === 'eval-orig-1');
+  assert.equal(mergedQuote.publicationMode, 'quote');
+  assert.equal(mergedQuote.status, 'posted');
+  assert.deepEqual(mergedQuote.quoteDecision, decision);
+  assert.deepEqual(mergedQuote.quality, quality);
+  assert.deepEqual(mergedQuote.lengthPolicy, lengthPolicy);
+  assert.deepEqual(mergedQuote.grokCalls, grokCalls);
+  assert.equal(mergedQuote.generationAttemptedAt, 5000);
+
+  assert.equal(mergedOrig.publicationMode, 'original');
+  assert.equal(mergedOrig.status, 'posted');
+  assert.deepEqual(mergedOrig.quoteDecision, decision);
+  assert.deepEqual(mergedOrig.quality, quality);
+  assert.deepEqual(mergedOrig.lengthPolicy, lengthPolicy);
+  assert.deepEqual(mergedOrig.grokCalls, grokCalls);
+  assert.equal(mergedOrig.generationAttemptedAt, 6000);
+
+});
+
+
+test('expired pre-action lease resumes the same job and fences the abandoned worker',async()=>{
+  const {store,clock}=storeFor();
+  await store.enqueue({accountId:'acc-1',targetUserId:'42',handle:'target',sources:[{module:'fans',enabled:true}]});
+  const first=await store.claim({accountId:'acc-1',owner:'abandoned',leaseMs:20});
+  clock.t+=30;
+  const resumed=await store.claim({accountId:'acc-1',owner:'new',leaseMs:20});
+  assert.equal(resumed.id,first.id);assert.equal(resumed.state,'running');assert.ok(resumed.lease.version>first.lease.version);
+  assert.equal((await store.settle({id:first.id,owner:'abandoned',version:first.lease.version,state:'followed',patch:{}})).ok,false);
+  const done=await store.settle({id:resumed.id,owner:'new',version:resumed.lease.version,state:'followed',patch:{followResult:{succeeded:true}}});
+  assert.equal(done.ok,true);assert.equal(done.job.state,'followed');
+});
+
+test('expired removal intent stays uncertain and cannot be replayed as a follow',async()=>{
+  const {store,clock}=storeFor();
+  await store.enqueue({accountId:'acc-1',targetUserId:'42',handle:'target',sources:[{module:'fans',enabled:true}],followResult:{followerRemoval:{attemptedAt:999}}});
+  const first=await store.claim({accountId:'acc-1',owner:'abandoned',leaseMs:20});
+  await store.settle({id:first.id,owner:'abandoned',version:first.lease.version,state:'running',patch:{followResult:{followerRemoval:{attemptedAt:999}}}});clock.t+=30;
+  assert.equal(await store.claim({accountId:'acc-1',owner:'new',leaseMs:20}),null);
+  assert.equal((await store.list({accountId:'acc-1'})).find(j=>j.id===first.id).state,'uncertain');
 });

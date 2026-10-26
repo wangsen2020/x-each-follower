@@ -60,7 +60,7 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
     const clean=String(handle||'').replace(/^@/,'');
     if(!HANDLE_RE.test(clean))throw new Error('账号名无效');
     return withPage(clean,'UserByScreenName',async tabId=>{
-      const result=await client.profile(tabId,clean);
+      const result=await client.profile(tabId,clean,{preferPageResponse:true});
       if(result.status!==200||result.error)throw networkError(result,'账号资料读取失败');
       const parsed=parsePublicProfile(result.json,now());
       if(parsed.handle.toLowerCase()!==clean.toLowerCase())throw new Error('返回资料与目标账号不符');

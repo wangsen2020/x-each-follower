@@ -119,6 +119,14 @@ test('readProfileBundle extracts profile bundle and posts up to recentLimit', ()
   assert.equal(result.followingText, '110 Following');
   assert.equal(result.posts.length, 1);
   assert.equal(result.posts[0].text, 'Hello world 1');
+  assert.equal(result.posts[0].textComplete,false,'whole article chrome is not proof of a complete post');
+  let truncated=false;
+  articles[0].querySelector=selector=>selector==='[data-testid="tweetText"]' ? {innerText:'Actual original text'}
+    : selector==='[data-testid="tweet-text-show-more-link"]' ? truncated ? {} : null : null;
+  assert.equal(readProfileBundle('alice',1).posts[0].text,'Actual original text');
+  assert.equal(readProfileBundle('alice',1).posts[0].textComplete,true);
+  truncated=true;
+  assert.equal(readProfileBundle('alice',1).posts[0].textComplete,false);
 });
 
 test('profile bundle reads the target account follow button and user ID, not another account', () => {

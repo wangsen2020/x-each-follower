@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
 const source=fs.readFileSync(new URL('../src/entries/main-world/net-hook.js',import.meta.url),'utf8');
-function fixture(response){
+function fixture(response,location={origin:'https://x.com'}){
  class XHR {open(){}send(){}setRequestHeader(){}}
  const messages=[];
  const window={fetch:async()=>response,postMessage:value=>messages.push(value)};
- vm.runInNewContext(source,{window,XMLHttpRequest:XHR,crypto,TextDecoder,URL,location:{origin:'https://x.com'}});
+ vm.runInNewContext(source,{window,XMLHttpRequest:XHR,crypto,TextDecoder,URL,location});
  return {window,messages};
 }
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('stream observation did not settle');}
@@ -115,4 +115,18 @@ test('bootstrap HTTP failures relay status and cooldown instead of waiting for a
 
 test('bootstrap honors the configured ceiling of 1000 and still sends only one query',async()=>{
  const f=bootstrapFixture(true,200,1000),url='https://x.com/i/api/graphql/id/contentPageQuery?variables='+encodeURIComponent('{"max_results":50,"query_page_size":50}');await f.window.fetch(url);await f.window.fetch(url);assert.equal(f.calls.length,1);const vars=JSON.parse(new URL(f.calls[0]).searchParams.get('variables'));assert.equal(vars.max_results,1000);assert.equal(vars.query_page_size,1000);
+});
+
+test('native profile capture is tab-local and ignores internal requests, failures and other routes',async()=>{
+ const url='https://x.com/i/api/graphql/query/UserByScreenName?variables='+encodeURIComponent(JSON.stringify({screen_name:'target'}));
+ const json={data:{user:{result:{rest_id:'123'}}}};
+ const f=fixture(new Response(JSON.stringify(json)),{origin:'https://x.com',pathname:'/target'});
+ await f.window.fetch(url);await until(()=>f.window.__xefNativeProfile);
+ assert.equal(f.window.__xefNativeProfile.handle,'target');
+ assert.equal(f.window.__xefNativeProfile.json.data.user.result.rest_id,'123');
+ for(const [path,status,internal] of [['/other',200,false],['/target',429,false],['/target',200,true]]){
+   const x=fixture(new Response(JSON.stringify(json),{status}),{origin:'https://x.com',pathname:path});
+   await x.window.fetch(url,{__xefInternal:internal});
+   await new Promise(r=>setTimeout(r,10));assert.equal(x.window.__xefNativeProfile,undefined);
+ }
 });

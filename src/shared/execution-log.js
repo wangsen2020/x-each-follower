@@ -1,5 +1,6 @@
 import {getDefaultExecutionLogStore} from './execution-log-store.js';
 import {selectExecutionLogs} from './execution-log-select.js';
+import {displayFollowLimitError} from './follow-limit.js';
 
 export {selectExecutionLogs};
 
@@ -40,15 +41,33 @@ export function appendExecutionLog(entry, storage = chrome.storage.local) {
 
 export function normalizeQueueExecutionLog(event, job = {}, audit = {}) {
   const type = event.type;
-  const evaluations = event.evaluations || job.evaluations || [];
+  const starting = type === 'job-start' || type === 'run-start';
+  // A start event describes a new attempt; it must never inherit old scan/failure data.
+  if (starting) audit = {};
+  else if (audit.diagnostic && event.runId && audit.diagnostic.runId !== event.runId) {
+    audit = {...audit}; delete audit.diagnostic;
+  }
+  const evaluations = starting ? [] : event.evaluations || job.evaluations || [];
   const labels = {'job-start':'开始访问主页并读取账号资料','job-complete':'账号任务处理结束','run-start':'本轮任务开始','run-complete':'本轮任务结束','job-settle-failed':'任务结果保存失败','job-imported-hold-applied':'采用历史处理结果'};
   let result = type === 'job-start' || type === 'run-start' ? 'started' : type === 'run-complete' ? 'completed' : event.state || event.result || 'info';
-  const follow = event.followResult || job.followResult || {};
+  const follow = starting ? {} : event.followResult || job.followResult || {};
   if (result === 'followed' && (event.alreadyFollowing || follow.alreadyFollowing)) result = 'already_following';
+  const succeeded = result === 'followed' || result === 'already_following';
+  const successDetail = result === 'already_following' ? '主页确认原本已关注，未重复关注，本次未生成引用评价。' : '关注成功。';
+  // Old successful entries may have copied their previous retry reason into detail.
+  // Correct presentation without rewriting the original historical record.
+  const explicitDetail = event.detail !== event.type && (!succeeded ||
+    (event.detail !== follow.reason && event.detail !== follow.error)) ? event.detail : '';
+  const decision = starting ? null : audit.relationshipDecision || event.relationshipDecision || follow.relationshipDecision;
+  const relationshipLabel = value => value === true ? '是' : value === false ? '否' : '未知';
+  const relationshipSummary = decision ? `${decision.reason}；对方关注我：${relationshipLabel(decision.followedBy)}，我关注对方：${relationshipLabel(decision.following)}${decision.screeningReason ? `；筛选：${decision.screeningReason}` : ''}` : '';
+  let detail = (starting ? labels[type] : '') || event.summary || event.reason || explicitDetail || (succeeded ? successDetail : follow.error || follow.reason) || labels[type] || '队列状态更新';
+  if (relationshipSummary && !detail.includes(relationshipSummary)) detail += ` ${relationshipSummary}`;
   return {...event, ...audit, scope:'queue',
     handle:event.handle || job.handle || '', name:audit.name || job.profile?.name || '',
     sources:event.sources || job.sources || [], evaluations, followResult:follow,
     result, source:event.manual === true ? 'manual' : event.manual === false ? 'scheduled' : event.source || 'unknown',
-    detail:event.summary || event.reason || (result === 'already_following' ? '主页确认原本已关注，未重复关注，本次未生成引用评价。' : '') || (event.detail !== event.type ? event.detail : '') || follow.error || follow.reason || labels[type] || '队列状态更新',
+    reason:displayFollowLimitError(event.reason),
+    detail:displayFollowLimitError(detail),
     at:new Date(event.at || Date.now()).toISOString()};
 }

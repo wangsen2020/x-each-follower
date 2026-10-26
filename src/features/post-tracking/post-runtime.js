@@ -1,5 +1,5 @@
 import {normalizeLowRules,validateLowRules} from './post-rules.js';
-import {analyticsRange, parseOwnAnalytics, mergePost, selectPostPage} from './post-model.js';
+import {parseOwnAnalytics, mergePost, selectPostPage} from './post-model.js';
 import {planBatch,batchVariables,finishBatch,monitorInterval,batchLimit,reviewInterval,MIN_BATCH_DELAY} from './post-scanner.js';
 import {createPostLearning} from './post-learning.js';
 import {createPostStore} from './post-store.js';
@@ -9,7 +9,14 @@ import {createFollowQueueStore} from '../follow-queue/follow-queue-store.js';
 export const POST_ALARM='xef-own-post-monitor';
 export const POST_CONFIG='ownPostTracking';
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))).map(v=>v.toString(16).padStart(2,'0')).join('');
+
+export function publishedQueueSources(jobs) {
+  const result=new Map();
+  for(const job of jobs)for(const ev of job.evaluations || [])if(ev.status==='posted'&&ev.publishedPostId)result.set(ev.publishedPostId,ev.publicationMode==='original'
+    ? {kind:'auto-original',referencePostId:ev.originalPostId,referencePostText:ev.originalPostText}
+    : {kind:'auto-quote',originalPostId:ev.originalPostId,originalPostUrl:/^\d+$/.test(ev.originalPostId||'')?`https://x.com/i/status/${ev.originalPostId}`:null,originalPostText:ev.originalPostText});
+  return result;
+}
 
 export function createPostRuntime({api=chrome, store=createPostStore(), fetchAnalytics=networkFetchOwnPostAnalytics, deletePost=networkDeleteOwnPost, fetchDetail=networkFetch, sleep=wait, now=()=>Date.now(), publishedSources, askGrok}={}) {
   let task=null, publishedStore;
@@ -18,9 +25,7 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
   const readPublished=publishedSources || (async ownerId=>{
     const {followQueueBinding}=await api.storage.local.get('followQueueBinding');
     if(followQueueBinding?.accountId!==ownerId)return new Map();
-    const jobs=await (publishedStore ||= createFollowQueueStore()).list({accountId:ownerId});const result=new Map();
-    for(const job of jobs)for(const ev of job.evaluations || [])if(ev.status==='posted'&&ev.publishedPostId)result.set(ev.publishedPostId,{kind:'auto-quote',originalPostId:ev.originalPostId,originalPostUrl:/^\d+$/.test(ev.originalPostId||'')?`https://x.com/i/status/${ev.originalPostId}`:null,originalPostText:ev.originalPostText});
-    return result;
+    return publishedQueueSources(await (publishedStore ||= createFollowQueueStore()).list({accountId:ownerId}));
   });
   async function exclusive(fn) {
     if (task) throw new Error('帖子任务正在执行，请稍后重试');
@@ -36,10 +41,10 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
       for(let attempt=0;attempt<50;attempt++) {
         const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
         const loaded=!cached||!api.tabs.get||(await api.tabs.get(tab.id)).status==='complete';
-        if(loaded && (cached||networkTemplates[op]?.at >= started-1000) && networkTemplates[op]?.headers?.['x-csrf-token']){ready=true;break;}
+        if(loaded && (op===null || (cached||networkTemplates[op]?.at >= started-1000) && networkTemplates[op]?.headers?.['x-csrf-token'])){ready=true;break;}
         await sleep(500);
       }
-      if(!ready)throw new Error('未取得当前 X 分析请求，请检查登录、订阅权限或网络后重试');
+      if(!ready)throw new Error(op===null?'X 页面未加载完成，请稍后重试':'未取得当前 X 请求，请检查登录、权限或网络后重试');
       return await fn(tab.id);
     } finally {if(owned)await api.tabs.remove(tab.id).catch(()=>{});}
   }
@@ -159,7 +164,7 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
     return exclusive(async()=>{
       const post=await getPost(postId);
       if(post.protected||post.deletion&&post.deletion.status!=='failed')throw new Error('帖子受保护或已有删除任务');
-      const intent={id:crypto.randomUUID(),ownerId:post.ownerId,bindingNonce:(await config()).bindingNonce,postId,textHash:await hash(post.text),text:post.text,url:post.url,createdAt:now(),expiresAt:now()+120000,status:'prepared'};
+      const intent={id:crypto.randomUUID(),ownerId:post.ownerId,bindingNonce:(await config()).bindingNonce,postId,text:post.text,url:post.url,createdAt:now(),expiresAt:now()+120000,status:'prepared'};
       await store.putIntent(intent);return {approvalId:intent.id,postId,text:intent.text,url:intent.url,owner: (await config()).owner,expiresAt:intent.expiresAt};
     });
   }
@@ -171,15 +176,10 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
       const intent=await store.intent(approvalId);const cfg=await config();
       if(!intent||!/^\d+$/.test(intent.postId||'')||intent.status!=='prepared'||intent.expiresAt<now()||intent.ownerId!==cfg.ownerId||intent.bindingNonce!==cfg.bindingNonce)throw new Error('删除确认已过期、已使用或账号已切换');
       const post=await getPost(intent.postId);
-      if(post.protected||post.deletion&&post.deletion.status!=='failed'||await hash(post.text)!==intent.textHash)throw new Error('帖子已变更或受保护，请重新审核');
-      // Use a loaded X execution page and the captured request shape. Fresh
-      // account/text checks come from read(), not a new native analytics event.
+      if(post.protected||post.deletion&&post.deletion.status!=='failed')throw new Error('帖子受保护或已有删除任务');
+      // Submit the approved ID directly; X checks existence, ownership and permissions.
       const execute=async tabId=>{
         const pageReadyAt=now();
-        const range=analyticsRange(1,post.createdAt);
-        const fresh=await read(tabId,range);
-        const current=fresh.posts.find(p=>p.postId===post.postId);
-        if(fresh.owner.id!==intent.ownerId || !current || await hash(current.text)!==intent.textHash)throw new Error('实时账号或帖文核验不通过，未发送删除');
         if(intent.expiresAt<now())throw new Error('删除确认已过期，请重新确认');
         // Consume and persist BEFORE sending. A restart must never replay an uncertain write.
         intent.status='sending';intent.sentAt=now();await store.putIntent(intent);
@@ -188,23 +188,15 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
         try{response=await deletePost(tabId,post.postId);}catch(error){response={status:0,error:error.message};}
         const mutationFinished=now();
         const serverAcknowledged=response.status===200&&!response.error&&!response.json?.errors?.length&&response.json?.data?.delete_tweet?.tweet_results!=null;
-        post.deletion={...post.deletion,status:response.attempted===false?'failed':'uncertain',httpStatus:response.status,error:response.error||'',serverAcknowledged,acknowledgedPostId:serverAcknowledged?post.postId:null,at:now()};
+        const rejected=response.attempted===false||response.status>=400||response.json?.errors?.length>0;
+        const error=response.error||response.json?.errors?.map(e=>e.message||String(e.code||'X 删除失败')).join('；')||(rejected?`删除失败 HTTP ${response.status}`:serverAcknowledged?'':'X 未返回明确删除结果');
+        post.deletion={...post.deletion,status:serverAcknowledged?'verified':rejected?'failed':'uncertain',httpStatus:response.status,error,serverAcknowledged,acknowledgedPostId:serverAcknowledged?post.postId:null,at:now(),...(serverAcknowledged?{verifiedAt:now(),verification:'server-acknowledged'}:{})};
         intent.status=post.deletion.status;await store.putIntent(intent);await store.put(post);
-        // A successful HTTP response alone does not establish that the post disappeared.
-        if(response.status===200&&!response.error&&!response.json?.errors?.length){
-          // X may briefly serve the pre-delete detail after acknowledging the write.
-          // Retry only the read, with a small bounded delay; never resend deletion.
-          for(const delay of [0,2000,5000]){
-            if(delay)await sleep(delay);
-            let checked;try{checked=await verify(post,tabId);}catch{break;}
-            if((await store.get(post.ownerId,post.postId)).deletion?.status==='verified'||checked?.httpStatus!==200)break;
-          }
-        }
         const timings={pageReadyMs:pageReadyAt-operationStarted,preflightMs:mutationStarted-pageReadyAt,mutationMs:mutationFinished-mutationStarted,verifyMs:now()-mutationFinished,totalMs:now()-operationStarted,...(response.timings?{transport:response.timings}:{})};
         await store.update(post.ownerId,post.postId,p=>({...p,deletion:{...p.deletion,timings}}));
         return {ok:true,deletion:(await store.get(post.ownerId,post.postId)).deletion};
       };
-      return reuseTabId==null?withPage('https://x.com/home','contentPageQuery',execute,{cached:true,reuse:true}):execute(reuseTabId);
+      return reuseTabId==null?withPage('https://x.com/home',null,execute,{cached:true,reuse:true}):execute(reuseTabId);
     }
   }
   async function prepareBatchDelete({postIds}) {
@@ -213,7 +205,7 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
       const cfg=await config(),posts=[];
       for(const id of postIds){const post=await getPost(id);if(post.protected||post.deletion&&post.deletion.status!=='failed')throw new Error('所选帖子受保护或已有删除任务，请取消勾选后重试');posts.push(post);}
       const expiresAt=now()+600000,items=[];
-      for(const post of posts){const intent={id:crypto.randomUUID(),ownerId:cfg.ownerId,bindingNonce:cfg.bindingNonce,postId:post.postId,textHash:await hash(post.text),text:post.text,url:post.url,createdAt:now(),expiresAt,status:'prepared'};await store.putIntent(intent);items.push({approvalId:intent.id,postId:post.postId,text:post.text,url:post.url});}
+      for(const post of posts){const intent={id:crypto.randomUUID(),ownerId:cfg.ownerId,bindingNonce:cfg.bindingNonce,postId:post.postId,text:post.text,url:post.url,createdAt:now(),expiresAt,status:'prepared'};await store.putIntent(intent);items.push({approvalId:intent.id,postId:post.postId,text:post.text,url:post.url});}
       const batch={id:crypto.randomUUID(),kind:'batch-delete',ownerId:cfg.ownerId,bindingNonce:cfg.bindingNonce,createdAt:now(),expiresAt,status:'prepared',items,results:[]};await store.putIntent(batch);
       return {ok:true,batchApprovalId:batch.id,owner:cfg.owner,items,expiresAt};
     });
@@ -223,22 +215,20 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
     return exclusive(async()=>{
       const batch=await store.intent(batchApprovalId),cfg=await config();
       if(!batch||batch.kind!=='batch-delete'||batch.status!=='prepared'||batch.expiresAt<now()||batch.ownerId!==cfg.ownerId||batch.bindingNonce!==cfg.bindingNonce)throw new Error('批量删除确认已过期、已使用或账号已切换');
-      // Recheck the entire approved set before sending the first mutation.
-      for(const item of batch.items){const post=await getPost(item.postId),intent=await store.intent(item.approvalId);if(!intent||intent.status!=='prepared'||post.protected||post.deletion&&post.deletion.status!=='failed'||await hash(post.text)!==intent.textHash)throw new Error('所选帖子已变更或受保护，请重新确认');}
       batch.status='running';batch.startedAt=now();await store.putIntent(batch);
       const pageStarted=now();
-      try{await withPage('https://x.com/home','contentPageQuery',async tabId=>{
+      try{await withPage('https://x.com/home',null,async tabId=>{
         batch.pageReadyMs=now()-pageStarted;let lastStarted=null;
         for(const item of batch.items){
           if(lastStarted!==null){const delay=Math.max(0,3000-(now()-lastStarted));if(delay)await sleep(delay);}
+          batch.currentIndex=batch.results.length+1;await store.putIntent(batch);
           lastStarted=now();let result;
           try{const response=await deleteConfirmed({approvalId:item.approvalId,confirmed:true},tabId);result={postId:item.postId,status:response.deletion.status,error:response.deletion.error||'',timings:response.deletion.timings};}
           catch(error){const post=await store.get(batch.ownerId,item.postId);result={postId:item.postId,status:post?.deletion?.status||'not-sent',error:error.message};}
           batch.results.push(result);await store.putIntent(batch);
-          if(result.status!=='verified')break;
         }
-      },{cached:true,reuse:true});}catch(error){if(!batch.results.length)batch.results.push({postId:batch.items[0].postId,status:'not-sent',error:error.message});else batch.error=error.message;}
-      batch.status=batch.results.length===batch.items.length&&batch.results.every(r=>r.status==='verified')?'completed':'stopped';batch.finishedAt=now();await store.putIntent(batch);
+      },{cached:true,reuse:true});}catch(error){batch.error=error.message;for(const item of batch.items.slice(batch.results.length))batch.results.push({postId:item.postId,status:'not-sent',error:error.message});}
+      batch.status=batch.results.every(r=>r.status==='verified')?'completed':'completed-with-errors';batch.finishedAt=now();await store.putIntent(batch);
       return {ok:true,status:batch.status,results:batch.results,remaining:batch.items.length-batch.results.length};
     });
   }
@@ -269,6 +259,11 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
   }
   async function handle(request) {
     switch(request.op) {
+      case 'batchDeleteProgress':{
+        const batch=await store.intent(request.batchApprovalId),cfg=await config();
+        if(!batch||batch.kind!=='batch-delete'||batch.ownerId!==cfg.ownerId||batch.bindingNonce!==cfg.bindingNonce)throw new Error('批量删除任务不存在或账号已切换');
+        return {ok:true,status:batch.status,total:batch.items.length,processed:batch.results.length,current:batch.status==='running'?batch.currentIndex||0:batch.results.length};
+      }
       case 'page':return page(request.options);
       case 'learn':return exclusive(async()=>{const cfg=await config();if(!cfg.ownerId||request.ownerId!==cfg.ownerId)throw new Error('当前账号已更新，请刷新后重试');return learning.start({ownerId:cfg.ownerId,kind:request.kind,postIds:request.postIds});});
       case 'saveMemory':return exclusive(async()=>{const cfg=await config();if(!cfg.ownerId||request.ownerId!==cfg.ownerId)throw new Error('当前账号已更新，请刷新后重试');return learning.save(cfg.ownerId,request);});

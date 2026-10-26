@@ -1,0 +1,192 @@
+[
+  {
+    "handle": "Desalimfi",
+    "previousState": "uncertain",
+    "previousReason": "关注接口返回限流（HTTP 429），本轮已停止，冷却 1 小时后按调度重试；该账号的关注关系待核实。",
+    "blocking": false,
+    "followedBy": true,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:04.738Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "brfu489",
+    "previousState": "followed",
+    "previousReason": "",
+    "blocking": false,
+    "followedBy": true,
+    "following": true,
+    "checkedAt": "2026-10-25T04:52:06.570Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "Gradjanin5",
+    "previousState": "retry",
+    "previousReason": "用户资料接口限流，未发送关注请求；稍后重试。",
+    "blocking": false,
+    "followedBy": true,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:08.420Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "ngrakib0",
+    "previousState": "retry",
+    "previousReason": "用户资料接口限流，未发送关注请求；稍后重试。",
+    "blocking": false,
+    "followedBy": true,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:10.614Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "Bberfll",
+    "previousState": "retry",
+    "previousReason": "用户资料接口限流，未发送关注请求；稍后重试。",
+    "blocking": false,
+    "followedBy": true,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:12.331Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "Masudkyc99",
+    "previousState": "retry",
+    "previousReason": "用户资料接口限流，未发送关注请求；稍后重试。",
+    "blocking": false,
+    "followedBy": true,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:14.271Z",
+    "pageFollowsYou": true
+  },
+  {
+    "handle": "L1nnHaidong21",
+    "previousState": "retry",
+    "previousReason": "用户资料接口限流，未发送关注请求；稍后重试。",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:16.428Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "wofeixz",
+    "previousState": "skipped",
+    "previousReason": "命中高风险内容门禁（导流、付费或高风险外链）",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:18.502Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "Rocida38",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:20.996Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "ohouhou717",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:22.836Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "Summer520999",
+    "previousState": "skipped",
+    "previousReason": "命中高风险内容门禁（导流、付费或高风险外链）",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:24.544Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "TrueXaea12",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:26.435Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "uuryetkindeveci",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:28.397Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "EnesAvar",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:30.463Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "trapleface",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:32.541Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "de_mon010",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:34.290Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "alun_qiye",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:37.768Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "x2mkj8",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:40.647Z",
+    "pageFollowsYou": false
+  },
+  {
+    "handle": "web3usb",
+    "previousState": "skipped",
+    "previousReason": "关注/粉丝比例低于 80%",
+    "blocking": false,
+    "followedBy": false,
+    "following": false,
+    "checkedAt": "2026-10-25T04:52:42.791Z",
+    "pageFollowsYou": false
+  }
+]

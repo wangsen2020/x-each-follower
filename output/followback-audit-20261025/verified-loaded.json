@@ -1,0 +1,204 @@
+{
+  "version": "2.15.1",
+  "build": {
+    "ok": true,
+    "version": "2.15.1"
+  },
+  "records": [
+    {
+      "handle": "L1nnHaidong21",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "wofeixz",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "Rocida38",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "ohouhou717",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "Summer520999",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "TrueXaea12",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "uuryetkindeveci",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "EnesAvar",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "trapleface",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "de_mon010",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "alun_qiye",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "x2mkj8",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    },
+    {
+      "handle": "web3usb",
+      "ok": true,
+      "rows": [
+        {
+          "status": "no_longer_following",
+          "state": "no_longer_following",
+          "relationship": {
+            "blocking": false,
+            "followedBy": false,
+            "following": false
+          }
+        }
+      ]
+    }
+  ],
+  "bundleNote": "Decision helpers are emitted into shared chunks; background.js references relationshipDecision. Browser-served background SHA-256 matched dist.",
+  "backgroundSha256": "cb39ceed037f0e1554b46fcb3f6f2fa3b89907a47d0f56387429d73305138c3f"
+}

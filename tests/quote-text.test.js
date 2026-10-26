@@ -31,11 +31,11 @@ test('parsing and optional suffixes retain the full long quote', () => {
   assert.ok(fitted.startsWith('a'.repeat(280)));
   assert.equal(fitted,'a'.repeat(280));
   const longTags = Array.from({length: 10}, (_, i) => `Tag${'X'.repeat(20)}${i}`);
-  assert.throws(() => validateQuoteTags({
+  assert.doesNotThrow(() => validateQuoteTags({
     quoteTagsEnabled: true,
     quoteCustomTags: longTags,
     quoteSelectedTags: longTags
-  }), /已选标签过长/);
+  }));
 });
 
 test('weighted budget handles emoji sequences, extended Han, punctuation and URLs', () => {

@@ -22,7 +22,7 @@ import {
 
 const panelSource = readFileSync(new URL('../src/entries/panel/panel.js', import.meta.url), 'utf8');
 
-test('relationship flags keep first queue status and follower or following membership', () => {
+test('relationship flags keep queue status separate from current following membership', () => {
   const monitor = {
     followingUsers: [{handle: 'Kept'}],
     users: [
@@ -47,7 +47,7 @@ test('relationship flags keep first queue status and follower or following membe
   assert.equal(commentRelationshipLabel({handle: 'Both', relationship: {followedBy: true}}, index), '未互关');
   assert.equal(commentRelationshipLabel({handle: 'Kept', relationship: {followedBy: true}}, index), '互相关注');
   assert.equal(commentRelationshipLabel({handle: 'Fan', relationship: {following: true, followedBy: true}}, index), '互相关注');
-  assert.equal(commentRelationshipLabel({handle: 'QueuedFollowed'}, index), '互相关注');
+  assert.equal(commentRelationshipLabel({handle: 'QueuedFollowed'}, index), '未互关');
   const snapped = applyRelationshipSnapshot({handle: 'Kept', relationship: {followedBy: false}}, index);
   assert.equal(snapped.relationship.following, true);
   assert.equal(snapped.relationship.followedBy, false);
@@ -70,9 +70,9 @@ test('a later pass sees in-place edits and does not reuse the previous index', (
   assert.equal(first.following.has('b'), false);
   const second = buildRelationshipIndex(monitor);
   assert.equal(monitorUserStatus({handle: 'A'}, second), 'followed');
-  assert.equal(second.following.has('a'), true);
+  assert.equal(second.following.has('a'), false);
   assert.equal(second.following.has('b'), true);
-  assert.equal(commentRelationshipLabel({handle: 'A'}, second), '互相关注');
+  assert.equal(commentRelationshipLabel({handle: 'A'}, second), '未互关');
 });
 
 test('one relationship pass touches each collection a constant number of times at 10k', () => {

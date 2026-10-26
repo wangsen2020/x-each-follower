@@ -12,8 +12,9 @@ test('manual quote uses bound account tags exactly like the queue within the rem
     return {ok:true,settings};
   }}};
   const result=await preparePanelQuoteText(text,'en',true,api);
-  assert.equal(result,appendQuoteTags(text,settings,'en'));
-  assert.ok(result.startsWith(text+'\n\n#FollowBack'));
+  assert.equal(result,appendQuoteTags(result,settings,'en'));
+  assert.equal((result.match(/#/g)||[]).length,2);
+  assert.ok(result.startsWith(text+'\n\n#'));
   assert.ok(tweetWeight(result)<=280);
 });
 

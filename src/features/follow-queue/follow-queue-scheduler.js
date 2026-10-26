@@ -13,6 +13,14 @@ function clone(value) {
   return value == null ? value : structuredClone(value);
 }
 
+function clearOldFollowFailure(result, currentReason = '') {
+  const next = {...result,reason:currentReason};
+  delete next.error;
+  delete next.responseStatus;
+  delete next.exhaustedRetries;
+  return next;
+}
+
 function requireAccountId(accountId) {
   if (typeof accountId !== 'string' || !accountId.trim()) {
     throw new Error('missing account; follow queue scheduler fails closed');
@@ -76,7 +84,7 @@ function formatSummary(counters, {reason = '', paused = false, enabled = true, m
     return '调度器正在执行其他轮次，跳过重复触发。';
   }
   if (reason === 'account-blocked' && counters.inspected === 0) {
-    return '当前账号未通过运行校验或处于限流暂停状态。';
+    return '运行条件检查未通过，请检查账号状态。';
   }
   if (counters.inspected === 0) {
     return '本轮无可执行的候选任务。';
@@ -110,6 +118,7 @@ export function createFollowQueueScheduler({
   store,
   execute,
   canRun = async () => true,
+  getBlockReason = () => null,
   now = () => Date.now(),
   owner,
   leaseMs,
@@ -279,11 +288,12 @@ export function createFollowQueueScheduler({
         allowed = false;
       }
       if (!allowed) {
-        const summary = formatSummary(counters, {reason: 'account-blocked', manual});
+        const blockReason = getBlockReason();
+        const summary = blockReason?.message || formatSummary(counters, {reason: 'account-blocked', manual});
         lastSummary = summary;
         lastCounters = clone(counters);
-        await emit({type: 'run-blocked', runId, accountId: account, manual, summary});
-        return {ok: false, reason: 'account-blocked', summary, counters: clone(counters), status: buildStatus()};
+        await emit({type: 'run-blocked', runId, accountId: account, manual, summary,blockReason});
+        return {ok: false, reason: 'account-blocked', blockReason, summary, counters: clone(counters), status: buildStatus()};
       }
 
       const batchLimit = Math.max(1, Number(settings.batchLimit) || FOLLOW_QUEUE_DEFAULT_SETTINGS.batchLimit);
@@ -301,8 +311,10 @@ export function createFollowQueueScheduler({
         deadline: cycleDeadline
       });
 
+      const inspectedJobIds = [];
       while (
         !state.paused &&
+        !state.rateLimited &&
         !pausedAccounts.has(account) &&
         counters.followed < batchLimit &&
         counters.inspected < inspectLimit &&
@@ -325,6 +337,7 @@ export function createFollowQueueScheduler({
           accountOk = false;
         }
         if (!accountOk) {
+          state.blockReason = getBlockReason();
           break;
         }
 
@@ -337,12 +350,13 @@ export function createFollowQueueScheduler({
         const claimed = await store.claim({
           accountId: account,
           owner: workerOwner,
-          leaseMs: claimLeaseMs
+          leaseMs: claimLeaseMs, excludeIds: inspectedJobIds
         });
         if (!claimed) {
           break;
         }
 
+        inspectedJobIds.push(claimed.id);
         counters.inspected += 1;
         state.jobId = claimed.id;
         state.stage = claimed.stage || 'claimed';
@@ -360,10 +374,17 @@ export function createFollowQueueScheduler({
 
         state.jobId = '';
         state.stage = '';
+
       }
 
       const paused = state.paused || pausedAccounts.has(account);
-      const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual});
+      const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual})
+        + (state.rateLimited ? state.accountFollowLimit
+          ? ' X 已限制继续关注（错误 161），本轮停止；请在 X 核实限制，当前任务结果待核实。'
+          : state.profileReadLimited
+            ? ' 用户资料接口限流，本轮停止；未发送关注请求，下轮按正常调度重试。'
+            : ' 本轮遇到关注接口限流，后续任务留待下轮正常调度；本次结果待核实。' : '')
+        + (state.blockReason?.message ? ' '+state.blockReason.message : '');
       lastCompletedAt = now();
       lastSummary = summary;
       lastCounters = clone(counters);
@@ -411,6 +432,7 @@ export function createFollowQueueScheduler({
     let hasExternalEffect = Boolean(
       currentJob.followResult?.succeeded ||
       currentJob.followResult?.attemptedAt ||
+      currentJob.followResult?.followerRemoval?.attemptedAt ||
       currentJob.stage === 'following' ||
       currentJob.stage === 'followed' ||
       currentJob.stage === 'evaluating' ||
@@ -496,7 +518,7 @@ export function createFollowQueueScheduler({
     const timeoutPromise = new Promise(resolve => {
       timeoutHandle = setTimeout(() => {
         abortController.abort(new Error('follow queue job deadline exceeded'));
-        resolve({__timedOut: true});
+        resolve({__timedOut: true,budgetExhausted:true,reason:'本轮时间已用完，留待下轮继续'});
       }, remainingMs);
     });
 
@@ -602,6 +624,7 @@ export function createFollowQueueScheduler({
           patch.stage === 'evaluated' ||
           patch.stage === 'publishing' ||
           patch.followResult?.attemptedAt ||
+          patch.followResult?.followerRemoval?.attemptedAt ||
           patch.followResult?.succeeded ||
           hasEvaluationExternalEffect(patch.evaluations)
         ) {
@@ -610,6 +633,7 @@ export function createFollowQueueScheduler({
         if (patch.followResult && typeof patch.followResult === 'object') {
           latestFollowResult = {...(latestFollowResult || {}), ...clone(patch.followResult)};
           if (latestFollowResult.succeeded === true) {
+            latestFollowResult = clearOldFollowFailure(latestFollowResult,patch.followResult.reason || '');
             followSucceeded = true;
           }
         }
@@ -691,10 +715,11 @@ export function createFollowQueueScheduler({
       if (outcome && outcome.followResult && typeof outcome.followResult === 'object') {
         latestFollowResult = {...(latestFollowResult || {}), ...clone(outcome.followResult)};
         if (latestFollowResult.succeeded === true) {
+          latestFollowResult = clearOldFollowFailure(latestFollowResult,outcome.followResult.reason || '');
           followSucceeded = true;
           hasExternalEffect = true;
         }
-        if (latestFollowResult.attemptedAt) {
+        if (latestFollowResult.attemptedAt || latestFollowResult.followerRemoval?.attemptedAt) {
           hasExternalEffect = true;
         }
       }
@@ -729,6 +754,11 @@ export function createFollowQueueScheduler({
         counters,
         runState
       });
+      if (outcome?.rateLimited === true) {
+        runState.rateLimited = true;
+        runState.accountFollowLimit = outcome.accountFollowLimit === true;
+        runState.profileReadLimited = outcome.profileReadLimited === true;
+      }
     });
   }
 
@@ -749,6 +779,7 @@ export function createFollowQueueScheduler({
     let finalStage = finalState || 'verify';
     let nextEligibleAt;
     const reason = typeof outcome?.reason === 'string' ? outcome.reason : '';
+
 
     // Rule: successful follow result persists even if evaluation fails or throws
     if (followSucceeded) {
@@ -773,7 +804,10 @@ export function createFollowQueueScheduler({
     }
 
     // Handle pre-action transient retry max 3 with exponential backoff using persisted retry counts
-    if (finalState === 'retry') {
+    if (finalState === 'retry' && outcome?.budgetExhausted && !hasExternalEffect) {
+      nextEligibleAt=now()+60000;
+      finalStage='retry';
+    } else if (finalState === 'retry') {
       const prevRetries = Math.max(
         0,
         Number(currentJob.followResult?.retryCount ?? currentJob.followResult?.attempts ?? 0) || 0
@@ -816,6 +850,7 @@ export function createFollowQueueScheduler({
       };
     } else if (finalState === 'followed') {
       finalStage = 'followed';
+      latestFollowResult = clearOldFollowFailure(latestFollowResult || {},reason);
       latestFollowResult = {
         ...(latestFollowResult || {}),
         succeeded: true,
@@ -826,7 +861,7 @@ export function createFollowQueueScheduler({
 
     const patch = {
       stage: finalStage,
-      ...(outcome?.diagnostic?{lastDiagnostic:clone(outcome.diagnostic)}:{}),
+      ...(outcome?.diagnostic?{lastDiagnostic:clone(outcome.diagnostic)}:finalState==='followed'?{lastDiagnostic:null}:{}),
       ...(Number.isFinite(nextEligibleAt) ? {nextEligibleAt} : {}),
       ...(latestFollowResult ? {followResult: latestFollowResult} : {}),
       ...(latestEvaluations.length ? {evaluations: latestEvaluations} : {})
@@ -885,7 +920,7 @@ export function createFollowQueueScheduler({
       counters.skipped += 1;
     } else if (finalState === 'retry') {
       counters.retried += 1;
-      counters.failed += 1;
+      counters.failed += outcome?.budgetExhausted ? 0 : 1;
     } else if (finalState === 'uncertain') {
       counters.uncertain += 1;
       counters.failed += 1;

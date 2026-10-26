@@ -1,5 +1,6 @@
 import {createXNetworkClient} from '../../platform/x/network-client.js';
 import { repairMojibake } from './scoring.js';
+import {ACCOUNT_FOLLOW_LIMIT_MESSAGE, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
 function collectUsers(value, out = new Map()) {
   if (!value || typeof value !== 'object') return out;
@@ -11,7 +12,8 @@ function collectUsers(value, out = new Map()) {
   const relationship = value.relationship_perspectives || value.relationship || {};
   const followers = legacy?.followers_count ?? value.relationship_counts?.followers ?? value.followers_count;
   const following = legacy?.friends_count ?? value.relationship_counts?.following ?? value.friends_count;
-  const followsYou = relationship.followed_by ?? legacy?.followed_by ?? value.followed_by;
+  const incoming = [relationship.followed_by, legacy?.followed_by, value.followed_by];
+  const followsYou = incoming.includes(true) ? true : incoming.includes(false) ? false : null;
   const followsAccount = legacy?.following ?? relationship.following ?? value.following;
   const relationshipKnown = typeof followsYou === 'boolean' && typeof followsAccount === 'boolean';
   if (restId && handle && /^[A-Za-z0-9_]{1,15}$/.test(handle)) out.set(handle.toLowerCase(), {
@@ -23,7 +25,8 @@ function collectUsers(value, out = new Map()) {
     bio:repairMojibake(legacy?.description || value.profile_bio?.description || value.description || ''),
     followersText:followers == null ? '' : String(followers),
     followingText:following == null ? '' : String(following),
-    state:followsAccount === true ? 'following' : followsAccount === false || followsYou === true ? 'follow_back' : 'unknown',
+    state:followsAccount === true ? 'following' : followsAccount === false && followsYou === true ? 'follow_back'
+      : followsAccount === false && followsYou === false ? 'none' : 'unknown',
     relationshipKnown,
     relationship:{blocking:relationship.blocking === true, followedBy:typeof followsYou === 'boolean' ? followsYou : null, following:typeof followsAccount === 'boolean' ? followsAccount : null}
   });
@@ -43,12 +46,36 @@ function findCursor(value) {
 // Stable business facade. The platform client owns HTTP, auth, signatures and errors.
 export {prepareNetworkHeaders, prepareNetworkVariables} from '../../platform/x/network-client.js';
 export const networkFetch = (tabId, operation, variables) => createXNetworkClient().query(tabId, operation, variables);
-export const networkGetUserProfile = (tabId, handle) => createXNetworkClient().profile(tabId, handle);
+export const networkGetUserProfile = (tabId, handle, options) => createXNetworkClient().profile(tabId, handle, options);
 export const networkGetUserPosts = (tabId, userId, variables) => createXNetworkClient().userPosts(tabId, userId, variables);
 export const networkGetFollowers = (tabId, userId, variables) => createXNetworkClient().followers(tabId, userId, variables);
 export const networkGetFollowing = (tabId, userId, variables) => createXNetworkClient().following(tabId, userId, variables);
 export const networkGetTweetDetail = (tabId, variables) => createXNetworkClient().query(tabId, 'TweetDetail', variables);
-export const networkFollow = (tabId, target) => createXNetworkClient().follow(tabId, target);
+// A successful HTTP response only proves that X accepted the request. Confirm
+// the target's resulting relationship before callers persist a followed state.
+export async function networkFollow(tabId, target, client = createXNetworkClient()) {
+  const result = await client.follow(tabId, target);
+  if (isAccountFollowLimit(result)) return {...result, httpStatus:result.status, status:result.status >= 200 && result.status < 300 ? 0 : result.status,
+    followLimit:true, errorCode:161, error:ACCOUNT_FOLLOW_LIMIT_MESSAGE};
+  if (!(result.status >= 200 && result.status < 300)) return result;
+  const expectedId = String(typeof target === 'object' ? target?.id || '' : target || '');
+  const handle = typeof target === 'object' ? String(target?.handle || '').replace(/^@/, '') : '';
+  const matches = json => parseNetworkUsers(json).find(user =>
+    expectedId ? user.id === expectedId : handle && user.handle.toLowerCase() === handle.toLowerCase());
+  if (result.json?.errors?.length) return {...result, status: 0, error: 'X 关注响应包含错误，关系待核实', uncertain: true};
+  const responseUser = matches(result.json);
+  if (responseUser?.relationship?.following === true) return {...result, verifiedFollowing: true};
+  if (handle) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let checked;
+      try { checked = await client.profile(tabId, handle); } catch { checked = null; }
+      const user = checked?.status === 200 ? matches(checked.json) : null;
+      if (user?.relationship?.following === true) return {...result, verifiedFollowing: true};
+      if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 350));
+    }
+  }
+  return {...result, status: 0, error: '关注请求已提交，但未核实到当前关注关系；请稍后重新核对', uncertain: true};
+}
 export const networkUnfollow = (tabId, target) => createXNetworkClient().unfollow(tabId, target);
 export const networkBlock = (tabId, target) => createXNetworkClient().block(tabId, target);
 export const networkUnblock = (tabId, target) => createXNetworkClient().unblock(tabId, target);
@@ -205,6 +232,10 @@ export function reconcileFollowBackQueue(queue = [], users = [], assessRisk = ()
     const existing = reconciled.get(key);
     if (user.state === 'following' || user.relationship?.following === true) {
       reconciled.delete(key);
+      continue;
+    }
+    if (user.relationship?.followedBy === false) {
+      if (existing) reconciled.set(key, {...existing, ...user, state:'no_longer_following', status:'no_longer_following'});
       continue;
     }
     if (user.state !== 'follow_back') continue;

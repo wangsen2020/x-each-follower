@@ -492,6 +492,8 @@ export async function evaluateProfileGrokRisk(profile = {}, { runner, sleep, cac
 
   const prompt = buildGrokProfileAssessmentPrompt(profile);
   const res = await runner(prompt);
+  if (res?.quotaExhausted) return {evaluated:false, safe:false, cached:false,
+    quotaExhausted:true, code:res.code, retryAt:res.retryAt, reason:res.reason};
   if (!res || !res.ok || !res.text) {
     return {
       evaluated: false,

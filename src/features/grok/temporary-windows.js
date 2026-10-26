@@ -1,3 +1,4 @@
+import {readSystemSettings} from '../../shared/system-settings.js';
 export const TEMP_WINDOW_ALARM = 'x-temporary-window-cleanup';
 const PREFIX = 'xfTemporaryWindow:';
 export const TEMP_WINDOW_TTL = 15 * 60 * 1000;
@@ -63,11 +64,12 @@ async function restoreRecords(windows) {
 // Per-window keys avoid read/modify/write races between panel and worker tasks.
 // session storage survives worker suspension, but not a browser restart with reused IDs.
 export async function createTemporaryWindow(options, kind = 'grok', lifetime = TEMP_WINDOW_TTL) {
+  const policy=await readSystemSettings('windows');
   const win = await chrome.windows.create(options);
   try {
     const tabs = win.tabs || await chrome.tabs.query({windowId:win.id});
     if (tabs.length !== 1 || !tabs[0]?.id) throw new Error('临时窗口标签页异常');
-    const expiresAt = kind === 'grok-persistent' ? 0 : Date.now() + Math.max(TEMP_WINDOW_TTL, lifetime);
+    const expiresAt = kind === 'grok-persistent' ? 0 : Date.now() + Math.max(policy.lifetimeMinutes * 60000, lifetime);
     await saveRecord({windowId:win.id,tabId:tabs[0].id,kind,ownershipToken:crypto.randomUUID(),createdAt:Date.now(),expiresAt});
     await markTemporaryWindowReady(win.id,tabs[0].id).catch(()=>{});
     return win;
@@ -81,6 +83,7 @@ export async function closeTemporaryWindow(windowId) {
   await removeRecord(PREFIX+windowId);
 }
 async function scanWindows(now = Date.now()) {
+  const policy=await readSystemSettings('windows');
   const windows=new Map((await chrome.windows.getAll({populate:true})).map(w=>[w.id,w]));
   const records=await restoreRecords(windows);
   const {grokVerification:verification}=await chrome.storage.local?.get?.('grokVerification') || {};
@@ -100,7 +103,7 @@ async function scanWindows(now = Date.now()) {
       continue;
     }
     if(record.kind==='grok-pool' && w.focused && !record.busyUntil) {
-      await saveRecord({...record,lastUsedAt:now,expiresAt:now+GROK_IDLE_TTL});
+      await saveRecord({...record,lastUsedAt:now,expiresAt:now+policy.idleMinutes*60000});
     }
     if(now < record.expiresAt || record.busyUntil>now || w.focused){result.retained.push(w.id);continue;}
     try {await closeTemporaryWindow(w.id);result.closed.push(w.id);}catch {result.failed.push(w.id);}
@@ -109,7 +112,8 @@ async function scanWindows(now = Date.now()) {
   return result;
 }
 export async function ensureTemporaryWindowCleanup() {
-  await chrome.alarms.create(TEMP_WINDOW_ALARM,{periodInMinutes:1});
+  const policy=await readSystemSettings('windows');
+  await chrome.alarms.create(TEMP_WINDOW_ALARM,{periodInMinutes:policy.checkMinutes});
   return scanTemporaryWindows();
 }
 
@@ -125,11 +129,12 @@ const owns = (w,r) => w?.type==='popup' && w.tabs?.length===1 && w.tabs[0].id===
 export function handleGrokWindowPool(message) {
   return exclusive(async()=>{
     const now=Date.now();
+    const policy=await readSystemSettings('windows');
     if(message.action==='acquire') {
       const url=message.url;
       if(!['https://x.com/i/grok','https://grok.com/'].includes(url))throw new Error('不支持的 Grok 地址');
       const origin=new URL(url).origin;
-      const lifetime=Math.max(TEMP_WINDOW_TTL,Number(message.lifetime)||0);
+      const lifetime=Math.max(policy.lifetimeMinutes*60000,Number(message.lifetime)||0);
       await scanWindows(now);
       const records=await chrome.storage.session.get(null);
       const windows=await chrome.windows.getAll({populate:true});
@@ -163,7 +168,7 @@ export function handleGrokWindowPool(message) {
       else await removeRecord(key);
       return;
     }
-    if(message.action==='release' || (message.action==='touch' && !(record.busyUntil>now)))await saveRecord({...record,busyUntil:0,lastUsedAt:now,expiresAt:now+GROK_IDLE_TTL});
+    if(message.action==='release' || (message.action==='touch' && !(record.busyUntil>now)))await saveRecord({...record,busyUntil:0,lastUsedAt:now,expiresAt:now+policy.idleMinutes*60000});
   });
 }
 async function poolRequest(message) {

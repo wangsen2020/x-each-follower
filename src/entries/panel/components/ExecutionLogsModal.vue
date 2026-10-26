@@ -45,21 +45,23 @@
             class="secondary danger-btn"
             type="button"
             :title="isFansScope && fansSubTab === 'followBack' ? '队列回关记录由关注队列统一管理' : '清空当前范围的执行日志'"
-            :disabled="isFansScope && fansSubTab === 'followBack'"
+            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack')"
             style="margin-right: 10px"
             @click="clearLogs"
-          >清空日志</button>
-          <button
+          >{{ currentScope === 'unreciprocated' ? '清空全部分类' : '清空日志' }}</button>
+          <PanelCloseButton
             id="closeLogsModal"
-            class="icon-button secondary"
-            type="button"
-            title="关闭"
-            aria-label="关闭"
             @click="close"
-          >×</button>
+          />
         </div>
       </div>
 
+      <div v-if="currentScope === 'unreciprocated'" class="logs-modal-subtabs">
+        <button type="button" class="subtab-btn" :class="{active: followbackSubTab === 'timeout-monitoring'}" @click="setFollowbackSubTab('timeout-monitoring')">超时监测</button>
+        <button id="subtabGreetingLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'greeting'}" @click="setFollowbackSubTab('greeting')">私信提醒</button>
+        <button id="subtabUnfollowLogs" type="button" class="subtab-btn" :class="{active: followbackSubTab === 'unfollow'}" @click="setFollowbackSubTab('unfollow')">取消关注</button>
+      </div>
+      <p v-if="currentScope === 'unreciprocated'" style="margin: 0; padding: 8px 16px; color: #52655e; font-size: 12px">{{ followbackSubTab === 'timeout-monitoring' ? '关系比对与超时判定，不执行提醒或取关。' : followbackSubTab === 'greeting' ? '私信提醒及发送结果；待确认不代表已送达。' : '自动、手动取关的账号及结果；跳过或待确认不代表已取关。' }}</p>
       <!-- Sub-tabs for Fans Scope (Scan vs Queue Follow-back) -->
       <div v-if="isFansScope" class="logs-modal-subtabs">
         <button
@@ -85,14 +87,18 @@
       <!-- Body Section -->
       <div class="logs-modal-body">
         <!-- Loading State -->
-        <div id="logsLoading" class="logs-empty" :hidden="status !== 'loading'">
-          <p><strong>正在加载执行日志…</strong></p>
+        <div id="logsLoading" class="logs-empty" :hidden="status !== 'loading'" role="status" aria-live="polite" :aria-busy="status === 'loading'">
+          <span class="logs-loading-spinner" aria-hidden="true"></span>
+          <p><strong>{{ loadingTitle }}</strong></p>
+          <span>{{ loadingDetail }}</span>
+          <span class="logs-loading-elapsed">已等待 {{ elapsedSeconds }} 秒 · 可随时关闭窗口</span>
         </div>
 
         <!-- Error State -->
         <div id="logsError" class="logs-empty" :hidden="status !== 'error'">
           <p><strong>执行日志加载失败</strong></p>
           <span id="logsErrorText">{{ errorMessage }}</span>
+          <button id="retryLogsBtn" class="secondary logs-retry" type="button" @click="loadPage">重新加载</button>
         </div>
 
         <!-- Empty State -->
@@ -139,7 +145,7 @@
                 </div>
                 <span
                   class="badge"
-                  :class="{ candidate: rawLog.result === 'success' }"
+                  :class="followbackLogPresentation(rawLog).tone"
                   :style="fansResultBadgeStyle(rawLog.result)"
                 >
                   {{ fansResultText(rawLog.result) }}
@@ -170,20 +176,39 @@
               <div class="log-card-header">
                 <div class="log-card-meta">
                   <span class="log-time">{{ formatTime(rawLog) }}</span>
-                  <span class="log-scope-badge">回关监测</span>
-                  <span class="log-scope-badge">{{ rawLog.source === 'manual' ? '手动检测' : '定时执行' }}</span>
+                  <span class="log-scope-badge">回关监控</span>
+                  <span class="log-scope-badge">{{ followbackLogPresentation(rawLog).source }}</span>
                 </div>
                 <span
                   class="badge"
-                  :class="{ candidate: rawLog.result === 'success' }"
-                  :style="rawLog.result === 'success' ? '' : 'background: #fbe9e7; color: #c62828;'"
+                  :class="followbackLogPresentation(rawLog).tone"
+                  :style="followbackLogPresentation(rawLog).tone === 'failed' ? 'background: #fbe9e7; color: #c62828;' : ''"
                 >
-                  {{ rawLog.result === 'success' ? '执行完成 ✓' : '执行失败' }}
+                  {{ followbackLogPresentation(rawLog).label }}
                 </span>
               </div>
               <div v-if="rawLog.summary" class="log-summary-row">{{ rawLog.summary }}</div>
-              <div v-if="rawLog.unfollowedHandles?.length" class="log-unfollowed-row">
-                已取关账号：{{ rawLog.unfollowedHandles.map(h => '@' + h).join('， ') }}
+              <div class="followback-log-key-info">
+                <div v-if="followbackLogContext(rawLog).handle || followbackLogPresentation(rawLog).source.includes('取关')" class="log-card-target">
+                  <strong>目标账号：</strong>
+                  <a v-if="followbackLogContext(rawLog).handle" class="log-target-link" :href="'https://x.com/' + encodeURIComponent(followbackLogContext(rawLog).handle)" target="_blank" rel="noopener noreferrer">@{{ followbackLogContext(rawLog).handle }}</a>
+                  <span v-else>{{ rawLog.result === 'started' ? '尚未选择' : '未记录' }}</span>
+                  <span v-if="followbackLogContext(rawLog).name" class="log-target-name">{{ followbackLogContext(rawLog).name }}</span>
+                </div>
+                <dl class="followback-log-key-fields"><template v-for="field in followbackLogContext(rawLog).rows" :key="field.label"><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></template></dl>
+              </div>
+              <div v-if="rawLog.details" class="followback-log-context">
+                <div v-if="Object.keys(rawLog.details['跳过原因统计'] || {}).length">跳过：{{ Object.entries(rawLog.details['跳过原因统计']).map(([reason, count]) => `${reason} ${count}`).join('；') }}</div>
+              </div>
+              <details v-if="rawLog.details" class="followback-log-details">
+                <summary>诊断详情<span v-if="rawLog.runId"> · {{ rawLog.runId.slice(0, 8) }}</span></summary>
+                <dl><template v-for="(value, key) in rawLog.details" :key="key">
+                  <dt>{{ key }}</dt><dd><pre v-if="value !== null &amp;&amp; typeof value === 'object'">{{ JSON.stringify(value, null, 2) }}</pre><span v-else>{{ value ?? '未记录' }}</span></dd>
+                </template></dl>
+              </details>
+              <div v-else class="followback-legacy-note">旧日志未记录诊断详情，无法追溯当时执行阶段。</div>
+              <div v-if="unfollowLogHandles(rawLog).length" class="log-unfollowed-row">
+                已取关账号：{{ unfollowLogHandles(rawLog).map(h => '@' + h).join('， ') }}
               </div>
             </template>
 
@@ -275,7 +300,7 @@
               <!-- Queue Detail Rows -->
               <template v-if="standardLog(rawLog).scope === 'queue'">
                 <section v-if="rawLog.diagnostic" class="log-diagnostics">
-                  <p class="log-detail-text">异常账号：@{{ rawLog.diagnostic.handle || '未记录' }} · 阶段：{{ rawLog.diagnostic.stageLabel }} · 累计 {{ rawLog.diagnostic.repeatCount || 1 }} 次</p>
+                  <p class="log-detail-text">异常账号：@{{ rawLog.diagnostic.handle || '未记录' }} · 阶段：{{ rawLog.diagnostic.stageLabel }} · {{ rawLog.diagnostic.repeatScope === 'target-error' ? '该账号同类异常' : '同阶段累计异常' }} {{ rawLog.diagnostic.repeatCount || 1 }} 次</p>
                   <p class="log-detail-text">诊断编号：{{ rawLog.diagnostic.id }} · 版本：{{ rawLog.diagnostic.version }}</p>
                   <p class="log-detail-text">失败网址：{{ rawLog.diagnostic.requestedUrl || rawLog.diagnostic.actualUrl || '未记录' }}</p>
                   <details>
@@ -324,7 +349,10 @@
 </template>
 
 <script setup>
+import {unfollowLogHandles} from '../../../shared/execution-log-select.js';
+import {followbackLogPresentation,followbackLogContext} from '../../../features/relationships/followback-log.js';
 import { logsModalController } from '../composables/useExecutionLogs.js';
+import PanelCloseButton from './PanelCloseButton.vue';
 import { repairMojibake } from '../../../features/relationships/scoring.js';
 import { normalizeQueueExecutionLog } from '../../../shared/execution-log.js';
 
@@ -333,10 +361,16 @@ const {
   isOpen,
   currentScope,
   fansSubTab,
+  followbackSubTab,
+  setFollowbackSubTab,
   isFansScope,
   setFansSubTab,
   status,
   errorMessage,
+  elapsedSeconds,
+  loadingTitle,
+  loadingDetail,
+  loadPage,
   entries,
   canPrev,
   canNext,
@@ -412,7 +446,7 @@ function standardScopeLabel(log) {
   }
   if (log.scope === 'comment') return '评论追踪';
   if (log.scope === 'mutual') return '互关追踪';
-  if (log.scope === 'unreciprocated') return '回关监测';
+  if (log.scope === 'unreciprocated') return '回关监控';
   return '系统日志';
 }
 
@@ -488,7 +522,7 @@ function postsBoxTitle(log) {
 }
 
 function formatQueueSources(sources) {
-  const map = { fans: '粉丝管理', mutual: '互关追踪', comments: '评论追踪' };
+  const map = { fans: '粉丝跟进', mutual: '互关追踪', comments: '评论追踪' };
   const list = [...new Set((sources || []).map(s => map[s.module] || s.module))];
   return list.join('、');
 }
@@ -543,6 +577,19 @@ async function copyText(text, event) {
 </script>
 
 <style scoped>
+.logs-loading-spinner {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  border: 3px solid #dce9df;
+  border-top-color: #268456;
+  border-radius: 50%;
+  animation: logs-spin .8s linear infinite;
+}
+.logs-loading-elapsed { display: block; margin-top: 10px; font-size: 12px; color: #617369; }
+.logs-retry { display: block; margin: 12px auto 0; }
+@keyframes logs-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .logs-loading-spinner { animation: none; } }
 .logs-modal-subtabs {
   display: flex;
   align-items: center;
@@ -623,4 +670,21 @@ async function copyText(text, event) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+</style>
+
+<style scoped>
+.followback-log-context { margin-top: 6px; font-size: 12px; color: #60776c; line-height: 1.6; overflow-wrap: anywhere; }
+.followback-log-key-info { margin-top: 10px; padding: 10px 12px; background: #f4f8f6; border-radius: 6px; font-size: 12px; }
+.followback-log-key-fields { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; line-height: 1.5; }
+.followback-log-key-fields dt { color: #60776c; }
+.followback-log-key-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.followback-log-details { margin: 8px 0 0; font-size: 12px; }
+.followback-log-details summary { cursor: pointer; color: #356451; padding: 4px 0; }
+.followback-log-details summary:focus-visible { outline: 2px solid #769287; outline-offset: 2px; }
+.followback-log-details dl { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 6px 10px; margin: 8px 0 0; }
+.followback-log-details dt { color: #60776c; overflow-wrap: anywhere; }
+.followback-log-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.followback-log-details pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.followback-legacy-note { margin-top: 6px; font-size: 11px; color: #769287; }
+@media (max-width: 480px) { .followback-log-details dl { grid-template-columns: 100px minmax(0, 1fr); } }
 </style>

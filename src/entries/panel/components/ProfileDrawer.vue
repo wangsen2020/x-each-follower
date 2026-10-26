@@ -14,20 +14,17 @@
       class="profile-drawer"
       role="dialog"
       aria-modal="true"
+      :inert="!profileDrawerController.isOpen.value"
       :aria-hidden="!profileDrawerController.isOpen.value"
       :hidden="!profileDrawerController.isOpen.value"
       aria-labelledby="profileDrawerTitle"
     >
       <div class="profile-drawer-head">
         <strong id="profileDrawerTitle">@{{ profileDrawerController.handle.value }}</strong>
-        <button
+        <PanelCloseButton
           id="closeProfileDrawer"
-          type="button"
-          class="icon-button secondary"
-          title="关闭"
-          aria-label="关闭"
           @click="profileDrawerController.close()"
-        >×</button>
+        />
       </div>
 
       <div id="profileDrawerContent" class="profile-drawer-content">
@@ -179,7 +176,9 @@
 </template>
 
 <script setup>
+import {useDrawerFocus} from '../composables/useDrawerFocus.js';
 import { onMounted, onUnmounted } from 'vue';
+import PanelCloseButton from './PanelCloseButton.vue';
 import { profileDrawerController } from '../composables/useProfileDrawer.js';
 
 function onKeyDown(event) {
@@ -195,4 +194,5 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
 });
+useDrawerFocus(profileDrawerController.isOpen, 'profileDrawer', '');
 </script>

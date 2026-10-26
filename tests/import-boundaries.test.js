@@ -32,8 +32,9 @@ async function importClosure(entry) {
     seen.add(name);
     const text = await source(name);
     for (const spec of staticImports(text)) {
-      // A bundled pure text parser is permitted; all other external imports remain forbidden.
+      // Audited dependencies are bundled by Vite; keep exceptions scoped to their owners.
       if (name === 'src/features/grok/quote-text.js' && spec === 'twitter-text/dist/parseTweet.js') continue;
+      if (name === 'src/features/records/record-repository.js' && spec === 'dexie') continue;
       assert.ok(spec.startsWith('.'), `unexpected non-relative runtime import: ${name} -> ${spec}`);
       const next = new URL(spec, new URL(name, root));
       assert.ok(next.href.startsWith(root.href), `import escapes repository: ${spec}`);

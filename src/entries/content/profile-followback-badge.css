@@ -1,0 +1,24 @@
+[data-xef-followback-badge] {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex: 0 0 24px;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-inline-start: 5px;
+  vertical-align: middle;
+  border-radius: 50%;
+  color: #8899a6;
+  cursor: help;
+  line-height: 1;
+}
+[data-xef-followback-badge] svg { display: block; width: 22px; height: 22px; }
+[data-xef-followback-badge][data-level="high"] { color: #f4212e; }
+[data-xef-followback-badge][data-level="elevated"] { color: #ef7d16; }
+[data-xef-followback-badge][data-level="medium"] { color: #b58a00; }
+[data-xef-followback-badge][data-level="lower"] { color: #00a878; }
+[data-xef-followback-badge][data-level="observe"] { color: #1d9bf0; }
+[data-xef-followback-badge]:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+[data-xef-followback-badge]:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

@@ -2,23 +2,53 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import { usePanelNavigation, TAB_TITLES, NAV_TABS } from '../../src/entries/panel/composables/usePanelNavigation.js';
+import {logsModalController} from '../../src/entries/panel/composables/useExecutionLogs.js';
+
+test('switching modules closes logs and ignores a pending response from the previous module',async()=>{
+ const previous=globalThis.chrome;let finish;
+ globalThis.chrome={runtime:{sendMessage:()=>new Promise(resolve=>{finish=resolve})}};
+ const nav=usePanelNavigation();
+ try{
+  nav.setTab('unreciprocated');
+  const opening=logsModalController.open('unreciprocated');
+  while(!finish)await Promise.resolve();
+  assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('postTracking');
+  assert.equal(logsModalController.isOpen.value,false);
+  finish({ok:true,kind:'unfollow',presentationVersion:2,entries:[{id:'late-log'}],total:1});await opening;
+  assert.equal(logsModalController.isOpen.value,false);
+  assert.equal(logsModalController.rawEntries.value.length,0);
+  await logsModalController.refreshIfOpen('unreciprocated');
+  assert.equal(logsModalController.isOpen.value,false);
+ }finally{logsModalController.close();globalThis.chrome=previous;}
+});
+
+test('same-module selection and invalid navigation preserve deliberately opened logs',()=>{
+ const nav=usePanelNavigation();nav.setTab('unreciprocated');logsModalController.isOpen.value=true;
+ try{
+  nav.setTab('unreciprocated');assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('invalid');assert.equal(logsModalController.isOpen.value,true);
+  nav.setTab('postTracking');assert.equal(logsModalController.isOpen.value,false);
+ }finally{logsModalController.close();}
+});
 
 test('usePanelNavigation initializes with default tab and titles', () => {
   const nav = usePanelNavigation();
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
   assert.equal(nav.version.value, JSON.parse(readFileSync(new URL('../../src/manifest.json', import.meta.url))).version);
-  assert.equal(nav.tabs.length, 7);
+  assert.equal(nav.tabs.length, 8);
+  assert.equal(TAB_TITLES.knowledge, '知识库');
   assert.equal(TAB_TITLES.postTracking, '帖子追踪');
   assert.equal(TAB_TITLES.leaderboard, 'X 榜单');
 });
 
 test('TAB_TITLES maps all 5 panels correctly', () => {
-  assert.equal(TAB_TITLES.monitor, '粉丝管理');
+  assert.equal(TAB_TITLES.monitor, '粉丝跟进');
   assert.equal(TAB_TITLES.candidates, '互关追踪');
   assert.equal(TAB_TITLES.comments, '评论追踪');
   assert.equal(TAB_TITLES.followQueue, '关注队列');
-  assert.equal(TAB_TITLES.unreciprocated, '回关监测');
+  assert.equal(TAB_TITLES.unreciprocated, '回关监控');
 });
 
 test('NAV_TABS correctly configures badge presence for panels', () => {
@@ -60,16 +90,16 @@ test('setTab reactively updates activeTab and title, ignoring invalid tabs', () 
 
   nav.setTab('unreciprocated');
   assert.equal(nav.activeTab.value, 'unreciprocated');
-  assert.equal(nav.currentTitle.value, '回关监测');
+  assert.equal(nav.currentTitle.value, '回关监控');
 
   nav.setTab('monitor');
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
 
   // Invalid tab ignored
   nav.setTab('nonExistentTab');
   assert.equal(nav.activeTab.value, 'monitor');
-  assert.equal(nav.currentTitle.value, '粉丝管理');
+  assert.equal(nav.currentTitle.value, '粉丝跟进');
 });
 
 test('updateBadge reactively sets counts and loading status', () => {

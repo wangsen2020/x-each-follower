@@ -41,6 +41,15 @@
     const u = new URL(String(url), location.origin); const q = u.searchParams;
     let vars = null; try { vars = JSON.parse(q.get('variables') || '{}'); } catch {}
     if (vars?.cursor) return;
+    // Reuse only the native response from this page, never an extension replay.
+    if (op === 'UserByScreenName' && json && !json.errors?.length && u.origin === location.origin) {
+      const handle = String(vars?.screen_name || '').toLowerCase();
+      const route=location.pathname.toLowerCase().split('/').filter(Boolean);
+      if (handle && route[0]===handle && (route.length===1 || route.length===2 && ['followers','following','verified_followers','with_replies'].includes(route[1]))) {
+        window.__xefNativeProfile = {handle, json, at:Date.now(), path:location.pathname};
+      }
+    }
+
     post({op, queryId:match[1], origin:u.origin, features:q.get('features'), fieldToggles:q.get('fieldToggles'), variables:q.get('variables'), headers:head, json:json || null, at:Date.now(),...(bootstrap&&op==='contentPageQuery'?{bootstrapId:bootstrap.id}:{}) ,...details});
   };
   const GROK_RE = /\/2\/grok\/add_response\.json/;

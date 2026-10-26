@@ -42,7 +42,7 @@ export function mergePost(previous, incoming) {
     deletion:previous?.deletion, snapshots:snapshots.slice(-336), current};
 }
 export function dueReviewPosts(posts, refreshedIds, now=Date.now()) {
-  return posts.filter(p=>p.source?.kind==='auto-quote'&&!p.protected&&!p.deletion&&!refreshedIds.has(p.postId)&&now-p.createdAt>=7*86400000&&now-p.createdAt<=90*86400000&&now-p.capturedAt>=86400000);
+  return posts.filter(p=>['auto-quote','auto-original'].includes(p.source?.kind)&&!p.protected&&!p.deletion&&!refreshedIds.has(p.postId)&&now-p.createdAt>=7*86400000&&now-p.createdAt<=90*86400000&&now-p.capturedAt>=86400000);
 }
 export function evaluatePost(post, peers = [], now = Date.now(), context, rules) {
   const thresholds=normalizeLowRules(rules);
@@ -67,7 +67,7 @@ export function evaluatePost(post, peers = [], now = Date.now(), context, rules)
 export function selectPostPage(posts, {view='latest', search='', sort='date', direction='desc', type='all', page=1, pageSize=20, days=14, onlyMonitored=false} = {}, now=Date.now(), rules) {
   const sorted = [...posts].filter(p=>p.deletion?.status !== 'verified').sort(comparePosts);
   const monitored = new Set(sorted.filter(p=>p.availability!=='unavailable'&&(!p.deletion || p.deletion.status==='failed')).slice(0,30).map(p=>p.postId));
-  let rows = sorted.map(p=>({...p, monitored:monitored.has(p.postId), evaluation:evaluatePost(p, sorted, now,undefined,rules)})).filter(p=>now-p.createdAt <= days*86400000 && (!onlyMonitored || p.monitored) && (type==='all' || (type==='auto-quote'?p.source?.kind==='auto-quote':p.type===type)) && (!search || p.text.toLowerCase().includes(search.toLowerCase()) || p.postId.includes(search)));
+  let rows = sorted.map(p=>({...p, monitored:monitored.has(p.postId), evaluation:evaluatePost(p, sorted, now,undefined,rules)})).filter(p=>now-p.createdAt <= days*86400000 && (!onlyMonitored || p.monitored) && (type==='all' || (['auto-quote','auto-original'].includes(type)?p.source?.kind===type:p.type===type)) && (!search || p.text.toLowerCase().includes(search.toLowerCase()) || p.postId.includes(search)));
   const counts = {latest:rows.length, low:rows.filter(p=>p.evaluation.low).length, high:rows.filter(p=>p.evaluation.high).length};
   if (view === 'low') rows=rows.filter(p=>p.evaluation.low);
   if (view === 'high') rows=rows.filter(p=>p.evaluation.high);

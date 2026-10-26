@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { useExecutionLogs } from '../../src/entries/panel/composables/useExecutionLogs.js';
 
+test('queue dialog queries and clears only its own scope, including the legacy entry alias', async () => {
+  const previous = globalThis.chrome;
+  const calls = [];
+  globalThis.chrome = {runtime:{sendMessage:async message => {calls.push(message); return {ok:true, entries:[], total:0};}}};
+  const c = useExecutionLogs();
+  try {
+    await c.open('autoFollow');
+    await c.clearLogs();
+    assert.equal(c.currentScope.value, 'queue');
+    assert.ok(calls.some(call=>call.cmd === 'clearExecutionLogs' && call.scope === 'queue'));
+    assert.ok(calls.filter(call=>call.cmd === 'queryExecutionLogs').every(call=>call.scope === 'queue'));
+    await c.open('unreciprocated');
+    assert.equal(calls.at(-1).scope, 'unreciprocated');
+  } finally { c.close(); globalThis.chrome = previous; }
+});
+
 test('useExecutionLogs initializes with robust default state and computed titles', () => {
   const c = useExecutionLogs();
   assert.equal(c.isOpen.value, false);
@@ -17,26 +33,26 @@ test('useExecutionLogs initializes with robust default state and computed titles
   // Fans scope (sub-tabs: scan, followBack, all)
   c.currentScope.value = 'fans';
   c.fansSubTab.value = 'scan';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
+  assert.equal(c.title.value, '粉丝跟进 · 粉丝扫描日志');
   assert.equal(c.emptyTitle.value, '暂无粉丝扫描日志');
 
   c.fansSubTab.value = 'followBack';
-  assert.equal(c.title.value, '粉丝管理 · 队列回关日志');
+  assert.equal(c.title.value, '粉丝跟进 · 队列回关日志');
   assert.equal(c.emptyTitle.value, '暂无队列回关日志');
 
   c.fansSubTab.value = 'all';
-  assert.equal(c.title.value, '粉丝管理 · 全部执行日志');
-  assert.equal(c.emptyTitle.value, '暂无粉丝管理执行日志');
+  assert.equal(c.title.value, '粉丝跟进 · 全部执行日志');
+  assert.equal(c.emptyTitle.value, '暂无粉丝跟进执行日志');
 
   // Monitor scope
   c.currentScope.value = 'monitor';
   c.fansSubTab.value = 'scan';
-  assert.equal(c.title.value, '粉丝管理 · 粉丝扫描日志');
+  assert.equal(c.title.value, '粉丝跟进 · 粉丝扫描日志');
 
   // Unreciprocated scope
   c.currentScope.value = 'unreciprocated';
-  assert.equal(c.title.value, '回关监测 · 定时检测与取关日志');
-  assert.equal(c.emptyTitle.value, '暂无回关监测日志');
+  assert.equal(c.title.value, '回关监控 · 取消关注');
+  assert.equal(c.emptyTitle.value, '暂无取消关注日志');
 
   // Comment scope
   c.currentScope.value = 'comment';
@@ -150,7 +166,7 @@ test('useExecutionLogs fansSubTab cleanly isolates scan logs from queue follow-b
   // 2. followBack tab: only queue and verification logs
   c.setFansSubTab('followBack');
   assert.deepEqual(c.entries.value.map(e => e.id), ['queue-1', 'queue-2', 'ver-1']);
-  assert.equal(c.totalBadgeText.value, '本页 3 条记录');
+  assert.equal(c.totalBadgeText.value, '0 条记录');
 
   c.setFansSubTab('all');
   assert.equal(c.fansSubTab.value, 'followBack', 'Unsupported aggregate tab must not imply an incomplete combined query');
@@ -172,6 +188,7 @@ test('clearLogs targets the current module and never clears fan scan records fro
     assert.deepEqual(requests.filter(r => r.cmd === 'clearExecutionLogs').map(r => r.scope), ['comment']);
     await c.open('fans');
     await c.setFansSubTab('followBack');
+    assert.equal(requests.filter(r => r.cmd === 'queryExecutionLogs').at(-1).scope, 'queueFans');
     const before = requests.filter(r => r.cmd === 'clearExecutionLogs').length;
     await c.clearLogs();
     assert.equal(requests.filter(r => r.cmd === 'clearExecutionLogs').length, before);
@@ -179,4 +196,18 @@ test('clearLogs targets the current module and never clears fan scan records fro
     globalThis.chrome = originalChrome;
     globalThis.window = originalWindow;
   }
+});
+
+test('unfollow tab reads legacy backend pages',async()=>{
+ const previous=globalThis.chrome,calls=[];
+ globalThis.chrome={runtime:{sendMessage:async m=>{
+  calls.push(m);
+  return m.cursor?{ok:true,entries:[{id:'u',at:'2026-10-25',source:'unfollow-auto'}],total:2,nextCursor:null}:{ok:true,entries:[{id:'g',at:'2026-10-26',source:'greeting-auto'}],total:2,nextCursor:{at:'2026-10-26',id:'g'}};
+ }}};
+ const c=useExecutionLogs();
+ try{
+  await c.open('unreciprocated');await c.setFollowbackSubTab('unfollow');
+  assert.equal(c.total.value,1);assert.equal(c.entries.value[0].id,'u');
+
+ }finally{c.close();globalThis.chrome=previous;}
 });

@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseNetworkUsers, parseTweetReplies, findBottomCursor, nextUserListPage, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../src/features/relationships/network-api.js';
+import {networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, nextUserListPage, mergeCommentTracking, mergeRecentPosts, findCursor, isUsableNetworkTemplate, personalRelationshipLabel, mutualUserCategory, reconcileFollowBackQueue, capturedPageRequestCursor, isCapturedPageForCursor, GRAPHQL_OP_RE, prepareNetworkHeaders, prepareNetworkVariables, addUniqueUsersUpTo} from '../src/features/relationships/network-api.js';
+import {isAccountFollowLimit} from '../src/shared/follow-limit.js';
+
+test('X follow error 161 is classified without showing the raw HTML response', async () => {
+  const result=await networkFollow(1,{id:'42',handle:'target'}, {follow:async()=>({status:403,json:{errors:[{code:161,message:"You are unable to follow more people at this time. Learn more <a href='http://support.twitter.com/articles/66885-i-can-t-follow-people-follow-limits'>here</a>."}]},error:"You are unable to follow more people at this time. Learn more <a href='http://support.twitter.com/articles/66885-i-can-t-follow-people-follow-limits'>here</a>."})});
+  assert.equal(result.status,403);
+  assert.equal(result.followLimit,true);
+  assert.equal(result.errorCode,161);
+  assert.match(result.error,/X 拒绝继续关注/);
+  assert.doesNotMatch(result.error,/<a|Learn more/i);
+  const inconsistent=await networkFollow(1,{id:'42',handle:'target'}, {follow:async()=>({status:200,json:{errors:[{code:161}]},error:''})});
+  assert.equal(inconsistent.status,0,'an error-bearing HTTP success must not become a followed state');
+  assert.equal(inconsistent.httpStatus,200);
+  assert.equal(isAccountFollowLimit({reason:'You are unable to follow more people at this time.'}),true);
+});
 
 test('follower page accumulation deduplicates accounts and never exceeds the per-scan cap', () => {
   const found = new Map();
@@ -65,7 +79,7 @@ test('parses nested X GraphQL user nodes and relationship state', () => {
   const json = {items:[{rest_id:'1',legacy:{screen_name:'alice',name:'Alice',description:'AI',following:false}},{value:'next-cursor',cursorType:'BottomCursor'}]};
   const users = parseNetworkUsers(json);
   assert.equal(users[0].handle, 'alice');
-  assert.equal(users[0].state, 'follow_back');
+  assert.equal(users[0].state, 'unknown');
   assert.equal(findCursor(json), 'next-cursor');
 });
 
@@ -257,4 +271,14 @@ test('multi-page Followers variables remain independent of the captured transact
   const page3Headers = prepareNetworkHeaders(capturedTemplate.headers, 'Followers');
   assert.equal(page3Headers['x-client-transaction-id'], undefined);
   assert.equal(page3Vars.cursor, 'cursor_step_2');
+});
+
+test('follow-back labels require both explicit relationship directions', () => {
+  for (const followedBy of [true,false,null]) for (const following of [true,false,null]) {
+    const user=parseNetworkUsers({rest_id:'123',core:{screen_name:'candidate'},relationship_perspectives:{followed_by:followedBy,following}})[0];
+    assert.equal(user.state,following===true?'following':following===false&&followedBy===true?'follow_back':following===false&&followedBy===false?'none':'unknown');
+  }
+  const stale={handle:'candidate',state:'follow_back',status:'pending',relationship:{followedBy:true,following:false}};
+  const [updated]=reconcileFollowBackQueue([stale],[{...stale,state:'none',relationship:{followedBy:false,following:false}}]);
+  assert.equal(updated.status,'no_longer_following');
 });
