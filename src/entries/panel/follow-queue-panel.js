@@ -836,6 +836,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   // --- Render Helpers ---
 
   function renderHeader() {
+    const publicationModeLabel = PUBLICATION_MODE_LABELS[settings.publicationMode] || PUBLICATION_MODE_LABELS.quote;
+    const quoteLengthLabel = QUOTE_LENGTH_LABELS[settings.quoteLengthMode] || QUOTE_LENGTH_LABELS.adaptive;
+    const grokStatus = settings.grokEnabled ? 'Grok 开启' : 'Grok 关闭';
+    const grokDetails = `${grokStatus}；发帖形式：${publicationModeLabel}；创作概率：${settings.quoteParticipationRate ?? 60}%；篇幅：${quoteLengthLabel}；自动发布：${settings.autoPublish ? '开启' : '关闭'}`;
+    const grokStatusEntry = el('span', { className: 'fq-grok-status' }, [
+      el('span', {}, grokStatus),
+      el('span', {className: 'info-tip', tabindex: '0', role: 'note', 'data-tip': grokDetails, 'aria-label': grokDetails}, '?')
+    ]);
     const autoScheduleSwitch = el('label', {
       className: 'fq-header-switch-label',
       title: '开启后后台按设定周期自动在后台调度关注任务'
@@ -918,6 +926,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
           : el('span', { className: 'fq-account-badge fq-account-badge-missing' }, '未登录 X 账号'),
         autoScheduleSwitch,
         refreshBtn,
+        grokStatusEntry,
         settingsBtn,
         execBtn,
         el('button', {
@@ -975,11 +984,6 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       el('span', { className: 'fq-summary-item' }, [`待核实 `, el('strong', { className: 'fq-text-uncertain' }, stats.uncertain)]),
       el('span', { className: 'fq-summary-item' }, [`已排除 `, el('strong', { className: 'fq-text-excluded' }, stats.excluded)])
     ];
-
-    const publicationModeLabel = PUBLICATION_MODE_LABELS[settings.publicationMode] || PUBLICATION_MODE_LABELS.quote;
-    const quoteLengthLabel = QUOTE_LENGTH_LABELS[settings.quoteLengthMode] || QUOTE_LENGTH_LABELS.adaptive;
-    const quoteSummary = `${settings.grokEnabled ? 'Grok 开启' : 'Grok 关闭'} · 发帖形式 ${publicationModeLabel} · 概率 ${settings.quoteParticipationRate ?? 60}% · ${quoteLengthLabel} · ${settings.autoPublish ? '自动发布开启' : '自动发布关闭'}`;
-    items.push(el('span', { className: 'fq-summary-item fq-summary-quote' }, quoteSummary));
 
     if (summary?.lastRunAt) {
       items.push(el('span', { className: 'fq-summary-item fq-summary-time' }, `上次执行: ${formatTime(summary.lastRunAt)}`));

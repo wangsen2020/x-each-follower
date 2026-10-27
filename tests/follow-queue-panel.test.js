@@ -14,6 +14,22 @@ import {
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
 
+test('Grok settings stay in accessible header help instead of the task summary', async () => {
+  const root = createMockElement('div');
+  const settings = {...DEFAULT_SETTINGS, grokEnabled:true, publicationMode:'article', quoteParticipationRate:75, quoteLengthMode:'deep', autoPublish:false};
+  const panel = mountFollowQueuePanel(root, {accountId:'owner', request:async message => message.cmd === 'followQueueSettings' ? {ok:true, settings} : {ok:true, jobs:[]}});
+  try {
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.doesNotMatch(root.querySelector('.fq-summary-bar').textContent, /Grok|发帖形式|创作概率/);
+    const status = root.querySelector('.fq-grok-status');
+    assert.match(status.textContent, /Grok 开启/);
+    const tip = status.querySelector('.info-tip');
+    assert.equal(tip.getAttribute('tabindex'), '0');
+    assert.equal(tip.getAttribute('data-tip'), 'Grok 开启；发帖形式：文章；创作概率：75%；篇幅：深入；自动发布：关闭');
+    assert.equal(tip.getAttribute('aria-label'), tip.getAttribute('data-tip'));
+  } finally { panel.destroy(); }
+});
+
 test('evaluation retry displays progress and the returned skip reason instead of silently refreshing',async()=>{
   const prior=globalThis.chrome;let listener,finish;
   globalThis.chrome={runtime:{onMessage:{addListener:fn=>{listener=fn;},removeListener:()=>{listener=null;}}}};
@@ -1756,8 +1772,8 @@ test('settings drawer renders 引用概率 and 篇幅 with accessible help, vali
     assert.equal(saveCalls[0].grokEnabled, false);
     assert.equal(saveCalls[0].autoPublish, false);
 
-    // Summary and reopened drawer reflect persisted values
-    assert.match(root.textContent, /概率 0% · 深入/);
+    // Header help and reopened drawer reflect persisted values
+    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /创作概率：0%；篇幅：深入/);
     settingsBtn.click();
     drawer = root.querySelector('.fq-drawer');
     assert.equal(drawer.querySelector('#fq_quoteParticipationRate').value, '0');
@@ -1827,8 +1843,8 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
   try {
     await new Promise(r => setTimeout(r, 15));
 
-    // Default summary bar shows 发帖形式 引用评论
-    assert.match(root.textContent, /发帖形式 引用评论/);
+    // Default header help shows the configured publication mode
+    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /发帖形式：引用评论/);
 
     // Table evaluation badges show each evaluation's own publication mode
     const rows = root.querySelectorAll('tbody tr');
@@ -1907,7 +1923,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
 
     assert.equal(saveCalls.length, 1);
     assert.equal(saveCalls[0].publicationMode, 'article');
-    assert.match(root.textContent, /发帖形式 文章/);
+    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /发帖形式：文章/);
 
     // Reopen settings drawer and verify 新帖 remains selected
     settingsBtn.click();
