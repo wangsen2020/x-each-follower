@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {appendExecutionLog} from '../src/shared/execution-log.js';
-import {createExecutionLogStore, createLogPager, getDefaultExecutionLogStore, handleExecutionLogRequest, isExecutionLogSender, resetDefaultExecutionLogStore} from '../src/shared/execution-log-store.js';
+import {createExecutionLogStore, createLogPager, getDefaultExecutionLogStore, handleExecutionLogRequest, isExecutionLogSender, QUEUE_LOG_LIMIT, resetDefaultExecutionLogStore} from '../src/shared/execution-log-store.js';
 
 function memoryDurable() {
   const saved = new Map();
@@ -43,6 +43,41 @@ test('queue scope isolates mixed writers, pagination totals and clear from follo
   const rebuilt = storeFor(storage, durable, 'logs-queue-isolation-rebuild');
   assert.equal((await rebuilt.query({scope:'queue'})).total, 0);
   assert.deepEqual((await rebuilt.query({scope:'unreciprocated'})).entries.map(row=>row.id), before);
+});
+
+test('queue retention removes oldest records across indexes and stays bounded after backup recovery', async () => {
+  assert.equal(QUEUE_LOG_LIMIT, 2000);
+  const queueLogLimit = 3;
+  const base = Date.parse('2026-10-27T00:00:00.000Z');
+  const oldQueue = Array.from({length: queueLogLimit + 2}, (_, i) => ({
+    id: `q${i}`, scope: 'queue', at: new Date(base + i * 1000).toISOString(), sources: [{module: 'fans'}]
+  }));
+  const storage = legacyStorage({autoFollowLogs: [
+    ...oldQueue,
+    {id: 'comment-kept', scope: 'comment', at: new Date(base).toISOString()}
+  ]});
+  const durable = memoryDurable();
+  const store = createExecutionLogStore({dbName: `logs-retention-${crypto.randomUUID()}`, storage, ...durable, queueLogLimit});
+  assert.equal((await store.query({scope: 'queue'})).total, queueLogLimit);
+  assert.equal((await store.query({scope: 'queueFans'})).total, queueLogLimit);
+  assert.equal((await store.query({scope: 'comment'})).total, 1);
+  await store.ready();
+  assert.deepEqual(durable.saved.get('executionLogBackupPage:1').ids, ['q0', 'q1']);
+
+  const newest = new Date(base + (queueLogLimit + 2) * 1000).toISOString();
+  await store.append({id: 'newest', scope: 'queue', at: newest});
+  await store.append({id: 'stale', scope: 'queue', at: new Date(base - 1000).toISOString()});
+  assert.equal((await store.query({scope: 'queue'})).total, queueLogLimit);
+  assert.equal((await store.query({scope: 'queueFans'})).total, queueLogLimit - 1);
+  assert.equal((await store.query({scope: 'queue', limit: 1})).entries[0].id, 'newest');
+  assert.deepEqual(durable.saved.get('executionLogBackupPage:2').prunedIds, ['q2']);
+  assert.deepEqual(durable.saved.get('executionLogBackupPage:3').prunedIds, ['stale']);
+
+  const rebuilt = createExecutionLogStore({dbName: `logs-retention-rebuild-${crypto.randomUUID()}`, storage, ...durable, queueLogLimit});
+  const recovered = await rebuilt.query({scope: 'queue', limit: 50});
+  assert.equal(recovered.total, queueLogLimit);
+  assert.equal(recovered.entries[0].id, 'newest');
+  assert.equal((await rebuilt.query({scope: 'comment'})).total, 1);
 });
 
 test('fan queue log scope indexes historical and new rows before pagination', async () => {

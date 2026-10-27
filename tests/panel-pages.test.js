@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPanelPages, assertRecordWritesOpen, createSelectionMemory} from '../src/entries/panel/panel-pages.js';
 
+test('page selection drops hidden rows and refreshes only current-page copies',()=>{
+  const memory=createSelectionMemory(),selected=new Set();
+  for(let i=0;i<32;i++){const handle='user'+i;selected.add(handle);memory.retain('fans',handle,{handle,bio:'old'});}
+  const visible=Array.from({length:5},(_,i)=>({handle:'user'+i,bio:'fresh'}));
+  memory.reconcilePage('fans',selected,visible);
+  assert.equal(selected.size,5);assert.equal(memory.selected('fans',selected).length,5);
+  assert.ok(memory.selected('fans',selected).every(row=>row.bio==='fresh'));
+  memory.reconcilePage('fans',selected,[{handle:'next-page'}]);
+  assert.equal(selected.size,0);assert.equal(memory.selected('fans',new Set(['user0'])).length,0);
+});
+
 function fakeRequest() {
   const ops = [];
   let migrateStarted = false;

@@ -1,11 +1,13 @@
 import {readXGrokUsageCooldown} from '../grok/grok-usage-limit.js';
+import {readGrokProvider} from '../grok/grok-provider.js';
 
 export const COMMENT_ALARM = 'x-independent-comments';
+export const COMMENT_TASK_TIMEOUT_MS = 360000;
 
 // No follow scheduler, follow API, follow retry counters or run budget in this worker.
 // Intent and result use evaluations; resolveJob is deliberately never given a state.
 export function createCommentWorker({store, storage, readBinding, execute, random, onSkip = async()=>{},
-  isBusy = () => false, now = Date.now, timeoutMs = 180000} = {}) {
+  isBusy = () => false, botAvailable=async()=>{try{return await readGrokProvider(storage)==='grok-bot';}catch{return false;}}, now = Date.now, timeoutMs = COMMENT_TASK_TIMEOUT_MS} = {}) {
   let running = false;
   const save = (accountId, job, evaluation) => store.resolveJob({accountId,
     id:job.id, evaluations:[evaluation]});
@@ -27,10 +29,17 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
         }
       }
       if (settings.quoteParticipationRate === 0) return {paused:true,reason:'创作概率为 0%，自动创作已暂停'};
+      const ready = ev => {
+        if(!ev.automaticComment || ev.recoveryDraftOnly || ev.retryAt > now())return false;
+        if(ev.status==='pending')return true;
+        const publicationEvidence=ev.publishedAttemptedAt || ev.publishedPostId || ev.publishedPostUrl || ev.articleDraftUrl
+          || (Array.isArray(ev.attempts) && ev.attempts.some(a=>/publish|发布/i.test(String(a?.stage || ''))));
+        return ev.status==='uncertain' && ev.reasonCode==='bot_pending' && Boolean(ev.relayJobId) && !ev.text && !publicationEvidence;
+      };
       const job = jobs.find(row => !isBusy(row) && row.evaluations?.some(ev =>
-        ev.automaticComment && ev.status === 'pending' && !(ev.retryAt > now())));
+        ready(ev)));
       if (!job) return {idle:true};
-      const ev = job.evaluations.find(ev => ev.automaticComment && ev.status === 'pending' && !(ev.retryAt > now()));
+      const ev = job.evaluations.find(ready);
       // Existing drafts are paid-for work; legacy pending tasks are sampled once.
       if (!ev.text) {
         const sampled = await store.ensureQuoteDecision({accountId,id:job.id,rate:settings.quoteParticipationRate ?? 60,random});
@@ -44,13 +53,13 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
             reason:`未抽中${form}（概率 ${sampled.decision.rate}%），未调用 Grok`});
           return {ok:true,skipped:true,reasonCode:'probability_skip'};
         }
-        if (ev.generationAttemptedAt && ev.reasonCode !== 'quota_not_sent') {
+        if (ev.generationAttemptedAt && ev.reasonCode !== 'quota_not_sent' && !ev.relayJobId) {
           await save(accountId,job,{...ev,status:'uncertain',reason:'上次 Grok 请求结果待核实，未重复调用'});
           return {ok:true,uncertain:true};
         }
       }
       const cooldown = await readXGrokUsageCooldown(storage, now());
-      if (cooldown) return {quotaExhausted:true,retryAt:cooldown.retryAt};
+      if (cooldown && !ev.relayJobId && !await botAvailable()) return {quotaExhausted:true,retryAt:cooldown.retryAt};
       const claimed = await save(accountId, job, {...ev,status:'processing'});
       if (!claimed.ok) return {skipped:true};
       const controller = new AbortController();
@@ -74,7 +83,7 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
         const current = latest?.evaluations?.find(item=>item.taskId === ev.taskId);
         if (current && !['posted','published'].includes(current.status)) {
           await save(accountId, job, {...current,
-            status:current.status === 'publishing' ? 'uncertain' : current.text ? 'draft' : 'failed',reason:error.message});
+            status:current.status === 'publishing' || (!current.text && current.relayJobId && current.reasonCode==='bot_pending') ? 'uncertain' : current.text ? 'draft' : 'failed',reason:error.message});
         }
         return {ok:false,error:error.message};
       } finally { clearTimeout(timer); }

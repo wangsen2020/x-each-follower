@@ -5,6 +5,7 @@ import {selectExecutionLogs, matchesFollowbackLogKind, collapseUnfollowSummaries
 
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
+export const QUEUE_LOG_LIMIT = 2000;
 export const BACKUP_ATTEMPT_LIMIT = 3;
 const UI_SCOPES = ['autoFollow', 'queue', 'queueFans', 'comment', 'mutual', 'fans', 'monitor', 'unreciprocated'];
 const LEGACY_KEYS = ['autoFollowLogs', 'monitorLogs', 'unreciprocatedLogs'];
@@ -145,6 +146,7 @@ export function createExecutionLogStore(options = {}) {
   const storage = options.storage || globalThis.chrome?.storage?.local;
   const durableGet = options.durableGet || persistentDurableGet;
   const durableSet = options.durableSet || persistentDurableSet;
+  const queueLogLimit = options.queueLogLimit || QUEUE_LOG_LIMIT;
   let dbPromise;
   let chain = Promise.resolve();
   let journalHead = 0;
@@ -194,6 +196,28 @@ export function createExecutionLogStore(options = {}) {
     for (const scope of record.membership || []) {
       tx.objectStore('scopeRows').put({scope, at: scopeSortAt(record), id: record.id, logId: record.id});
     }
+  }
+
+  async function deleteLog(tx, id) {
+    tx.objectStore('logs').delete(id);
+    const rows = await requestToPromise(tx.objectStore('scopeRows').index('byLog').getAll(id));
+    for (const row of rows) tx.objectStore('scopeRows').delete([row.scope, row.at, row.id]);
+  }
+
+  async function pruneQueueRows(tx) {
+    const rows = tx.objectStore('scopeRows');
+    const range = scopeBound('queue', null);
+    const excess = await requestToPromise(rows.count(range)) - queueLogLimit;
+    if (excess <= 0) return [];
+    const oldest = await requestToPromise(rows.getAll(range, excess));
+    const ids = [];
+    for (const row of oldest) {
+      const record = await requestToPromise(tx.objectStore('logs').get(row.logId));
+      if (record?.scope !== 'queue') throw new Error('关注队列日志索引与记录不一致，已停止清理');
+      await deleteLog(tx, record.id);
+      ids.push(record.id);
+    }
+    return ids;
   }
 
   function noteBackup(patch) {
@@ -346,10 +370,9 @@ export function createExecutionLogStore(options = {}) {
       tx.objectStore('logs').put(record);
       await replaceScopeRows(tx, record);
     } else if (op.op === 'delete' && op.id) {
-      tx.objectStore('logs').delete(op.id);
-      const rows = await requestToPromise(tx.objectStore('scopeRows').index('byLog').getAll(op.id));
-      for (const row of rows) tx.objectStore('scopeRows').delete([row.scope, row.at, row.id]);
+      await deleteLog(tx, op.id);
     }
+    for (const id of op.op === 'prune' ? op.ids || [] : op.prunedIds || []) await deleteLog(tx, id);
     // Commit the replay position together with the data it represents.
     tx.objectStore('meta').put({key: 'recoveryProgress', n: sequence, done: false});
     await transactionDone(tx);
@@ -539,6 +562,10 @@ export function createExecutionLogStore(options = {}) {
         await migrateQueueScope();
         await migrateQueueFansScope();
         const db = await database();
+        const pruneTx = db.transaction(['logs', 'scopeRows', 'backupOutbox'], 'readwrite');
+        const prunedIds = await pruneQueueRows(pruneTx);
+        if (prunedIds.length) queueOp(pruneTx, {op: 'prune', ids: prunedIds});
+        await transactionDone(pruneTx);
         const tx = db.transaction('meta', 'readwrite');
         tx.objectStore('meta').put({key: 'backupHead', n: durableCommitted});
         tx.objectStore('meta').put({key: 'recoveryProgress', n: replayedThrough, done: true});
@@ -595,7 +622,8 @@ export function createExecutionLogStore(options = {}) {
         record.scopeSchemaVersion = 3;
         tx.objectStore('logs').put(record);
         await replaceScopeRows(tx, record);
-        queueOp(tx, {op: 'put', record});
+        const prunedIds = record.scope === 'queue' ? await pruneQueueRows(tx) : [];
+        queueOp(tx, {op: 'put', record, prunedIds});
         await transactionDone(tx);
         try {
           await flushOutbox();

@@ -1,0 +1,22 @@
+{
+  // Grok Bot relay Worker configuration.
+  "name": "grok-bot-relay",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "grok-bot-relay",
+      // Replace after `wrangler d1 create grok-bot-relay`.
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+  "vars": {
+    "BOT_NAME": "Grok Bot",
+    // Fixed HTTPS origin of the deployed Worker, no trailing slash.
+    "PUBLIC_BASE_URL": "https://grok-bot-relay.example.workers.dev"
+  }
+  // Secrets are NOT stored here. Set with `wrangler secret put <NAME>`:
+  //   WEBHOOK_URL, WEBHOOK_SECRET, CLIENT_TOKEN
+}

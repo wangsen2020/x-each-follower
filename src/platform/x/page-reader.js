@@ -58,11 +58,16 @@ export function readProfileBundle(handle, recentLimit = 8) {
     const target = label.match(/@([a-zA-Z0-9_]{1,15})(?![a-zA-Z0-9_])/);
     return target?.[1].toLowerCase() === handle.toLowerCase() && /-(?:unfollow|follow)$/.test(button.getAttribute('data-testid') || '');
   });
+  const pendingAction = [...root.querySelectorAll('button[data-testid]')].find(button => /^\d+-cancel$/.test(button.getAttribute('data-testid') || '') && /^(?:pending|等待确认|等待回應|等待回应|请求中)$/i.test((button.innerText || '').trim()) && !button.closest?.('article, [data-testid=\"UserCell\"]'));
+  const pendingRequestUserId = pendingAction?.getAttribute('data-testid')?.match(/^(\d+)-cancel$/)?.[1] || '';
   const actionId = action?.getAttribute('data-testid') || '';
   const relationship = action ? {following:actionId.endsWith('-unfollow')} : {};
   const id = actionId.match(/^(\d+)-(?:unfollow|follow)$/)?.[1];
-  const articles = [...(root?.querySelectorAll('article') || [])];
-  if (articles.length < Math.min(5, recentLimit) && typeof window !== 'undefined' && typeof window.scrollBy === 'function') {
+  const articles = [...(root?.querySelectorAll('article') || [])].filter(article => {
+    const context = article.querySelector('[data-testid="socialContext"]')?.innerText || '';
+    return !/(?:置顶|置頂|已釘選|釘選|\bpinned\b)/i.test(context);
+  });
+  if (articles.length < recentLimit && typeof window !== 'undefined' && typeof window.scrollBy === 'function') {
     window.scrollBy(0, 700);
   }
   const posts = articles.slice(0, recentLimit).map(article => {
@@ -71,10 +76,45 @@ export function readProfileBundle(handle, recentLimit = 8) {
     const showMore = article.querySelector('[data-testid="tweet-text-show-more-link"]');
     const textComplete = Boolean(body) && !showMore;
     const time = article.querySelector('time')?.getAttribute('datetime') || '';
-    const link = [...article.querySelectorAll('a[href]')].find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
-    return {text, textComplete, time, url: link ? new URL(link.href, location.origin).href : ''};
+    const links = [...article.querySelectorAll('a[href]')];
+    const link = links.find(item => item.querySelector?.('time')) || links.find(item => /\/status\/\d+/.test(item.getAttribute('href') || ''));
+    const count = (selectors, emptyIsZero = true) => {
+      const control = article.querySelector(selectors);
+      const raw = control ? String(control.innerText || '').trim().replace(/,/g,'') : null;
+      const compact = raw?.match(/^(\d+(?:\.\d+)?)\s*([KMB万亿])?$/i);
+      const multiplier = {k:1000,m:1000000,b:1000000000,'万':10000,'亿':100000000};
+      return raw === '' && emptyIsZero ? 0 : compact ? Number(compact[1]) * (multiplier[compact[2]?.toLowerCase()] || 1) : null;
+    };
+    // An empty bookmark icon on a timeline does not disclose its count.
+    return {text, textComplete, time, isPinned:false,
+      replyCount:count('[data-testid="reply"]'),repostCount:count('[data-testid="retweet"], [data-testid="unretweet"]'),
+      likeCount:count('[data-testid="like"], [data-testid="unlike"]'),bookmarkCount:count('[data-testid="bookmark"], [data-testid="removeBookmark"]',false),
+      url: link ? new URL(link.href, location.origin).href : ''};
   });
-  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts, relationship, ...(id ? {id} : {})};
+  return {pending:false, name:name.split('\n')[0], bio, followersText:followers.innerText, followingText:following.innerText, avatarUrl, status:'ok', posts, relationship, ...(id ? {id} : {}), ...(pendingRequestUserId ? {pendingRequestUserId} : {})};
+}
+
+// MAIN world: use already loaded page data, with an exact source ID match.
+// No requests, clicks or state changes. React layout changes fail to unknown.
+export function readPostMetricsOnPage(postIds) {
+  const wanted = new Set(postIds);
+  const rows = {};
+  const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  for (const article of document.querySelectorAll('[data-testid="primaryColumn"] article')) {
+    const key = Object.keys(article).find(name => name.startsWith('__reactFiber$'));
+    let fiber = article[key];
+    for (let depth=0; fiber && depth<35; depth++,fiber=fiber.return) {
+      const tweet = fiber.memoizedProps?.tweet;
+      if (!tweet) continue;
+      const id = String(tweet.id_str || tweet.rest_id || '');
+      if (!wanted.has(id)) continue;
+      const data = tweet.legacy || tweet;
+      rows[id] = {replyCount:count(data.reply_count),repostCount:count(data.retweet_count),
+        likeCount:count(data.favorite_count),bookmarkCount:count(data.bookmark_count)};
+      break;
+    }
+  }
+  return rows;
 }
 
 export function scanFollowers() {
@@ -265,7 +305,9 @@ export function openQuoteComposerOnPage(tweetUrl) {
     const hasQuoteComposer = () => [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')]
       .filter(visible)
       .some(box => {
-        const root = box.closest?.('[role="dialog"]') || box.closest?.('main') || document;
+        const dialog = box.closest?.('[role="dialog"]');
+        const root = dialog || box.closest?.('main') || document;
+        if (!dialog && (!/^\/compose\/(?:post|tweet)\/?$/.test(location.pathname) || !root.querySelector('[data-testid="tweetButton"]'))) return false;
         const rootText = root.innerText || '';
         const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
         const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
@@ -330,10 +372,15 @@ export function inspectQuoteComposerOnPage(tweetUrl, expectedPostText = '', expe
   const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
   const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
   const boxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible);
+  const hasDialogEditor = boxes.some(box => box.closest?.('[role="dialog"]'));
   for (const box of boxes) {
     const dialog = box.closest?.('[role="dialog"]');
+    // The source post can itself contain a Quote card. Its inline Reply box
+    // must not qualify while the real modal is still mounting.
+    if (!dialog && (hasDialogEditor || !/^\/compose\/(?:post|tweet)\/?$/.test(location.pathname))) continue;
     const root = dialog || box.closest?.('main') || document;
     if (root !== document && !visible(root)) continue;
+    if (!dialog && !root.querySelector('[data-testid="tweetButton"]')) continue;
     const rootText = root.innerText || '';
     const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
     const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
@@ -463,10 +510,14 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
       const sourceAuthor = sourceArticle?.querySelector('[data-testid^="UserAvatar-Container-"]')?.getAttribute('data-testid') || '';
       const sourceText = sourceArticle?.querySelector('[data-testid="tweetText"]')?.innerText?.trim() || '';
       const sourceArticleTitle = sourceArticle?.querySelector('[data-testid="twitter-article-title"]')?.innerText?.trim() || '';
-      for (const box of [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible)) {
+      const boxes = [...document.querySelectorAll('[data-testid="tweetTextarea_0"]')].filter(visible);
+      const hasDialogEditor = boxes.some(box => box.closest?.('[role="dialog"]'));
+      for (const box of boxes) {
         const dialog = box.closest?.('[role="dialog"]');
+        if (!dialog && (hasDialogEditor || !/^\/compose\/(?:post|tweet)\/?$/.test(location.pathname))) continue;
         const root = dialog || box.closest?.('main') || document;
         if (root !== document && !visible(root)) continue;
+        if (!dialog && !root.querySelector('[data-testid="tweetButton"]')) continue;
         const rootText = root.innerText || '';
         const quoteLabel = /(?:^|\n)[ \t]*(?:quote(?: post)?|引用(?:帖子|推文)?)[ \t]*(?:\n|$)/i.test(rootText);
         const replyingLabel = /replying to\s+@|回复\s*@/i.test(rootText);
@@ -549,7 +600,7 @@ export function publishQuotePostOnPage(tweetUrl, quoteText, expectedPostText = '
       if (send && send.getAttribute('aria-disabled') !== 'true' && !send.disabled) break;
       send = null; await sleep(300);
     }
-    if (!send) return { ok: false, reason: '引用帖发送按钮一直不可用（可能超长或被限制）' };
+    if (!send) return { ok: false, attempted:false, reason: 'X 未允许发送该引用，已保留草稿（可能超出当前账号长度限制或受到限制）' };
     send.click();
 
     // 确认发出：引用编辑框关闭且没有失败提示 = X 已接受。

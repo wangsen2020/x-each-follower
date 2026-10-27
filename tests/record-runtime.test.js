@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {indexedDB, IDBKeyRange} from 'fake-indexeddb';
 import {createRecordRuntime, LEGACY_RECORD_KEYS} from '../src/features/records/record-runtime.js';
+import {createRecordProjection} from '../src/features/records/record-projection.js';
 
 function memoryStorage(data) {
   const calls = [];
@@ -89,6 +90,99 @@ function comments(count, extra = {}) {
     }
   };
 }
+
+test('fan directory has unique counts, global search, durable updates and no history overwrite', async () => {
+  const old={handle:'Ada',id:'42',name:'Ada Archive',relationship:{following:false,followedBy:true},state:'follow_back',status:'pending'};
+  const storage=memoryStorage({monitor:{users:[old,{handle:'Single',relationship:{following:true,followedBy:false}}],
+    queue:[old],followingUsers:[{...old,bio:'historical biography',relationship:{following:true,followedBy:true}}]}});
+  const durable=memoryDurable();
+  const service=runtime('fan-directory-integration',storage,durable);
+  await service.migrate();
+  let summary=await service.summary({module:'fans'});
+  assert.equal(summary.tabs.fanAll,2);
+  assert.equal(summary.tabs.fanUnknown,1);
+  assert.equal(summary.tabs.fanFollowing,1);
+  let search=await service.query({module:'fans',filter:{tab:'fanAll',search:'https://x.com/Ada'},limit:10});
+  assert.equal(search.records.length,1);
+  assert.equal(search.records[0].payload.fanCategory,'unknown');
+  assert.equal(search.records[0].module,'fans');
+  assert.ok(search.records[0].userKey.startsWith('monitor/'));
+  await service.handle({op:'batch',sourceKey:'monitor',changes:[{handle:'ada',sourceBucket:'queue',patch:{relationship:{following:true,followedBy:true},relationshipVerifiedAt:'2026-10-27T04:00:00Z'}}]});
+  summary=await service.summary({module:'fans'});
+  assert.equal(summary.tabs.fanMutual,1);
+  assert.equal(summary.tabs.fanUnknown,0);
+  assert.equal(storage.data.monitor.queue[0].relationship.following,false);
+  const reopened=runtime('fan-directory-integration',storage,durable);
+  const mutual=await reopened.query({module:'fans',filter:{tab:'fanMutual'},limit:10});
+  assert.equal(mutual.records[0].payload.fanCategory,'mutual');
+  assert.equal((await reopened.query({module:'fans',filter:{tab:'fanAll',search:'biography'},limit:10})).records.length,1);
+  const selection=await reopened.handle({op:'fanInspectionTargets',filter:{tab:'fanPending'},handles:['ada','single']});
+  assert.deepEqual(selection.handles,[]);
+  const current=await reopened.handle({op:'fanInspectionTargets',filter:{tab:'fanFollowing'},handles:['ada','single']});
+  assert.deepEqual(current.handles,['single']);
+});
+
+test('fan directory recovers a source commit interrupted before derived view refresh', async () => {
+  const storage=memoryStorage({monitor:{users:[{handle:'Ada',relationship:{following:false,followedBy:true},relationshipObservedAt:100}]}});
+  const durable=memoryDurable();
+  const service=runtime('fan-directory-interrupted',storage,durable);
+  await service.migrate();
+  assert.equal((await service.summary({module:'fans'})).tabs.fanPending,1);
+  const source=(await service.lookupAll({sourceKey:'monitor',bucket:'users',handle:'ada'}))[0];
+  const projection=createRecordProjection({indexedDB,IDBKeyRange,dbName:'fan-directory-interrupted-dashboard'});
+  const raw=await projection.getRow('unassigned','fans',source.userKey);
+  const changed={...raw,payload:{...raw.payload,relationship:{following:true,followedBy:true},relationshipVerifiedAt:'2026-10-27T04:00:00Z'}};
+  // Simulate the durable raw commit, with no runtime recompute or journal step.
+  await projection.commitWithBackup(['unassigned','fans',source.userKey],{row:changed,membership:[]},
+    {operationId:'interrupted-raw',sourceKey:'monitor',handle:'ada',status:'stored',result:{}});
+  assert.deepEqual((await projection.readState()).fanDirectoryDirtyHandles,['ada']);
+  const restarted=runtime('fan-directory-interrupted',storage,durable);
+  const page=await restarted.query({module:'fans',filter:{tab:'fanMutual'},limit:10});
+  assert.equal(page.records[0].handle,'ada');
+  assert.equal((await restarted.summary({module:'fans'})).tabs.fanPending,0);
+  assert.deepEqual((await projection.readState()).fanDirectoryDirtyHandles,[]);
+});
+
+test('global fan search counts beyond one scan batch and paginates unique accounts across categories', async () => {
+  const users=Array.from({length:230},(_,i)=>({handle:`fan${String(i).padStart(3,'0')}`,name:'Needle',bio:'mentions fan000',relationshipObservedAt:100,relationship:{following:i%2===0,followedBy:true}}));
+  const service=runtime('fan-directory-search-pages',memoryStorage({monitor:{users,queue:users.slice(0,40)}}),memoryDurable());
+  await service.migrate();
+  const all=[];let cursor=null;
+  do {
+    const page=await service.query({module:'fans',filter:{tab:'fanAll',search:'needle'},limit:20,cursor});
+    assert.equal(page.matched,230);
+    all.push(...page.records.map(row=>row.handle));cursor=page.nextCursor;
+  } while(cursor);
+  assert.equal(all.length,230);
+  assert.equal(new Set(all).size,230);
+  const summary=await service.summary({module:'fans'});
+  assert.equal(summary.tabs.fanAll,230);
+  assert.equal(summary.tabs.fanPending,115);
+  assert.equal(summary.tabs.fanMutual,115);
+  const exact=await service.query({module:'fans',filter:{tab:'fanAll',search:'@fan000'},limit:20});
+  assert.equal(exact.matched,1);
+  assert.equal(exact.records[0].handle,'fan000');
+  const link=await service.query({module:'fans',filter:{tab:'fanAll',search:'https://x.com/fan000'},limit:20});
+  assert.equal(link.matched,1);
+});
+
+test('fan deletion removes every monitor source while preserving other modules and survives reopening', async () => {
+  const user = {handle:'FanUser', relationship:{following:true, followedBy:false}};
+  const storage = memoryStorage({monitor:{users:[user], queue:[user], followingUsers:[user]}, mutualNetwork:{users:[user]}, unreciprocatedTracker:{users:[user]}, autoFollowLogs:[{handle:'FanUser', result:'followed'}]});
+  const durable = memoryDurable();
+  const service = runtime('delete-fan', storage, durable);
+  await service.migrate();
+  const result = await service.handle({op:'deleteFanAccount', handle:'@FANUSER'});
+  assert.equal(result.result.deleted, 3);
+  const remaining = (await service.handle({op:'lookupAll', handle:'fanuser'})).records;
+  assert.equal(remaining.some(row => row.sourceKey === 'monitor'), false);
+  assert.ok(remaining.some(row => row.sourceKey === 'mutualNetwork'));
+  assert.ok(remaining.some(row => row.sourceKey === 'unreciprocatedTracker'));
+  const reopened = runtime('delete-fan-recovered', storage, durable);
+  await reopened.migrate();
+  assert.equal((await reopened.handle({op:'lookupAll', handle:'fanuser'})).records.some(row => row.sourceKey === 'monitor'), false);
+  await assert.rejects(service.handle({op:'deleteFanAccount', handle:'bad/name'}), /账号格式无效/);
+});
 
 test('unavailable account deletion removes all source rows and survives reopening without removing other users or logs', async () => {
   const gone = {handle:'GoneUser', relationship:{following:true}, followedAt:'2026-10-01T00:00:00Z',

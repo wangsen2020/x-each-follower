@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createProfileTab,updateProfileTab,readProfileOnTab,observeProfile,PROFILE_ACCESS_PREFIX,unavailableFromProfileResponse} from '../src/platform/x/profile-access.js';
 import {createXNetworkClient} from '../src/platform/x/network-client.js';
+import {readPostMetricsOnPage} from '../src/platform/x/page-reader.js';
+
+test('profile reading enriches by exact post ID with loaded main-world metrics and preserves unknowns',async()=>{
+ const {api}=fixture();
+ let mainCalls=0;
+ api.scripting.executeScript=async({func,world,args})=>{
+  if(func===readPostMetricsOnPage){mainCalls++;assert.equal(world,'MAIN');assert.deepEqual(args,[['123','456']]);return [{result:{'123':{replyCount:10,repostCount:20,likeCount:30,bookmarkCount:40}}}];}
+  return [{result:{pending:false,status:'ok',posts:[{url:'https://x.com/writer/status/123',replyCount:1,bookmarkCount:null},{url:'https://x.com/writer/status/456',bookmarkCount:null}]}}];
+ };
+ const bundle=await readProfileOnTab(api,12,'writer',20,'follow-queue');
+ assert.equal(mainCalls,1);assert.equal(bundle.posts[0].replyCount,10);assert.equal(bundle.posts[0].bookmarkCount,40);
+ assert.equal(bundle.posts[1].bookmarkCount,null);
+});
 function fixture(){const values={},calls=[];return {values,calls,api:{storage:{local:{get:async k=>({[k]:values[k]}),set:async p=>Object.assign(values,structuredClone(p))}},tabs:{create:async opts=>{calls.push(['create',opts]);return {id:12}},update:async(id,opts)=>{calls.push(['update',id,opts]);return {id}}},scripting:{executeScript:async()=>[{result:{pending:false,status:'not_found',reason:'此账号不存在'}}]}}};}
 test('a real DOM terminal result blocks later opens and navigations across module entry points',async()=>{
  const {api,values,calls}=fixture();await createProfileTab(api,{url:'https://x.com/GaoShouKeJi'},'follow-queue');await readProfileOnTab(api,12,'GaoShouKeJi',5,'follow-queue');

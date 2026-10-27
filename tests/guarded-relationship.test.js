@@ -1,7 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeVerifiedRelationship,profileRelationshipOnPage} from '../src/platform/x/guarded-relationship.js';
+import {mergeVerifiedRelationship,profileRelationshipOnPage,profileReadinessError,inspectOrActOnProfile} from '../src/platform/x/guarded-relationship.js';
+import {targetCheckFailure} from '../src/features/relationships/auto-unfollow-state.js';
 import {parseNetworkUsers} from '../src/features/relationships/network-api.js';
+
+test('profile loading timeout isolates the target while wrong viewer still pauses the scheduler',()=>{
+ assert.equal(targetCheckFailure(profileReadinessError({ready:false})),true);
+ assert.equal(targetCheckFailure(profileReadinessError({ready:false,reason:'登录账号不一致'})),false);
+ assert.equal(profileReadinessError({code:'X_PROFILE_ACTION_UNAVAILABLE'}).code,'X_PROFILE_ACTION_UNAVAILABLE');
+});
+
+test('a stuck page read times out, closes only its owned tab and cannot advance after a late response',async()=>{
+ let release,calls=0;const closed=[];
+ const api={tabs:{create:async()=>({id:123}),remove:async id=>closed.push(id)},scripting:{executeScript:async()=>{calls++;return await new Promise(resolve=>{release=resolve;});}}};
+ await assert.rejects(inspectOrActOnProfile(api,{handle:'target',id:'12'},'owner','read',{timeoutMs:10}),error=>error.code==='X_PROFILE_ACTION_UNAVAILABLE');
+ assert.deepEqual(closed,[123]);
+ release([{result:{ready:true,following:true,followedBy:false}}]);await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls,1);assert.ok(closed.every(id=>id===123));
+});
+test('an action stuck before the first click returns definite no-action on deadline',async()=>{
+ const closed=[];const api={tabs:{create:async()=>({id:321}),remove:async id=>closed.push(id)},scripting:{executeScript:async()=>new Promise(()=>{})}};
+ const result=await inspectOrActOnProfile(api,{handle:'target',id:'12'},'owner','unfollow',{timeoutMs:10});
+ assert.equal(result.attempted,false);assert.equal(result.status,0);assert.deepEqual(closed,[321]);
+});
 
 test('positive profile evidence overrides stale negatives; absent evidence is not proof',()=>{
  assert.deepEqual(mergeVerifiedRelationship({following:true,followedBy:false},{ready:true,following:true,followedBy:true}),{following:true,followedBy:true});
@@ -56,9 +77,10 @@ test('compact unfollow menu is a submitting action and requires exact target sem
   assert.equal(clicks,1);
  }finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
 });
-test('network parser never lets a negative field override positive follower evidence',()=>{
+test('network parser treats conflicting follower fields as unknown and never authorizes an unfollow',()=>{
  const [user]=parseNetworkUsers({rest_id:'12',legacy:{screen_name:'target',following:true,followed_by:true},relationship_perspectives:{followed_by:false}});
- assert.equal(user.relationship.followedBy,true);
+ assert.equal(user.relationship.followedBy,null);
+ assert.equal(user.relationshipKnown,false);
 });
 test('page guard blocks wrong actor, follower, and recommendation buttons',()=>{
  const oldDocument=globalThis.document,oldLocation=globalThis.location;

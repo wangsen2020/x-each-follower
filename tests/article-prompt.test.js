@@ -11,15 +11,15 @@ test('article prompt carries full source, opening context, provenance and reader
     for(const expected of [source,'开篇必须交代背景与写作缘起','读者为什么会关心','不能自动升级为已核实事实','不要虚构','年份、单位、分母与口径','总分至少7分','Prefer clear paragraphs.','test-token',START,END])assert.ok(prompt.includes(expected),expected);
     for(const oldInstruction of ['最值得公开引用评价','上文的引用措辞','总分至少 6','220 加权字符','280 加权字符','系统会从用户候选池随机补充'])assert.ok(!prompt.includes(oldInstruction),oldInstruction);
   }
-  assert.match(buildGrokCommentPrompt({handle:'author',posts:[{text:source}],qualityFirst:true}),/最值得公开引用评价/,'quote framing stays in the quote path');
+  assert.match(buildGrokCommentPrompt({handle:'author',posts:[{text:source}],qualityFirst:true}),/公开引用评价/,'quote framing stays in the quote path');
 });
 
 test('original writer sends article instructions in the real shared request path and keeps selection binding',async()=>{
-  const posts=['Cache experiment: 800ms cold, 80ms warm; same dataset.','Database migration: a checkpoint after each transaction permits restart without replaying committed work.'].map((text,i)=>({url:`https://x.com/author/status/${i+1}`,text,textComplete:true}));
+  const posts=['Cache experiment: 800ms cold, 80ms warm; same dataset.','Database migration: a checkpoint after each transaction permits restart without replaying committed work.'].map((text,i)=>({url:`https://x.com/author/status/${i+1}`,text,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:i+1,textComplete:true}));
   let calls=0;
   const result=await generateOriginalPost('author',posts,'Author',{sleep:async()=>{},askers:[async prompt=>{
     calls++;assert.match(prompt,/开篇必须交代背景与写作缘起/);assert.doesNotMatch(prompt,/最值得公开引用评价/);
-    return {ok:true,...parseGrokQuoteDecision(`【选择帖子:2】【质量评分:2,2,2,1】【引用价值:区分实验条件】${START}A cache benchmark compares cold and warm reads. For a reader choosing a cache, tail latency matters alongside that difference.${END}【评价语言:en】`,2)};
+    return {ok:true,...parseGrokQuoteDecision(`【选择帖子:1】【质量评分:2,2,2,1】【引用价值:区分实验条件】${START}A cache benchmark compares cold and warm reads. For a reader choosing a cache, tail latency matters alongside that difference.${END}【评价语言:en】`,1)};
   },async()=>{throw Error('must not request a second draft');}]});
   assert.equal(calls,1);assert.equal(result.ok,true);assert.equal(result.post.url,posts[1].url);assert.equal(result.publicationMode,'original');
 });

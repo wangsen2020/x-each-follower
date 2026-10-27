@@ -6,12 +6,10 @@
         <button id="batchUnfollowUnreciprocatedBtn" class="secondary danger-btn" disabled title="批量取消关注已勾选的未回关账号">批量取关</button>
         <button id="unfollowAllOverdueBtn" class="secondary danger-btn" title="选择所有超过设定天数仍未回关的账号">选择超时账号</button>
       </div>
-      <div class="module-header-actions">
-        <button id="openUnreciprocatedSettingsDrawer" class="icon-button secondary settings-gear-btn" title="回关监控与定时取关设置" aria-label="回关监控与定时取关设置">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-        <button id="openUnreciprocatedLogs" class="secondary module-log-button" type="button">执行日志</button>
-      </div>
+      <PanelActionBar class="module-header-actions">
+        <PanelIconButton id="openUnreciprocatedSettingsDrawer" :icon="Settings" label="回关监控设置" tip="回关监控与定时取关设置" />
+        <PanelIconButton id="openUnreciprocatedLogs" :icon="ScrollText" label="执行日志" />
+      </PanelActionBar>
     </div>
     <div class="mutual-subbar unreciprocated-subbar">
       <div class="subbar-left">
@@ -45,6 +43,7 @@
     </div>
     <div id="unreciprocatedLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载回关监控…</span></div>
     <div id="unreciprocatedLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="unreciprocated">重试</button></div>
+    <AutoUnfollowStatus />
     <p id="unreciprocatedStatus" class="monitor-status" role="status" aria-live="polite"></p>
     <div class="table-wrap unreciprocated-table-wrap">
       <table class="mutual-table unreciprocated-table">
@@ -83,6 +82,10 @@
 </template>
 
 <script setup>
+import AutoUnfollowStatus from '../components/AutoUnfollowStatus.vue';
+import PanelActionBar from '../components/PanelActionBar.vue';
+import PanelIconButton from '../components/PanelIconButton.vue';
+import {Settings, ScrollText} from 'lucide';
 import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;
@@ -123,6 +126,8 @@ const { activeTab } = panelNavigationController;
 }
 
 @media (max-width: 600px) {
+  #unreciprocatedSection { height: auto; max-height: none; overflow: visible; }
+  #unreciprocatedSection .unreciprocated-table-wrap { flex: 0 0 auto; height: 55vh; min-height: 260px; }
   #unreciprocatedSection .unreciprocated-tabs {
     min-width: 0;
     max-width: 100%;

@@ -1,9 +1,10 @@
 import {observeProfile} from '../../platform/x/profile-access.js';
 import {queueRelationshipDecision} from '../relationships/fan-followback-policy.js';
 import {readQueueProfile,profileReadLimitError} from './profile-reader.js';
+import {readScoredPosts} from './scored-posts.js';
 import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
 import {createQueueDiagnostics} from './queue-diagnostics.js';
-import {createCommentWorker, COMMENT_ALARM} from './comment-worker.js';
+import {createCommentWorker, COMMENT_ALARM, COMMENT_TASK_TIMEOUT_MS} from './comment-worker.js';
 export {COMMENT_ALARM};
 import {isPageFailure} from '../../platform/page-failure.js';
 import {appendQuoteTags} from '../grok/quote-tags.js';
@@ -18,10 +19,11 @@ import {originalQualityIssue,originalTextIssue} from '../publishing/original-qua
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
+import {createFanInspectionBatch} from '../relationships/fan-inspection-batch.js';
 import {networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from '../../platform/x/page-reader.js';
 import {parseCount, riskAssess, evaluateMutualProfile} from '../relationships/scoring.js';
-import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage} from '../grok/grok-comment.js';
+import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage, quoteCandidates, highestScoredPost, composeQueueFollowBack} from '../grok/grok-comment.js';
 import {interactionSkipReason} from '../relationships/content-risk.js';
 import {followerRatioDecision} from '../relationships/follower-ratio-policy.js';
 import {removeRatioFollower} from '../../platform/x/remove-follower.js';
@@ -37,7 +39,7 @@ const canonical = value => String(value || '').replace(/^@/, '').toLowerCase();
 
 export function quotePublicationState(result) {
   if (result?.riskBlocked) return 'skipped';
-  return result?.stage === 'composer' ? 'failed' : 'uncertain';
+  return result?.attempted === false ? 'draft' : result?.stage === 'composer' ? 'failed' : 'uncertain';
 }
 
 export function assessQueueProfile(profile, settings, confirmedFollowBack = false) {
@@ -341,9 +343,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const bypass = allowAll && candidate.followBackCandidate && (!verifiedDecision || verifiedDecision.code === 'follow-back')
         && candidate.sources.some(s=>s.module === 'fans' && s.enabled);
       const item = bypass && candidate.state === 'skipped' ? {...candidate,state:''} : candidate;
-      if (bypass && prior?.state === 'skipped' && !prior.followResult?.succeeded) {
+      if (bypass && prior?.state === 'skipped' && !prior.followResult?.succeeded && !verifiedDecision && !prior.followResult?.fanBypassReopened) {
         await store.resolveJob({accountId:binding.accountId,id:prior.id,state:'pending',stage:'pending',nextEligibleAt:0,
-          followResult:{...prior.followResult,reason:'待回关一律放行，重新核验关系后回关'}});
+          followResult:{...prior.followResult,fanBypassReopened:true,reason:'待回关一律放行，重新核验关系后回关'}});
       }
       const newSource = !prior || item.sources.some(source => !prior.sources.some(s => s.module === source.module && s.url === source.url));
       const priorState = prior?.followResult?.succeeded ? 'followed' : prior?.importedHold?.state || prior?.state;
@@ -425,6 +427,13 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         }
         const attempts = handles.length ? await readAutoFollowAttempts(handles.map(handle => ({handle})), api.storage.local) : {};
         const profiles = await profilesForHandles(handles, snapshot);
+        if (sourceKey === 'monitor' && typeof records.fanDirectory === 'function') {
+          const directory = new Map((await records.fanDirectory([...new Set(handles)])).map(row => [canonical(row.handle),row.payload]));
+          for (const bucket of ['users','queue','followingUsers']) snapshot.monitor[bucket] = snapshot.monitor[bucket]
+            .filter(user => ['following','mutual','pending'].includes(directory.get(canonical(user.handle))?.fanCategory))
+            .map(user => ({...user,relationship:directory.get(canonical(user.handle)).relationship,
+              state:directory.get(canonical(user.handle)).fanCategory === 'pending' ? 'follow_back' : 'following'}));
+        }
         await enqueueCandidates(binding, collectFollowQueueCandidates({
           accountId:binding.accountId, ...snapshot, attempts, sourceEnabled:binding.sources
         }), profiles);
@@ -468,7 +477,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     try {
       tab = await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false},'follow-queue',{jobId:job.id,runId:control.runId});
       const loaded = await readQueueProfile({handle:job.handle,
-        readDom:()=>script(tab.id,readProfileBundle,[job.handle,5]),
+        readDom:()=>script(tab.id,readProfileBundle,[job.handle,20]),
         readNetwork:()=>fetchProfile(tab.id,job.handle,{preferPageResponse:true}),guard,
         deadline:control.deadline,signal:control.signal});
       let profile=loaded.profile;
@@ -497,6 +506,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (lookup.status!==200 || lookup.error) return {state:'retry',reason:lookup.error || `用户资料请求返回 ${lookup.status}`};
       if (!target?.id) {await observeProfile(api,job.handle,{status:'identity_unresolved',reason:'无法解析目标用户 ID'},'queue-identity');return {state:'uncertain',reason:'身份待核实，已暂停自动请求'};}
       if (job.targetUserId && job.targetUserId !== target.id) return {state:'excluded',reason:'账号名称对应的用户 ID 已变化'};
+      if (profile.pendingRequestUserId === target.id) {
+        const reason='主页确认关注请求等待对方批准，跳过重复关注';
+        return {state:'uncertain',reason,followResult:{...followResult,followRequestPending:true,targetUserId:target.id,reason,verifiedAt:Date.now()}};
+      }
       if (target.relationship?.following === false && followResult.succeeded) {
         followResult = {...followResult, succeeded:false, following:false, verifiedAt:Date.now()};
       }
@@ -510,9 +523,14 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         const removed=target.relationship?.followedBy===false && target.relationship?.following===false;
         return {state:removed?'excluded':'uncertain',followResult:{...followResult,followerRemoval:{...followResult.followerRemoval,removed,verifiedAt:Date.now()}},reason:removed?'已核实移除此关注者，跳过回关':'移除关注者结果待核实，禁止自动重复提交'};
       }
+      if (relationshipDecision.code === 'request-pending' || (target.protected === true && target.relationship?.following !== true && target.relationship?.followRequestSent !== false)) {
+        const reason = relationshipDecision.code === 'request-pending' ? relationshipDecision.reason : '受保护账号的关注请求状态不明确，等待核实，未发送关注';
+        return {state:'uncertain',reason,followResult:{...followResult,reason,followRequestPending:relationshipDecision.code === 'request-pending'}};
+      }
       if (relationshipDecision.code === 'relationship-unknown') {
         return {state:'uncertain', reason:relationshipDecision.reason, followResult};
       }
+      if (relationshipDecision.code === 'not-a-follower') return {state:'excluded',reason:relationshipDecision.reason,followResult};
       const merged = await store.enqueue({accountId:job.accountId,targetUserId:target.id,handle:job.handle,sources:job.sources});
       if (merged.importedHold?.state && !(merged.importedHold.state === 'followed' && target.relationship?.following === false)) {
         const holdState = merged.importedHold.state;
@@ -559,15 +577,42 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         }
       }
       stage('read-posts');
+      const observedPosts = new Map();
+      const rememberPosts = bundle => {
+        for (const post of bundle?.posts || []) {
+          if (!post.isPinned && post.url && (observedPosts.has(post.url) || observedPosts.size < 20)) observedPosts.set(post.url,post);
+        }
+      };
+      rememberPosts(profile);
       const dwell = randomizedSeconds(settings.dwellSeconds, settings.dwellJitter, 2, 60);
       for (let round=0; round<settings.scrollRounds; round++) {
         await guard();
         await script(tab.id,simulateProfileScrollStep,[round,420]);
         audit.scrollRounds = round + 1;
         await wait(dwell * 1000 / settings.scrollRounds);
+        if (settings.grokEnabled) rememberPosts(await script(tab.id,readProfileBundle,[job.handle,20]));
       }
-      const fresh = await script(tab.id,readProfileBundle,[job.handle,10]);
+      const fresh = await script(tab.id,readProfileBundle,[job.handle,20]);
       if (fresh && !fresh.pending) profile = {...profile,...fresh};
+      rememberPosts(profile);
+      if (settings.grokEnabled) {
+        let timeline;
+        try {timeline=await readScoredPosts({api,tabId:tab.id,userId:target.id,handle:job.handle,guard});}
+        catch(error){audit.postReadError=error.message;if(error.status===429)throw error;}
+        if(timeline?.posts.length){profile.posts=timeline.posts;audit.postSelectionSource=timeline.source;audit.excludedPinnedPostIds=timeline.pinnedIds;}
+        else {
+        let unchanged=0;
+        for (let round=0; observedPosts.size<20 && unchanged<2 && round<20; round++) {
+          await guard();
+          const previous=observedPosts.size;
+          await script(tab.id,simulateProfileScrollStep,[round,700]);
+          await wait(500);
+          rememberPosts(await script(tab.id,readProfileBundle,[job.handle,20]));
+          unchanged=previous===observedPosts.size ? unchanged+1 : 0;
+        }
+        profile.posts=[...observedPosts.values()];
+        }
+      }
       Object.assign(audit,{name:profile.name,posts:profile.posts || [],dwellSeconds:dwell});
       stage('save-profile');
       await saveProfile(job.handle, profile);
@@ -594,16 +639,16 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
             rateLimited:true,
             reason:'关注接口返回限流（HTTP 429），本轮停止；下轮按正常调度检查。该账号的关注关系待核实。'};
         }
-        return {state:'uncertain',reason:result.error || `关注返回 ${result.status}，需要核对实际关系`};
+        return {state:'uncertain',followResult:{...followResult,attemptedAt:Date.now(),targetUserId:target.id,followRequestPending:result.followRequestPending === true},reason:result.error || `关注返回 ${result.status}，需要核对实际关系`};
       }
       followResult = {...followResult,succeeded:true,alreadyFollowing:false,targetUserId:target.id,at:Date.now(),dwellSeconds:dwell};
       await control.checkpoint({stage:'followed',followResult});
       if (!settings.grokEnabled) return {state:'followed',followResult,evaluations};
-      const recentPosts = (profile.posts || []).slice(0, 5).filter(p => {
+      const recentPosts = (profile.posts || []).filter(p=>!p.isPinned).slice(0, 20).filter(p => {
         const match = String(p.url || '').match(/^https:\/\/(?:x\.com|twitter\.com)\/([^/]+)\/status\/\d+/);
         return match && canonical(match[1]) === canonical(job.handle) && String(p.text || '').length >= 8;
       });
-      if (!recentPosts.length) return {state:'followed',followResult,evaluations,reason:'最近 5 条帖子没有可评价的原创正文'};
+      if (!recentPosts.length) return {state:'followed',followResult,evaluations,reason:'最近 20 条非置顶帖子没有可评价的原创正文'};
       const existingJobs = typeof store.hasPostEvaluation === 'function' ? null : await store.list({accountId:job.accountId});
       const eligiblePosts = [];
       for (const post of recentPosts) {
@@ -613,9 +658,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           : existingJobs.some(other => other.evaluations?.some(e => e.originalPostId === postId));
         if (!alreadyQueued) eligiblePosts.push(post);
       }
-      if (!eligiblePosts.length) return {state:'followed',followResult,evaluations,reason:'最近 5 条帖子均已有引用评价记录'};
+      if (!eligiblePosts.length) return {state:'followed',followResult,evaluations,reason:'最近 20 条非置顶帖子均已有评价记录'};
       // Only persist intent here: comments have their own worker and deadline.
-      const post = eligiblePosts[0];
+      const post = highestScoredPost(quoteCandidates(job.handle,eligiblePosts,profile.name,profile).candidates);
+      if (!post) return {state:'followed',followResult,evaluations,reason:'没有可按综合互动分确定的合格原帖，未调用 Grok'};
       const originalPostId = post.url.match(/\/status\/(\d+)/)[1];
       const sampled = await store.ensureQuoteDecision({accountId:job.accountId,id:job.id,rate:settings.quoteParticipationRate ?? 60});
       if (!sampled.ok) throw new Error('引用抽样结果未能保存，已停止引用流程');
@@ -624,9 +670,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       evaluations.push({taskId:job.accountId+':'+originalPostId, followJobId:job.id,
         targetUserId:target.id, originalAuthorId:target.id, originalPostId,
         originalPostUrl:post.url, originalPostText:post.text,
-        automaticComment:true, candidatePosts:eligiblePosts,quoteDecision,grokCalls:0,publicationMode:settings.publicationMode || 'quote',
+        automaticComment:true, candidatePosts:[post],quoteDecision,grokCalls:0,publicationMode:settings.publicationMode || 'quote',
         status:quoteDecision.selected ? 'pending' : 'skipped',reasonCode:quoteDecision.selected ? 'probability_selected' : 'probability_skip',
-        reason:quoteDecision.selected ? `已抽中${creationForm}（概率 ${quoteDecision.rate}%），等待质量判断` : `未抽中${creationForm}（概率 ${quoteDecision.rate}%），未调用 Grok`});
+        reason:quoteDecision.selected ? `已抽中${creationForm}（概率 ${quoteDecision.rate}%），等待生成评价` : `未抽中${creationForm}（概率 ${quoteDecision.rate}%），未调用 Grok`});
       return {state:'followed',followResult,evaluations};
     } catch (error) {
       if(error.code==='QUEUE_BUDGET_EXHAUSTED' || (control.signal.aborted && Date.now()>=control.deadline)) return {state:followResult.succeeded?'followed':attemptedFollow?'uncertain':'retry',budgetExhausted:true,followResult,evaluations,reason:'本轮时间已用完，留待下轮继续'};
@@ -668,6 +714,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
               if (row.payload?.relationship?.following === true) continue;
               groups[sourceKey].push({handle, sourceBucket:bucket, patch:{
                 relationship:{...(row.payload?.relationship || {}), following:true},
+                followingObservedAt:job.followResult?.at || job.followResult?.verifiedAt || job.updatedAt,
                 state:'following', autoFollowState:'followed',
                 followedAt:row.payload?.followedAt || new Date(job.followResult?.at || job.updatedAt).toISOString()
               }});
@@ -761,7 +808,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!job.targetUserId) {
         await store.enqueue({accountId:binding.accountId,targetUserId:target.id,handle:job.handle,sources:job.sources});
       }
-      if (target.relationship?.following === true) {
+      if (target.relationship?.following === true && target.relationship?.followRequestSent !== true) {
         const resolved = await store.resolveJob({
           accountId:binding.accountId,
           id:job.id,
@@ -775,6 +822,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         return {ok:true,resolvedState:'followed',job:resolved.job,summary:`已核实 @${job.handle} 处于已关注状态`};
       }
       const relationshipDecision = {...queueRelationshipDecision(job, target.relationship), checkedAt:Date.now(), targetUserId:target.id, source:'manual-verification'};
+      if (relationshipDecision.code === 'request-pending' || ((target.protected === true || job.followResult?.followRequestPending === true || job.followResult?.attemptedAt) && target.relationship?.followRequestSent !== false)) {
+        const reason = relationshipDecision.code === 'request-pending' ? relationshipDecision.reason : '关注请求状态不明确，继续等待核实，避免重复提交';
+        const resolved = await store.resolveJob({accountId:binding.accountId,id:job.id,state:'uncertain',stage:'uncertain',followResult:{...(job.followResult || {}),relationshipDecision,followRequestPending:relationshipDecision.code === 'request-pending',reason,verifiedAt:Date.now()}});
+        if (!resolved?.ok) throw new Error('更新任务状态失败');
+        return {ok:true,resolvedState:'uncertain',job:resolved.job,summary:reason};
+      }
       if (relationshipDecision.code === 'relationship-unknown') throw new Error(relationshipDecision.reason);
       const reopened = await store.resolveJob({
         accountId:binding.accountId,
@@ -789,35 +842,64 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       return {ok:true,resolvedState:'pending',job:reopened.job,summary:`已核实 @${job.handle} 尚未关注，已恢复待关注`};
     });
   }
-  async function reconcileFan(binding, {handle} = {}) {
+  async function reconcileFan(binding, {handle, inspectOnly = false, signal} = {}) {
+    signal?.throwIfAborted();
     const key = canonical(handle);
     if (!key || !/^[a-z0-9_]{1,15}$/.test(key)) throw new Error('无效粉丝账号');
-    if (binding.sources?.fans !== true) throw new Error('粉丝来源未启用');
+    if (!inspectOnly && binding.sources?.fans !== true) throw new Error('粉丝来源未启用');
     if (!records) throw new Error('粉丝档案不可用');
     const queueRows = await records.lookupAll({sourceKey:'monitor', bucket:'queue', handle:key});
-    if (!queueRows.length) throw new Error('粉丝待回关档案不存在');
+    const allRows = inspectOnly ? (await Promise.all(['users','queue','followingUsers'].map(bucket => records.lookupAll({sourceKey:'monitor',bucket,handle:key})))).flat() : queueRows;
+    signal?.throwIfAborted();
+    if (!allRows.length) throw new Error('粉丝档案不存在');
     return withVerifiedXTab(binding, async tab => {
+      signal?.throwIfAborted();
       const target = typeof fetchUser === 'function'
         ? await fetchUser(tab.id, key)
         : await (async () => {
             const lookup = await networkGetUserProfile(tab.id, key);
+            if (lookup.status === 429) throw profileReadLimitError(lookup);
+            if (lookup.status !== 200) {
+              const error=new Error(lookup.error || `关系读取失败 HTTP ${lookup.status}`);
+              error.status=lookup.status;error.code='FAN_INSPECTION_NETWORK';throw error;
+            }
             return lookup.status === 200
               ? parseNetworkUsers(lookup.json).find(user => canonical(user.handle) === key) : null;
           })();
+      signal?.throwIfAborted();
       if (!target?.id || target.relationshipKnown !== true
         || typeof target.relationship.followedBy !== 'boolean'
         || typeof target.relationship.following !== 'boolean') {
+        if(inspectOnly && target?.id) {
+          await records.batch({sourceKey:'monitor',changes:allRows.map(row=>({handle:key,sourceBucket:row.sourcePath?.[1] || 'queue',patch:{
+            relationship:{following:null,followedBy:null},relationshipKnown:false,state:'unknown',status:'unknown',relationshipVerifiedAt:new Date().toISOString()
+          }}))});
+          const pending=await priorByHandle(binding.accountId,key);
+          signal?.throwIfAborted();
+          if(pending && ['pending','retry'].includes(pending.state)) await store.resolveJob({accountId:binding.accountId,id:pending.id,state:'uncertain',stage:'uncertain',
+            followResult:{...(pending.followResult || {}),reason:'X 关系字段不完整或相互冲突，暂停粉丝回关任务'}});
+        }
         throw new Error(`无法核实 @${key} 的完整关注关系`);
       }
-      if (queueRows.some(row => row.payload?.id && String(row.payload.id) !== target.id)) {
+      if (allRows.some(row => row.payload?.id && String(row.payload.id) !== target.id)) {
         await records.batch({sourceKey:'monitor',changes:queueRows.map(row=>({handle:key,sourceBucket:'queue',patch:{
           status:'identity_mismatch',state:'identity_mismatch',relationshipKnown:false,
           relationshipVerifiedAt:new Date().toISOString()
         }}))});
         return {ok:true,handle:key,jobState:'identity-mismatch'};
       }
-      const job = await priorByHandle(binding.accountId, key);
+      let job = await priorByHandle(binding.accountId, key);
+      signal?.throwIfAborted();
+      if (inspectOnly && job?.state === 'running') throw new Error(`@${key} 正在由关注队列处理，请稍后核验`);
       if (job?.targetUserId && job.targetUserId !== target.id) throw new Error(`@${key} 的队列用户 ID 不一致`);
+      if (inspectOnly && job && typeof store.enqueue === 'function') {
+        // Verified identity lets the existing store merge a legacy handle job
+        // with its Rest ID job, retaining sources, evaluations and outcomes.
+        job = await store.enqueue({accountId:binding.accountId,targetUserId:target.id,handle:key,sources:job.sources || [],
+          followBackCandidate:target.relationship.followedBy===true && target.relationship.following===false});
+        signal?.throwIfAborted();
+        if (job.state === 'running') throw new Error(`@${key} 正在由关注队列处理，请稍后核验`);
+      }
       const following = target.relationship.following;
       const followedBy = target.relationship.followedBy;
       const stamp = Date.now();
@@ -827,35 +909,51 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           followResult:{...(job.followResult || {}),succeeded:true,following:true,alreadyFollowing:true,targetUserId:target.id,verifiedAt:stamp,reason:'X 关系核实已关注'}});
         if (!resolved?.ok) throw new Error(`更新 @${key} 队列状态失败`);
         result = 'already-following';
-      } else if (followedBy && !following && job?.state === 'skipped'
+      } else if (inspectOnly && !following && job?.state === 'followed') {
+        const resolved = await store.resolveJob({accountId:binding.accountId,id:job.id,state:'uncertain',stage:'uncertain',
+          followResult:{...(job.followResult || {}),succeeded:false,following:false,verifiedAt:stamp,reason:'历史关注结果与当前关系不一致，等待人工核对，不自动重复关注'}});
+        if (!resolved?.ok) throw new Error(`更新 @${key} 队列状态失败`);
+        result = 'uncertain';
+      } else if (inspectOnly && !following && !followedBy && job && ['pending','retry','skipped'].includes(job.state)
+        && job.sources?.some(source=>source.enabled && source.module==='fans')
+        && !job.sources.some(source=>source.enabled && source.module!=='fans')) {
+        const resolved=await store.resolveJob({accountId:binding.accountId,id:job.id,state:'excluded',stage:'excluded',
+          followResult:{...(job.followResult || {}),following:false,verifiedAt:stamp,reason:'对方已未关注你，退出粉丝回关队列',relationshipDecision:{code:'not-a-follower',following:false,followedBy:false,checkedAt:stamp}}});
+        if(!resolved?.ok)throw new Error(`更新 @${key} 队列状态失败`);
+        result='excluded';
+      } else if (!inspectOnly && followedBy && !following && job?.state === 'skipped'
         && /^关注\/粉丝比例低于 \d+%$/.test(String(job.followResult?.reason || ''))) {
         const resolved = await store.resolveJob({accountId:binding.accountId,id:job.id,state:'pending',stage:'queued',nextEligibleAt:stamp,
           followResult:{targetUserId:target.id,verifiedAt:stamp,reason:'X 关系核实待回关，恢复比例门槛跳过任务'}});
         if (!resolved?.ok) throw new Error(`恢复 @${key} 待回关任务失败`);
         result = 'reopened';
       }
-      const changes = queueRows.map(row => ({handle:key,sourceBucket:'queue',patch:{
+      const changes = allRows.map(row => ({handle:key,sourceBucket:row.sourcePath?.[1] || 'queue',patch:{
         relationship:{...(row.payload?.relationship || {}),following,followedBy},relationshipKnown:true,
         status:following ? 'followed' : followedBy ? 'pending' : 'no_longer_following',
         state:following ? 'following' : followedBy ? 'follow_back' : 'no_longer_following',
         relationshipVerifiedAt:new Date(stamp).toISOString()
       }}));
+      signal?.throwIfAborted();
       await records.batch({sourceKey:'monitor',changes});
+      signal?.throwIfAborted();
       if (following && job) await reflectFollowed(binding.accountId,[{...job,followResult:{...(job.followResult || {}),at:stamp},updatedAt:stamp}]);
       return {ok:true,handle:key,relationship:{followedBy,following},jobState:result};
     });
   }
+  const fanInspectionBatch=createFanInspectionBatch({storage:api.storage.local,binding:readBinding,
+    targets:request=>records.fanInspectionTargets(request),inspect:(handle,{signal}={})=>readBinding().then(binding=>reconcileFan(binding,{handle,inspectOnly:true,signal}))});
   const commentLocks = new Set();
   async function retryEvaluation(binding, options = {}) {
     const key = binding.accountId+':'+options.jobId;
     if (commentLocks.has(key)) return {ok:false, error:'评论任务正在执行'};
     commentLocks.add(key);
     const controller = new AbortController();
-    const timer = options.signal ? null : setTimeout(()=>controller.abort(),180000);
+    const timer = options.signal ? null : setTimeout(()=>controller.abort(),COMMENT_TASK_TIMEOUT_MS);
     try { return await performEvaluation(binding, {...options,signal:options.signal || controller.signal}); }
     finally { clearTimeout(timer); commentLocks.delete(key); }
   }
-  async function performEvaluation(binding, {jobId, taskId, publish = false, signal, automatic = false} = {}) {
+  async function performEvaluation(binding, {jobId, taskId, publish = false, verifyOnly = false, signal, automatic = false} = {}) {
     let tab;
     const progress=label=>{
       try{api.runtime?.sendMessage?.({cmd:'followQueueEvaluationProgress',accountId:binding.accountId,jobId,taskId,label})?.catch(()=>{});}catch{}
@@ -887,6 +985,33 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     if (targetEval && (targetEval.status === 'posted' || targetEval.status === 'published')) {
       return {ok:true,job,evaluation:targetEval,summary:'该引用评价已发布，无需重复执行'};
     }
+    // Generation has no publishing side effect. A manual check can finish this
+    // stage without replaying the paid request or clearing its audit evidence.
+    if (!automatic && targetEval && !targetEval.text && (verifyOnly || targetEval.status === 'uncertain') && !(targetEval.relayJobId && targetEval.reasonCode==='bot_pending' && !targetEval.publishedAttemptedAt && !targetEval.publishedPostId && !targetEval.publishedPostUrl && !targetEval.articleDraftUrl)) {
+      const ev = {...targetEval};
+      const publicationEvidence = ev.publishedAttemptedAt || ev.publishedPostId || ev.publishedPostUrl
+        || ev.articleDraftUrl || (Array.isArray(ev.attempts) && ev.attempts.some(a=>/publish|发布/i.test(String(a?.stage || ''))));
+      const generationOnly = ev.generationAttemptedAt && ['generation_uncertain','generation_started','generation_retry_ready'].includes(ev.reasonCode);
+      if (generationOnly && !publicationEvidence) {
+        if (ev.reasonCode === 'generation_retry_ready') return {ok:true,job,evaluation:ev,summary:ev.reason};
+        const {recoveryHistory: priorHistory, ...snapshot} = ev;
+        ev.recoveryHistory = [...(priorHistory || []), {
+          id:`generation:${ev.generationAttemptedAt}`, at:Date.now(), action:'generation-retry-ready',
+          basis:'generation-checkpoint-without-publication', evaluation:snapshot
+        }];
+        ev.status = 'failed'; ev.reasonCode = 'generation_retry_ready'; ev.recoveryDraftOnly = true;
+        ev.reason = '生成结果未保存，已确认尚未进入发布；可重新生成，完成后先保留草稿';
+        const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        if (!saved.ok) throw new Error('恢复状态未保存，请重试核对；未重新生成或发布');
+        await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,
+          at:new Date().toISOString(),result:'generation-retry-ready',detail:ev.reason});
+        return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+      }
+      const reason = publicationEvidence
+        ? '存在发布记录但缺少核对正文，请从溯源详情核对原发布结果；未重新生成或发布'
+        : '缺少可确认的生成阶段记录，请从溯源详情核对历史；未重新生成或发布';
+      return {ok:false,error:reason,job,evaluation:ev};
+    }
     try {
       progress('正在核验登录账号…');
       tab = await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(binding.handle)}`,active:false},'follow-queue');
@@ -894,7 +1019,11 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       let ev = targetEval ? {...targetEval} : null;
       const hadPinnedEvaluation = Boolean(ev?.originalPostUrl);
       // Step 1: If uncertain or draft, verify on viewer's profile page first before any re-publish
-      if (ev && ev.originalPostId && ev.text) {
+      if (ev?.text) {
+        ev.originalPostId ||= ev.originalPostUrl?.match(/\/status\/(\d+)/)?.[1] || '';
+        if (!ev.originalPostId && ['quote','reply'].includes(publicationMode)) {
+          return {ok:false,error:'缺少原帖标识，无法核对发布结果；未重复发布',evaluation:ev,job};
+        }
         progress('正在核对是否已发布…');
         const proof = publicationMode==='article'
           ? (ev.article?await articles.verify({owner:binding.handle,article:ev.article,after:ev.publishedAttemptedAt||0}):null)
@@ -928,8 +1057,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!post || (!post.text && !ev?.text)) {
         await updateProfileTab(api,tab.id,{url:`https://x.com/${encodeURIComponent(job.handle)}`},'follow-queue');
         for (let i=0;i<20;i++) {
-          const bundle = await script(tab.id,readProfileBundle,[job.handle,5]).catch(() => null);
-          if (bundle && !bundle.pending && Array.isArray(bundle.posts)) {
+          const bundle = await script(tab.id,readProfileBundle,[job.handle,20]).catch(() => null);
+          if (bundle && !bundle.pending && Array.isArray(bundle.posts) && bundle.posts.some(item => /^https:\/\/(?:x\.com|twitter\.com)\/[a-zA-Z0-9_]+\/status\/\d+/.test(String(item?.url || '')) && String(item?.text || '').trim().length >= 8)) {
             cachedPosts = bundle.posts;
             const saved = await saveProfile(job.handle, bundle);
             cachedPosts = saved.posts || bundle.posts;
@@ -987,19 +1116,28 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await guardComment();
       const commentSettings = await store.getSettings(binding.accountId);
       if(!targetEval){publicationMode=commentSettings.publicationMode || 'quote';ev.publicationMode=publicationMode;form=modeLabel(publicationMode);}
-      // Local gates above remain mandatory; model risk review, selection and
-      // writing share one request rather than a second per-user Grok call.
+      // Local gates and comment-count selection run before the writing request.
       // Reuse existing draft text if available; only call Grok when draft text is empty
       if (!ev.text) {
-        if (ev.generationAttemptedAt && !['quota_not_sent','quality_skip'].includes(ev.reasonCode)) {
+        if (ev.generationAttemptedAt && !['quota_not_sent','quality_skip',...(!automatic ? ['generation_retry_ready'] : [])].includes(ev.reasonCode) && !ev.relayJobId) {
           ev.status = 'uncertain'; ev.reason = '上次 Grok 请求结果待核实，未重复调用';
           const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
           return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
         }
-        const initialCandidates = targetEval?.automaticComment && targetEval.candidatePosts?.length
-          ? targetEval.candidatePosts : hadPinnedEvaluation ? post : cachedPosts.slice(0, 5);
+        const initialCandidates = (targetEval?.automaticComment || targetEval?.relayJobId) && targetEval.candidatePosts?.length
+          ? targetEval.candidatePosts : hadPinnedEvaluation ? post : cachedPosts.filter(p=>!p.isPinned).slice(0, 20);
+        const selection = quoteCandidates(job.handle,initialCandidates,safetyProfile.name,safetyProfile);
+        const fixedPost = highestScoredPost(selection.candidates);
+        if (!fixedPost) {
+          ev.status='skipped';ev.reasonCode='engagement_metrics_unknown';ev.grokCalls=0;
+          ev.reason=selection.interactionReason || '没有可按综合互动分确定的合格原帖，未调用 Grok';
+          const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+        }
+        // Persist the source before generation. Retries keep the same decision.
+        Object.assign(ev,{candidatePosts:[fixedPost],originalPostId:fixedPost.url.match(/\/status\/(\d+)/)[1],originalPostUrl:fixedPost.url,originalPostText:fixedPost.text});
         const candidates=[];
-        for (const [candidateIndex,candidate] of (Array.isArray(initialCandidates) ? initialCandidates : [initialCandidates]).slice(0,5).entries()) {
+        for (const [candidateIndex,candidate] of [fixedPost].entries()) {
           progress(`正在读取原帖 ${candidateIndex+1}…`);
           if (quoteInputComplete(candidate)) { candidates.push(candidate); continue; }
           await guardComment();
@@ -1023,18 +1161,30 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
         }
         ev.generationAttemptedAt = Date.now();
+        ev.candidatePosts = candidates;
         ev.reasonCode = 'generation_started';
         const started = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
         if (!started.ok) throw new Error('未能保存 Grok 请求状态，未发送请求');
         const generate=({reply:generateReply,article:generateArticle,original:generatePost})[publicationMode]||generateComment;
-        progress('Grok 正在评估并生成内容…');
+        progress('已按综合互动分选帖，Grok 正在生成内容…');
         const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,
-          qualityFirst:true,lengthMode:commentSettings.quoteLengthMode || 'adaptive'});
+          qualityFirst:true,qualityGate:!['quote','reply'].includes(publicationMode),lengthMode:commentSettings.quoteLengthMode || 'adaptive',relayJobId:ev.relayJobId,
+          onRelayJobCreated:async relay=>{
+            await guardComment();
+            Object.assign(ev,{relayJobId:relay.id,channel:'grok-bot',reasonCode:'bot_pending'});
+            const checkpoint=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+            if(!checkpoint.ok)throw new Error('未能保存 Bot 任务编号，未发送生成请求');
+          }});
+        if(generated.pending){
+          Object.assign(ev,{status:'uncertain',reasonCode:'bot_pending',relayJobId:generated.jobId,channel:'grok-bot',reason:generated.reason||'Bot 结果待确认，已保留原任务'});
+          const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:false,pending:true,error:ev.reason,evaluation:ev,job:saved.job,summary:ev.reason};
+        }
         if (generated.quotaExhausted) {
           // Only an explicit pre-submit quota check authorizes a future request.
           const unsent = generated.generationAttempted === false;
           ev.reasonCode = unsent ? 'quota_not_sent' : 'generation_uncertain';
-          ev.status = unsent ? 'pending' : 'uncertain';
+          ev.status = unsent ? (ev.recoveryDraftOnly ? 'failed' : 'pending') : 'uncertain';
           ev.reason = unsent ? 'Grok 额度不足，未发送生成请求' : 'Grok 提交后触发额度限制，结果待核实，未重复请求';
           ev.grokCalls=(Number(ev.grokCalls)||0)+(generated.grokCalls || 0);
           await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
@@ -1070,20 +1220,23 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const settings = await store.getSettings(binding.accountId);
       ev.baseText ||= ev.text;
       ev.language = resolveCommentLanguage(ev.baseText, ev.language);
-      ev.text = publicationMode!=='quote' ? ev.baseText : appendQuoteTags(ev.baseText, settings, ev.language || 'und', {previousText: ev.text,lengthPolicy:ev.lengthPolicy});
-      const reviewIssue = ev.reasonCode === 'draft_too_long' || ev.quality?.reviewRequired ? ev.reason || '质量判断待复核'
+      const ending = composeQueueFollowBack(ev.baseText,ev.language,settings.followBackSuffixEnabled && ['reply','quote'].includes(publicationMode));
+      ev.text = publicationMode!=='quote' ? ending.text : appendQuoteTags(ending.text, settings, ev.language || 'und', {previousText: ev.text,lengthPolicy:ev.lengthPolicy});
+      const reviewIssue = ending.issue || (ev.reasonCode === 'draft_too_long' || ev.quality?.reviewRequired ? ev.reason || '质量判断待复核'
         : publicationMode==='article' ? (!ev.article?'缺少文章结构，请重新检查草稿':originalQualityIssue(ev.quality))
-        : publicationMode==='original' ? originalQualityIssue(ev.quality) || originalTextIssue(ev.text,ev.originalPostText) : quotePublishIssue(ev.text);
+        : publicationMode==='original' ? originalQualityIssue(ev.quality) || originalTextIssue(ev.text,ev.originalPostText) : quotePublishIssue(ev.text));
       if (reviewIssue) {
         ev.status = 'draft'; ev.reason = reviewIssue;
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
         await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:reviewIssue});
         return {ok:true,job:saved.job,evaluation:ev,summary:reviewIssue};
       }
-      if (!publish && !settings.autoPublish) {
+      if ((ev.recoveryDraftOnly && (automatic || !targetEval?.text || !publish)) || (!publish && !settings.autoPublish) || verifyOnly) {
+        if (ev.recoveryDraftOnly) ev.reason = '重新生成的草稿已保留，请检查后再点击发布评价';
         const saved = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        if (!saved.ok) throw new Error('评价草稿未保存，已停止发布');
         await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`${form}草稿已就绪（未开启自动发布）`});
-        return {ok:true,job:saved.job,evaluation:ev,summary:`${form}草稿已就绪（未自动发布）`};
+        return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason || `${form}草稿已就绪（未自动发布）`};
       }
       await guardComment();
       if (automatic && !(await store.getSettings(binding.accountId)).autoPublish) {
@@ -1105,9 +1258,11 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         await guardComment();
       }
       ev.status = 'publishing';
+      ev.recoveryDraftOnly = false;
       progress('正在发布并核验结果…');
       ev.publishedAttemptedAt=Date.now();
-      await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+      const publishingCheckpoint = await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+      if (!publishingCheckpoint.ok) throw new Error('未能保存发布检查点，未提交发布');
       const submittedAt = Date.now();
       const beforePublish=async()=>{
         await guardComment();
@@ -1230,6 +1385,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         };
       }
       case 'followQueueRunCheck': return {ok:true,allowed:await canRun(binding.accountId),blockReason:runBlockReason};
+      case 'followQueueSyncSources': await syncCandidates(); return {ok:true};
       case 'followQueueSettings': return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueSaveSettings': {
         const settings = await store.saveSettings(binding.accountId,message.settings); await schedule(); return {ok:true,settings};
@@ -1245,6 +1401,15 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         return result;
       }
       case 'followQueueReconcileFan': return reconcileFan(binding, message);
+      case 'followQueueInspectFan': return reconcileFan(binding, {...message,inspectOnly:true});
+      case 'followQueueFanBatchStart': {
+        if(!Array.isArray(message.handles)||!message.handles.length)throw new Error('请先勾选当前页需要核验的账号');
+        return {ok:true,batch:await fanInspectionBatch.start(binding.accountId,message)};
+      }
+      case 'followQueueFanBatchStatus': return {ok:true,batch:await fanInspectionBatch.status(binding.accountId)};
+      case 'followQueueFanBatchResume': return {ok:true,batch:await fanInspectionBatch.resume(binding.accountId)};
+      case 'followQueueFanBatchStop': return {ok:true,batch:await fanInspectionBatch.stop(binding.accountId)};
+      case 'followQueueFanBatchCancel': return {ok:true,batch:await fanInspectionBatch.cancel(binding.accountId)};
       case 'followQueueRetryEvaluation': return retryEvaluation(binding, message);
       case 'followQueueBackfillProfiles': return {ok: true, ...(await backfillProfiles(message))};
       case 'followQueueEnqueue': {

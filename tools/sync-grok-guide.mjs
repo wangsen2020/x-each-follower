@@ -1,0 +1,12 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+const root=new URL('../',import.meta.url);
+const require=createRequire(new URL('deploy/grok-bot-relay/package.json',root));
+const {build}=await import(pathToFileURL(require.resolve('esbuild')).href);
+const source=await readFile(new URL('deploy/grok-bot-relay/worker.js',root),'utf8');
+const hash=createHash('sha256').update(source).digest('hex');
+const result=await build({stdin:{contents:"import handler from './worker.js';export default handler;",resolveDir:fileURLToPath(new URL('deploy/grok-bot-relay/',root))},bundle:true,platform:'browser',format:'esm',write:false,legalComments:'inline'});
+await writeFile(new URL('src/assets/grok-bot-relay-worker.txt',root),`// source-sha256: ${hash}\n// Includes standardwebhooks and its dependencies; see THIRD_PARTY_NOTICES.txt.\n`+result.outputFiles[0].text);
+console.log('Tutorial Worker bundle synchronized with deployment source.');

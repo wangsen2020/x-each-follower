@@ -6,7 +6,7 @@ function fixture({windows = [{id:7, focused:true}], tabs = [], create, send} = {
   const calls = [], messages = [], warnings = [];
   const api = {
     runtime:{getURL:path => `chrome-extension://test/${path}`},
-    windows:{getAll:async () => windows},
+    windows:{getAll:async () => windows, update:async () => ({})},
     tabs:{query:async () => tabs, create:async options => {
       calls.push(options);
       return create ? create(options) : {id:99};
@@ -83,6 +83,13 @@ test('manual opening uses the clicked window and handles create rejection', asyn
   assert.equal((await f.launcher.openPanel(8)).reason, 'open_failed');
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].windowId, 8);
+  assert.equal(f.calls[0].active, true);
+});
+
+test('notification opening creates the explicit source URL', async () => {
+  const f = fixture();
+  assert.equal((await f.launcher.openPanel(undefined, 'followQueue')).ok, true);
+  assert.equal(f.calls[0].url, 'chrome-extension://test/panel.html?tab=followQueue');
   assert.equal(f.calls[0].active, true);
 });
 
