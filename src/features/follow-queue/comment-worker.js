@@ -7,7 +7,7 @@ export const COMMENT_TASK_TIMEOUT_MS = 360000;
 // No follow scheduler, follow API, follow retry counters or run budget in this worker.
 // Intent and result use evaluations; resolveJob is deliberately never given a state.
 export function createCommentWorker({store, storage, readBinding, execute, random, onSkip = async()=>{},
-  isBusy = () => false, botAvailable=async()=>{try{return await readGrokProvider(storage)==='grok-bot';}catch{return false;}}, now = Date.now, timeoutMs = COMMENT_TASK_TIMEOUT_MS} = {}) {
+  isBusy = () => false, botAvailable=async()=>{try{return ['grok-bot','grok-local'].includes(await readGrokProvider(storage));}catch{return false;}}, now = Date.now, timeoutMs = COMMENT_TASK_TIMEOUT_MS} = {}) {
   let running = false;
   const save = (accountId, job, evaluation) => store.resolveJob({accountId,
     id:job.id, evaluations:[evaluation]});

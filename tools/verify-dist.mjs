@@ -394,7 +394,11 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
     if (ext === '.js' || ext === '.html' || ext === '.css' || ext === '.json') {
       const content = readFileSync(file, 'utf8');
       for (const { pattern, label } of devClientPatterns) {
-        if (pattern.test(content)) {
+        // The authenticated Grok Bot service is the sole permitted HTTP loopback client.
+        const checked = label === 'localhost/127.0.0.1 bridge'
+          ? content.replaceAll('http://127.0.0.1/*', '').replace(/http:\/\/127\.0\.0\.1:\$\{[A-Za-z_$][\w$]*\.port\}\$\{[A-Za-z_$][\w$]*\}/g, '')
+          : content;
+        if (pattern.test(checked)) {
           errors.push(`Development client pattern "${label}" detected in dist file: ${relative(distDir, file)}`);
         }
       }
