@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {extractGrokComment,extractGrokCommentLanguage,appendFollowBackSuffix,resolveCommentLanguage,tweetWeight} from '../src/features/grok/grok-comment.js';
+import {extractGrokComment,extractGrokCommentLanguage,appendFollowBackSuffix,composeQueueFollowBack,resolveCommentLanguage,tweetWeight} from '../src/features/grok/grok-comment.js';
 import {appendQuoteTags} from '../src/features/grok/quote-tags.js';
 test('language metadata is separate from body and belongs to the last answer',()=>{
  const raw='【引用评价开始】旧的中文回答【引用评价结束】【评价语言:zh】\n【引用评价开始】Remote work still has a local pay ceiling.【引用评价结束】【评价语言:en】';
@@ -17,6 +17,16 @@ test('localized suffixes remove legacy Chinese endings and are idempotent',()=>{
  assert.equal(appendFollowBackSuffix('未知语种',undefined,'de'),'未知语种');
  assert.ok(appendFollowBackSuffix('a'.repeat(280),undefined,'en').startsWith('a'.repeat(280)));
  assert.equal(resolveCommentLanguage('English reply about remote jobs','zh'),'en');
+});
+test('queue follow-back switch preserves text, localizes once, and reports insufficient space',()=>{
+ const zh='事实和专有名词需要实测。', en='The result needs a real test.';
+ assert.deepEqual(composeQueueFollowBack(zh,'zh',false),{text:zh,issue:''});
+ assert.equal(composeQueueFollowBack(zh,'zh',true).text,zh+'来关必回');
+ assert.equal(composeQueueFollowBack(en,'en',true).text,en+' I follow back.');
+ assert.equal(composeQueueFollowBack(en,'es',true).text,en+' Te sigo de vuelta.');
+ for(const existing of [zh+'来关必回',zh+'有关必回',en+' I follow back.'])assert.equal(composeQueueFollowBack(existing,undefined,true).text,existing);
+ const full='a'.repeat(280);const out=composeQueueFollowBack(full,'en',true);
+ assert.equal(out.text,full);assert.match(out.issue,/无法追加/);
 });
 test('language filters selected tags on generation and legacy draft retry',()=>{
  const settings={quoteTagsEnabled:true,quoteSelectedTags:['互关','互关呀','FollowBack','FollowForFollow']};

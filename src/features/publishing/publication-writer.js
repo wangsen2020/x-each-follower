@@ -18,7 +18,7 @@ export function parseXArticleDraft(text) {
 }
 
 export async function generateDirectReply(handle, posts, name, options = {}) {
-  const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,promptBuilder:buildDirectReplyPrompt});
+  const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,qualityGate:false,promptBuilder:buildDirectReplyPrompt});
   if (!result.ok) return result;
   if (tweetWeight(result.reply) > 280) return {...result,reviewRequired:true,reason:'评论超过280个加权字符，保留草稿待编辑，未截断',publicationMode:'reply'};
   return {...result,publicationMode:'reply'};

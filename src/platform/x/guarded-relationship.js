@@ -72,22 +72,34 @@ export function mergeVerifiedRelationship(apiRelationship, page) {
   };
 }
 
-export async function inspectOrActOnProfile(api, user, owner, action = 'read', {sleep = ms => new Promise(r => setTimeout(r, ms)), canAct = async () => true} = {}) {
+export function profileReadinessError(page) {
+  return Object.assign(new Error(page?.reason || '主页关系信息未就绪，禁止操作'), {
+    code: page?.reason === '登录账号不一致' ? 'X_PROFILE_OWNER_MISMATCH' : page?.code || 'X_PROFILE_IDENTITY_UNRESOLVED'
+  });
+}
+
+export async function inspectOrActOnProfile(api, user, owner, action = 'read', {sleep = ms => new Promise(r => setTimeout(r, ms)), canAct = async () => true, timeoutMs = 60000} = {}) {
   const tab = await createProfileTab(api,{url:'https://x.com/' + user.handle,active:false},'relationship-preflight');
-  let attempted = false;
-  const readPage = async step => (await api.scripting.executeScript({target:{tabId:tab.id},func:profileRelationshipOnPage,args:[user.handle,String(user.id),owner,step]}))[0]?.result;
+  let attempted = false, expired = false, timer;
+  const timeoutError=()=>Object.assign(new Error('主页操作等待超时，已关闭本轮临时页面'),{code:'X_PROFILE_ACTION_UNAVAILABLE'});
+  const assertActive=()=>{if(expired)throw timeoutError();};
+  const readPage = async step => {
+    assertActive();
+    const result=(await api.scripting.executeScript({target:{tabId:tab.id},func:profileRelationshipOnPage,args:[user.handle,String(user.id),owner,step]}))[0]?.result;
+    assertActive();return result;
+  };
   const fresh = async () => {
     const response = await createXNetworkClient(api).profile(tab.id,user.handle);
-    if(response.status !== 200) throw new Error('关系核验接口未成功，停止操作');
+    if(response.status !== 200) throw Object.assign(new Error('关系核验接口未成功，停止操作'),{code:'PROFILE_HTTP_ERROR',status:response.status});
     const target = parseNetworkUsers(response.json).find(e => e.handle.toLowerCase() === user.handle.toLowerCase());
-    if(!target || String(target.id) !== String(user.id)) throw new Error('目标身份不一致，停止操作');
+    if(!target || String(target.id) !== String(user.id)) throw Object.assign(new Error('目标身份不一致，停止操作'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH'});
     const page = await readPage('read');
     return {...target,relationship:mergeVerifiedRelationship(target.relationship,page),evidence:{page,api:target.relationship}};
   };
-  try {
+  const inspect=async()=>{try {
     let page;
     for(let i=0;i<30;i++){page=await readPage('read');if(page?.ready)break;await sleep(500);}
-    if(!page?.ready) throw Object.assign(new Error(page?.reason || '主页关系信息未就绪，禁止操作'),page?.code?{code:page.code}:{});
+    if(!page?.ready) throw profileReadinessError(page);
     const live=await fresh();
     if(action==='read')return live;
     const valid = action==='followback' ? live.relationship.followedBy===true && live.relationship.following===false : live.relationship.followedBy===false && live.relationship.following===true;
@@ -112,5 +124,14 @@ export async function inspectOrActOnProfile(api, user, owner, action = 'read', {
     }
     return {status:0,attempted:true,error:'操作结果待确认，禁止重复操作'};
   }catch(error){if(action==='read')throw error;return {status:0,attempted,error:error.message};}
-  finally{await api.tabs.remove(tab.id).catch(()=>{});}
+  finally{await api.tabs.remove(tab.id).catch(()=>{});}};
+  const deadline=new Promise((resolve,reject)=>{timer=setTimeout(async()=>{
+    expired=true;
+    // Cancel queued page scripts by closing only this operation's owned tab.
+    // Late read responses cannot advance to a click after assertActive fails.
+    await api.tabs.remove(tab.id).catch(()=>{});
+    if(action==='read')reject(timeoutError());
+    else resolve({status:0,attempted,error:timeoutError().message});
+  },timeoutMs);});
+  try{return await Promise.race([inspect(),deadline]);}finally{clearTimeout(timer);}
 }

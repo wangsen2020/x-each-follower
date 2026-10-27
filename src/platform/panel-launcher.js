@@ -1,14 +1,16 @@
+import {panelSourcePath} from '../shared/notification-source.js';
 // Coalesce overlapping scan alarms; never retry an uncertain tab creation.
 export function createPanelLauncher({api, sendToPanel, makeToken = () => crypto.randomUUID(), warn = console.warn}) {
   let scanInFlight;
 
-  async function open(url, active, preferredWindowId) {
+  async function open(url, active, preferredWindowId, focusWindow = false) {
     try {
       const windows = await api.windows.getAll({windowTypes:['normal']});
       const window = windows.find(item => item.id === preferredWindowId)
         || windows.find(item => item.focused) || windows[0];
       if (!window) return {ok:false, reason:'no_window'};
       const tab = await api.tabs.create({url, active, windowId:window.id});
+      if (focusWindow) await api.windows.update(window.id, {focused:true});
       return {ok:true, tabId:tab.id};
     } catch (error) {
       warn('看板打开失败，本轮不重试:', error?.message || error);
@@ -47,6 +49,6 @@ export function createPanelLauncher({api, sendToPanel, makeToken = () => crypto.
 
   return {
     runScheduledScan,
-    openPanel: windowId => open(api.runtime.getURL('panel.html'), true, windowId)
+    openPanel: (windowId, tab) => open(api.runtime.getURL(panelSourcePath(tab)), true, windowId, Boolean(tab))
   };
 }

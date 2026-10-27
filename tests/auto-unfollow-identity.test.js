@@ -52,12 +52,12 @@ for(const status of [0,401,429,503])test(`HTTP ${status} still stops round`,asyn
   assert.deepEqual(f.data.autoUnfollowState.accounts['999'].queue,['missing','later']);
 });
 
-test('a pending action with missing identity still blocks all further actions',async()=>{
+test('a known pending target with unavailable live identity is isolated while later targets continue',async()=>{
   const f=setup({status:200,json:{data:{}}},{pending:true});
-  assert.match((await f.runner.run()).error,/身份待核实/);
-  assert.ok(f.data.autoUnfollowState.accounts['999'].pending);
-  assert.deepEqual(f.inspected,[]);
-  assert.deepEqual(f.fetched,['owner','missing']);
+  assert.equal((await f.runner.run()).error,undefined);
+  assert.equal(f.data.autoUnfollowState.accounts['999'].pendingItems[0].user.handle,'missing');
+  assert.deepEqual(f.inspected,['later']);
+  assert.deepEqual(f.fetched,['owner','missing','later']);
 });
 
 test('owner mismatch stops before candidate checks',async()=>{

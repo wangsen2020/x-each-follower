@@ -1,7 +1,63 @@
+import {buildDirectReplyPrompt} from '../src/features/publishing/reply-prompt.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {extractGrokComment, buildGrokCommentPrompt, quoteCandidates, parseGrokQuoteDecision, isGrokSkipResponse, requestGrokComment, SKIP, tweetWeight, makeNonce, START, END, postQuoteOnTab, buildBackgroundGrokWindowOptions, submitGrokPromptAndWaitForCopyIconOnPage, driveGrokInput, createStableAnswerGate, readGrokPageAnswer, appendFollowBackSuffix} from '../src/features/grok/grok-comment.js';
 import {openQuoteComposerOnPage, inspectQuoteComposerOnPage, publishQuotePostOnPage, dismissQuoteComposerOnPage} from '../src/platform/x/page-reader.js';
+import {highestScoredPost,postEngagementScore} from '../src/features/grok/grok-comment.js';
+
+test('engagement weights are exactly 1:3:3:3 and comment-heavy posts can lose',()=>{
+  const post={replyCount:10,repostCount:20,likeCount:30,bookmarkCount:40};
+  assert.equal(postEngagementScore(post),280);
+  for (const field of ['replyCount','repostCount','likeCount','bookmarkCount']) {
+    assert.equal(postEngagementScore({...post,[field]:undefined}),null);
+    assert.equal(postEngagementScore({...post,[field]:-1}),null);
+  }
+  const inflated={replyCount:100,repostCount:0,likeCount:0,bookmarkCount:0};
+  const balanced={replyCount:1,repostCount:10,likeCount:20,bookmarkCount:10};
+  assert.equal(highestScoredPost([inflated,balanced]),balanced);
+  assert.equal(postEngagementScore({metrics:{replies:10,reposts:20,likes:30,bookmarks:40}}),280);
+});
+
+test('pinned posts never win or consume the twenty-post window; an ordinary first post remains eligible',()=>{
+  const regular=Array.from({length:20},(_,i)=>({url:`https://x.com/alice/status/${i+1}`,text:'Concrete source about a product release',replyCount:i,repostCount:0,likeCount:0,bookmarkCount:0}));
+  const pinned={...regular[0],url:'https://x.com/alice/status/999',isPinned:true,replyCount:9999};
+  assert.equal(highestScoredPost([pinned,...regular]),regular[19]);
+  assert.equal(quoteCandidates('alice',[pinned,...regular]).candidates.length,20);
+  assert.equal(quoteCandidates('alice',[pinned,...regular]).candidates[0],regular[0]);
+  const first={...regular[0],likeCount:999};
+  assert.equal(highestScoredPost([first,...regular.slice(1)]),first);
+});
+
+test('local selection includes the twentieth post, ignores the twenty-first and preserves ties without mutating inputs',async()=>{
+  const posts=Array.from({length:21},(_,i)=>({url:`https://x.com/alice/status/${i+1}`,text:`Concrete test result number ${i+1}`,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:i===19?50:i===20?999:2,textComplete:true}));
+  assert.equal(highestScoredPost(posts),posts[19]);
+  assert.equal(posts[0].replyCount,2);
+  assert.equal(highestScoredPost([{repostCount:0,likeCount:0,bookmarkCount:0,replyCount:3},{repostCount:0,likeCount:0,bookmarkCount:0,replyCount:3}]).replyCount,3);
+  const first={repostCount:0,likeCount:0,bookmarkCount:0,replyCount:3};assert.equal(highestScoredPost([first,{repostCount:0,likeCount:0,bookmarkCount:0,replyCount:3}]),first);
+  let calls=0;
+  const result=await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[async(prompt,nonce,sleep,count)=>{
+    calls++;assert.equal(count,1);assert.match(prompt,/number 20/);assert.doesNotMatch(prompt,/number 21|number 1\n/);
+    return {ok:true,selectedIndex:1,reply:'Check the measurement conditions first.'};
+  }]});
+  assert.equal(calls,1);assert.equal(result.post,posts[19]);
+});
+
+test('unknown comment counts do not become zero and an incomplete winner does not fall back',async()=>{
+  const base={url:'https://x.com/alice/status/1',text:'Specific measured performance improvement',repostCount:0,likeCount:0,bookmarkCount:0,replyCount:5,textComplete:true};
+  assert.equal(highestScoredPost([base,{...base,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:null}]),null);
+  let calls=0;
+  const options={qualityFirst:true,sleep:async()=>{},askers:[async()=>{calls++;assert.fail('must not ask Grok');}]};
+  const unknown=await requestGrokComment('alice',[base,{...base,url:'https://x.com/alice/status/2',repostCount:0,likeCount:0,bookmarkCount:0,replyCount:null}],'Alice',options);
+  assert.equal(unknown.reasonCode,'engagement_metrics_unknown');
+  const incomplete=await requestGrokComment('alice',[base,{...base,url:'https://x.com/alice/status/2',repostCount:0,likeCount:0,bookmarkCount:0,replyCount:10,textComplete:false}],'Alice',options);
+  assert.equal(incomplete.reasonCode,'context_incomplete');assert.equal(calls,0);
+});
+
+test('a writer cannot select a different post after local selection',async()=>{
+  const posts=[1,2].map(id=>({url:`https://x.com/alice/status/${id}`,text:'Specific source material for discussion',repostCount:0,likeCount:0,bookmarkCount:0,replyCount:id}));
+  const result=await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[async()=>({ok:true,selectedIndex:2,reply:'Invalid source choice.'})]});
+  assert.equal(result.ok,false);
+});
 
 test('queue publication fence stops sending after composer is ready and closes owned popup',async()=>{
   const prior=globalThis.chrome, closed=[];
@@ -68,21 +124,23 @@ test('the prompt echo (which contains the markers) is never mistaken for an answ
   assert.ok(prompt.includes(nonce));
 });
 
-test('quote prompt asks Grok to choose one of five or abstain without a fixed template', () => {
+test('quote prompt restricts writing to the single locally chosen source', () => {
   const posts = Array.from({length:5}, (_,i) => ({text:`这是第 ${i+1} 条有细节的帖子` }));
   const prompt = buildGrokCommentPrompt({handle: 'alice', name: 'Alice', posts, nonce: 'task-1'});
-  assert.match(prompt, /帖子 5：/);
-  assert.match(prompt, /想纠正、看结果或翻车、辨真伪、给建议、代入自己、证明经验/);
-  assert.match(prompt, /【选择帖子:数字序号】/);
-  assert.match(prompt, /【跳过评价】/);
-  assert.match(prompt, /不要硬造争议/);
-  assert.match(prompt, /编造事实或动机/);
-  assert.match(prompt, /按内容需要自然发挥/);
+  assert.match(prompt, /帖子 1：/);
+  assert.doesNotMatch(prompt, /帖子 2：/);
+  assert.match(prompt, /不另选帖子或话题/);
+  assert.match(prompt, /必须给出一条完整评价/);
+  assert.match(prompt, /【选择帖子:1】/);
+  assert.doesNotMatch(prompt, /质量评分|先评价证据/);
+  assert.match(prompt, /不编造事实/);
+  assert.match(prompt, /不假装看过未提供的资料/);
+  assert.match(prompt, /自然、有观点/);
   assert.match(prompt,/280 加权字符/);
   assert.doesNotMatch(prompt, /25~50|只写一句完整评价|170 字符|80 汉字/);
 });
 
-test('candidate selection only considers the first five owned safe distinct posts', () => {
+test('candidate selection considers up to twenty owned safe distinct posts', () => {
   const posts = [
     {url:'https://x.com/alice/status/1',text:'正常分享一个具体的工作细节'},
     {url:'https://x.com/bob/status/2',text:'其他作者的帖子不能代发引用'},
@@ -92,8 +150,8 @@ test('candidate selection only considers the first five owned safe distinct post
     {url:'https://x.com/alice/status/6',text:'第六条不进入本次候选池'}
   ];
   const chosen = quoteCandidates('alice', posts, 'Alice');
-  assert.deepEqual(chosen.candidates.map(p => p.url),[posts[0].url,posts[4].url]);
-  assert.equal(chosen.inspected,5);
+  assert.deepEqual(chosen.candidates.map(p => p.url),[posts[0].url,posts[4].url,posts[5].url]);
+  assert.equal(chosen.inspected,6);
   assert.equal(chosen.blocked.length,1);
 });
 
@@ -172,10 +230,10 @@ test('quote publisher skips a religion-related source before opening a window', 
   assert.equal(fromReply.skipped,true);
 });
 
-test('Grok choice is bound to the chosen source post and skip consumes no fallback', async () => {
-  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,text:`这是第 ${id} 条有具体细节的帖子` }));
+test('local comment counts bind the source and skip consumes no fallback', async () => {
+  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:id,text:`这是第 ${id} 条有具体细节的帖子` }));
   let calls=0;
-  const choose = async () => { calls++; return {ok:true,...parseGrokQuoteDecision(`【选择帖子:2】\n${START}第二条的判断值得单独讨论。${END}\n【评价语言:zh】`,2),channel:'mock'}; };
+  const choose = async () => { calls++; return {ok:true,...parseGrokQuoteDecision(`【选择帖子:1】\n${START}第二条的判断值得单独讨论。${END}\n【评价语言:zh】`,1),channel:'mock'}; };
   const result = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[choose]});
   assert.equal(result.ok,true);
   assert.equal(result.postUrl,posts[1].url);
@@ -184,19 +242,19 @@ test('Grok choice is bound to the chosen source post and skip consumes no fallba
   const skip = async () => { calls++; return {ok:true,...parseGrokQuoteDecision(SKIP,2),channel:'mock'}; };
   const skipped = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[skip,choose]});
   assert.equal(skipped.ok,false);
-  assert.equal(skipped.skipped,true);
+  assert.equal(skipped.reasonCode,'generation_failed');
   assert.equal(calls,2);
   assert.equal(parseGrokQuoteDecision(`【选择帖子:3】${START}不应选中${END}`,2).reply,'');
 });
 
 test('over-budget quote is rewritten once without changing the source post', async () => {
-  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,text:`这是第 ${id} 条有具体细节的帖子` }));
+  const posts = [1,2].map(id=>({url:`https://x.com/alice/status/${id}`,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:id,text:`这是第 ${id} 条有具体细节的帖子` }));
   const longReply = 'This observation has a concrete detail. '.repeat(12);
   const prompts = [];
   const ask = async (prompt, nonce, sleep, count) => {
     prompts.push({prompt, count});
     if(prompts.length===2)return {ok:true,selectedIndex:1,reply:'The concrete detail matters more than the headline.',channel:'x.com'};
-    return {ok:true,...parseGrokQuoteDecision(`【选择帖子:2】${START}${longReply.trim()}${END}【评价语言:en】`,count),channel:'x.com'};
+    return {ok:true,...parseGrokQuoteDecision(`【选择帖子:1】${START}${longReply.trim()}${END}【评价语言:en】`,count),channel:'x.com'};
   };
   const result = await requestGrokComment('alice',posts,'Alice',{sleep:async()=>{},askers:[ask]});
   assert.equal(result.ok,true);
@@ -556,6 +614,46 @@ test('publishQuotePostOnPage embeds the exact original and publishes through Quo
   const result = await publishQuotePostOnPage('https://x.com/alice/status/123', '有价值的引用评价内容', 'A post to quote', 'alice');
   assert.deepEqual(result, {ok: true, mode: 'quote'});
   assert.deepEqual(events, ['retweet', 'quote', 'focus', 'type', 'input', 'publish']);
+});
+
+test('a source post containing its own Quote card is not a ready quote editor', async () => {
+  makeQuotePage({pageComposer:true});
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  globalThis.location.pathname = '/alice/status/123';
+  assert.equal(inspectQuoteComposerOnPage('https://x.com/alice/status/123', 'A post to quote', 'alice').ready, false);
+  const opened=await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  assert.equal(opened.stage,'quote_selected');
+});
+
+test('quote publishing waits for the modal and ignores a smaller background Reply editor', async () => {
+  const {events} = makeQuotePage();
+  await openQuoteComposerOnPage('https://x.com/alice/status/123');
+  // X changes the route before its modal editor has mounted.
+  globalThis.location.pathname = '/compose/post';
+  const page = globalThis.document;
+  const originalQuery = page.querySelectorAll.bind(page);
+  const background = {
+    innerText:'Quote\n@alice\nA post to quote',
+    getBoundingClientRect:()=>({top:0,bottom:100,width:100,height:100}),
+    querySelectorAll:selector=>selector==='a'?[{href:'https://x.com/alice/status/123'}]:[],
+    querySelector:()=>null
+  };
+  const reply = {
+    innerText:'',
+    getBoundingClientRect:()=>({top:0,bottom:28,width:100,height:28}),
+    closest:selector=>selector==='main'?background:null,
+    focus(){assert.fail('must never focus the background Reply editor');}
+  };
+  let probes = 0;
+  page.querySelectorAll = selector => {
+    if(selector!=='[data-testid="tweetTextarea_0"]')return originalQuery(selector);
+    const modal=originalQuery(selector);
+    return ++probes===1 ? [reply] : [...modal,reply];
+  };
+  const result=await publishQuotePostOnPage('https://x.com/alice/status/123','Existing generated comment','A post to quote','alice');
+  assert.deepEqual(result,{ok:true,mode:'quote'});
+  assert.equal(events.filter(event=>event==='publish').length,1);
+  assert.ok(probes>=3);
 });
 
 test('Quote menu on a long post is brought into view before selecting it', async () => {
@@ -969,3 +1067,11 @@ test('quote prompt requests relevant topic tags and reserves space for two sampl
  assert.match(prompt,/220 加权字符/);
  assert.doesNotMatch(prompt,/不要标签、链接/);
 });
+
+test('quote writing prompt never delegates source selection or filtering back to Grok',()=>{
+  const prompt=buildGrokCommentPrompt({handle:'alice',name:'Alice',posts:[{text:'Chosen source'}],nonce:'test'});
+  assert.match(prompt,/1:3:3:3/);assert.match(prompt,/必须给出一条完整评价/);
+  assert.doesNotMatch(prompt,/跳过评价|跳过原因|质量评分|评分口径|先判断|一律跳过/);
+});
+
+test('direct reply uses the chosen source without model filtering or scoring',()=>{const prompt=buildDirectReplyPrompt({handle:'alice',posts:[{text:'Chosen source'}]});assert.match(prompt,/1:3:3:3/);assert.match(prompt,/必须给出一条完整评论/);assert.doesNotMatch(prompt,/跳过评价|跳过原因|质量评分|评分口径/);});

@@ -11,6 +11,7 @@ import {mutualUserCategory, personalRelationshipLabel} from '../relationships/ne
 import {applyRelationshipSnapshot, buildRelationshipIndex, commentRelationshipLabel, deriveNotMutualUsers, deriveTrackerUsers} from '../relationships/relationship-rules.js';
 import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {PROFILE_ACCESS_PREFIX} from '../../platform/x/profile-access.js';
+import {buildFanDirectory, fanDirectoryRow, FAN_DIRECTORY_VERSION, FAN_TABS, normalizeFanSearch, exactFanSearchHandle} from '../relationships/fan-directory.js';
 
 export const LEGACY_RECORD_KEYS = [
   'monitor', 'rows', 'profileCache', 'mutualNetwork', 'commentTracking',
@@ -401,6 +402,7 @@ function membershipOf(row) {
 
 function matches(moduleName, row, filter) {
   const payload = row.payload || {};
+  if (filter.searchHandle && row.handle !== filter.searchHandle) return false;
   if (Array.isArray(filter.statuses) && filter.statuses.length && !filter.statuses.includes(payload.status || row.status)) return false;
   if (filter.dateUnknown && Number.isFinite(Date.parse(payload.followedAt))) return false;
   if (filter.dateKnown && !Number.isFinite(Date.parse(payload.followedAt))) return false;
@@ -419,7 +421,7 @@ function matches(moduleName, row, filter) {
   if (!keyword) return true;
   const replies = (payload.sources || []).flatMap(source => (source.replies || []).map(reply => reply?.text || '')).join(' ');
   const posts = (payload.posts || []).map(post => typeof post === 'string' ? post : (post?.text || '')).join(' ');
-  return [payload.handle, payload.name, payload.bio, payload.text, payload.event, replies, posts]
+  return [row.searchText, payload.handle, payload.name, payload.bio, payload.text, payload.event, replies, posts]
     .some(value => String(value || '').toLowerCase().includes(keyword));
 }
 
@@ -834,6 +836,7 @@ export function createRecordRuntime({
       });
     }
     await projection.putRelations(built.relations.records, built.relations.summary);
+    await projection.writeState({fanDirectoryVersion:0,fanDirectoryDirtyHandles:[]});
     const metadata = {};
     for (const key of ['monitor', 'mutualNetwork', 'commentTracking', 'unreciprocatedTracker']) metadata[key] = scalarRoot(snapshot[key]);
     await bumpRevision({metadata});
@@ -905,6 +908,7 @@ export function createRecordRuntime({
       const relations = relationRecords(snapshot);
       await projection.putRelations(relations.records, relations.summary);
     }
+    if (key === 'monitor') await projection.writeState({fanDirectoryVersion:0,fanDirectoryDirtyHandles:[]});
     await bumpRevision({metadata: {[key]: scalarRoot(snapshot[key])}});
     const state = await projection.readState();
     const live = await hashCanonical(snapshot[key] ?? null);
@@ -1117,6 +1121,54 @@ export function createRecordRuntime({
     return owned || 'unassigned';
   }
 
+  let directoryBuild = null;
+  async function ensureFanDirectory() {
+    const checkpoint = await projection.readState();
+    if (checkpoint.fanDirectoryVersion === FAN_DIRECTORY_VERSION && !checkpoint.fanDirectoryDirtyHandles?.length) return;
+    if (!directoryBuild) directoryBuild = sequenceMutation(async () => {
+      const state = await projection.readState();
+      if (state.fanDirectoryVersion === FAN_DIRECTORY_VERSION) {
+        for (const handle of state.fanDirectoryDirtyHandles || []) await recomputeHandle(handle);
+        return;
+      }
+      const rows = [];
+      let cursor = null;
+      do {
+        const page = await projection.scanBySource({sourceKey:'monitor', limit:200, cursor});
+        rows.push(...page.records);
+        cursor = page.nextCursor;
+      } while (cursor);
+      const groups = new Map();
+      let previousCursor = null;
+      do {
+        const page = await projection.scanBySource({sourceKey:'derived:fanDirectory',limit:200,cursor:previousCursor});
+        for (const row of page.records) if (!groups.has(row.accountId)) groups.set(row.accountId, []);
+        previousCursor = page.nextCursor;
+      } while (previousCursor);
+      for (const row of buildFanDirectory(rows)) {
+        if (!groups.has(row.accountId)) groups.set(row.accountId, []);
+        groups.get(row.accountId).push(row);
+      }
+      // This is a derived index only. No legacy snapshot or X state is changed.
+      await projection.clearSource('derived:fanDirectory');
+      for (const [accountId, records] of groups) await projection.replaceModuleRows(accountId, 'fanDirectory', 'derived:fanDirectory', {
+        rows:records, membership:records.flatMap(membershipOf)
+      });
+      await projection.writeState({fanDirectoryVersion:FAN_DIRECTORY_VERSION,fanDirectoryDirtyHandles:[]});
+    }).finally(() => {directoryBuild = null;});
+    return directoryBuild;
+  }
+
+  function presentDirectory(row) {
+    return {...present(row), module:'fans', userKey:row.sourceUserKey};
+  }
+
+  async function directorySummary(accountId) {
+    const saved = await projection.getSummary(accountId, 'fans');
+    const directory = await projection.getSummary(accountId, 'fanDirectory');
+    return {...saved, tabs:{...(saved?.tabs || {}), ...Object.fromEntries(Object.entries(FAN_TABS).map(([tab, category]) => [tab,directory?.tabs?.[category] || 0]))}};
+  }
+
   async function query(request = {}) {
     await ensureOpen();
     requireReady();
@@ -1126,8 +1178,17 @@ export function createRecordRuntime({
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 to 100');
     const accountId = request.accountId || 'unassigned';
     await flushDirty(moduleName);
-    const filter = request.filter && typeof request.filter === 'object' ? request.filter : {};
+    const filter = request.filter && typeof request.filter === 'object' ? {...request.filter} : {};
     const tab = filter.tab || 'all';
+    const directory = moduleName === 'fans' && Object.hasOwn(FAN_TABS, tab);
+    if (directory) {
+      await ensureFanDirectory();
+      filter.searchHandle = exactFanSearchHandle(filter.search);
+      if (filter.search) filter.search = normalizeFanSearch(filter.search);
+    }
+    const storedModule = directory ? 'fanDirectory' : moduleName;
+    const storedTab = directory ? FAN_TABS[tab] : tab;
+    const show = directory ? presentDirectory : present;
     const complex = Boolean(filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown || filter.availability);
     const revision = (await projection.readState()).revision || 0;
     const filterHash = canonicalValue({module: moduleName, accountId, tab, filter});
@@ -1155,17 +1216,36 @@ export function createRecordRuntime({
       return {records:records.map(present),nextCursor:remaining.length>limit?stamp(records.at(-1)):null,scanned,matched:history.length,revision};
     }
     const onStep = hooks.onCursorStep;
+    if (directory && complex) {
+      const token = request.cancelToken || null;
+      let cursor = null, scanned = 0, matched = 0;
+      const found = [];
+      do {
+        const batch = await projection.scanBatches({accountId,module:storedModule,tab:storedTab,limit:200,maxScan:200,cursor,
+          match:row => matches(moduleName,row,filter), shouldStop:() => token != null && cancels.has(token),onStep});
+        scanned += batch.scanned;
+        for (const row of batch.records) {
+          matched++;
+          if (found.length <= limit && (!parsed || row.sortKey > parsed.sortKey || (row.sortKey === parsed.sortKey && row.userKey > parsed.userKey))) found.push(row);
+        }
+        cursor = batch.nextCursor;
+        if (token != null && cancels.has(token)) return {records:[],nextCursor:null,scanned,cancelled:true,matched:null,revision};
+      } while (cursor);
+      const records = found.slice(0,limit);
+      return {records:records.map(show),nextCursor:found.length > limit ? stamp(records.at(-1)) : null,scanned,matched,revision,summary:await directorySummary(accountId)};
+    }
     if (!complex) {
       const page = await projection.queryPage({
         accountId,
-        module: moduleName,
-        tab,
+        module: storedModule,
+        tab: storedTab,
         limit,
         cursor: parsed,
         onStep
       });
       if (page.scanned > limit + 1) throw new Error('index page scanned more than one extra row');
-      return {records: page.records.map(present), nextCursor: stamp(page.nextCursor), scanned: page.scanned, matched: null, revision};
+      return {records: page.records.map(show), nextCursor: stamp(page.nextCursor), scanned: page.scanned, matched: directory ? (await projection.getSummary(accountId,'fanDirectory'))?.tabs?.[storedTab] || 0 : null, revision,
+        ...(directory ? {summary:await directorySummary(accountId)} : {})};
     }
     const token = request.cancelToken || null;
     const records = [];
@@ -1175,8 +1255,8 @@ export function createRecordRuntime({
     while (records.length < limit) {
       const batch = await projection.scanBatches({
         accountId,
-        module: moduleName,
-        tab,
+        module: storedModule,
+        tab: storedTab,
         limit: limit - records.length,
         cursor: resume,
         maxScan: 200,
@@ -1193,7 +1273,7 @@ export function createRecordRuntime({
       if (batch.done || !resume) break;
     }
     return {
-      records: records.map(present),
+      records: records.map(show),
       nextCursor: stamp(resume),
       scanned,
       cancelled,
@@ -1238,7 +1318,10 @@ export function createRecordRuntime({
     await ensureOpen();
     requireReady();
     if (request.module) await flushDirty(request.module);
-    return projection.getSummary(request.accountId || 'unassigned', request.module);
+    const saved = await projection.getSummary(request.accountId || 'unassigned', request.module);
+    if (request.module !== 'fans') return saved;
+    await ensureFanDirectory();
+    return directorySummary(request.accountId || 'unassigned');
   }
 
   async function relations(request = {}) {
@@ -1255,6 +1338,31 @@ export function createRecordRuntime({
     requireReady();
     await flushDirty('fans');
     return projection.getSummary('unassigned', 'relations');
+  }
+
+  async function fanDirectory(request = {}) {
+    await ensureOpen();
+    requireReady();
+    await flushDirty('fans');
+    await ensureFanDirectory();
+    if (!Array.isArray(request.handles) || request.handles.length > 100) throw new Error('fan directory lookup accepts at most 100 handles');
+    return projection.rowsByHandle(request.accountId || 'unassigned','fanDirectory',request.handles.map(handle => String(handle).toLowerCase()));
+  }
+
+  async function fanInspectionTargets(request = {}) {
+    await ensureOpen();requireReady();await flushDirty('fans');await ensureFanDirectory();
+    const filter={...(request.filter || {})};
+    const tab=FAN_TABS[filter.tab || 'fanAll'];
+    if (!tab) throw new Error('无效粉丝分类');
+    filter.searchHandle=exactFanSearchHandle(filter.search);filter.search=normalizeFanSearch(filter.search);
+    const selected=Array.isArray(request.handles) ? new Set(request.handles.map(h=>String(h).toLowerCase())) : null;
+    const handles=[];let cursor=null;
+    do {
+      const page=await projection.scanBatches({accountId:request.accountId || 'unassigned',module:'fanDirectory',tab,limit:200,maxScan:200,cursor,
+        match:row=>(!selected || selected.has(row.handle)) && matches('fans',row,filter)});
+      handles.push(...page.records.map(row=>row.handle));cursor=page.nextCursor;
+    }while(cursor);
+    return [...new Set(handles)];
   }
 
   async function profiles(request = {}) {
@@ -1427,6 +1535,13 @@ export function createRecordRuntime({
   async function recomputeHandle(handle, track = (_step, action) => action()) {
     if (!handle) return;
     const rows = await track('read-related-rows', () => projection.rowsByHandleKey(handle));
+    const directoryAccounts = new Set(rows.filter(row => row.sourceKey === 'monitor' || row.sourceKey === 'derived:fanDirectory').map(row => row.accountId));
+    for (const accountId of directoryAccounts) {
+      const previous = rows.find(row => row.module === 'fanDirectory' && row.accountId === accountId);
+      const next = fanDirectoryRow(rows.filter(row => row.accountId === accountId));
+      if (next || previous) await track('refresh-fan-directory', () => projection.mutateRow(next ? {row:next, membership:membershipOf(next)} : null,
+        previous ? [accountId,'fanDirectory',handle] : null));
+    }
     const monitor = rows.filter(row => row.sourceKey === 'monitor');
     const users = monitor.filter(row => row.sourcePath?.[1] === 'users');
     const following = monitor.filter(row => row.sourcePath?.[1] === 'followingUsers');
@@ -1500,6 +1615,8 @@ export function createRecordRuntime({
       await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     }
     await track('refresh-related-views', () => refreshBoundViews(handle, relation, rows));
+    const state = await projection.readState();
+    if (state.fanDirectoryDirtyHandles?.includes(handle)) await projection.writeState({fanDirectoryDirtyHandles:state.fanDirectoryDirtyHandles.filter(item => item !== handle)});
   }
 
   async function commitRow(previous, row, entry) {
@@ -1675,6 +1792,23 @@ export function createRecordRuntime({
     await ensureOpen();
     requireReady();
     return sequenceMutation(() => applyMutation(kind, request));
+  }
+
+  async function deleteFanAccount(request = {}) {
+    await ensureOpen();
+    requireReady();
+    const handle = String(request.handle || '').replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_]{1,15}$/.test(handle)) throw new Error('账号格式无效');
+    return sequenceMutation(async () => {
+      await recoverBackups();
+      const rows = (await projection.rowsByHandleKey(handle)).filter(row => row.module === 'fans' && row.sourceKey === 'monitor' && row.accountId === (request.accountId || 'unassigned'));
+      let deleted = 0;
+      for (const row of rows) {
+        const result = await applyMutation('delete', {module:'fans', accountId:row.accountId, userKey:row.userKey, expectedHandle:handle, operationId:crypto.randomUUID()});
+        if (!result.missing) deleted++;
+      }
+      return {handle, deleted};
+    });
   }
 
   async function deleteUnavailableAccount(request = {}) {
@@ -2111,9 +2245,12 @@ export function createRecordRuntime({
     if (op === 'put') return {ok: true, result: await mutate('put', message)};
     if (op === 'patch') return {ok: true, result: await mutate('patch', message)};
     if (op === 'delete') return {ok: true, result: await mutate('delete', message)};
+    if (op === 'deleteFanAccount') return {ok:true, result:await deleteFanAccount(message)};
     if (op === 'deleteUnavailableAccount') return {ok: true, result: await deleteUnavailableAccount(message)};
     if (op === 'summary') return {ok: true, summary: await summary(message)};
     if (op === 'relations') return {ok: true, relations: await relations(message)};
+    if (op === 'fanDirectory') return {ok:true,records:(await fanDirectory(message)).map(presentDirectory)};
+    if (op === 'fanInspectionTargets') return {ok:true,handles:await fanInspectionTargets(message)};
     if (op === 'relationSummary') return {ok: true, summary: await relationSummary()};
     if (op === 'profiles') return {ok: true, profiles: await profiles(message)};
     if (op === 'config') return {ok: true, value: await config(message)};

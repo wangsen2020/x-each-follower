@@ -28,6 +28,45 @@ async function setup(generator,settings={},postPublisher,hooks={}) {
     counts:()=>({generated,removed})};
 }
 
+test('an interrupted Bot generation preserves its ID and resumes the same result without a second dispatch',async()=>{
+ let paidRequests=0,checkpoint;
+ const env=await setup(async({args,store,post})=>{
+   const options=args[3];
+   if(!options.relayJobId){
+     paidRequests++;
+     await options.onRelayJobCreated({id:'reserved-relay-id',status:'unknown'});
+     checkpoint=(await store.listByState({accountId:'123',state:'followed'}))[0].evaluations[0];
+     assert.equal(checkpoint.relayJobId,'reserved-relay-id');
+     throw Error('worker interrupted while waiting for callback');
+   }
+   assert.equal(options.relayJobId,'reserved-relay-id');
+   return {ok:true,reply:'An existing Bot result.',post,language:'en',channel:'grok-bot',grokCalls:1};
+ });
+ await env.runtime.runComments();
+ let ev=(await env.read()).evaluations[0];assert.equal(ev.status,'uncertain');assert.equal(ev.relayJobId,'reserved-relay-id');assert.equal(ev.reasonCode,'bot_pending');
+ await env.runtime.runComments();
+ ev=(await env.read()).evaluations[0];assert.equal(ev.status,'draft');assert.equal(ev.baseText,'An existing Bot result.');assert.equal(paidRequests,1);
+});
+
+for(const [mode,language,body,ending] of [
+ ['quote','zh','这是一个值得检查的技术细节。','来关必回'],
+ ['reply','en','The tradeoff deserves a closer test.','I follow back.']
+]) test(`${mode} automatically appends its localized follow-back ending when enabled`,async()=>{
+ const env=await setup(async({post})=>({ok:true,reply:body,post,language,quality:{passed:true,total:8},grokCalls:1}),{publicationMode:mode,followBackSuffixEnabled:true});
+ await env.runtime.runComments();const saved=await env.read();
+ assert.equal(saved.evaluations[0].status,'draft');assert.ok(saved.evaluations[0].text.endsWith(ending));
+ assert.equal(saved.evaluations[0].baseText,body);
+});
+
+test('a requested ending that does not fit keeps the draft and prevents auto-publishing',async()=>{
+ let sent=0;const body='a'.repeat(280);
+ const env=await setup(async({post})=>({ok:true,reply:body,post,language:'en',quality:{passed:true,total:8},grokCalls:1}),
+  {publicationMode:'quote',followBackSuffixEnabled:true,autoPublish:true},{publish:async()=>{sent++;}});
+ await env.runtime.runComments();const saved=await env.read();
+ assert.equal(sent,0);assert.equal(saved.evaluations[0].status,'draft');assert.equal(saved.evaluations[0].text,body);
+ assert.match(saved.evaluations[0].reason,/无法追加/);
+});
+
 test('viewer guard waits for missing identity but immediately blocks a different logged-in account',async()=>{
   const values=['','','Viewer'];let waits=0;
   assert.equal(await waitForQueueViewer({read:async()=>values.shift(),expected:'viewer',wait:async()=>waits++}),'viewer');
@@ -67,6 +106,32 @@ test('selected task generates one quality-first long draft, persists diagnostics
   assert.match(saved.evaluations[0].reason,/长引用能力/);
   assert.equal((await env.runtime.runComments()).idle,true);assert.deepEqual(env.counts(),{generated:1,removed:1});
 });
+
+test('legacy multi-post tasks choose the most commented source locally and persist it across a quality retry',async()=>{
+  const winner={url:'https://x.com/author/status/799',text:'A specific independent source about software releases.',textComplete:true,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:30};
+  const env=await setup(async({args})=>{
+    assert.deepEqual(args[1],[winner]);
+    return {ok:false,skipped:true,reasonCode:'quality_skip',reason:'材料不足',grokCalls:1};
+  });
+  const job=await env.read();
+  const candidates=Array.from({length:10},(_,i)=>({...winner,url:`https://x.com/author/status/${789+i}`,repostCount:0,likeCount:0,bookmarkCount:0,replyCount:i===9?30:1}));
+  candidates[9]=winner;
+  await env.store.resolveJob({accountId:'123',id:job.id,evaluations:[{...job.evaluations[0],candidatePosts:candidates}]});
+  await env.runtime.runComments();
+  let saved=await env.read();assert.equal(saved.evaluations[0].originalPostUrl,winner.url);
+  assert.deepEqual(saved.evaluations[0].candidatePosts,[winner]);
+  await env.runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id,taskId:'123:789'});
+  assert.equal(env.counts().generated,2);
+});
+
+test('the highest scoring source still respects participation sampling and a zero rate never calls Grok',async()=>{
+  const env=await setup(async()=>assert.fail('must not call Grok'),{quoteParticipationRate:0});
+  const job=await env.read();
+  const winner={url:'https://x.com/author/status/799',text:'A concrete source with a very high interaction score.',textComplete:true,replyCount:10,repostCount:1000,likeCount:1000,bookmarkCount:1000};
+  await env.store.resolveJob({accountId:'123',id:job.id,evaluations:[{...job.evaluations[0],candidatePosts:[winner]}]});
+  const result=await env.runtime.runComments();
+  assert.equal(result.paused,true);assert.equal(env.counts().generated,0);
+});
 test('quality skip is terminal and does not regenerate or affect following',async()=>{
   const env=await setup(async()=>({ok:false,skipped:true,reasonCode:'quality_skip',reason:'缺乏新增分析价值',grokCalls:1}));
   await env.runtime.runComments();await env.runtime.runComments();
@@ -102,7 +167,11 @@ for (const attempted of [false,true]) test(`quota ${attempted ? 'after' : 'befor
   await env.runtime.handle({cmd:'followQueueRetryEvaluation',jobId:env.job.id,taskId:'123:789'});
   saved=await env.read();
   assert.equal(count,attempted?1:2);
-  assert.equal(saved.evaluations[0].status,attempted?'uncertain':'draft');
+  assert.equal(saved.evaluations[0].status,attempted?'failed':'draft');
+  if(attempted){
+    assert.equal(saved.evaluations[0].reasonCode,'generation_retry_ready');
+    assert.equal(saved.evaluations[0].recoveryHistory[0].evaluation.status,'uncertain');
+  }
 });
 
 test('standalone tasks keep their snapshotted form and delegate publication to the post module',async()=>{
@@ -140,4 +209,14 @@ test('article image failure retains generated body and does not auto-regenerate 
  const article={title:'Reward rules',body:'A standalone explanation of fixed reward rates.',description:'Read the rules.',coverPrompt:'5:2 abstract network'};let images=0;
  const env=await setup(async({post})=>({ok:true,reply:article.body,article,post,quality:{passed:true,scores:[2,2,2,1],total:7}}),{publicationMode:'article',autoPublish:true},undefined,{articlePublisher:{verify:async()=>null,publish:async()=>assert.fail('no image: no publication')},generateCover:async()=>{images++;return {ok:false,reason:'额度不足'};}});
  await env.runtime.runComments();await env.runtime.runComments();const ev=(await env.read()).evaluations[0];assert.equal(ev.status,'draft');assert.equal(ev.article.body,article.body);assert.match(ev.reason,/额度不足/);assert.equal(images,1);assert.equal(env.counts().generated,1);
+});
+
+test('manual reply waits for a populated profile timeline rather than failing on initial empty render',async()=>{
+ const store=createFollowQueueStore({indexedDB,dbName:'timeline-hydration-'+crypto.randomUUID()});await store.saveSettings('123',{publicationMode:'reply',grokEnabled:true,autoPublish:false});
+ const job=await store.enqueue({accountId:'123',handle:'author',sources:[{module:'fans',enabled:true}]});await store.resolveJob({accountId:'123',id:job.id,state:'followed',followResult:{succeeded:true}});
+ const post={url:'https://x.com/author/status/789',text:'A specific original post about building a tool.',textComplete:true,replyCount:1,repostCount:0,likeCount:1,bookmarkCount:0};
+ const data={followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{}};let reads=0;
+ const api={storage:{local:{get:async key=>({[key]:data[key]}),set:async patch=>Object.assign(data,patch)}},tabs:{create:async()=>({id:900}),update:async()=>({id:900}),remove:async()=>{}},scripting:{executeScript:async({func})=>{if(func.name==='readQueueViewerOnPage')return [{result:'viewer'}];if(func.name==='readProfileBundle')return [{result:{pending:false,status:'ok',name:'author',bio:'software',posts:++reads===1?[]:[post]}}];if(func.name==='readPostMetricsOnPage')return [{result:{}}];throw Error('unexpected '+func.name)}}};
+ const runtime=createFollowQueueRuntime({api,store,generateReply:async()=>({ok:true,reply:'A useful observation.',post,language:'en',grokCalls:1})});
+ const result=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id});assert.equal(reads,2);assert.equal(result.ok,true);assert.equal(result.evaluation.status,'draft');assert.equal(result.evaluation.originalPostId,'789');
 });

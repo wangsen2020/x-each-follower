@@ -40,8 +40,8 @@ function place() {
 }
 
 async function show(target) {
-  const tip = target?.closest?.('.info-tip[data-tip]');
-  const message = tip?.getAttribute('data-tip');
+  const tip = target?.closest?.('.info-tip[data-tip], [data-panel-tip]');
+  const message = tip?.getAttribute('data-panel-tip') || tip?.getAttribute('data-tip');
   if (!tip || !message) return;
   if (active !== tip) {
     restoreDescription();
@@ -60,7 +60,7 @@ async function show(target) {
 function onPointerOver(event) { show(event.target); }
 function onPointerOut(event) {
   if (!active || !active.contains(event.target) || active.contains(event.relatedTarget)) return;
-  if (document.activeElement !== active) hide();
+  if (!active.contains(document.activeElement)) hide();
 }
 function onFocusIn(event) { show(event.target); }
 function onFocusOut(event) {

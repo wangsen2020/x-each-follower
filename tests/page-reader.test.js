@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectVisible, readProfile, readProfileBundle, scanFollowers, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
+import {collectVisible, readProfile, readProfileBundle, readPostMetricsOnPage, scanFollowers, clickFollowOnProfile, clickFollowBackOnProfile, isOwnFollowersRoute} from '../src/platform/x/page-reader.js';
 
 const link = (path, text) => ({href:`https://x.com${path}`,innerText:text});
 test('own follower scan reuses only the logged-in account followers route', () => {
@@ -120,6 +120,19 @@ test('readProfileBundle extracts profile bundle and posts up to recentLimit', ()
   assert.equal(result.posts.length, 1);
   assert.equal(result.posts[0].text, 'Hello world 1');
   assert.equal(result.posts[0].textComplete,false,'whole article chrome is not proof of a complete post');
+  assert.equal(result.posts[0].replyCount,null,'missing reply controls stay unknown');
+  for (const [raw,expected] of [['',0],['1,234',1234],['1.2K',1200],['2万',20000],['unavailable',null]]) {
+    articles[0].querySelector=selector=>selector==='[data-testid="reply"]' ? {innerText:raw} : null;
+    assert.equal(readProfileBundle('alice',1).posts[0].replyCount,expected);
+  }
+  articles[0].querySelector=selector=>selector.includes('bookmark') ? {innerText:''} : selector.includes('retweet') ? {innerText:'3'} : selector.includes('like') ? {innerText:'12'} : null;
+  const metrics=readProfileBundle('alice',1).posts[0];
+  assert.equal(metrics.bookmarkCount,null,'empty bookmark control does not expose the count');
+  assert.equal(metrics.repostCount,3);assert.equal(metrics.likeCount,12);
+  for (const label of ['置顶','Pinned','已釘選']) {
+    articles[0].querySelector=selector=>selector==='[data-testid="socialContext"]' ? {innerText:label} : null;
+    assert.equal(readProfileBundle('alice',1).posts[0].text,'Hello world 2');
+  }
   let truncated=false;
   articles[0].querySelector=selector=>selector==='[data-testid="tweetText"]' ? {innerText:'Actual original text'}
     : selector==='[data-testid="tweet-text-show-more-link"]' ? truncated ? {} : null : null;
@@ -127,6 +140,19 @@ test('readProfileBundle extracts profile bundle and posts up to recentLimit', ()
   assert.equal(readProfileBundle('alice',1).posts[0].textComplete,true);
   truncated=true;
   assert.equal(readProfileBundle('alice',1).posts[0].textComplete,false);
+});
+
+test('page metrics match exact source IDs and do not use a quoted tweet or invent missing bookmarks',()=>{
+  const tweet={id_str:'123',reply_count:4,retweet_count:5,favorite_count:6,bookmark_count:7};
+  const article={__reactFiber$test:{memoizedProps:{tweet:{...tweet,id_str:'999',bookmark_count:999}},return:{memoizedProps:{tweet}}}};
+  const previous=globalThis.document;
+  globalThis.document={querySelectorAll:()=>[article]};
+  try {
+    assert.deepEqual(readPostMetricsOnPage(['123']),{'123':{replyCount:4,repostCount:5,likeCount:6,bookmarkCount:7}});
+    delete tweet.bookmark_count;
+    assert.equal(readPostMetricsOnPage(['123'])['123'].bookmarkCount,null);
+    assert.deepEqual(readPostMetricsOnPage(['456']),{});
+  } finally {globalThis.document=previous;}
 });
 
 test('profile bundle reads the target account follow button and user ID, not another account', () => {
@@ -157,4 +183,11 @@ test('profile empty state is terminal; ordinary text, loading and other routes a
     empty='';assert.equal(reader('missing').pending,true);
     empty='此账号不存在';assert.equal(reader('another').pending,true);
   }
+});
+
+test('profile identifies pending request by the actual target button ID without reading unrelated cells',()=>{
+ globalThis.location={pathname:'/alice',origin:'https://x.com'};
+ const button={innerText:'等待确认',getAttribute:key=>key==='data-testid'?'42-cancel':null,closest:()=>null};
+ globalThis.document={querySelector:()=>({querySelector:s=>s.includes('UserName')?{innerText:'Alice'}:null,querySelectorAll:s=>s==='a[href]'?[link('/alice/following','1'),link('/alice/followers','1')]:s==='button[data-testid]'?[button]:[]})};
+ assert.equal(readProfileBundle('alice').pendingRequestUserId,'42');button.closest=()=>({});assert.equal(readProfileBundle('alice').pendingRequestUserId,undefined);
 });

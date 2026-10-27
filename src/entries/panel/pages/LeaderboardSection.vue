@@ -30,57 +30,12 @@
       </div>
 
       <!-- Icon-only actions with hover tips in header -->
-      <div class="lb-head-icons">
-        <button
-          type="button"
-          class="secondary lb-icon-btn"
-          aria-label="立即扫描快照"
-          title="立即扫描快照"
-          :disabled="loading || busy"
-          @click="triggerScan"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/>
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="secondary lb-icon-btn"
-          aria-label="触发 Grok 日报分析"
-          title="触发 Grok 日报分析"
-          :disabled="loading || busy || analyzing"
-          @click="triggerAnalyze"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/>
-            <circle cx="12" cy="12" r="3"/>
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="secondary lb-icon-btn"
-          aria-label="优质帖子日报"
-          title="优质帖子日报"
-          @click="openReportDrawer"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="secondary lb-icon-btn settings-gear-btn lb-settings-trigger"
-          aria-label="榜单监控设置"
-          title="榜单监控设置"
-          @click="openSettings"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
-      </div>
+      <PanelActionBar class="lb-head-icons">
+        <PanelIconButton :icon="RefreshCw" label="扫描快照" :disabled="loading || busy" @click="triggerScan" />
+        <PanelIconButton :icon="Sparkles" label="Grok 日报分析" :disabled="loading || busy || analyzing" @click="triggerAnalyze" />
+        <PanelIconButton :icon="ScrollText" label="优质帖子日报" @click="openReportDrawer" />
+        <PanelIconButton :icon="Settings" class="lb-settings-trigger" label="榜单监控设置" @click="openSettings" />
+      </PanelActionBar>
     </div>
 
     <!-- Toolbar: Search & Summary (统一 height: 30px, line-height: 30px) -->
@@ -607,6 +562,9 @@
 </template>
 
 <script setup>
+import PanelActionBar from '../components/PanelActionBar.vue';
+import PanelIconButton from '../components/PanelIconButton.vue';
+import {RefreshCw, Sparkles, ScrollText, Settings} from 'lucide';
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
 import PanelCloseButton from '../components/PanelCloseButton.vue';

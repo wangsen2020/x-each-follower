@@ -378,7 +378,21 @@ export function createFollowQueueScheduler({
       }
 
       const paused = state.paused || pausedAccounts.has(account);
+      const stopReason = paused ? 'paused'
+        : state.rateLimited ? 'rate-limited'
+        : state.blockReason ? 'account-blocked'
+        : counters.followed >= batchLimit ? 'batch-limit'
+        : counters.inspected >= inspectLimit ? 'inspect-limit'
+        : now() >= cycleDeadline ? 'time-budget'
+        : 'no-candidates';
+      const stopMessage = {
+        'batch-limit': `已达本轮新增关注上限 ${batchLimit} 人。`,
+        'inspect-limit': `已达本轮检查上限 ${inspectLimit} 人，剩余候选留待下轮。`,
+        'time-budget': `已达本轮时限 ${settings.timeBudgetMinutes} 分钟，剩余候选留待下轮。`,
+        'no-candidates': '当前无更多可执行候选。'
+      }[stopReason] || '';
       const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual})
+        + (counters.inspected > 0 ? stopMessage : '')
         + (state.rateLimited ? state.accountFollowLimit
           ? ' X 已限制继续关注（错误 161），本轮停止；请在 X 核实限制，当前任务结果待核实。'
           : state.profileReadLimited
@@ -391,6 +405,7 @@ export function createFollowQueueScheduler({
 
       await emit({
         type: 'run-complete',
+        stopReason,
         runId,
         accountId: account,
         manual,
@@ -402,6 +417,7 @@ export function createFollowQueueScheduler({
       return {
         ok: true,
         runId,
+        stopReason,
         accountId: account,
         manual,
         paused,

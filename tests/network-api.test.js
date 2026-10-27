@@ -60,7 +60,8 @@ test('follow queue removes accounts confirmed as following and adds confirmed fo
   assert.deepEqual(reconciled.map(user => [user.handle, user.status]).sort(), [
     ['already-done','pending'],
     ['failed-before','follow_failed'],
-    ['new-back','pending']
+    ['new-back','pending'],
+    ['niuniu34390484','followed']
   ]);
 });
 
@@ -281,4 +282,16 @@ test('follow-back labels require both explicit relationship directions', () => {
   const stale={handle:'candidate',state:'follow_back',status:'pending',relationship:{followedBy:true,following:false}};
   const [updated]=reconcileFollowBackQueue([stale],[{...stale,state:'none',relationship:{followedBy:false,following:false}}]);
   assert.equal(updated.status,'no_longer_following');
+});
+test('conflicting relationship fields stay unknown instead of authorizing follow or unfollow',()=>{
+  const [user]=parseNetworkUsers({rest_id:'42',legacy:{screen_name:'test',followed_by:true,following:true},relationship_perspectives:{followed_by:false,following:false}});
+  assert.deepEqual(user.relationship,{blocking:false,followedBy:null,following:null});
+  assert.equal(user.relationshipKnown,false);
+});
+
+test('pending follow request remains distinct from following and is not treated as a completed follow',async()=>{
+ const user={rest_id:'42',core:{screen_name:'target'},legacy:{follow_request_sent:true,protected:true},relationship_perspectives:{following:false,followed_by:true}};
+ const parsed=parseNetworkUsers(user)[0];assert.equal(parsed.relationship.followRequestSent,true);assert.equal(parsed.protected,true);assert.equal(parsed.relationship.following,false);
+ const result=await networkFollow(1,{id:'42',handle:'target'},{follow:async()=>({status:200,json:user}),profile:async()=>{throw Error('unnecessary read')}});
+ assert.equal(result.followRequestPending,true);assert.equal(result.status,0);assert.equal(result.uncertain,true);
 });

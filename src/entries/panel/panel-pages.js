@@ -137,20 +137,22 @@ export function createPanelPages({request, onProgress, delay, cacheLimit = 3, de
       await send({op: 'cancel', cancelToken}).catch(() => {});
       return null;
     }
-    const summary = summaries[moduleName] || null;
+    const summary = result.page.summary || summaries[moduleName] || null;
+    if (result.page.summary) summaries[moduleName] = structuredClone(result.page.summary);
     const tab = filter.tab || 'all';
     const complex = Boolean(filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown);
     const tabCount = summary?.tabs && Object.prototype.hasOwnProperty.call(summary.tabs, tab) ? summary.tabs[tab] : undefined;
     const statusesTotal = !filter.search && Array.isArray(filter.statuses) && filter.statuses.length && summary?.tabs
       ? filter.statuses.reduce((sum, status) => sum + (summary.tabs[status] || 0), 0)
       : null;
-    const total = statusesTotal ?? (complex ? null : (tabCount != null ? tabCount : (tab === 'all' || !summary?.tabs ? (summary?.total ?? result.page.records.length) : 0)));
+    const total = result.page.matched ?? statusesTotal ?? (complex ? null : (tabCount != null ? tabCount : (tab === 'all' || !summary?.tabs ? (summary?.total ?? result.page.records.length) : 0)));
     const page = {
       module: moduleName,
       filter: {...filter},
       records: (result.page.records || []).map(record => ({...record, payload: structuredClone(record.payload), view: record.view ? structuredClone(record.view) : null})),
       nextCursor: result.page.nextCursor,
       scanned: result.page.scanned,
+      revision: result.page.revision,
       total,
       summary: summary ? structuredClone(summary) : null,
       history: []
@@ -375,6 +377,15 @@ export function createSelectionMemory() {
     },
     clear(moduleName) {
       bucket(moduleName).clear();
+    },
+    reconcilePage(moduleName, handles, users) {
+      const visible=new Map(users.map(user=>[String(user.handle || '').toLowerCase(),user]));
+      const saved=bucket(moduleName);
+      for(const handle of [...handles]) {
+        if(!visible.has(handle)){handles.delete(handle);saved.delete(handle);}
+        else saved.set(handle,structuredClone(visible.get(handle)));
+      }
+      for(const handle of [...saved.keys()])if(!handles.has(handle))saved.delete(handle);
     },
     selected(moduleName, handles) {
       const rows = bucket(moduleName);

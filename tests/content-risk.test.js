@@ -255,7 +255,7 @@ test('postQuoteOnTab rejects risk post pre-flight before opening windows', async
   assert.ok(res.reason.includes('高风险内容') || res.reason.includes('色情'));
 });
 
-test('buildGrokCommentPrompt includes calibrated safety instructions distinguishing advocacy vs description', () => {
+test('quote prompt leaves existing program screening outside the writing task', () => {
   const prompt = buildGrokCommentPrompt({
     handle: 'nice_user',
     name: '好青年',
@@ -264,12 +264,8 @@ test('buildGrokCommentPrompt includes calibrated safety instructions distinguish
     profile: {bio:'关注技术和阅读'}
   });
 
-  assert.ok(prompt.includes('色情低俗、暴力、政治、军事、武装组织、恐怖极端、恶心猎奇'));
-  assert.ok(prompt.includes('伊斯兰教、穆斯林、清真、斋月、拜火教、祆教、巴哈伊'));
-  assert.ok(prompt.includes('任一候选帖明确命中就跳过整个账号'));
-  assert.ok(prompt.includes('不要凭姓名、地区，或“不信神”“上帝视角”等玩笑比喻推断宗教关联'));
-  assert.ok(prompt.includes('点名追杀、死亡威胁'));
-  assert.ok(prompt.includes('宗教身份不等于危险标签'));
+  assert.doesNotMatch(prompt,/跳过评价|跳过原因|跳过整个账号|质量评分/);
+  assert.match(prompt,/必须给出一条完整评价/);
   assert.ok(prompt.includes('账号简介：关注技术和阅读'));
 });
 

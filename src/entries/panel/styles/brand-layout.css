@@ -193,7 +193,7 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .mutual-table th.th-relation{text-align:center;width:110px}
 .mutual-table th.th-count{text-align:right;width:80px}
 .mutual-table th.th-record,.mutual-table tbody td.col-record{text-align:center;width:170px;min-width:140px;white-space:nowrap}
-.mutual-network-head #collectNetwork,.mutual-network-head #batchRefreshMutual,.mutual-network-head #grokAnalyzeMutual{flex:0 0 auto;width:auto;height:32px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
+.mutual-network-head #collectNetwork{flex:0 0 auto;width:auto;height:32px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
 .mutual-network-head #openMutualSettingsDrawer{flex:0 0 32px;width:32px;height:32px;padding:0;margin:0 0 0 auto;align-self:flex-end}
 .mutual-table th.th-actions{text-align:center;width:148px}
 .mutual-table tbody td{padding:8px 12px;border-bottom:1px solid #e7ece5;vertical-align:middle}
@@ -990,11 +990,24 @@ main > :not(.sidebar){margin-left:20px}
 @media(max-width:600px){main > :not(.sidebar){margin-left:0}}
 .drawer-facts{grid-template-columns:calc(50% - 4px) calc(50% + 4px)}.drawer-facts > :nth-child(even){margin-left:8px}.drawer-facts > :nth-child(n + 3){margin-top:8px}
 .monitor-list-header{margin-bottom:10px}.monitor-list-header,.monitor-item{grid-template-columns:18px minmax(0,1fr) 130px 154px 102px 108px}.monitor-list-header > :not(:first-child),.monitor-item > :not(:first-child){margin-left:12px}
+#monitorSection .monitor-list-header,#monitorSection .monitor-item{grid-template-columns:18px minmax(140px,1fr) 92px minmax(110px,154px) 68px 200px;column-gap:10px}
+#monitorSection .monitor-list-header > :not(:first-child),#monitorSection .monitor-item > :not(:first-child){margin-left:0;min-width:0}
+#monitorSection .monitor-badge{justify-self:center;width:max-content;max-width:100%;padding:0 6px}
+#monitorSection .col-tag-cell{min-width:0;max-width:100%;display:flex;flex-wrap:wrap;gap:4px}
+#monitorSection .col-tag-cell > :not(:last-child){margin:0}
+#monitorSection .tag-badge{max-width:100%;padding:0 5px}
+#monitorSection .monitor-actions{justify-self:end;gap:10px;width:max-content}
+#monitorSection .monitor-actions > :not(:last-child){margin-right:0}
+#monitorSection .fan-inspection-progress{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 0;font-size:12px;color:#456456}
+#monitorSection .fan-inspection-progress[hidden]{display:none}
+#monitorSection #fanInspectionStatus{flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
+#monitorSection #fanInspectionDetails{flex-basis:100%}
+#monitorSection #fanInspectionResults{max-height:160px;overflow:auto;margin:6px 0;padding-left:20px;overflow-wrap:anywhere}
 .monitor-list-header .col-counts{white-space:nowrap}
 .monitor-counts{min-width:0;display:grid;gap:2px;color:#60756a;font-size:11px}
 .monitor-counts > span{min-width:0;display:flex;align-items:baseline;gap:6px}
 .monitor-counts strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#234b3a;font-size:12px;font-weight:600}
-@media(max-width:700px){
+@media(max-width:900px){
   #monitorSection .monitor-list-header{grid-template-columns:18px minmax(0,1fr)}
   #monitorSection .monitor-list-header .col-counts,#monitorSection .monitor-list-header .col-tag,#monitorSection .monitor-list-header .col-status,#monitorSection .monitor-list-header .col-actions{display:none}
   #monitorSection .monitor-item{grid-template-columns:18px minmax(0,1fr) auto;grid-template-areas:'check profile actions' 'check counts counts' 'check tags tags' 'check status status';gap:6px 10px}
@@ -1099,6 +1112,20 @@ label > input[type="checkbox"] { width:16px; height:16px; padding:0; flex:none; 
 .info-tip:focus::after { opacity: 1; }
 .info-tip:focus-visible { outline: 2px solid #14744c; outline-offset: 3px; }
 
+/* Shared page actions: icon geometry and spacing are identical in Vue and native DOM. */
+body .panel-action-bar { display:flex; align-items:center; flex-wrap:wrap; row-gap:10px; column-gap:0; }
+body .panel-action-bar > * { margin:0; }
+body .panel-action-bar > :not(:last-child) { margin-right:10px; }
+body .panel-action-bar button.panel-icon-button {
+  display:inline-flex; align-items:center; justify-content:center;
+  flex:0 0 30px; width:30px; min-width:30px; height:30px; min-height:30px;
+  padding:0; border:1px solid #cbdacf; border-radius:7px; background:#fff; color:#315847;
+}
+body .panel-icon-button > svg { width:16px; height:16px; stroke-width:1.75; pointer-events:none; }
+body .panel-icon-button:focus-visible { outline:2px solid #14744c; outline-offset:2px; }
+body .panel-action-bar .panel-icon-button:disabled { opacity:.55; cursor:default; }
+body .panel-action-bar button.panel-icon-primary { background:#205b45; border-color:#205b45; color:#fff; }
+
 /* Empty status text should not reserve a separate instruction row. */
 #commentTrackingStatus:empty, .comment-empty > span:empty { display: none; }
 
@@ -1178,3 +1205,9 @@ body :is(.search-wrap, .page-actions, .module-header-actions, .icon-actions, .po
 #unreciprocatedSection .availability-ok { color:#28744d; }
 #unreciprocatedSection .account-availability-icon::after { content:attr(data-tip); position:absolute; left:0; top:calc(100% + 5px); width:max-content; max-width:260px; z-index:60; white-space:normal; padding:6px 8px; border-radius:5px; background:#2c3834; color:white; font-size:12px; font-weight:400; line-height:1.4; opacity:0; pointer-events:none; }
 #unreciprocatedSection .account-availability-icon:hover::after, #unreciprocatedSection .account-availability-icon:focus-visible::after { opacity:1; }
+
+.fan-inspection-dialog{width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);box-sizing:border-box;border:0;border-radius:10px;padding:16px;color:#18302e;box-shadow:0 12px 40px #0e1c1640}
+.fan-inspection-dialog::backdrop{background:#0e1c1673}
+.fan-inspection-dialog header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.fan-inspection-dialog p{margin:10px 0;overflow-wrap:anywhere}
+.fan-inspection-dialog ul{max-height:50dvh;overflow:auto;margin:0;padding-left:20px;overflow-wrap:anywhere}

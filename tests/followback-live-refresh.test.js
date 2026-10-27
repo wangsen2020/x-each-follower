@@ -7,6 +7,15 @@ import {refreshCompletedUnfollow} from '../src/entries/panel/followback-live-ref
 const completed = {autoUnfollowState:{oldValue:{pending:{user:{handle:'Arena'}}},newValue:{pending:null}}};
 const record = {module:'unreciprocated',userKey:'tracker/arena',handle:'arena',sourceKey:'unreciprocatedTracker',bucket:'users',payload:{handle:'arena',name:'Arena.ai',status:'unfollowed',relationship:{following:false},unfollowedAt:'2026-10-26T07:40:49.440Z'}};
 
+test('account-scoped isolated pending migration does not look like completion, resolution does',async()=>{
+ const pending={user:{handle:'Arena',id:'1'}};let reads=0;
+ const deps={lookup:async()=>{reads++;return {ok:true,records:[record]};},getUsers:()=>[],setUsers:()=>{}};
+ assert.equal(await refreshCompletedUnfollow({autoUnfollowState:{oldValue:{accounts:{owner:{pending}}},newValue:{accounts:{owner:{pending:null,pendingItems:[pending]}}}}},deps),false);
+ assert.equal(reads,0);
+ assert.equal(await refreshCompletedUnfollow({autoUnfollowState:{oldValue:{accounts:{owner:{pendingItems:[pending]}}},newValue:{accounts:{owner:{pendingItems:[]}}}}},deps),true);
+ assert.equal(reads,1);
+});
+
 test('completed background action refreshes the local list, count and name search from committed data', async () => {
   let users=[{handle:'arena',name:'Arena.ai',status:'pending'},{handle:'other',status:'unfollowed'}];
   let reads=0;

@@ -78,6 +78,20 @@ export function createBackgroundRecords({service, extensionUrl = ''} = {}) {
       }
       return rows;
     },
+    async fanDirectory(handles) {
+      await ready();
+      const records=[];
+      for (const group of chunks([...new Set(handles)], PAGE_LIMIT)) {
+        const result=await call({op:'fanDirectory',handles:group});
+        records.push(...(result.records || []));
+      }
+      return records;
+    },
+    async fanInspectionTargets(request) {
+      await ready();
+      const result=await call({op:'fanInspectionTargets',...request});
+      return result.handles || [];
+    },
     async sourcePage({sourceKey, limit = PAGE_LIMIT, cursor = null} = {}) {
       await ready();
       const size = Number(limit);
