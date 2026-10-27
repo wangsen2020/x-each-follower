@@ -1,8 +1,8 @@
-# XFollower · 粉丝跟进 · v3.7.4
+# XFollower · 粉丝跟进 · v3.7.5
 
 管理 X 粉丝、待回关账号和关注任务，追踪帖子与作者，使用 Grok 或 Grok Hook 辅助创作与发布。
 
-正式发行：[XFollower 3.7.4](https://github.com/wangsen2020/x-each-follower/releases/tag/3.7.4)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
+正式发行：[XFollower 3.7.5](https://github.com/wangsen2020/x-each-follower/releases/tag/3.7.5)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
 
 ## 主要功能
 
@@ -13,6 +13,10 @@
 - **Grok Hook**：通过 Grok 自动化 Webhook 生成与回传文本，提供 Cloudflare Worker、D1 接入向导及手动教程。仍使用 Grok 用量，不代表独立 Bot 额度。
 - **发布与恢复**：发送生成请求前保存任务 ID，回传后继续原任务；已有结果直接复用，保留发布证据并阻止重复执行。可按语言追加“来关必回”，超长内容保留草稿。
 - **文章与追踪**：文章支持配图及可选 Cloudflare 备用出图；提供帖子追踪、作者榜单、知识库和执行日志。
+
+## 3.7.5 更新
+
+修复教程 Worker 的源码校验值不一致，固定部署源码使用 LF 换行，并同步教程内嵌资源。此补丁延续 3.7.4 的业务功能；没有新增生成请求或修改已发布任务。发行前完成历史工作区差异核对与清理，并重新验证依赖、测试和安装包。
 
 ## 3.7.4 更新与验收边界
 
