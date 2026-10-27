@@ -1,0 +1,34 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>自动取关 · 产品验收</title>
+<style>body{font:13px/1.6 system-ui,"Microsoft YaHei";background:#eef3ef;color:#264b3c;margin:0}main{max-width:1000px;margin:20px auto;background:white;padding:20px;border-radius:10px}button,select{padding:6px 10px;margin-right:10px;border:1px solid #ccdcd2;border-radius:5px;background:#f8fbf9;color:inherit}table{width:100%;margin-top:10px;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #d8e5dd}h1{font-size:18px}#controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}@media(max-width:600px){main{margin:8px;padding:10px}}</style>
+<main><h1>自动取关 · 调度验收</h1><p>隔离数据，使用实际调度模块和界面组件；不会操作 X 账号。</p><div id="controls"><select id="scenario"><option value="pending">单账号待确认</option><option value="quota">额度用完</option><option value="window">执行时段外</option><option value="auth">登录异常</option><option value="rate">平台限流</option><option value="off">开关关闭</option></select><button id="run">执行一轮</button><button id="resolve">模拟原操作已完成</button></div><div id="app"></div><table><tbody id="rows"></tbody></table><p id="outcome" role="status"></p></main>
+<script type="module">
+import {createApp} from 'vue';
+import {createAutoUnfollow} from '/src/features/relationships/auto-unfollow.js';
+const listeners=new Set(),calls=[],done=new Set();let tick=Date.now(),alarm;
+const users=['blocked','later','third'].map((handle,i)=>({handle,id:String(i+10),status:'overdue',followedAt:'2026-10-01T00:00:00Z',relationship:{following:true,followedBy:false}}));
+let data;
+const storage={get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,structuredClone(data[k])])),set:async value=>{const changes={};for(const [k,v]of Object.entries(value)){changes[k]={oldValue:data[k],newValue:structuredClone(v)};data[k]=structuredClone(v)}for(const listener of listeners)listener(changes,'local');}};
+const alarms={get:async()=>alarm,clear:async()=>{alarm=null},create:async(name,{when})=>{alarm={scheduledTime:when}}};
+const deps={storage,alarms,normalize:x=>x,now:()=>tick,random:()=>0.5,candidates:async()=>users,profile:async u=>({...u,relationship:{following:!done.has(u.handle),followedBy:false}}),verifyAccount:async()=>{},unfollow:async u=>{calls.push(u.handle);done.add(u.handle);return {status:200}},reconcile:async()=>{},log:async()=>{}};
+let runner=createAutoUnfollow(deps);
+globalThis.chrome={storage:{local:storage,onChanged:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}},alarms,runtime:{sendMessage:message=>runner.run({reviewHandle:message.handle})}};
+const {default:Component}=await import('/src/entries/panel/components/AutoUnfollowStatus.vue');
+const {autoUnfollowStatusController:controller,paintAutoUnfollowRow}=await import('/src/entries/panel/composables/useAutoUnfollowStatus.js');
+async function scenario(name='pending'){
+ done.clear();calls.length=0;alarm={scheduledTime:Date.now()+180000};
+ const cfg={settingsSchemaVersion:5,autoUnfollow:true,autoUnfollowAccount:{id:'1',handle:'owner'},dailyLimit:200,activeTimeStart:'00:00',activeTimeEnd:'00:00',autoUnfollowEvery:3,autoUnfollowJitter:0,overdueDays:7};
+ const state={account:'1',day:'2026-10-27',used:1,queue:['later','third'],pendingItems:[{user:users[0],at:tick-60000,checks:3,reason:'上次操作结果待确认'}]};
+ if(name==='quota')state.used=200;
+ if(name==='window'){const h=new Date().getHours();cfg.activeTimeStart=String((h+2)%24).padStart(2,'0')+':00';cfg.activeTimeEnd=String((h+3)%24).padStart(2,'0')+':00'}
+ if(name==='off')cfg.autoUnfollow=false;
+ if(name==='auth'||name==='rate')state.scheduler={phase:'paused',reason:name==='auth'?'绑定账号未就绪':'平台限流',resume:name==='auth'?'保留绑定账号的已登录 X 页面，下次计划重新核验':'等待下次计划重试'};
+ data={unreciprocatedSettings:cfg,autoUnfollowState:{accounts:{1:state}}};
+ runner=createAutoUnfollow(deps);await controller.refresh();document.querySelector('#outcome').textContent='';
+ for(const user of users){let row=document.querySelector('[data-row="'+user.handle+'"]');if(!row){row=document.createElement('tr');row.dataset.row=user.handle;row.innerHTML='<td>@'+user.handle+'</td><td><span tabindex="0"></span></td>';document.querySelector('#rows').append(row)}paintAutoUnfollowRow(row.querySelector('span'),user)}
+}
+await scenario();createApp(Component).mount('#app');
+document.querySelector('#scenario').onchange=e=>scenario(e.target.value);
+document.querySelector('#run').onclick=async()=>{const result=await runner.run();document.querySelector('#outcome').textContent=JSON.stringify({result,submitted:[...calls]});await controller.refresh()};
+document.querySelector('#resolve').onclick=()=>{done.add('blocked');document.querySelector('#outcome').textContent='已模拟原操作完成，请点击待确认账号旁的核验按钮。'};
+window.acceptance={scenario,get data(){return data},calls,done,run:()=>runner.run(),controller};
+</script></html>

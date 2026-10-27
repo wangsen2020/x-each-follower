@@ -18,6 +18,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         panel: resolve(__dirname, 'src/panel.html'),
+        grokBotGuide: resolve(__dirname, 'src/grok-bot-guide.html'),
         background: resolve(__dirname, 'src/entries/background/background.js')
       },
       output: {

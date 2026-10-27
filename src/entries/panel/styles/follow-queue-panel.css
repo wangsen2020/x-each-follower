@@ -67,14 +67,6 @@
   flex-wrap: wrap;
 }
 
-.fq-grok-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: #69766c;
-}
-
 .fq-account-badge {
   display: inline-flex;
   align-items: center;
@@ -401,8 +393,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
+  row-gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 150px;
 }
 
 .fq-trace-actions {
@@ -834,9 +827,14 @@
 .fq-subbar-left {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
+
+.fq-selection-info { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.fq-batch-feedback { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 0; font-size:12px; }
+.fq-batch-feedback details { flex:1 0 100%; }
+.fq-batch-feedback ul { margin:10px 0 0; padding-left:20px; overflow-wrap:anywhere; }
 
 .fq-pagination-wrap {
   display: flex;
@@ -982,10 +980,46 @@
 .fq-panel-root .fq-pagination { gap:0; }
 .fq-panel-root .fq-pagination > :not(:last-child) { margin-right:10px; }
 
-.fq-header-actions.module-header-actions { gap:0; margin-left:auto; }
+.fq-header-actions.module-header-actions { gap:10px 0; margin-left:auto; }
 .fq-header-actions.module-header-actions > * { margin-top:0; margin-bottom:0; }
 .fq-header-actions.module-header-actions > :not(:last-child) { margin-right:10px; }
 .fq-header-actions .module-log-button { height:32px; min-height:32px; font-size:12px; }
+
+.fq-header-actions { row-gap:10px; }
+.fq-header-actions .panel-icon-button {
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:0 0 30px;
+  width:30px;
+  min-width:30px;
+  height:30px;
+  padding:0;
+  box-sizing:border-box;
+  border:1px solid #cbdacf;
+  border-radius:7px;
+  color:#315847;
+  background:#fff;
+}
+.fq-header-actions .panel-icon-button svg { flex:none; pointer-events:none; }
+.fq-header-actions .panel-icon-button.is-active { background:#cfe7d9; border-color:#8bc7a6; color:#174a37; }
+.fq-header-actions .panel-icon-button:focus-visible,
+.fq-header-actions .fq-schedule-toggle:focus-within { outline:2px solid #14744c; outline-offset:2px; }
+.fq-header-actions .fq-schedule-toggle { cursor:pointer; margin:0; }
+.fq-header-actions .fq-schedule-toggle input {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  margin:0;
+  opacity:0;
+  cursor:pointer;
+}
+.fq-header-actions .fq-schedule-toggle:has(input:disabled) { opacity:.55; cursor:default; }
+.fq-header-actions .fq-exec-run-btn { background:#205b45; color:#fff; border-color:#205b45; }
+.fq-header-actions .fq-exec-stop-btn { background:#fff0eb; color:#b03a2e; border-color:#f2c7bd; }
+.fq-header-actions .fq-account-badge-missing { color:#b03a2e; border-color:#fbd3cb; }
 
 .fq-grok-session-card {
   margin-top: 12px;
@@ -1052,6 +1086,10 @@
 .fq-table .fq-stage-tag { color:#52685d; background:#f2f6f3; border:1px solid #dce3d9; }
 .fq-table .fq-priority-tag { color:#245b45; background:#eef6f1; border:1px solid #cbdacf; font-weight:600; }
 /* Keep configuration labels and controls together, with explanations in help. */
+.fq-drawer-body .fq-setting-row { display:flex; align-items:center; flex-wrap:nowrap; gap:10px; }
+.fq-drawer-body .fq-setting-row > label { display:inline-flex; flex-direction:row; align-items:center; flex:0 0 auto; gap:10px; margin:0; }
+.fq-drawer-body .fq-setting-row > label > .info-tip { margin:0; }
+.fq-drawer-body .fq-setting-row > select { flex:0 1 140px; width:140px; min-width:100px; margin:0; }
 .fq-drawer-body .fq-setting-group { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; gap: 0; text-align: start; }
 .fq-drawer-body .fq-setting-label { min-width: 12em; max-width: calc(100% - 90px); margin: 0 10px 0 0; line-height: 20px; flex-wrap: nowrap; }
 .fq-drawer-body .fq-setting-input { width: 80px; flex: 0 0 80px; margin: 0; text-align: start; }

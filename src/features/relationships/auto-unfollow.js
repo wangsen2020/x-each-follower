@@ -1,4 +1,5 @@
 import {createFollowbackAudit,unfollowSkipReason} from './followback-audit.js';
+import {isolatePending, samePendingTarget, targetCheckFailure, pauseDescription, PENDING_RECHECK_LIMIT, PENDING_RECHECK_INTERVAL_MS} from './auto-unfollow-state.js';
 export const AUTO_UNFOLLOW_ALARM='x-auto-unfollow';
 export const AUTO_UNFOLLOW_STATE='autoUnfollowState';
 export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=60000;
@@ -46,43 +47,60 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     await alarms.create(AUTO_UNFOLLOW_ALARM,{when});
     return when;
   }
-  async function run() {
-    if(running){await log({source:'unfollow-auto',scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：上一轮仍在运行'});return {skipped:'running'};}
+  async function run({reviewHandle = ''} = {}) {
+    if(running){await schedule(true);await log({source:'unfollow-auto',scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：上一轮仍在运行，已保留下次计划'});return {skipped:'running'};}
     const audit=createFollowbackAudit('自动取关',entry=>log({source:'unfollow-auto',...entry}),now);
-    running=true;let completed=0,attempted=0,checked=0,repaired=0,currentTarget=null;const unfollowedHandles=[];
+    running=true;let completed=0,attempted=0,checked=0,repaired=0,currentTarget=null,state=null,persist=null,nextAt=null;const unfollowedHandles=[];
+    const status=async(phase,reason='',resume='')=>{if(!state)return;state.scheduler={phase,reason,resume,nextAt,updatedAt:now(),target:currentTarget?.handle||''};await persist();};
     try {
       const cfg=await config();
       audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
-      const nextAt=await schedule(); // A worker interruption still leaves the next round scheduled.
+      nextAt=await schedule(); // A worker interruption still leaves the next round scheduled.
       audit.stage('检查配置',{'下次计划时间':nextAt?new Date(nextAt).toISOString():'未启用','当前本地时间':new Date(now()).toLocaleString(),'最短请求间隔分钟':AUTO_UNFOLLOW_MIN_INTERVAL_MS/60000});
-      if(!cfg.autoUnfollow||!inUnfollowWindow(cfg,now())){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
+      if(!reviewHandle && (!cfg.autoUnfollow||!inUnfollowWindow(cfg,now()))){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
       if(!cfg.autoUnfollowAccount?.id || !cfg.autoUnfollowAccount?.handle)throw new Error('缺少绑定账号，请重新保存自动取关设置');
       await audit.event({scope:'unreciprocated',result:'started',summary:'开始自动取关检查'});
       const ledger=(await storage.get(AUTO_UNFOLLOW_STATE))[AUTO_UNFOLLOW_STATE]||{};
       const account=String(cfg.autoUnfollowAccount.id);
       const accounts={...(ledger.accounts||{})};
       if(ledger.account && !accounts[ledger.account])accounts[ledger.account]=ledger;
-      let state=accounts[account]||{account,day:day(),used:0};
-      const persist=()=>{accounts[account]=state;return storage.set({[AUTO_UNFOLLOW_STATE]:{accounts}});};
+      state=accounts[account]||{account,day:day(),used:0};
+      persist=()=>{accounts[account]=state;return storage.set({[AUTO_UNFOLLOW_STATE]:{accounts}});};
+      await status('running',reviewHandle?'正在核验待确认账号':'正在检查取关队列');
       audit.stage('核验登录账号');
       await verifyAccount(cfg);
-      if(state.pending){
-        currentTarget=state.pending.user;
-        audit.stage('核验上次未确认的取关',{'目标账号':currentTarget.handle,'目标账号ID':currentTarget.id,'目标昵称':currentTarget.name||'','上次请求时间':new Date(state.pending.at||now()).toISOString(),'提交状态':'上次操作结果待确认，禁止重复操作'});
-        const live=await profile(state.pending.user,cfg);
-        if(state.pending.kind==='followback' ? !(live.relationship?.following===true && live.relationship?.followedBy===true) : live.relationship?.following!==false)throw new Error('上次操作结果尚未确认，已暂停自动取关，请核对执行日志');
-        await reconcile(state.pending.user,live);
-        state.queue=(state.queue||[]).filter(handle=>handle!==handleOf(state.pending.user));
-        state.pending=null;await persist();
+      isolatePending(state);await persist();
+      if(state.pendingItems.some(item=>!item?.user?.id || !handleOf(item?.user)))throw new Error('待确认记录缺少目标身份，无法安全隔离，请核对执行日志');
+      const pending=state.pendingItems.find(item=>reviewHandle ? handleOf(item.user)===handleOf({handle:reviewHandle}) : item.checks<PENDING_RECHECK_LIMIT && !(item.nextCheckAt>now()));
+      if(pending){
+        currentTarget=pending.user;
+        audit.stage('核验待确认账号',{'目标账号':currentTarget.handle,'目标账号ID':currentTarget.id,'目标昵称':currentTarget.name||'','提交状态':'仅核验关系，不重复操作'});
+        // Bound automatic recovery even when the worker is interrupted mid-check.
+        if(!reviewHandle)pending.checks++;
+        pending.nextCheckAt=now()+PENDING_RECHECK_INTERVAL_MS;await persist();
+        let live,localError;
+        try {live=await profile(pending.user,cfg);} catch(error){if(!targetCheckFailure(error))throw error;localError=error;}
+        const identityMatches=live && String(live.id||'')===String(pending.user.id) && handleOf(live)===handleOf(pending.user);
+        const confirmed=identityMatches && (pending.kind==='followback' ? live.relationship?.following===true && live.relationship?.followedBy===true : live.relationship?.following===false);
+        if(confirmed){
+          await reconcile(pending.user,live);
+          state.pendingItems=state.pendingItems.filter(item=>item!==pending);await persist();
+          await audit.event({scope:'unreciprocated',result:'success',handle:currentTarget.handle,summary:`@${currentTarget.handle} 的上次操作已核实，已解除待确认`},{'提交状态':'仅确认已有结果，本轮未重复提交'});
+        }else{
+          pending.reason=localError?.message || '上次操作结果尚未确认';await persist();
+          await audit.event({scope:'unreciprocated',result:'skipped',handle:currentTarget.handle,summary:`@${currentTarget.handle} 待确认，已隔离；其他账号继续按计划处理`},{'核验说明':pending.reason,'自动核验次数':pending.checks,'恢复方式':pending.checks>=PENDING_RECHECK_LIMIT?'在 X 核实后，点击核验':'稍后自动核验；不会重复取关'});
+        }
+        currentTarget=null;
       }
+      if(reviewHandle){await status('waiting','待确认核验结束','其他账号仍按计划处理');return {reviewed:Boolean(pending),pending:state.pendingItems.length};}
       if(state.day!==day())state={...state,day:day(),used:0};
       const cap=Math.min(1,Math.max(0,cfg.dailyLimit-(state.used||0)));
-      if(!cap){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：今日额度已用完'},{'今日已用':state.used,'下次条件':'本地日期变更后恢复额度'});return {skipped:'daily_limit'};}
-      if(now()-(state.lastAttemptAt||0)<AUTO_UNFOLLOW_MIN_INTERVAL_MS){await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：距上次请求不足 1 分钟'},{'上次请求时间':new Date(state.lastAttemptAt).toISOString()});return {skipped:'interval'};}
+      if(!cap){await status('paused','今日额度已用完','次日进入执行时段后恢复');await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：今日额度已用完'},{'今日已用':state.used,'下次条件':'本地日期变更后恢复额度'});return {skipped:'daily_limit'};}
+      if(now()-(state.lastAttemptAt||0)<AUTO_UNFOLLOW_MIN_INTERVAL_MS){await status('waiting','等待最短操作间隔','下次计划继续');await audit.event({scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：距上次请求不足 1 分钟'},{'上次请求时间':new Date(state.lastAttemptAt).toISOString()});return {skipped:'interval'};}
       audit.stage('筛选超时账号',{'今日已用':state.used,'本轮可用额度':cap});
       const allUsers=await candidates();
       audit.stage('筛选超时账号',{'候选记录总数':allUsers.length});
-      const users=allUsers.filter(u=>{const eligible=eligibleAutoUnfollow(u,cfg,now());if(!eligible)audit.skip(unfollowSkipReason(u,cfg,now()),u);return eligible;}).sort((a,b)=>Date.parse(a.followedAt)-Date.parse(b.followedAt));
+      const users=allUsers.filter(u=>{if(state.pendingItems.some(item=>samePendingTarget(item,u))){audit.skip('上次操作待确认，已隔离',u);return false;}const eligible=eligibleAutoUnfollow(u,cfg,now());if(!eligible)audit.skip(unfollowSkipReason(u,cfg,now()),u);return eligible;}).sort((a,b)=>Date.parse(a.followedAt)-Date.parse(b.followedAt));
       const byHandle=new Map(users.map(user=>[handleOf(user),user]));
       const queued=new Set();
       state.queue=[...(Array.isArray(state.queue)?state.queue:[]),...users.map(handleOf)]
@@ -107,7 +125,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         catch(error){
           // Only target-specific preflight failures may yield to the next candidate.
           // Pending actions and owner/session/network failures still stop the round.
-          if(!['AUTO_UNFOLLOW_TARGET_MISSING','AUTO_UNFOLLOW_TARGET_MISMATCH','X_PROFILE_UNAVAILABLE','X_PROFILE_IDENTITY_UNRESOLVED','X_PROFILE_ACTION_UNAVAILABLE'].includes(error.code))throw error;
+          if(!targetCheckFailure(error))throw error;
           const reason=error.code==='X_PROFILE_ACTION_UNAVAILABLE'?'主页关注入口待核实，未操作':error.code==='X_PROFILE_UNAVAILABLE'?'目标账号不可用，未操作':'目标身份待核实，未操作';
           audit.skip(reason,user);
           state.queue=state.queue.filter(item=>item!==handle);state.queue.push(handle);await persist();
@@ -158,7 +176,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
           // Transport failures and server errors remain pending until independently confirmed.
           if(result?.attempted===false || (result?.status>=400 && result?.status<500)){state.pending=null;await persist();}
           if(result?.attempted===false){state.queue=state.queue.filter(item=>item!==handle);state.queue.push(handle);await persist();}
-          throw new Error(`取关页面操作未确认成功（${result?.status||'无响应'}）${result?.error?'：'+result.error:''}，本轮已停止`);
+          throw Object.assign(new Error(`取关页面操作未确认成功（${result?.status||'无响应'}）${result?.error?'：'+result.error:''}，本轮已停止`),{status:result?.status});
         }
         audit.stage('复查实际关注关系');
         const verified=await profile(user,latest);
@@ -169,10 +187,19 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         completed++;unfollowedHandles.push(handle);
       }
       audit.stage('本轮结束',{'提交状态':completed?'已确认取关并回写本地':'本轮未新增取关'});
+      currentTarget=null;
+      await status('waiting',state.queue.length?'等待下次执行':state.pendingItems.length?'待确认账号已隔离，暂无其他排队账号':'暂无符合条件的排队账号','下次计划重新检查候选账号');
       if(!repaired)await audit.event({scope:'unreciprocated',summary:completed ? `自动取关 @${unfollowedHandles[0]} 成功` : `自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${cfg.dailyLimit}`,handle:completed?unfollowedHandles[0]:undefined,result:'success',unfollowedHandles:[...unfollowedHandles]},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
       return {completed,attempted,repaired};
     } catch(error) {
-      await audit.event({scope:'unreciprocated',summary:`自动取关${currentTarget?.handle?' @'+currentTarget.handle:''}已停止：${error.message}`,result:'failed'},{'错误原因':error.message,'错误类型':error.name,'错误代码':error.code||'未提供',...(error.status!=null?{'HTTP状态':error.status}:{}),'处理次数':attempted,'成功人数':completed,'处理建议':'核对目标关系及接口状态；有待确认记录时不会重复取关'}).catch(()=>{});
+      let isolated=false;
+      if(state && persist){
+        isolated=Boolean(state.pending);
+        if(isolated)isolatePending(state,error.message);
+        const pause=pauseDescription(error);
+        await status(isolated?'waiting':'paused',isolated?'单个账号待确认，已隔离':pause.reason,isolated?'其他账号下次计划继续；待确认账号不会重复操作':pause.resume).catch(()=>{});
+      }
+      await audit.event({scope:'unreciprocated',summary:isolated?`@${currentTarget?.handle||'当前账号'} 的操作待确认，已隔离；其他账号下次计划继续`:`自动取关${currentTarget?.handle?' @'+currentTarget.handle:''}本轮已停止：${error.message}`,result:isolated?'skipped':'failed'},{'错误原因':error.message,'错误类型':error.name,'错误代码':error.code||'未提供',...(error.status!=null?{'HTTP状态':error.status}:{}),'处理次数':attempted,'成功人数':completed,'处理建议':isolated?'待确认账号不会重复操作；可在调度状态中核验':'核对目标关系及接口状态，下次计划重新检查'}).catch(()=>{});
       return {completed,attempted,error:error.message};
     } finally {running=false;}
   }

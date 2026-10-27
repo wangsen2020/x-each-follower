@@ -1296,6 +1296,17 @@ test('quote tag settings survive partial settings saves and custom tag removal',
  assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关']);
 });
 
+test('follow-back ending is off by default and persists independently per account across saves',async()=>{
+ const store=createFollowQueueStore({indexedDB:createFakeIndexedDB()});
+ assert.equal((await store.getSettings('one')).followBackSuffixEnabled,false);
+ await store.saveSettings('one',{followBackSuffixEnabled:true});
+ await store.saveSettings('one',{every:9});
+ assert.equal((await store.getSettings('one')).followBackSuffixEnabled,true);
+ assert.equal((await store.getSettings('two')).followBackSuffixEnabled,false);
+ await store.saveSettings('one',{followBackSuffixEnabled:false});
+ assert.equal((await store.getSettings('one')).followBackSuffixEnabled,false);
+});
+
 test('quoteParticipationRate and quoteLengthMode migrate missing legacy fields, save 0/60/100 boundaries, and reject invalid explicit saves', async () => {
   const {store, indexedDB} = storeFor();
   const db = await (async () => {

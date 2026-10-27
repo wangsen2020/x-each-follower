@@ -9,7 +9,7 @@ export function tweetWeight(text) {
 /** Prefer explicit model metadata; legacy drafts only infer scripts with high confidence. */
 export function resolveCommentLanguage(text, declared = '') {
   const code = String(declared).trim().toLowerCase().split('-')[0];
-  const body = String(text || '').replace(/#[\p{L}\p{M}\p{N}_]+/gu, '').replace(/有关必回|关注必回|互关必回/g, '');
+  const body = String(text || '').replace(/#[\p{L}\p{M}\p{N}_]+/gu, '').replace(/来关必回|有关必回|关注必回|互关必回/g, '');
   const han = (body.match(/\p{Script=Han}/gu) || []).length;
   const latin = (body.match(/[a-z]/gi) || []).length;
   if (/^[a-z]{2}$/.test(code) && code !== 'un') {

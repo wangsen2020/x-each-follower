@@ -9,32 +9,11 @@
     <!-- Header -->
     <div class="kb-head">
       <p class="kb-context">记录写作经验，审核后采纳</p>
-      <div class="kb-head-actions">
-        <button type="button" class="secondary settings-gear-btn kb-icon-btn kb-settings-trigger" aria-label="知识库设置" title="知识库设置" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg></button>
-        <button
-          type="button"
-          class="kb-btn-primary kb-icon-btn kb-add-trigger"
-          aria-label="新增知识"
-          title="新增知识"
-          :disabled="!ownerId || busy"
-          @click="openCreateDrawer"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-        <button
-          type="button"
-          class="secondary kb-icon-btn kb-refresh-trigger"
-          aria-label="刷新知识"
-          title="刷新知识"
-          :disabled="loading || busy"
-          @click="loadData"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg>
-        </button>
-      </div>
+      <PanelActionBar class="kb-head-actions">
+        <PanelIconButton :icon="Settings" class="kb-settings-trigger" label="知识库设置" @click="openSettings" />
+        <PanelIconButton :icon="Plus" class="kb-add-trigger" label="新增知识" :disabled="!ownerId || busy" @click="openCreateDrawer" />
+        <PanelIconButton :icon="RefreshCw" class="kb-refresh-trigger" label="刷新知识" :disabled="loading || busy" @click="loadData" />
+      </PanelActionBar>
     </div>
 
     <!-- Alert / Notice message -->
@@ -408,6 +387,9 @@
 </template>
 
 <script setup>
+import PanelActionBar from '../components/PanelActionBar.vue';
+import PanelIconButton from '../components/PanelIconButton.vue';
+import {Settings, Plus, RefreshCw} from 'lucide';
 import { ref, reactive, computed, watch, onUnmounted } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
 import PanelCloseButton from '../components/PanelCloseButton.vue';

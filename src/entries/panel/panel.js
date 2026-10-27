@@ -1,7 +1,9 @@
 import {inspectOrActOnProfile} from '../../platform/x/guarded-relationship.js';
+import {paintAutoUnfollowRow} from './composables/useAutoUnfollowStatus.js';
 import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
 import {followerEmptyView} from './follower-empty-view.js';
 import {refreshCompletedUnfollow} from './followback-live-refresh.js';
+import {fanDirectoryFromMonitor, FAN_LABELS} from '../../features/relationships/fan-directory.js';
 import {shouldEnqueueFan} from '../../features/relationships/fan-followback-policy.js';
 import {saveFollowbackSettings, withFollowbackProgress} from '../../features/relationships/followback-settings.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
@@ -10,6 +12,7 @@ import {APP_VERSION, BACKGROUND_RELOAD_KEY} from '../../shared/version.js';
 import {executeGrokScript, assertGrokVerificationClear} from '../../features/grok/grok-verification.js';
 import {releaseGrokWindow} from '../../features/grok/temporary-windows.js';
 import {openFollowQueue} from './follow-queue-entry.js';
+import {panelSourceTab} from '../../shared/notification-source.js';
 import { normalizeHandle, parseCount, assess, riskAssess, evaluateMutualProfile, parseGrokMutualAnalysis, filterMutualTrackingUsers, selectValuableMutualTargets, csv, formatPageSummary, repairMojibake, detectAccountLanguage } from '../../features/relationships/scoring.js';
 import { followerScanDue, restoreMissingLocalSetting } from '../../shared/automation-recovery.js';
 import {normalizeQueueExecutionLog} from '../../shared/execution-log.js';
@@ -52,7 +55,7 @@ let analysisRows = [];
 let profileCache = {};
 let followerScanRunning = false;
 const temporaryBackgroundXTabs = new Set();
-let activeFollowerTab = 'following';
+let activeFollowerTab = 'fanFollowing';
 let selectedFollowerHandles = new Set();
 let followerPage = 1;
 let followerPageSize = 20;
@@ -232,6 +235,103 @@ const selectedCommentHandles = new Set();
 const MAX_FOLLOWER_SCAN = 1000;
 let mutualNetworkRunning = false;
 const followBackBusy = new Set();
+const fanInspectBusy = new Set();
+let fanBatchState=null,fanBatchTimer=null,fanBatchError='';
+let fanViewEpoch=0,fanContextChanging=false,fanStartToken=null;
+function clearFollowerSelection() {
+  selectedFollowerHandles.clear();selectedRowCopies.clear('fans');
+}
+function fanSelectionLocked() {return fanContextChanging || Boolean(fanStartToken) || fanBatchState?.stage==='running';}
+async function changeFollowerContext(change,action) {
+  const epoch=++fanViewEpoch;
+  clearTimeout(fanBatchTimer);fanStartToken=null;fanContextChanging=true;clearFollowerSelection();renderFanBatch();
+  try {
+    const result=await chrome.runtime.sendMessage({cmd:'followQueueFanBatchCancel'});
+    if(epoch!==fanViewEpoch)return;
+    if(!result?.ok)throw new Error(result?.error || '取消旧批次失败，请稍后重试');
+    fanBatchState=result.batch;fanBatchError='';change();await action();
+  }catch(error){if(epoch===fanViewEpoch)fanBatchError=error.message;}
+  finally{if(epoch===fanViewEpoch){fanContextChanging=false;renderMonitorList();}}
+}
+function renderFanBatch() {
+  const host=$('fanInspectionProgress');
+  if(!host)return;
+  const batch=fanBatchState,running=batch?.stage==='running';
+  host.hidden=(!batch || ['completed','cancelled'].includes(batch.stage)) && !fanBatchError;
+  $('batchInspectFans').disabled=fanSelectionLocked() || !selectedFollowerHandles.size;
+  $('batchInspectFans').textContent=running?'核验中':selectedFollowerHandles.size?`核验所选 ${selectedFollowerHandles.size}`:'批量核验';
+  for(const check of document.querySelectorAll('#monitorList input[type="checkbox"],#listSelectAll'))check.disabled=fanSelectionLocked();
+  $('followerPageSize').disabled=fanContextChanging;
+  if(fanContextChanging)for(const id of ['followerPageSize','followerPrevPage','followerNextPage'])$(id).disabled=true;
+  $('stopFanInspection').hidden=!running;
+  $('stopFanInspection').disabled=Boolean(batch?.stopping);
+  $('resumeFanInspection').hidden=!(batch?.stage==='paused'&&batch.nextIndex<batch.handles.length);
+  $('showFanInspectionResults').hidden=!(batch?.stage==='paused' && batch.results.length);
+  if(!batch){$('fanInspectionStatus').textContent=fanBatchError;return;}
+  const verified=batch.results.filter(item=>item.status==='verified').length;
+  $('fanInspectionStatus').textContent=`${batch.scope}核验${running?'中':batch.stage==='completed'?'结束':batch.stage==='cancelled'?'已取消':'已暂停'}：已处理 ${batch.nextIndex}/${batch.handles.length} · 已核实 ${verified} · 未核实 ${batch.results.length-verified}`
+    +(batch.currentHandle?` · @${batch.currentHandle}`:'')+(batch.reason?` · ${batch.reason}`:'')+(batch.stopping?' · 当前项结束后停止':'')+(fanBatchError?` · ${fanBatchError}`:'');
+  $('fanInspectionSummary').textContent=$('fanInspectionStatus').textContent;
+  const list=$('fanInspectionResults');list.replaceChildren();
+  for(const item of batch.results){const li=document.createElement('li');const rel=item.relationship;
+    const label=item.status==='identity-mismatch'?'身份不一致，保留待核实':item.status==='failed'?item.error
+      :rel?.following&&rel?.followedBy?'已互关':rel?.following?'已关注，对方未关注你':rel?.followedBy?'待回关':'双方未关注';
+    li.textContent=`@${item.handle} · ${label}`;list.append(li);}
+}
+async function refreshFanBatchStatus() {
+  clearTimeout(fanBatchTimer);
+  const epoch=fanViewEpoch;
+  try {
+    const result=await chrome.runtime.sendMessage({cmd:'followQueueFanBatchStatus'});
+    if(epoch!==fanViewEpoch)return;
+    if(!result?.ok)throw new Error(result?.error||'批量核验状态读取失败');
+    const before=fanBatchState;fanBatchState=result.batch;
+    if(fanBatchState && ['completed','cancelled'].includes(fanBatchState.stage) && (before?.id!==fanBatchState.id || before.stage!==fanBatchState.stage))clearFollowerSelection();
+    renderFanBatch();
+    if(before?.stage==='running' && fanBatchState?.stage==='completed' && !$('fanInspectionDialog').open) $('fanInspectionDialog').showModal();
+    if(before?.stage==='running'&&fanBatchState?.stage!=='running'&&recordPages){await recordPages.invalidate();await recordPages.open('fans',currentRecordFilter('fans'));renderMonitorList();}
+    if(fanBatchState?.stage==='running')fanBatchTimer=setTimeout(refreshFanBatchStatus,800);
+  }catch(error){if(epoch===fanViewEpoch&&fanBatchState){fanBatchError=error.message;renderFanBatch();fanBatchTimer=setTimeout(refreshFanBatchStatus,2000);}}
+}
+async function fanBatchAction(action) {
+  const epoch=fanViewEpoch,token={epoch};
+  fanBatchError='';
+  try {
+    if(action==='followQueueFanBatchStart') {
+      selectedRowCopies.reconcilePage('fans',selectedFollowerHandles,currentFollowerUsers());
+      if(!selectedFollowerHandles.size)throw new Error('请先勾选当前页需要核验的账号');
+      fanStartToken=token;renderFanBatch();
+    }
+    const labels={fanFollowing:'已关注',fanPending:'待回关',fanMutual:'已互关',fanUnknown:'待核实'};
+    const message={cmd:action,filter:currentRecordFilter('fans'),scope:selectedFollowerHandles.size?'所选账号':followerSearch.trim()?'搜索结果':labels[activeFollowerTab]||'当前分类'};
+    if(selectedFollowerHandles.size)message.handles=[...selectedFollowerHandles];
+    const result=await chrome.runtime.sendMessage(message);
+    if(epoch!==fanViewEpoch)return;
+    if(!result?.ok)throw new Error(result?.error||'批量核验未能开始');
+    fanBatchState=result.batch;
+    if(action==='followQueueFanBatchStart')clearFollowerSelection();
+    renderMonitorList();void refreshFanBatchStatus();
+  }catch(error){if(epoch===fanViewEpoch){fanBatchError=error.message;renderFanBatch();}}
+  finally{if(fanStartToken===token){fanStartToken=null;renderFanBatch();}}
+}
+
+async function inspectFanRelationship(user) {
+  const key = String(user?.handle || '').toLowerCase();
+  if (!key || fanInspectBusy.has(key)) return;
+  fanInspectBusy.add(key);
+  renderMonitorList();
+  try {
+    const result = await chrome.runtime.sendMessage({cmd:'followQueueInspectFan',handle:key});
+    if (!result?.ok) throw new Error(result?.error || '关系核验失败');
+    if (recordPages) {
+      await recordPages.invalidate();
+      await recordPages.open('fans',currentRecordFilter('fans'));
+    }
+    monitorStatus(`@${user.handle} 关系已核验`);
+  } catch (error) { monitorStatus(`@${user.handle}：${error.message}`); }
+  finally { fanInspectBusy.delete(key); renderMonitorList(); }
+}
+let fanDeleteRunning = false;
 const unfollowBusy = new Set();
 let unfollowRunning = false;
 let unfollowStopped = false;
@@ -348,7 +448,7 @@ function paintSummaryCount(id, count) {
 function refreshSidebarBadges() {
   const summaries = recordPaging && recordPages ? recordPages.summaries() : null;
   if (summaries && (summaries.fans || summaries.mutual || summaries.comments || summaries.unreciprocated)) {
-    paintSummaryCount('queueCount', summaries.fans?.tabs?.pendingQueue || 0);
+    paintSummaryCount('queueCount', summaries.fans?.tabs?.fanPending || 0);
     paintSummaryCount('mutualNetworkCount', summaries.mutual?.tabs?.all || 0);
     paintSummaryCount('commentTrackingCount', summaries.comments?.tabs?.all || 0);
     paintSummaryCount('unreciprocatedCount', (summaries.unreciprocated?.tabs?.overdue || 0) + (summaries.unreciprocated?.tabs?.pending || 0));
@@ -500,7 +600,7 @@ function bridgePersist(key, value) {
 }
 
 function currentRecordFilter(moduleName) {
-  if (moduleName === 'fans') return {tab: activeFollowerTab, search: followerSearch, pageSize: capPageSize(followerPageSize)};
+  if (moduleName === 'fans') return {tab: followerSearch.trim() ? 'fanAll' : activeFollowerTab, search: followerSearch, pageSize: capPageSize(followerPageSize)};
   if (moduleName === 'mutual') return {tab: activeMutualTab, search: mutualSearch, tags: [...(activeMutualTags || [])], pageSize: capPageSize(mutualPageSize)};
   if (moduleName === 'comments') return {tab: activeCommentFilter, search: commentSearch, pageSize: capPageSize(commentPageSize)};
   const tab = activeUnreciprocatedTab === 'unreciprocated' && unreciprocatedOverdueFilter !== 'all'
@@ -530,7 +630,7 @@ function servedRecordWindow(moduleName, fallbackUsers, page, pageSize) {
     users: served.records.map(record => {
       const payload = structuredClone(record.payload || {});
       if (record.view) payload.relationship = structuredClone(record.view);
-      if (moduleName === 'fans') payload.status = monitorUserStatus(payload);
+      if (moduleName === 'fans' && !payload.fanCategory) payload.status = monitorUserStatus(payload);
       return payload;
     }),
     total,
@@ -973,16 +1073,11 @@ function removeUnfollowedUser(key) {
   selectedFollowerHandles.delete(k);
 }
 
-function currentFollowerUsers(index = buildRelationshipIndex(monitor)) {
-  let source;
-  if (activeFollowerTab === 'notMutual') {
-    source = getNotMutualUsers(index.followers);
-  } else if (activeFollowerTab === 'followBack') {
-    source = (monitor.queue || []).filter(user => user.status !== 'followed' && user.state !== 'following' && user.relationship?.following !== true);
-  } else {
-    source = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user, index) === 'followed').map(user => ({...user, status:monitorUserStatus(user, index)}));
-  }
-  return [...source].sort((a,b) => String(b.discoveredAt || '').localeCompare(String(a.discoveredAt || '')));
+function currentFollowerUsers() {
+  const served = recordPaging && recordPages ? recordPages.window('fans') : null;
+  if (served) return served.records.map(record => structuredClone(record.payload || {}));
+  const category = {fanFollowing:'following',fanPending:'pending',fanMutual:'mutual',fanUnknown:'unknown'}[activeFollowerTab];
+  return fanDirectoryFromMonitor(monitor).filter(row => followerSearch.trim() || row.payload.fanCategory === category).map(row => row.payload);
 }
 
 function renderMonitorList() {
@@ -998,7 +1093,7 @@ function renderMonitorList() {
   const pending = (monitor.queue || []).filter(user => user.status === 'pending' && user.state !== 'following' && user.relationship?.following !== true);
   const notMutualUsers = getNotMutualUsers(index.followers);
   const keyword = followerSearch.trim().toLowerCase();
-  const matchedUsers = keyword ? allTabUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allTabUsers;
+  const matchedUsers = keyword && !servedFans ? allTabUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allTabUsers;
   const fanWindow = servedRecordWindow('fans', matchedUsers, followerPage, followerPageSize);
   if (!fanWindow.served) followerPage = fanWindow.page;
   const totalPages = fanWindow.totalPages;
@@ -1008,11 +1103,12 @@ function renderMonitorList() {
   const listHeader = $('monitorListHeader');
   const following = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user, index) === 'followed').length;
   const fanTabs = fanWindow.summary?.tabs;
-  paintFollowerCount('followingCount', fanTabs ? (fanTabs.following || 0) : following);
-  paintFollowerCount('followBackCount', fanTabs ? (fanTabs.pendingQueue || 0) : pending.length);
-  paintFollowerCount('notMutualCount', fanTabs ? (fanTabs.notMutual || 0) : notMutualUsers.length);
+  paintFollowerCount('followingCount', fanTabs ? (fanTabs.fanFollowing || 0) : following);
+  paintFollowerCount('followBackCount', fanTabs ? (fanTabs.fanPending || 0) : pending.length);
+  paintFollowerCount('fanMutualCount', fanTabs?.fanMutual || 0);
+  paintFollowerCount('fanUnknownCount', fanTabs?.fanUnknown || 0);
   document.querySelectorAll('[data-follower-tab]').forEach(button => {
-    const isActive = button.dataset.followerTab === activeFollowerTab;
+    const isActive = !followerSearch.trim() && button.dataset.followerTab === activeFollowerTab;
     button.classList.toggle('active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
@@ -1021,28 +1117,27 @@ function renderMonitorList() {
   empty.hidden = !emptyView.showEmpty; list.hidden = !emptyView.showList; selection.hidden = false; pagination.hidden = false;
   if (listHeader) listHeader.hidden = !hasUsers;
   list.replaceChildren();
-  $('scanFollowers').title = allUsers.length ? '扫描新粉丝，只读取最新页面直到遇到历史账号。' : '获取初始粉丝列表。';
-  $('monitorEmptyTitle').textContent = activeFollowerTab === 'notMutual' ? '没有未互关（单向关注）账号' : (activeFollowerTab === 'followBack' ? '没有待回关账号' : (allUsers.length ? '没有已关注的粉丝' : '还没有粉丝列表'));
-  $('initialFollowers').hidden = activeFollowerTab === 'followBack';
-  $('initialFollowers').textContent = activeFollowerTab === 'notMutual' ? '扫描关注与粉丝' : (allUsers.length ? '扫描新粉丝' : '获取初始列表');
-  const archiveCount = fanTabs?.archive ?? allUsers.length;
-  const pendingBadge = fanTabs ? (fanTabs.pendingQueue || 0) : pending.length;
-  $('monitorStatus').textContent = (fanTabs || allUsers.length) ? `本地档案 ${Number(archiveCount).toLocaleString()} 个 · 待回关 ${pendingBadge} 个 · 未互关 ${fanTabs ? (fanTabs.notMutual || 0) : notMutualUsers.length} 个${keyword ? ` · 搜索到 ${countText(visibleTotal, servedFans?.scanned)}` : ''}` : '点击“获取初始列表”开始建立本地粉丝档案。';
-  if (!recordPaging) {
-    const visibleKeys = new Set(allTabUsers.map(user => user.handle.toLowerCase()));
-    for (const key of [...selectedFollowerHandles]) if (!visibleKeys.has(key) && !allUsers.some(user => user.handle.toLowerCase() === key)) selectedFollowerHandles.delete(key);
-  }
+  $('scanFollowers').setAttribute('data-panel-tip', allUsers.length ? '扫描新粉丝，只读取最新页面直到遇到历史账号。' : '获取初始粉丝列表。');
+  const categoryLabel = {fanFollowing:'已关注',fanPending:'待回关',fanMutual:'已互关',fanUnknown:'待核实'}[activeFollowerTab];
+  $('monitorEmptyTitle').textContent = '没有' + (categoryLabel || '匹配的') + '账号';
+  $('initialFollowers').hidden = true;
+  const archiveCount = fanTabs?.fanAll ?? allUsers.length;
+  $('monitorStatus').textContent = keyword
+    ? '全部分类搜索 · ' + (visibleTotal == null ? '本页 ' + users.length + ' 人' : '找到 ' + visibleTotal + ' 人') + (servedFans?.nextCursor ? ' · 可继续翻页' : '')
+    : '本地账号 ' + Number(archiveCount).toLocaleString() + ' 个 · 每人仅计一次' + (fanTabs?.fanNone ? ' · 无关系 ' + fanTabs.fanNone + ' 个，可通过全局搜索查找' : '');
+  selectedRowCopies.reconcilePage('fans',selectedFollowerHandles,users);
   $('selectedCount').textContent = String(selectedFollowerHandles.size);
-  if ($('totalVisibleCount')) $('totalVisibleCount').textContent = countText(visibleTotal, servedFans?.scanned);
+  if ($('totalVisibleCount')) $('totalVisibleCount').textContent = String(users.length);
   if ($('analyzeSelected')) {
-    $('analyzeSelected').hidden = activeFollowerTab === 'notMutual';
+    $('analyzeSelected').hidden = !keyword && activeFollowerTab === 'fanFollowing';
     $('analyzeSelected').disabled = selectedFollowerHandles.size === 0 || selectedFollowerHandles.size > 20;
   }
+  if ($('batchDeleteFans')) $('batchDeleteFans').disabled = selectedFollowerHandles.size === 0 || fanDeleteRunning || fanSelectionLocked();
   if ($('addSelectedToMutual')) {
     $('addSelectedToMutual').disabled = selectedFollowerHandles.size === 0;
   }
   if ($('batchUnfollow')) {
-    $('batchUnfollow').hidden = activeFollowerTab !== 'notMutual';
+    $('batchUnfollow').hidden = Boolean(keyword) || activeFollowerTab !== 'fanFollowing';
     $('batchUnfollow').disabled = selectedFollowerHandles.size === 0 || unfollowRunning;
   }
   $('listSelectAll').checked = users.length > 0 && users.every(user => selectedFollowerHandles.has(user.handle.toLowerCase()));
@@ -1054,9 +1149,9 @@ function renderMonitorList() {
     : formatPageSummary(fanWindow.page, totalPages, visibleTotal);
   $('followerPrevPage').disabled = fanWindow.served ? !((servedFans?.cursors || []).length > 1) : followerPage <= 1;
   $('followerNextPage').disabled = fanWindow.served ? !servedFans?.nextCursor : followerPage >= totalPages;
-  if (!allTabUsers.length && !keyword) return;
+  if (!allTabUsers.length && !keyword) {renderFanBatch();return;}
   if (!users.length) {
-    const noMatch = document.createElement('p'); noMatch.className = 'monitor-no-match'; noMatch.textContent = emptyView.message; list.append(noMatch); return;
+    const noMatch = document.createElement('p'); noMatch.className = 'monitor-no-match'; noMatch.textContent = emptyView.message; list.append(noMatch); renderFanBatch();return;
   }
   const fragment = document.createDocumentFragment();
   for (const user of users) {
@@ -1066,13 +1161,8 @@ function renderMonitorList() {
     const select = document.createElement('input');
     select.type = 'checkbox';
     select.checked = selectedFollowerHandles.has(key);
-    select.title = activeFollowerTab === 'notMutual' ? '选择后可批量取关' : '选择后可提交给 Grok 分析';
+    select.title = activeFollowerTab === 'fanFollowing' ? '选择后可批量取关' : '选择后可提交给 Grok 分析';
     select.addEventListener('change', () => {
-      if (select.checked && activeFollowerTab !== 'notMutual' && selectedFollowerHandles.size >= 20) {
-        select.checked = false;
-        monitorStatus('Grok 一次最多选择 20 个账号。');
-        return;
-      }
       if (select.checked) { selectedFollowerHandles.add(key); selectedRowCopies.retain('fans', key, user); }
       else { selectedFollowerHandles.delete(key); selectedRowCopies.forget('fans', key); }
       renderMonitorList();
@@ -1131,20 +1221,17 @@ function renderMonitorList() {
     const tagCell = createMutualTagCell(user, 'div');
 
     const badge = document.createElement('span');
-    if (activeFollowerTab === 'notMutual' || user.notMutual) {
-      badge.className = 'monitor-badge badge-danger';
-      badge.textContent = '未回关我';
-      badge.title = '不推荐原因：你已关注该账号，但对方未回关你';
-      badge.dataset.tip = badge.title;
-    } else {
-      badge.className = `monitor-badge badge-${user.status || 'saved'}`;
-      badge.textContent = { danger: '风险', following: '已关注', followed: '已回关', pending: '待回关', follow_failed: '关注失败', blocked: '已屏蔽', saved: '本地收录' }[user.status] || '本地收录';
-      if (user.status === 'follow_failed' && user.followFailureReason) badge.title = `最近失败原因：${user.followFailureReason}`;
-    }
+    badge.className = 'monitor-badge badge-' + (user.fanCategory === 'unknown' ? 'saved' : 'followed');
+    badge.textContent = FAN_LABELS[user.fanCategory] || '待核实';
+    badge.title = user.fanRelationshipReason || '最近一次本地关系记录；可点击核验关系更新';
 
     const actions = document.createElement('div');
     actions.className = 'monitor-actions';
-    if (activeFollowerTab === 'followBack' && user.status !== 'followed') {
+    const inspect = monitorIconButton('available', fanInspectBusy.has(key) ? '核验中…' : '核验关系');
+    inspect.disabled = fanInspectBusy.has(key);
+    inspect.addEventListener('click', () => inspectFanRelationship(user));
+    actions.append(inspect);
+    if (user.fanCategory === 'pending') {
       const follow = monitorIconButton('follow', followBackBusy.has(key) ? '回关中…' : '回关');
       follow.disabled = followBackBusy.has(key);
       follow.classList.toggle('is-busy', followBackBusy.has(key));
@@ -1152,7 +1239,7 @@ function renderMonitorList() {
       follow.addEventListener('click', () => followBackOne(user, follow));
       actions.append(follow);
     }
-    if (activeFollowerTab === 'notMutual') {
+    if (user.fanCategory === 'following') {
       const unfollow = monitorIconButton('unfollow', unfollowBusy.has(key) ? '取关中…' : '取消关注');
       unfollow.disabled = unfollowBusy.has(key);
       unfollow.classList.toggle('is-busy', unfollowBusy.has(key));
@@ -1172,10 +1259,15 @@ function renderMonitorList() {
     action.addEventListener('click', () => openProfileDrawer(user));
     actions.append(action);
 
+    const deleteButton = monitorIconButton('delete', '删除本地记录');
+    deleteButton.disabled = fanDeleteRunning || fanSelectionLocked();
+    deleteButton.addEventListener('click', () => deleteFanRecords([key]));
+    actions.append(deleteButton);
     item.append(select, info, counts, tagCell, badge, actions);
     fragment.append(item);
   }
   list.append(fragment);
+  renderFanBatch();
 }
 function renderQueue() { renderMonitorList(); }
 
@@ -1960,10 +2052,11 @@ function renderMutualNetwork() {
 
   const selCount = selectedMutualHandles.size;
   if (!batchRefreshRunning && $('batchRefreshMutual')) {
-    $('batchRefreshMutual').textContent = selCount > 0 ? `批量更新 (${selCount})` : '批量更新';
+    $('batchRefreshMutual').setAttribute('data-panel-tip', selCount > 0 ? `更新已选 ${selCount} 个账号` : '更新当前页的公开资料及关注关系');
+    $('batchRefreshMutual').setAttribute('aria-label', '批量更新');
   }
   if ($('grokAnalyzeMutual')) {
-    $('grokAnalyzeMutual').textContent = selCount > 0 ? `Grok 分析 (${Math.min(selCount, 20)})` : 'Grok 分析';
+    $('grokAnalyzeMutual').setAttribute('data-panel-tip', selCount > 0 ? `Grok 分析已选账号中的前 ${Math.min(selCount, 20)} 个` : 'Grok 分析当前页账号，最多 20 个');
   }
 
   const pagination = $('mutualPagination');
@@ -2251,14 +2344,14 @@ async function fetchUserProfileNetwork(user, tabId, readHomePosts = false) {
         }
         const preEval = evaluateMutualProfile({...user, ...updated});
         if (readHomePosts || (!preEval.promise && !preEval.hasBaitRisk && !(user.posts?.length))) {
-          const posts = await readPostsFromProfileTab(tabId, handle, 10, readHomePosts ? 6000 : 4000);
+          const posts = await readPostsFromProfileTab(tabId, handle, 20, readHomePosts ? 6000 : 4000);
           if (posts.length) updated.posts = posts;
         }
         return updated;
       }
     }
   } catch (error) { if(error.code==='X_PROFILE_UNAVAILABLE')throw error; }
-  const bundle = await readProfileBundleInBackground({handle}, 10, tabId);
+  const bundle = await readProfileBundleInBackground({handle}, 20, tabId);
   if (['not_found','suspended'].includes(bundle.status)) return bundle;
   return {
     name: repairMojibake(bundle.name || user.name || handle),
@@ -2335,7 +2428,7 @@ async function batchRefreshMutualNetwork() {
 
   batchRefreshRunning = true;
   const btn = $('batchRefreshMutual');
-  if (btn) btn.textContent = '停止更新';
+  if (btn) { btn.setAttribute('data-panel-tip', '停止批量更新'); btn.setAttribute('aria-label', '停止批量更新'); }
   networkStatus(`准备批量更新${modeLabel}账号的信息…`);
 
   let tabId;
@@ -2599,7 +2692,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       const t = await chrome.tabs.get(tabId).catch(() => null);
       if (!t) throw new Error('主页标签页已关闭');
       if (t.status === 'complete') {
-        bundle = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null) || bundle;
+        bundle = await readProfileOnTab(chrome,tabId,handle,20,'profile-posts').catch(()=>null) || bundle;
       }
       if (bundle.pending) await sleep(650);
     }
@@ -2623,7 +2716,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       remainingDwellMs -= currentStepDelay;
     }
 
-    const afterScroll = await readProfileOnTab(chrome,tabId,handle,10,'profile-posts').catch(()=>null);
+    const afterScroll = await readProfileOnTab(chrome,tabId,handle,20,'profile-posts').catch(()=>null);
     if (afterScroll && !afterScroll.pending) {
       bundle = afterScroll;
     }
@@ -2695,7 +2788,7 @@ async function visitScrollAndFollowCandidate(user, cfg) {
       // 关注成功后再评论：任何一步失败只记录原因，不影响已完成的关注。
       const comment = {status: 'off', reason: ''};
       if (cfg.grokAutoComment) {
-        const withUrl = (updatedProfile.posts || []).slice(0, 5);
+        const withUrl = (updatedProfile.posts || []).filter(post=>!post.isPinned).slice(0, 20);
         if (!withUrl.length) {
           Object.assign(comment, {status: 'skipped', reason: '没有读到带链接的帖子，无法定位评论目标'});
         } else {
@@ -3077,7 +3170,7 @@ async function markQueueFollowed(user) {
   const key = user.handle.toLowerCase();
   registerTrackedFollow(user);
   const now = new Date().toISOString();
-  const stamp = entry => { entry.followedAt = now; entry.followedAtSource = 'confirmed'; delete entry.followBackAt; entry.relationship = {...(entry.relationship || {}), following: true}; };
+  const stamp = entry => { entry.followedAt = now; entry.followedAtSource = 'confirmed'; entry.followingObservedAt = now; delete entry.followBackAt; entry.relationship = {...(entry.relationship || {}), following: true}; };
   let item = (monitor.queue || []).find(entry => entry.handle?.toLowerCase() === key);
   if (!item && user?.handle) {
     item = {...user, handle: user.handle};
@@ -3582,7 +3675,7 @@ async function scanOwnFollowing(tabId, handle, maxUsers = 1000, startCursor = ''
     readCount = budget.consumed;
     for (const user of pageUsers) {
       if (user.handle.toLowerCase() !== handle.toLowerCase()) {
-        found.set(user.handle.toLowerCase(), {...user, relationship:{...(user.relationship || {}), following:true}});
+        found.set(user.handle.toLowerCase(), {...user, relationshipObservedAt:new Date().toISOString(), relationship:{...(user.relationship || {}), following:true}});
       }
     }
     const progress=nextUserListPage(response.json,cursor,pageUsers);
@@ -3606,13 +3699,6 @@ async function syncOwnFollowingList(tabId, handle) {
       monitor.followingUsers = [...previous.values()];
       monitor.followingCursor = result.nextCursor || null;
       monitor.followingListComplete = result.complete;
-      const followingHandles = ownFollowingHandles(buildRelationshipIndex(monitor));
-      const apply = user => {
-        if (!user?.handle) return;
-        if (followingHandles.has(user.handle.toLowerCase())) user.relationship = {...(user.relationship || {}), following:true};
-        user.relationshipKnown = typeof user.relationship.followedBy === 'boolean';
-      };
-      for (const user of [...(monitor.users || []), ...(monitor.queue || []), ...(mutualNetwork.users || [])]) apply(user);
       return result.users;
     }
   } catch {}
@@ -3651,7 +3737,7 @@ async function scanFollowersFromNetwork(tabId, startCursor = '', operation = 'Fo
     readCount = budget.consumed;
     const selected = pageUsers.filter(user => user.handle.toLowerCase() !== handle.toLowerCase());
     if (!startCursor && !topFollower) topFollower = selected[0] || null;
-    addUniqueUsersUpTo(found, selected, maxUsers, user => ({...user, followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
+    addUniqueUsersUpTo(found, selected, maxUsers, user => ({...user, relationshipObservedAt:new Date().toISOString(), followerSource:operation === 'BlueVerifiedFollowers' ? 'verified_followers' : 'followers'}));
     const progress=nextUserListPage(response.json,cursor,pageUsers);
     if (!progress.next) {
       if (!progress.complete) return {fallbackReason:`${operation} 分页游标未前进`,partialUsers:[...found.values()],operation};
@@ -3693,11 +3779,15 @@ async function scanFollowerList(scanSource = 'manual') {
       for (const user of networkUsers) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
       const users = [...previous.values()];
       const followingScanned = await syncOwnFollowingList(tabId, handle);
-      const queue = reconcileFollowBackQueue(monitor.queue, users, riskAssess);
+      const freshFollowing = new Set(followingScanned.map(user => user.handle.toLowerCase()));
+      for (const user of users) if (freshFollowing.has(user.handle.toLowerCase())) { user.relationship = {...user.relationship, following:true}; user.state = 'following'; }
+      const queue = reconcileFollowBackQueue(monitor.queue, [...networkUsers, ...followingScanned], riskAssess);
       const queueChanges = changedFollowBackRows(monitor.queue, queue);
       queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
-      const pendingEligible = queue.filter(user => shouldEnqueueFan(user, monitor));
+      const directory = fanDirectoryFromMonitor({...monitor,users,queue});
+      const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
+      const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
       let enqueuedCount = 0;
       const enqueuedHandles = [];
       const autoEnqueue = monitor.autoEnqueue !== false;
@@ -3726,7 +3816,7 @@ async function scanFollowerList(scanSource = 'manual') {
       const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
       const cpText = complete ? '本圈已到末页，下轮从最新粉丝重新开始' : `本轮读取 ${readCount} 人，下轮从保存的游标接续`;
       const notMutualCount = getNotMutualUsers().length;
-      const pendingCount = queue.filter(user => user.status === 'pending').length;
+      const pendingCount = pendingHandles.size;
       const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
 
       monitor = {
@@ -3741,7 +3831,7 @@ async function scanFollowerList(scanSource = 'manual') {
         followerCursor: nextCursor || null,
         source: sourceOperation === 'BlueVerifiedFollowers' ? 'verified_followers_network' : 'followers_network'
       };
-      await writeLocal({monitor:{...monitor,users:networkUsers.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
+      await writeLocal({monitor:{...monitor,users:users.filter(user => freshFollowing.has(user.handle.toLowerCase()) || networkUsers.some(item => item.handle.toLowerCase() === user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
       persist('monitor', monitor); renderQueue(); renderSettingsDrawer(); renderMonitorList();
 
       await recordMonitorLog({
@@ -3793,11 +3883,15 @@ async function scanFollowerList(scanSource = 'manual') {
     for (const user of users) { const old=previous.get(user.handle.toLowerCase()); previous.set(user.handle.toLowerCase(), {...old, ...user, discoveredAt:old?.discoveredAt || foundAt}); }
     const allUsers = [...previous.values()];
     const followingScanned = await syncOwnFollowingList(tabId, handle);
-    const queue = reconcileFollowBackQueue(monitor.queue, allUsers, riskAssess);
+    const freshFollowing = new Set(followingScanned.map(user => user.handle.toLowerCase()));
+    for (const user of allUsers) if (freshFollowing.has(user.handle.toLowerCase())) { user.relationship = {...user.relationship, following:true}; user.state = 'following'; }
+    const queue = reconcileFollowBackQueue(monitor.queue, [...users, ...followingScanned], riskAssess);
     const queueChanges = changedFollowBackRows(monitor.queue, queue);
     queue.sort((a,b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
 
-    const pendingEligible = queue.filter(user => shouldEnqueueFan(user, monitor));
+    const directory = fanDirectoryFromMonitor({...monitor,users:allUsers,queue});
+    const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
+    const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
     let enqueuedCount = 0;
     const enqueuedHandles = [];
     const autoEnqueue = monitor.autoEnqueue !== false;
@@ -3826,7 +3920,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const newCheckpointHandle = reachedCheckpointDom ? topFollowerDom?.handle || monitor.checkpointHandle || null : monitor.checkpointHandle || null;
     const newCount = users.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
     const notMutualCount = getNotMutualUsers().length;
-    const pendingCount = queue.filter(user => user.status === 'pending').length;
+    const pendingCount = pendingHandles.size;
     const capText = users.length >= followerBatch ? `本次达到 ${followerBatch} 个上限；` : '';
     const coverageText = reachedCheckpointDom ? `已到达旧位点，新位点 @${newCheckpointHandle}` : '尚未到达旧位点，本次仅为部分结果；下轮继续补齐';
     const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
@@ -3843,7 +3937,7 @@ async function scanFollowerList(scanSource = 'manual') {
       followerCursor: null,
       source: 'followers_dom'
     };
-    await writeLocal({monitor:{...monitor,users:users.map(user => previous.get(user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
+    await writeLocal({monitor:{...monitor,users:allUsers.filter(user => freshFollowing.has(user.handle.toLowerCase()) || users.some(item => item.handle.toLowerCase() === user.handle.toLowerCase())),queue:queueChanges,followingUsers:followingScanned}});
     persist('monitor', monitor);
     renderQueue();
     renderSettingsDrawer();
@@ -3921,7 +4015,7 @@ function installPageCopies(moduleName) {
   if (recordPaging && recordPages?.isComplete(legacyKey)) return;
   const page = recordPaging && recordPages ? recordPages.window(moduleName) : null;
   if (!page) return;
-  const signature = page.records.map(record => record.userKey).join('\0');
+  const signature = String(page.revision || '') + JSON.stringify(page.records.map(record => [record.userKey,record.payload]));
   if (installedPageSignature.get(moduleName) === signature) return;
   installedPageSignature.set(moduleName, signature);
   const users = [];
@@ -3977,52 +4071,70 @@ function reloadRecordModule(moduleName, render) {
   return runRecordPageAction(moduleName, () => recordPages.open(moduleName, currentRecordFilter(moduleName)), render);
 }
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
-  activeFollowerTab = button.dataset.followerTab;
-  selectedFollowerHandles.clear();
-  selectedRowCopies.clear('fans');
-  followerPage = 1;
-  reloadRecordModule('fans', renderMonitorList);
+  const tab=button.dataset.followerTab;
+  void changeFollowerContext(()=>{activeFollowerTab=tab;followerSearch='';$('followerSearch').value='';followerPage=1;},
+    ()=>reloadRecordModule('fans',renderMonitorList));
 }));
 $('listSelectAll')?.addEventListener('change', event => {
   const allUsers = currentFollowerUsers();
   const keyword = followerSearch.trim().toLowerCase();
-  const matchedUsers = keyword ? allUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allUsers;
-  const users = matchedUsers.slice((followerPage - 1) * followerPageSize, followerPage * followerPageSize);
-  if (activeFollowerTab === 'notMutual') {
-    for (const user of users) {
-      const key = user.handle.toLowerCase();
-      if (event.target.checked) selectedFollowerHandles.add(key);
-      else selectedFollowerHandles.delete(key);
-    }
-  } else {
-    const additions = users.filter(user => !selectedFollowerHandles.has(user.handle.toLowerCase())).length;
-    if (event.target.checked && selectedFollowerHandles.size + additions > 20) {
-      const capacity = 20 - selectedFollowerHandles.size;
-      for (const user of users.slice(0, Math.max(0, capacity))) selectedFollowerHandles.add(user.handle.toLowerCase());
-      monitorStatus(`Grok 一次最多分析 20 个账号，已从当前页选择前 ${Math.max(0, capacity)} 个。`);
-    } else {
-      for (const user of users) {
-        const key = user.handle.toLowerCase();
-        if (event.target.checked) selectedFollowerHandles.add(key);
-        else selectedFollowerHandles.delete(key);
-      }
-    }
+  const matchedUsers = keyword && !(recordPaging && recordPages) ? allUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allUsers;
+  const users = recordPaging && recordPages ? allUsers : matchedUsers.slice((followerPage - 1) * followerPageSize, followerPage * followerPageSize);
+  for (const user of users) {
+    const key=user.handle.toLowerCase();
+    if(event.target.checked){selectedFollowerHandles.add(key);selectedRowCopies.retain('fans',key,user);}
+    else {selectedFollowerHandles.delete(key);selectedRowCopies.forget('fans',key);}
   }
   renderMonitorList();
 });
+async function deleteFanRecords(handles) {
+  const targets = [...new Set(handles)].filter(Boolean);
+  if (!targets.length || fanDeleteRunning || fanSelectionLocked()) return;
+  if (!confirm('删除所选 ' + targets.length + ' 个账号的粉丝管理本地记录？不会改变 X 关注关系，后续同步可能重新出现。')) return;
+  fanDeleteRunning = true;
+  renderMonitorList();
+  let succeeded = 0;
+  const failures = [];
+  try {
+    assertRecordWritesOpen(!recordPaging);
+    for (const handle of targets) {
+      try {
+        const response = await chrome.runtime.sendMessage({cmd:'recordData', op:'deleteFanAccount', handle});
+        if (!response?.ok) throw new Error(response?.error || '删除失败');
+        for (const field of ['users','queue','followingUsers']) if (Array.isArray(monitor[field])) monitor[field] = monitor[field].filter(item => String(item?.handle || '').toLowerCase() !== handle);
+        selectedFollowerHandles.delete(handle);
+        selectedRowCopies.forget('fans', handle);
+        succeeded++;
+      } catch (error) { failures.push('@' + handle + '：' + error.message); }
+    }
+    installedPageSignature.clear();
+    if (recordPages) { await recordPages.invalidate(); await recordPages.open('fans', currentRecordFilter('fans')); }
+  } catch (error) { failures.push(error.message); }
+  finally {
+    fanDeleteRunning = false;
+    renderMonitorList();
+    monitorStatus('已删除 ' + succeeded + ' 个本地账号记录' + (failures.length ? '；未完成：' + failures.join('；') : '') + '。');
+  }
+}
+$('batchDeleteFans')?.addEventListener('click', () => deleteFanRecords([...selectedFollowerHandles]));
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
+$('batchInspectFans')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchStart'));
+$('closeFanInspectionDialog')?.addEventListener('click', () => $('fanInspectionDialog').close());
+$('showFanInspectionResults')?.addEventListener('click', () => { if (!$('fanInspectionDialog').open) $('fanInspectionDialog').showModal(); });
+$('stopFanInspection')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchStop'));
+$('resumeFanInspection')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchResume'));
 $('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
 function searchFollowers(value) {
-  followerSearch=String(value||'').trim();followerPage=1;
-  if(recordPaging&&recordPages)runRecordPageAction('fans', () => recordPages.search('fans', currentRecordFilter('fans')), renderMonitorList);
-  else renderMonitorList();
+  const search=String(value||'').trim();
+  void changeFollowerContext(()=>{followerSearch=search;followerPage=1;},
+    ()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.search('fans',currentRecordFilter('fans')),renderMonitorList):Promise.resolve());
 }
 $('followerSearch')?.addEventListener('input',event=>searchFollowers(event.target.value));
 $('followerSearchBtn')?.addEventListener('click',()=>searchFollowers($('followerSearch').value));
 $('followerSearch')?.addEventListener('keydown',event=>{if(event.key==='Enter')searchFollowers(event.target.value);});
-$('followerPageSize')?.addEventListener('change', event => { followerPageSize=capPageSize(event.target.value); followerPage=1; reloadRecordModule('fans', renderMonitorList); });
-$('followerPrevPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.previous('fans'), renderMonitorList); return; } followerPage--; renderMonitorList(); });
-$('followerNextPage')?.addEventListener('click', () => { if (recordPaging && recordPages) { runRecordPageAction('fans', () => recordPages.next('fans'), renderMonitorList); return; } followerPage++; renderMonitorList(); });
+$('followerPageSize')?.addEventListener('change', event => {const size=capPageSize(event.target.value);void changeFollowerContext(()=>{followerPageSize=size;followerPage=1;},()=>reloadRecordModule('fans',renderMonitorList));});
+$('followerPrevPage')?.addEventListener('click', () => {void changeFollowerContext(()=>{if(!recordPaging)followerPage--;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.previous('fans'),renderMonitorList):Promise.resolve());});
+$('followerNextPage')?.addEventListener('click', () => {void changeFollowerContext(()=>{if(!recordPaging)followerPage++;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.next('fans'),renderMonitorList):Promise.resolve());});
 $('collectNetwork')?.addEventListener('click', () => collectMutualNetwork($('networkAnchor')?.value, true));
 $('networkAnchor')?.addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer')?.addEventListener('click', closeProfileDrawer);
@@ -4489,6 +4601,7 @@ async function bootRecordDashboard() {
   if (booted?.config?.commentAutoFollowSettings) commentTracking = {...commentTracking, autoFollow: normalizeAutoFollowConfig(booted.config.commentAutoFollowSettings)};
   if (booted?.config?.unreciprocatedSettings) unreciprocatedTracker = {...unreciprocatedTracker, config: normalizeUnreciprocatedConfig(withFollowbackProgress(booted.config.unreciprocatedSettings, metadata.unreciprocatedTracker?.config))};
   hideMigrationProgress(document);
+  void refreshFanBatchStatus();
   const activeModule = booted?.module || panelModuleForTab(activeDashboardTab) || 'fans';
   const panelId = activeModule === 'fans' ? 'monitor' : activeModule === 'mutual' ? 'mutual' : activeModule;
   loadRegistry.succeed(panelId);
@@ -4499,7 +4612,7 @@ async function bootRecordDashboard() {
     try { if (monitor.enabled) await startFollowerScan('alarm'); }
     finally { chrome.runtime.sendMessage({cmd:'scheduledFollowersDone',token:scheduledToken}).catch(() => {}); }
   }, 1000);
-  else if (followerScanDue(monitor)) setTimeout(() => {
+  else if (!panelSourceTab(location.search) && followerScanDue(monitor)) setTimeout(() => {
     if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan('alarm');
   }, 1000);
 }
@@ -4512,6 +4625,10 @@ try {
   recordPaging = false;
   monitorStatus(`记录迁移失败：${error.message}`);
 }
+
+// Apply the notification route after records are ready so the target loads once.
+const notificationTab = panelSourceTab(location.search);
+if (notificationTab) setTab(notificationTab);
 
 // 自动检测后台 Service Worker 是否还是未重载的旧版本（例如刷新了 panel.html 但 Chrome 未重载 background.js）
 try {
@@ -5349,7 +5466,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
     let testUser = null;
     let testPosts = [];
     for (const u of [...(mutualNetwork.users || []), ...(commentTracking.users || [])]) {
-      const posts = [...(profileCache[String(u.handle || '').toLowerCase()]?.posts || []), ...(u.posts || []), ...(u.recentPosts || [])].slice(0, 5);
+      const posts = [...(profileCache[String(u.handle || '').toLowerCase()]?.posts || []), ...(u.posts || []), ...(u.recentPosts || [])].filter(post=>!post.isPinned).slice(0, 20);
       if (posts.some(hasRealPost)) { testUser = u; testPosts = posts; break; }
     }
     if (!testUser) {
@@ -6212,6 +6329,12 @@ function renderUnreciprocatedUI() {
     const tdDeadline = document.createElement('td');
     tdDeadline.className = 'col-status';
     tdDeadline.textContent = ['mutual', 'unfollowed'].includes(user.status) ? '—' : user.status === 'overdue' ? '已超时' : elapsedDays === null ? '时间未知' : '未超时';
+    const scheduleBadge=document.createElement('span');
+    scheduleBadge.className='auto-unfollow-row-status';
+    scheduleBadge.style.cssText='display:block;font-size:12px;line-height:24px;white-space:normal;color:#51695c';
+    scheduleBadge.tabIndex=0;
+    paintAutoUnfollowRow(scheduleBadge,user);
+    accMeta.insertBefore(scheduleBadge,bioP);
     tr.append(tdRelation);
     tr.append(tdDeadline);
 
@@ -6578,6 +6701,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // Per-list controls remain temporary overrides of these persisted defaults.
 async function applySystemPagination(reload=true) {
   const settings=await readSystemSettings('pagination');
+  if(reload&&settings.fans!==followerPageSize)await changeFollowerContext(()=>{followerPageSize=settings.fans;},()=>Promise.resolve());
   followerPageSize=settings.fans;mutualPageSize=settings.mutual;commentPageSize=settings.comments;unreciprocatedPageSize=settings.unreciprocated;
   followerPage=mutualPage=commentPage=unreciprocatedPage=1;
   for(const [key,id] of Object.entries({fans:'followerPageSize',mutual:'mutualPageSize',comments:'commentPageSize',unreciprocated:'unreciprocatedPageSize'})) {

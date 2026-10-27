@@ -394,6 +394,8 @@ test('batchLimit counts only new follows while alreadyFollowing and skipped cont
   assert.equal(result.counters.skipped, 1);
   assert.equal(result.counters.quotePublished, 2);
   assert.match(result.summary, /本轮检查 5 人：新增关注 2、原已关注 2、策略跳过 1/);
+  assert.equal(result.stopReason, 'batch-limit');
+  assert.match(result.summary, /已达本轮新增关注上限 2 人/);
   assert.match(result.summary, /引用评价：发布 2/);
   assert.ok(events.some(e => e.type === 'run-complete'));
 
@@ -427,6 +429,8 @@ test('inspectLimit and timeBudgetMinutes stop the cycle cleanly', async () => {
   assert.equal(firstRun.ok, true);
   assert.equal(firstRun.counters.inspected, 2);
   assert.equal(firstRun.counters.skipped, 2);
+  assert.equal(firstRun.stopReason, 'inspect-limit');
+  assert.match(firstRun.summary, /已达本轮检查上限 2 人/);
 
   await store.saveSettings('acc-1', {enabled: true, batchLimit: 5, inspectLimit: 10, timeBudgetMinutes: 1});
   const timeScheduler = createFollowQueueScheduler({
@@ -441,6 +445,8 @@ test('inspectLimit and timeBudgetMinutes stop the cycle cleanly', async () => {
 
   const secondRun = await timeScheduler.run({accountId: 'acc-1'});
   assert.equal(secondRun.counters.inspected, 1);
+  assert.equal(secondRun.stopReason, 'time-budget');
+  assert.match(secondRun.summary, /已达本轮时限 1 分钟/);
   const remaining = (await store.list({accountId: 'acc-1'})).filter(j => j.state === 'pending');
   assert.equal(remaining.length, 1);
 });

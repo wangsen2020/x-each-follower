@@ -31,6 +31,7 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   grokProfileAssessment: true,
   grokEnabled: false,
   autoPublish: false,
+  followBackSuffixEnabled: false,
   publicationMode: 'quote',
   quoteParticipationRate: 60,
   quoteLengthMode: 'adaptive'
@@ -258,6 +259,7 @@ function mergeEvaluations(existing, incoming, followJobId) {
       publicationMode: resolveEvaluationPublicationMode(prev.publicationMode, item.publicationMode),
       article: isMeaningfulObject(item.article) ? clone(item.article) : (prev.article ? clone(prev.article) : null),
       coverAttemptedAt: item.coverAttemptedAt ?? prev.coverAttemptedAt ?? 0,
+      relayJobId: nonEmptyString(item.relayJobId, prev.relayJobId).slice(0,128),
       articleDraftUrl: item.articleDraftUrl || prev.articleDraftUrl || '',
       language: nonEmptyString(item.language, prev.language),
       baseText: nonEmptyString(item.baseText, prev.baseText),
@@ -304,7 +306,16 @@ function mergeEvaluations(existing, incoming, followJobId) {
         : (item.generationAttemptedAt === 0 || prev.generationAttemptedAt === 0 ? 0 : undefined));
     if (generationAttemptedAt !== undefined) merged.generationAttemptedAt = generationAttemptedAt;
     if (Number.isFinite(item.publishedAttemptedAt) || Number.isFinite(prev.publishedAttemptedAt)) {
-      merged.publishedAttemptedAt=Number.isFinite(item.publishedAttemptedAt)?item.publishedAttemptedAt:prev.publishedAttemptedAt;
+      merged.publishedAttemptedAt=item.publishedAttemptedAt > 0 ? item.publishedAttemptedAt
+        : prev.publishedAttemptedAt > 0 ? prev.publishedAttemptedAt : 0;
+    }
+    const recoveryHistory = new Map();
+    for (const entry of [...(prev.recoveryHistory || []), ...(item.recoveryHistory || [])]) {
+      if (entry?.id && !recoveryHistory.has(entry.id)) recoveryHistory.set(entry.id, clone(entry));
+    }
+    if (recoveryHistory.size) merged.recoveryHistory = [...recoveryHistory.values()];
+    if (typeof item.recoveryDraftOnly === 'boolean' || typeof prev.recoveryDraftOnly === 'boolean') {
+      merged.recoveryDraftOnly = typeof item.recoveryDraftOnly === 'boolean' ? item.recoveryDraftOnly : prev.recoveryDraftOnly;
     }
 
     map.set(item.taskId, merged);
@@ -356,6 +367,7 @@ function normalizeSettings(input, base) {
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
+  next.followBackSuffixEnabled = merged.followBackSuffixEnabled === true;
   next.publicationMode = PUBLICATION_MODES.includes(merged.publicationMode)
     ? merged.publicationMode
     : (PUBLICATION_MODES.includes(base?.publicationMode)

@@ -110,7 +110,8 @@ test('ambiguous request reserves quota and does not repeat on worker restart',as
  const f=setup();let calls=0;f.deps.unfollow=async()=>{calls++;throw new Error('network timeout');};
  const first=await createAutoUnfollow(f.deps).run();assert.match(first.error,/timeout/);
  assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].used,1);
- const second=await createAutoUnfollow(f.deps).run();assert.match(second.error,/尚未确认/);assert.equal(calls,1);
+ const second=await createAutoUnfollow(f.deps).run();assert.equal(second.skipped,'interval');assert.equal(calls,1);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems[0].user.handle,'test0');
 });
 test('pending success is reconciled after restart without resending',async()=>{
  const f=setup({config:{dailyLimit:1}});f.data[AUTO_UNFOLLOW_STATE]={accounts:{'1':{account:'1',day:'2026-10-23',used:1,pending:{user:user()}}}};
@@ -221,4 +222,57 @@ test('one successful action produces exactly one success card for its round',asy
 
 test('live follower is never unfollowed and mutual relation is reconciled',async()=>{const f=setup({deps:{profile:async u=>({...u,relationship:{following:true,followedBy:true}})}});await f.runner.run();assert.equal(f.sent.length,0);assert.equal(f.reconciled.length,5);assert.ok(f.reconciled.every(([,v])=>v.relationship.followedBy===true));});
 test('live followback is performed once, confirmed, and reconciled instead of unfollow',async()=>{let followed=false,count=0;const f=setup({deps:{profile:async u=>({...u,relationship:{following:followed,followedBy:true}}),followback:async()=>{count++;followed=true;return {status:200,attempted:true};}}});await f.runner.run();assert.equal(f.sent.length,0);assert.equal(count,1);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pending,null);assert.equal(f.reconciled.at(-1)[1].relationship.following,true);});
-test('ambiguous followback remains pending and cannot repeat',async()=>{let count=0;const f=setup({deps:{profile:async u=>({...u,relationship:{following:false,followedBy:true}}),followback:async()=>{count++;return {status:0,attempted:true};}}});await f.runner.run();f.advance(60000);await f.runner.run();assert.equal(count,1);assert.equal(f.sent.length,0);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pending.kind,'followback');});
+test('ambiguous followback protects its target while later targets can proceed',async()=>{const handles=[];const f=setup({deps:{profile:async u=>({...u,relationship:{following:false,followedBy:true}}),followback:async u=>{handles.push(u.handle);return {status:0,attempted:true};}}});await f.runner.run();f.advance(60000);await f.runner.run();assert.deepEqual(handles,['test0','test1']);assert.equal(f.sent.length,0);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems[0].kind,'followback');});
+
+test('legacy unresolved target survives restart without blocking unrelated unfollows or refunding quota',async()=>{
+ const f=setup();f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:5,pending:{user:user(0),at:time-120000},queue:['test0','test1','test2']}}};
+ assert.equal((await f.runner.run()).completed,1);assert.deepEqual(f.sent,['test1']);
+ f.advance(60000);assert.equal((await createAutoUnfollow(f.deps).run()).completed,1);assert.deepEqual(f.sent,['test1','test2']);
+ const state=f.data[AUTO_UNFOLLOW_STATE].accounts['1'];assert.equal(state.used,7);assert.equal(state.pendingItems.length,1);assert.equal(state.pendingItems[0].user.handle,'test0');
+});
+test('pending identity is protected by both ID and handle across renames',async()=>{
+ const f=setup({deps:{candidates:async()=>[{...user(0),handle:'renamed'},{...user(0),id:'999'},user(1)]}});
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
+ await f.runner.run();assert.deepEqual(f.sent,['test1']);
+});
+test('automatic pending rechecks stop after three, manual review only reconciles and never submits',async()=>{
+ let checks=0,confirmed=false;
+ const f=setup({deps:{candidates:async()=>[],profile:async u=>{checks++;return {...u,relationship:{following:!confirmed,followedBy:false}};}}});
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
+ for(let i=0;i<5;i++){await createAutoUnfollow(f.deps).run();f.advance(10*60000);}
+ assert.equal(checks,3);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems[0].checks,3);
+ confirmed=true;await createAutoUnfollow(f.deps).run({reviewHandle:'test0'});
+ assert.equal(checks,4);assert.deepEqual(f.sent,[]);assert.equal(f.reconciled.length,1);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems.length,0);
+});
+test('manual review with an unknown target cannot execute ordinary queued actions',async()=>{
+ const f=setup();await f.runner.run({reviewHandle:'missing'});assert.deepEqual(f.sent,[]);
+});
+test('global failures during pending verification preserve the record and pause the round',async()=>{
+ for(const status of [401,429,503]){
+ const f=setup({deps:{profile:async()=>{throw Object.assign(Error('HTTP failure'),{status});}}});
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
+ assert.ok((await f.runner.run()).error);assert.deepEqual(f.sent,[]);
+ const state=f.data[AUTO_UNFOLLOW_STATE].accounts['1'];assert.equal(state.pendingItems.length,1);assert.equal(state.scheduler.phase,'paused');
+ }
+});
+test('unidentifiable historical pending record fails closed instead of losing protection',async()=>{
+ const f=setup();f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:{}}}}};
+ assert.match((await f.runner.run()).error,/缺少目标身份/);assert.deepEqual(f.sent,[]);
+});
+test('multiple unresolved accounts survive new ambiguous operations and restart',async()=>{
+ const attempts=[];const f=setup({deps:{unfollow:async u=>{attempts.push(u.handle);return {status:0,attempted:true};}}});
+ for(let i=0;i<3;i++){await createAutoUnfollow(f.deps).run();f.advance(60000);}
+ assert.deepEqual(attempts,['test0','test1','test2']);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems.length,3);
+});
+test('pending isolation cannot bypass daily limits or a disabled setting',async()=>{
+ const f=setup({config:{dailyLimit:1}});f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
+ assert.equal((await f.runner.run()).skipped,'daily_limit');assert.deepEqual(f.sent,[]);
+ f.data.unreciprocatedSettings.autoUnfollow=false;assert.equal((await f.runner.run()).skipped,'disabled_or_outside_window');assert.deepEqual(f.sent,[]);
+});
+test('an alarm arriving during an active round preserves the next alarm without starting a second action',async()=>{
+ const f=setup(),original=f.deps.profile;let release,firstRead=true;
+ f.deps.profile=async u=>{if(firstRead){firstRead=false;await new Promise(resolve=>{release=resolve;});}return original(u);};
+ const runner=createAutoUnfollow(f.deps),first=runner.run();await new Promise(resolve=>setImmediate(resolve));
+ f.alarms.clear();assert.equal((await runner.run()).skipped,'running');assert.ok(f.alarms.has(AUTO_UNFOLLOW_ALARM));assert.deepEqual(f.sent,[]);
+ release();await first;assert.deepEqual(f.sent,['test0']);
+});

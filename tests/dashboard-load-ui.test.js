@@ -205,7 +205,8 @@ test('Vue page templates expose loading state before the business controller sta
   assert.ok(pageMarkup.indexOf('id="openUnreciprocatedLogs"') < pageMarkup.indexOf('id="unreciprocatedLoad"'));
   assert.match(pageMarkup, /id="followingCount"[^>]*>…</);
   assert.match(pageMarkup, /id="followBackCount"[^>]*>…</);
-  assert.match(pageMarkup, /id="notMutualCount"[^>]*>…</);
+  assert.match(pageMarkup, /id="fanMutualCount"[^>]*>…</);
+  assert.match(pageMarkup, /id="fanUnknownCount"[^>]*>…</);
   assert.doesNotMatch(pageMarkup, /id="followingCount"[^>]*>0</);
 });
 

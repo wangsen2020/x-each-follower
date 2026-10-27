@@ -74,6 +74,15 @@ test('hung comment does not block follow and cannot publish after its abort sign
   assert.equal((await env.read()).evaluations[0].status,'failed');
 });
 
+test('recovery drafts cannot be picked up by automatic comments even after a pre-submit quota failure',async()=>{
+  const env=await setup(async()=>assert.fail('manual recovery must stay manual'));
+  const saved=await env.read();
+  await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[{...saved.evaluations[0],
+    status:'pending',reasonCode:'quota_not_sent',recoveryDraftOnly:true}]});
+  assert.equal((await env.worker.run()).idle,true);
+  assert.equal((await env.read()).evaluations[0].status,'pending');
+});
+
 test('restart never blindly repeats an interrupted publication',async()=>{
   const env=await setup(async()=>assert.fail('must verify manually'));
   const saved=await env.read();
@@ -101,6 +110,11 @@ test('probability zero pauses without opening tabs or spending Grok and keeps pe
 test('legacy unselected tasks finish without Grok and restart never redraws',async()=>{
   const env=await setup(async()=>assert.fail('not selected'));
   await env.store.saveSettings(env.accountId,{quoteParticipationRate:60});
+  const job=await env.read();
+  await env.store.resolveJob({accountId:env.accountId,id:job.id,evaluations:[{...job.evaluations[0],candidatePosts:[{
+    url:'https://x.com/done/status/789',text:'A source with a very high weighted score.',textComplete:true,
+    replyCount:1000,repostCount:1000,likeCount:1000,bookmarkCount:1000
+  }]}]});
   let rolls=0;
   const args={...env.args,random:()=>{rolls++;return .6;}};
   assert.equal((await createCommentWorker(args).run()).reasonCode,'probability_skip');
@@ -137,4 +151,62 @@ test('runtime rejects a late generated comment after timeout before any publish 
     taskId:'123:789',signal:controller.signal}),/评论任务超时/);
   assert.equal((await env.read()).state,'followed');
   assert.deepEqual(removed,[999]);
+});
+
+test('known X cooldown permits the enabled Bot fallback but still pauses an unbound client',async()=>{
+  let calls=0;const env=await setup(async()=>{calls++;return {ok:true}});
+  env.values.xfGrokUsageLimit={channel:'x.com',retryAt:Date.now()+900000};
+  assert.equal((await createCommentWorker({...env.args,botAvailable:async()=>false}).run()).quotaExhausted,true);
+  assert.equal(calls,0);
+  await createCommentWorker({...env.args,botAvailable:async()=>true}).run();
+  assert.equal(calls,1);
+});
+
+test('Bot pending keeps source candidates and job ID; retry resumes that ID without publishing',async()=>{
+  const env=await setup(async()=>{});await env.store.saveSettings(env.accountId,{skipRiskContent:false,autoPublish:false});
+  const values={followQueueBinding:{accountId:env.accountId,handle:'viewer',activated:true},profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}]}}};
+  const api={storage:{local:{get:async key=>({[key]:values[key]}),set:async patch=>Object.assign(values,patch)}},tabs:{create:async()=>({id:999}),remove:async()=>{}},scripting:{executeScript:async({func})=>{assert.equal(func.name,'readQueueViewerOnPage');return [{result:'viewer'}]}}};
+  let calls=0;const runtime=createFollowQueueRuntime({api,store:env.store,generateComment:async(_h,posts,_name,options)=>{
+    calls++;if(calls===1)return {ok:false,pending:true,channel:'grok-bot',jobId:'relay-original',reason:'waiting'};
+    assert.equal(options.relayJobId,'relay-original');assert.equal(posts[0].url,'https://x.com/done/status/789');
+    return {ok:true,reply:'Useful draft.',channel:'grok-bot',quality:{passed:true},post:posts[0]};
+  }});
+  const first=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:env.job.id,taskId:'123:789'});
+  assert.equal(first.pending,true);assert.equal(first.evaluation.status,'uncertain');assert.equal(first.evaluation.relayJobId,'relay-original');
+  const second=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:env.job.id,taskId:'123:789'});
+  assert.equal(second.evaluation.status,'draft',JSON.stringify({second,calls}));assert.equal(second.evaluation.text,'Useful draft.');assert.equal(calls,2);
+});
+
+test('late Bot callback resumes automatically by original task after restart and provider change',async()=>{
+  let env,calls=0;
+  env=await setup(async(_binding,options)=>{
+    calls++;assert.equal(options.automatic,true);
+    const ev=(await env.read()).evaluations[0];
+    assert.equal(ev.relayJobId,'existing-cloud-job');
+    const next={...ev,status:calls===1?'uncertain':'posted',reasonCode:calls===1?'bot_pending':'generated',text:calls===1?'':'Returned quote',publishedPostUrl:calls===1?'':'https://x.com/viewer/status/999'};
+    await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[next]});
+    return {ok:calls!==1,pending:calls===1,evaluation:next};
+  },{botAvailable:async()=>false});
+  const ev=(await env.read()).evaluations[0];
+  await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[{...ev,status:'uncertain',reasonCode:'bot_pending',relayJobId:'existing-cloud-job',generationAttemptedAt:100}]});
+  env.values.xfGrokUsageLimit={channel:'x.com',retryAt:Date.now()+900000};
+  assert.equal((await env.worker.run()).pending,true);
+  assert.equal((await createCommentWorker(env.args).run()).ok,true);
+  assert.equal((await env.read()).evaluations[0].status,'posted');
+  assert.equal((await createCommentWorker(env.args).run()).idle,true);
+  assert.equal(calls,2);
+});
+for(const evidence of [{publishedAttemptedAt:100},{publishedPostId:'999'},{publishedPostUrl:'https://x.com/a/status/999'},{articleDraftUrl:'https://x.com/articles/edit/999'},{attempts:[{stage:'publish'}]},{reasonCode:'generation_uncertain'}])test('Bot auto resume refuses publication evidence or unrelated uncertainty '+JSON.stringify(evidence),async()=>{
+  const env=await setup(async()=>assert.fail('must not resume unknown publication'));
+  const ev=(await env.read()).evaluations[0];
+  await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[{...ev,status:'uncertain',reasonCode:'bot_pending',relayJobId:'original-job',...evidence}]});
+  assert.equal((await env.worker.run()).idle,true);
+});
+
+test('outer comment budget is six minutes and exceeds the Bot budget',async()=>{
+  const {COMMENT_TASK_TIMEOUT_MS}=await import('../src/features/follow-queue/comment-worker.js');
+  const {BOT_WAIT_MS}=await import('../src/features/grok/grok-bot-relay.js');
+  assert.equal(COMMENT_TASK_TIMEOUT_MS,360000);assert.equal(COMMENT_TASK_TIMEOUT_MS-BOT_WAIT_MS,60000);
+  const runtime=await readFile(new URL('../src/features/follow-queue/follow-queue-runtime.js',import.meta.url),'utf8');
+  assert.match(runtime,/setTimeout\(\(\)=>controller\.abort\(\),COMMENT_TASK_TIMEOUT_MS\)/);
 });

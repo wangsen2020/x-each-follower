@@ -2,7 +2,11 @@
   <section id="postTrackingSection" class="tab-panel own-posts" data-panel="postTracking" :hidden="activeTab !== 'postTracking'" aria-label="帖子追踪">
     <div class="post-head">
       <div class="post-heading"><div class="post-title-row"></div><div class="post-subtitle"><span>{{ data.config?.owner ? '@'+data.config.owner.handle : '待识别账号' }}</span><span class="post-monitor-count" title="最近30条监控">◉ {{ data.monitored || 0 }}/30</span><span class="post-task-state" :class="{'is-cooling':cooling}" :title="statusTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>{{ taskLabel }}</span><time v-if="data.config?.enabled && data.config?.ownerId && !scanning" :datetime="nextAt ? new Date(nextAt).toISOString() : undefined">{{ countdown }}</time></span></div></div>
-      <div class="post-head-icons"><button class="secondary post-refresh-trigger" aria-label="立即更新帖子" :title="manualBlockedUntil>clockNow ? '请求冷却至 '+date(manualBlockedUntil) : '立即更新'" :disabled="busy || loading || manualBlockedUntil>clockNow" @click="refresh(true)"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg></button><button class="secondary post-memory-trigger" aria-label="写作记忆" title="写作记忆" @click="openMemory"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5C9 3 5 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-6-1-9 1Zm0 0v15"/></svg><span v-if="data.learning?.memory?.rules?.length">{{ data.learning.memory.rules.filter(r=>r.enabled).length }}/{{ data.learning.memory.rules.length }}</span></button><button class="secondary post-settings-trigger" aria-label="帖子追踪设置" title="追踪设置" @click="openSettings"><svg viewBox="0 0 24 24" width="16" height="16" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+      <PanelActionBar class="post-head-icons">
+        <PanelIconButton :icon="RefreshCw" class="post-refresh-trigger" label="立即更新帖子" :tip="manualBlockedUntil>clockNow ? '请求冷却至 '+date(manualBlockedUntil) : '立即更新帖子'" :disabled="busy || loading || manualBlockedUntil>clockNow" @click="refresh(true)" />
+        <PanelIconButton :icon="BookOpen" class="post-memory-trigger" label="写作记忆" :tip="'写作记忆；已启用 '+(data.learning?.memory?.rules?.filter(r=>r.enabled).length || 0)+' 条规则'" @click="openMemory" />
+        <PanelIconButton :icon="Settings" class="post-settings-trigger" label="帖子追踪设置" @click="openSettings" />
+      </PanelActionBar>
     </div>
     <div class="follower-tabs" role="tablist" aria-label="帖子价值视图"><button v-for="tab in views" :key="tab.key" class="follower-tab" :class="{active:options.view===tab.key}" role="tab" :aria-selected="options.view===tab.key" @click="changeView(tab.key)">{{ tab.label }} <span>{{ data.counts?.[tab.key] || 0 }}</span></button></div>
     <div class="post-filters">
@@ -84,6 +88,9 @@
 </template>
 
 <script setup>
+import PanelActionBar from '../components/PanelActionBar.vue';
+import PanelIconButton from '../components/PanelIconButton.vue';
+import {RefreshCw, BookOpen, Settings} from 'lucide';
 import {ref, reactive, computed, watch, nextTick, onMounted, onUnmounted} from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
 import {LOW_RULE_FIELDS,normalizeLowRules,validateLowRules} from '../../../features/post-tracking/post-rules.js';

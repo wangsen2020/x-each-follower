@@ -568,7 +568,16 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
   }
 
   async function commitWithBackup(previousKey, next, backup) {
-    const transaction = await begin(['rows', 'membership', 'summaries', 'backups'], 'readwrite');
+    const transaction = await begin(['rows', 'membership', 'summaries', 'backups', 'state'], 'readwrite');
+    if (backup?.sourceKey === 'monitor' && backup.handle) {
+      const stateStore = transaction.objectStore('state');
+      const stateRequest = stateStore.get('runtime');
+      stateRequest.onsuccess = () => {
+        const state = stateRequest.result || blankState();
+        state.fanDirectoryDirtyHandles = [...new Set([...(state.fanDirectoryDirtyHandles || []), String(backup.handle).toLowerCase()])];
+        stateStore.put(state);
+      };
+    }
     const rowStore = transaction.objectStore('rows');
     const membership = transaction.objectStore('membership');
     const summaries = transaction.objectStore('summaries');

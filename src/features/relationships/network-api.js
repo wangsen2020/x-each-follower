@@ -2,6 +2,11 @@ import {createXNetworkClient} from '../../platform/x/network-client.js';
 import { repairMojibake } from './scoring.js';
 import {ACCOUNT_FOLLOW_LIMIT_MESSAGE, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
+function relationshipFlag(values) {
+  const flags=new Set(values.filter(value=>typeof value==='boolean'));
+  return flags.size===1 ? [...flags][0] : null;
+}
+
 function collectUsers(value, out = new Map()) {
   if (!value || typeof value !== 'object') return out;
   if (Array.isArray(value)) { for (const item of value) collectUsers(item, out); return out; }
@@ -12,9 +17,11 @@ function collectUsers(value, out = new Map()) {
   const relationship = value.relationship_perspectives || value.relationship || {};
   const followers = legacy?.followers_count ?? value.relationship_counts?.followers ?? value.followers_count;
   const following = legacy?.friends_count ?? value.relationship_counts?.following ?? value.friends_count;
-  const incoming = [relationship.followed_by, legacy?.followed_by, value.followed_by];
-  const followsYou = incoming.includes(true) ? true : incoming.includes(false) ? false : null;
-  const followsAccount = legacy?.following ?? relationship.following ?? value.following;
+  const incoming = [relationship.followed_by, relationship.followedBy, legacy?.followed_by, value.followed_by];
+  const followsYou = relationshipFlag(incoming);
+  const followsAccount = relationshipFlag([relationship.following,legacy?.following,value.following]);
+  const requestSent = relationshipFlag([relationship.follow_request_sent, relationship.followRequestSent, legacy?.follow_request_sent, value.follow_request_sent]);
+  const protectedAccount = relationshipFlag([value.privacy?.protected, legacy?.protected, value.protected]);
   const relationshipKnown = typeof followsYou === 'boolean' && typeof followsAccount === 'boolean';
   if (restId && handle && /^[A-Za-z0-9_]{1,15}$/.test(handle)) out.set(handle.toLowerCase(), {
     id:String(restId),
@@ -28,7 +35,8 @@ function collectUsers(value, out = new Map()) {
     state:followsAccount === true ? 'following' : followsAccount === false && followsYou === true ? 'follow_back'
       : followsAccount === false && followsYou === false ? 'none' : 'unknown',
     relationshipKnown,
-    relationship:{blocking:relationship.blocking === true, followedBy:typeof followsYou === 'boolean' ? followsYou : null, following:typeof followsAccount === 'boolean' ? followsAccount : null}
+    ...(protectedAccount !== null ? {protected:protectedAccount} : {}),
+    relationship:{blocking:relationship.blocking === true, followedBy:typeof followsYou === 'boolean' ? followsYou : null, following:typeof followsAccount === 'boolean' ? followsAccount : null, ...(requestSent !== null ? {followRequestSent:requestSent} : {})}
   });
   for (const child of Object.values(value)) collectUsers(child, out);
   return out;
@@ -64,12 +72,14 @@ export async function networkFollow(tabId, target, client = createXNetworkClient
     expectedId ? user.id === expectedId : handle && user.handle.toLowerCase() === handle.toLowerCase());
   if (result.json?.errors?.length) return {...result, status: 0, error: 'X 关注响应包含错误，关系待核实', uncertain: true};
   const responseUser = matches(result.json);
+  if (responseUser?.relationship?.followRequestSent === true) return {...result, status:0, uncertain:true, followRequestPending:true, error:'关注请求已发送，等待对方确认；不会重复提交'};
   if (responseUser?.relationship?.following === true) return {...result, verifiedFollowing: true};
   if (handle) {
     for (let attempt = 0; attempt < 2; attempt++) {
       let checked;
       try { checked = await client.profile(tabId, handle); } catch { checked = null; }
       const user = checked?.status === 200 ? matches(checked.json) : null;
+      if (user?.relationship?.followRequestSent === true) return {...result, status:0, uncertain:true, followRequestPending:true, error:'关注请求已发送，等待对方确认；不会重复提交'};
       if (user?.relationship?.following === true) return {...result, verifiedFollowing: true};
       if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 350));
     }
@@ -231,7 +241,7 @@ export function reconcileFollowBackQueue(queue = [], users = [], assessRisk = ()
     const key = user.handle.toLowerCase();
     const existing = reconciled.get(key);
     if (user.state === 'following' || user.relationship?.following === true) {
-      reconciled.delete(key);
+      if (existing) reconciled.set(key, {...existing, ...user, relationship:{...(existing.relationship || {}), ...(user.relationship || {}), following:true}, state:'following', status:'followed'});
       continue;
     }
     if (user.relationship?.followedBy === false) {

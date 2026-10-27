@@ -1,4 +1,4 @@
-import {readProfileBundle} from './page-reader.js';
+import {readProfileBundle,readPostMetricsOnPage} from './page-reader.js';
 
 export const PROFILE_ACCESS_PREFIX='xefProfileAccess:';
 export const PROFILE_UNAVAILABLE_TTL=86400000;
@@ -38,7 +38,16 @@ export async function updateProfileTab(api,tabId,options,source){
 }
 export async function readProfileOnTab(api,tabId,handle,limit,source){
   const results=await api.scripting.executeScript({target:{tabId},func:readProfileBundle,args:[handle,limit]});
-  const result=results?.[0]?.result;if(result)await observeProfile(api,handle,result,source);return result;
+  const result=results?.[0]?.result;
+  if (result?.posts?.length) {
+    const ids=result.posts.map(post=>post.url?.match(/\/status\/(\d+)/)?.[1]).filter(Boolean);
+    const metrics=(await api.scripting.executeScript({target:{tabId},world:'MAIN',func:readPostMetricsOnPage,args:[ids]}).catch(()=>[]))?.[0]?.result;
+    result.posts=result.posts.map(post=>{
+      const exact=metrics?.[post.url?.match(/\/status\/(\d+)/)?.[1]];
+      return exact ? {...post,...Object.fromEntries(Object.entries(exact).filter(([,value])=>Number.isFinite(value)&&value>=0))} : post;
+    });
+  }
+  if(result)await observeProfile(api,handle,result,source);return result;
 }
 export function unavailableFromProfileResponse(response){
   if(![200,404].includes(response?.status))return null;

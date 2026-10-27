@@ -1,3 +1,6 @@
+import {createBotOnboarding,SETUP_ALARM} from '../../features/grok/bot-onboarding.js';
+import onboardingWorkerSource from '../../assets/grok-bot-relay-worker.txt?raw';
+import onboardingSchema from '../../../deploy/grok-bot-relay/schema.sql?raw';
 import {createUnavailableCleanup,UNAVAILABLE_CLEANUP_ALARM} from '../../features/relationships/unavailable-cleanup.js';
 import {AUTO_GREETING_ALARM} from '../../features/relationships/auto-greeting.js';
 import {createBackgroundAutoGreeting} from '../../features/relationships/auto-greeting-adapter.js';
@@ -10,6 +13,7 @@ import {APP_VERSION} from '../../shared/version.js';
 import {createVersionHistory} from '../../shared/version-history.js';
 import {createSidebarIdentity} from '../../platform/x/sidebar-identity.js';
 import {createPanelLauncher} from '../../platform/panel-launcher.js';
+import {createNotificationClickHandler, notificationSource} from '../../shared/notification-source.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM, COMMENT_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
 import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
@@ -73,10 +77,11 @@ chrome.action.onClicked.addListener(tab => {
   void panelLauncher.openPanel(tab?.windowId);
 });
 
-chrome.notifications.onClicked.addListener(async id => {
-  if (id !== 'xf-grok-verification') return;
-  await showVerificationAlert({force:true}).catch(()=>{});
-});
+chrome.notifications.onClicked.addListener(createNotificationClickHandler({
+  api: chrome, launcher: panelLauncher,
+  openVerification: () => showVerificationAlert({force:true}),
+  openGrok: () => handleGrokSessionAction('open_window')
+}));
 chrome.windows.onRemoved.addListener(windowId=>{markVerificationAlertClosed(windowId).catch(()=>{});});
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{
   if(change.status==='complete')markTemporaryWindowReady(tab.windowId,tabId).catch(()=>{});
@@ -90,6 +95,7 @@ const autoGreetingRuntime=createBackgroundAutoGreeting({api:chrome,service:recor
 autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划恢复失败',error));
 const autoUnfollowRuntime=createBackgroundAutoUnfollow({api:chrome,service:recordRuntimeService,records:backgroundRecords,normalize:normalizeUnreciprocatedConfig});
 autoUnfollowRuntime.schedule(true).catch(error=>console.warn('自动取关计划恢复失败',error));
+const botOnboarding=createBotOnboarding({workerSource:onboardingWorkerSource,schema:onboardingSchema});
 const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
 const unavailableCleanup=createUnavailableCleanup({storage:chrome.storage.local,queue:followQueueRuntime.store,records:{handle:request=>recordRuntimeService.handle(request,chrome.runtime.getURL('background.js'))}});
 chrome.alarms.create(UNAVAILABLE_CLEANUP_ALARM,{periodInMinutes:5});
@@ -216,6 +222,7 @@ async function createNotification(id, options) {
   try {
     await chrome.notifications.create(id, {
       ...options,
+      ...(notificationSource(id) ? {contextMessage:`来源：${notificationSource(id).label} · 点击查看`} : {}),
       // Chrome's notification image decoder is not reliable for SVG icons.
       // Use the packaged PNG used by the extension manifest instead.
       iconUrl: chrome.runtime.getURL('icon128.png')
@@ -237,7 +244,7 @@ async function saveCommentTrackingData(tracking, changedHandle = '') {
   await backgroundRecords.batch({sourceKey:'commentTracking', changes:[{handle, sourceBucket:'users', patch:user}]});
 }
 
-async function readProfilePosts(tabId, handle, recentLimit = 5, cfg = {}) {
+async function readProfilePosts(tabId, handle, recentLimit = 20, cfg = {}) {
   const deadline = Date.now() + 25000;
   let data = {pending:true};
   while (Date.now() < deadline && data.pending) {
@@ -316,7 +323,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
       await recordAutoFollowAttempt(handle, 'processing', '', undefined);
       try {
         await updateProfileTab(chrome,tabId,{url:`https://x.com/${encodeURIComponent(handle)}`},'comment-auto-follow');
-        const profile = await readProfilePosts(tabId, handle, 5, cfg);
+        const profile = await readProfilePosts(tabId, handle, 20, cfg);
         if (['not_found','suspended'].includes(profile.status)) {
           user.autoFollowState = 'skipped'; user.autoFollowReason = profile.reason;
           user.autoFollowCheckedAt = new Date().toISOString();
@@ -411,7 +418,7 @@ async function executeCommentAutoFollow(source = 'alarm') {
           user.autoFollowState = 'followed'; delete user.autoFollowReason;
           didFollow = true;
           if (cfg.grokAutoComment) {
-            const posts = (user.recentPosts || []).slice(0, 5);
+            const posts = (user.recentPosts || []).filter(post=>!post.isPinned).slice(0, 20);
             if (!posts.length) commentRes = {status:'skipped', reason:'没有读到带链接的帖子，无法定位评论目标'};
             else {
               const g = await requestGrokComment(handle, posts, user.name, {sleep, fix:repairMojibake, profile:{...user,...profile}});
@@ -571,6 +578,13 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  if (cmd === 'reviewAutoUnfollowPending') {
+    if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || !/^[a-z0-9_]{1,15}$/i.test(message.handle || '')) {
+      sendResponse({error:'仅管理面板可核验有效的待确认账号'}); return false;
+    }
+    autoUnfollowRuntime.run({reviewHandle:message.handle}).then(sendResponse,error=>sendResponse({error:error.message}));
+    return true;
+  }
   if (cmd === 'sidebarIdentity') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
       sendResponse({ok: false, error: '仅管理面板可读取账号身份'}); return false;
@@ -735,6 +749,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleGrokWindowPool(message).then(value=>sendResponse({ok:true,value}),error=>sendResponse({ok:false,error:error.message}));
     return true;
   }
+  if (cmd === 'grokBotSetup') {
+    if(!sender.url?.startsWith(chrome.runtime.getURL(''))){sendResponse({ok:false,error:'仅扩展页面可配置接入'});return false;}
+    const actions={status:botOnboarding.status,start:botOnboarding.start,advance:botOnboarding.advance,resume:botOnboarding.resume,cancel:botOnboarding.cancel};
+    const action=Object.hasOwn(actions,message.action)?actions[message.action]:null;
+    if(!action){sendResponse({ok:false,error:'未知接入步骤'});return false;}
+    action().then(state=>sendResponse({ok:true,state}),()=>sendResponse({ok:false,error:'接入操作未完成，请保留配置页面后重试'}));return true;
+  }
   if (cmd?.startsWith('followQueue')) {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return false; }
     followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
@@ -819,6 +840,7 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     return;
   }
   if (alarm.name === TEMP_WINDOW_ALARM) { await scanTemporaryWindows().catch(error=>console.warn('临时窗口清理失败:',error)); return; }
+  if (alarm.name === SETUP_ALARM) {await botOnboarding.advance();return;}
   if (alarm.name === COMMENT_ALARM) {
     await followQueueRuntime.runComments().catch(error=>console.warn('独立评论任务:',error.message));
     return;

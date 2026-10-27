@@ -14,19 +14,94 @@ import {
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
 
+test('uncertain batch verification is sequential, confirms once and retains failures for retry', async () => {
+  const root=createMockElement('div');
+  let jobs=['a','b','c'].map(id=>({id,handle:id,state:'uncertain',sources:[]}));
+  const calls=[];let release,confirmed=false,confirmations=0;
+  const prior=globalThis.confirm;globalThis.confirm=()=>{confirmations++;return confirmed;};
+  const request=async m=>{
+    if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+    if(m.cmd==='followQueueList')return {ok:true,jobs};
+    if(m.cmd==='followQueueVerify'){
+      calls.push(m);
+      if(m.jobId==='a')await new Promise(resolve=>{release=resolve;});
+      if(m.jobId==='b')return {ok:false,error:'无法读取关系'};
+      jobs=jobs.map(j=>j.id===m.jobId?{...j,state:'followed'}:j);return {ok:true};
+    }
+    return {ok:true};
+  };
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request});
+  const wait=()=>new Promise(r=>setTimeout(r,20));
+  try {
+    await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
+    root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+    const start=()=>root.querySelectorAll('button').find(b=>b.textContent==='批量核对').click();
+    start();await wait();assert.equal(calls.length,0);
+    confirmed=true;start();await wait();assert.equal(calls.length,1);
+    assert.ok(root.querySelector('.fq-filter-tab').disabled);
+    assert.match(root.querySelector('.fq-batch-feedback').textContent,/已处理 0\/3/);
+    release();await wait();
+    assert.deepEqual(calls.map(m=>m.jobId),['a','b','c']);
+    assert.ok(calls.every(m=>m.accountId==='owner'&&m.mode==='check'));
+    assert.equal(confirmations,2);
+    assert.match(root.querySelector('.fq-batch-feedback').textContent,/成功 2，失败 1/);
+    assert.match(root.querySelector('.fq-batch-feedback').textContent,/@b：无法读取关系/);
+    assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
+  } finally {panel.destroy();globalThis.confirm=prior;}
+});
+
+test('uncertain bulk exclude and delete reuse single-item commands and stop after the in-flight item', async () => {
+  for(const mode of ['exclude','delete']){
+    const root=createMockElement('div');let jobs=['a','b'].map(id=>({id,handle:id,state:'uncertain',sources:[]}));
+    const calls=[];let release;
+    const prior=globalThis.confirm;globalThis.confirm=()=>true;
+    const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
+      if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+      if(m.cmd==='followQueueList')return {ok:true,jobs};
+      calls.push(m);await new Promise(r=>{release=r;});jobs=jobs.filter(j=>j.id!==m.jobId);return {ok:true};
+    }});
+    const wait=()=>new Promise(r=>setTimeout(r,20));
+    try{
+      await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
+      root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+      root.querySelectorAll('button').find(b=>b.textContent===(mode==='delete'?'批量删除':'批量排除')).click();
+      await wait();root.querySelector('[data-batch-stop="true"]').click();release();await wait();
+      assert.equal(calls.length,1);
+      assert.equal(calls[0].cmd,mode==='delete'?'followQueueDelete':'followQueueVerify');
+      assert.equal(mode==='delete'?calls[0].confirmed:calls[0].mode,mode==='delete'?true:'exclude');
+      assert.match(root.querySelector('.fq-batch-feedback').textContent,/已停止：已处理 1\/2/);
+      assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
+    }finally{panel.destroy();globalThis.confirm=prior;}
+  }
+});
+
 test('Grok settings stay in accessible header help instead of the task summary', async () => {
   const root = createMockElement('div');
   const settings = {...DEFAULT_SETTINGS, grokEnabled:true, publicationMode:'article', quoteParticipationRate:75, quoteLengthMode:'deep', autoPublish:false};
-  const panel = mountFollowQueuePanel(root, {accountId:'owner', request:async message => message.cmd === 'followQueueSettings' ? {ok:true, settings} : {ok:true, jobs:[]}});
+  const panel = mountFollowQueuePanel(root, {accountId:'1485853007346827264', accountHandle:'owner', request:async message => message.cmd === 'followQueueSettings' ? {ok:true, settings} : {ok:true, jobs:[]}});
   try {
     await new Promise(resolve => setTimeout(resolve, 15));
     assert.doesNotMatch(root.querySelector('.fq-summary-bar').textContent, /Grok|发帖形式|创作概率/);
     const status = root.querySelector('.fq-grok-status');
-    assert.match(status.textContent, /Grok 开启/);
-    const tip = status.querySelector('.info-tip');
-    assert.equal(tip.getAttribute('tabindex'), '0');
-    assert.equal(tip.getAttribute('data-tip'), 'Grok 开启；发帖形式：文章；创作概率：75%；篇幅：深入；自动发布：关闭');
-    assert.equal(tip.getAttribute('aria-label'), tip.getAttribute('data-tip'));
+    assert.equal(status.textContent, '');
+    assert.equal(status.getAttribute('aria-label'), 'Grok 创作设置');
+    assert.equal(status.getAttribute('data-panel-tip'), 'Grok 开启；发帖形式：文章；创作概率：75%；篇幅：深入；自动发布：关闭');
+    assert.match(status.className, /is-active/);
+    const actions = root.querySelector('.fq-header-actions');
+    assert.equal(actions.children.length, 7);
+    for (const control of actions.children) {
+      assert.equal(control.textContent, '');
+      assert.ok(control.querySelector('svg'));
+      assert.ok(control.getAttribute('data-panel-tip'));
+    }
+    const identity = root.querySelector('.fq-account-badge');
+    assert.match(identity.getAttribute('data-panel-tip'), /队列执行账号：@owner/);
+    assert.match(identity.getAttribute('data-panel-tip'), /任务和设置按此账号隔离/);
+    assert.match(identity.getAttribute('data-panel-tip'), /1485853007346827264/);
+    assert.equal(identity.getAttribute('tabindex'), '0');
+    assert.equal(root.querySelector('.fq-switch-checkbox').getAttribute('aria-label'), '定时调度');
+    status.click();
+    assert.ok(root.querySelector('.fq-drawer'));
   } finally { panel.destroy(); }
 });
 
@@ -39,7 +114,7 @@ test('evaluation retry displays progress and the returned skip reason instead of
   const panel=mountFollowQueuePanel(root,{accountId:'owner',request});
   try{
     await new Promise(r=>setTimeout(r,15));
-    root.querySelectorAll('button').find(b=>b.textContent==='重新评估').click();
+    root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='重新评估').click();
     assert.match(root.querySelector('.fq-evaluation-feedback').textContent,/正在开始/);
     listener({cmd:'followQueueEvaluationProgress',accountId:'owner',jobId:job.id,label:'正在读取原帖 2…'});
     assert.equal(root.querySelector('.fq-evaluation-feedback').textContent,'正在读取原帖 2…');
@@ -113,6 +188,15 @@ test('queue deletion requires confirmation, keeps failed rows and disables runni
     const buttons = root.querySelectorAll('.fq-delete-job');
     assert.equal(buttons.length, 2);
     assert.equal(buttons[1].disabled, true);
+    const actions = root.querySelector('tbody .fq-actions-group');
+    assert.match(actions.className, /panel-action-bar/);
+    assert.deepEqual(actions.querySelectorAll('button').map(button=>button.getAttribute('aria-label')), ['核对关系','排除','溯源详情','删除']);
+    for (const button of actions.querySelectorAll('button')) {
+      assert.equal(button.textContent, '');
+      assert.ok(button.querySelector('svg'));
+      assert.ok(button.getAttribute('data-panel-tip'));
+    }
+    assert.match(buttons[1].getAttribute('data-panel-tip'), /任务正在执行/);
     buttons[0].click(); await wait();
     assert.equal(calls.some(call=>call.cmd === 'followQueueDelete'), false);
     confirmed = true;
@@ -381,6 +465,7 @@ function setupDOM() {
   const docListeners = new Map();
   globalThis.document = {
     createElement(tag) { return createMockElement(tag); },
+    createElementNS(namespace, tag) { return createMockElement(tag); },
     createTextNode(text) { return createMockTextNode(text); },
     addEventListener(event, listener) {
       if (!docListeners.has(event)) docListeners.set(event, []);
@@ -542,7 +627,8 @@ test('mountFollowQueuePanel loads list and renders jobs with status badges and s
   // Verify header account info
   const accountBadge = root.querySelector('.fq-account-badge');
   assert.ok(accountBadge);
-  assert.ok(accountBadge.textContent.includes('WatsonTaylor23'));
+  assert.equal(accountBadge.textContent, '');
+  assert.ok(accountBadge.getAttribute('data-panel-tip').includes('WatsonTaylor23'));
 
   // Verify rendered rows
   const rows = root.querySelectorAll('tbody tr');
@@ -763,7 +849,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   await new Promise(r => setTimeout(r, 10));
 
   // Open settings drawer
-  const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+  const settingsBtn = root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]');
   assert.ok(settingsBtn);
   settingsBtn.click();
 
@@ -783,6 +869,9 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   const autoPublishSwitch = drawer.querySelector('#fq_autoPublish');
   assert.ok(autoPublishSwitch);
   assert.equal(autoPublishSwitch.checked, false);
+  const followBackSuffix = drawer.querySelector('#fq_followBackSuffixEnabled');
+  assert.ok(followBackSuffix);assert.equal(followBackSuffix.checked,false);
+  followBackSuffix.checked=true;followBackSuffix.dispatchEvent({type:'change',target:{checked:true}});
   const fanBypass = drawer.querySelector('#fq_followBackAllowAll');
   assert.ok(fanBypass);
   assert.equal(fanBypass.checked, false);
@@ -805,8 +894,11 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.ok(savedSettings);
   assert.equal(savedSettings.batchLimit, 10);
   assert.equal(savedSettings.autoPublish, true);
+  assert.equal(savedSettings.followBackSuffixEnabled, true);
   assert.equal(savedSettings.followBackAllowAll, true);
   assert.equal(savedSettings.enabled, false);
+  root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]').click();
+  assert.equal(root.querySelector('#fq_followBackSuffixEnabled').checked,true);
 
   handle.destroy();
 });
@@ -1207,7 +1299,7 @@ test('settings fetch failure displays error banner and disables save button', as
   assert.ok(alertBox.textContent.includes('配置存储损坏，无法读取'));
 
   // Open settings drawer
-  const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+  const settingsBtn = root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]');
   settingsBtn.click();
 
   const drawer = root.querySelector('.fq-drawer');
@@ -1291,7 +1383,7 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
 
   // First row has verify button
   const row0Btns = rows[0].querySelectorAll('.fq-col-actions button');
-  assert.equal(row0Btns[0].textContent, '核对关系');
+  assert.equal(row0Btns[0].getAttribute('aria-label'), '核对关系');
   row0Btns[0].click();
   await new Promise(r => setTimeout(r, 15));
   assert.ok(calls.some(c => c.cmd === 'followQueueVerify' && c.jobId === 'job-uncertain' && c.mode === 'check'));
@@ -1299,8 +1391,8 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   // Open traceability drawer on second row and verify array attempts length is rendered as '2'
   const updatedRows = root.querySelectorAll('tbody tr');
   const row1Btns = updatedRows[1].querySelectorAll('.fq-col-actions button');
-  assert.equal(row1Btns[0].textContent, '发布评价');
-  const traceBtn = Array.from(row1Btns).find(button => button.textContent === '溯源详情');
+  assert.equal(row1Btns[0].getAttribute('aria-label'), '发布评价');
+  const traceBtn = Array.from(row1Btns).find(button => button.getAttribute('aria-label') === '溯源详情');
   traceBtn.click();
 
   const drawer = root.querySelector('.fq-drawer');
@@ -1318,14 +1410,15 @@ test('uncertain job and non-posted evaluation render verify/retry actions and ar
   // Verify Run Now button re-enables after followQueueRun + fetchAll completes
   const runBtn = root.querySelector('.fq-header-actions .fq-exec-run-btn');
   assert.ok(runBtn);
-  assert.equal(runBtn.getAttribute('title'), '立即执行');
+  assert.equal(runBtn.getAttribute('data-panel-tip'), '立即执行');
   runBtn.click();
   await new Promise(r => setTimeout(r, 20));
   const runBtnAfter = root.querySelector('.fq-header-actions .fq-exec-run-btn');
   assert.ok(runBtnAfter);
   assert.equal(runBtnAfter.disabled, false, 'Run button must re-enable after followQueueRun + fetchAll completes');
-  assert.equal(runBtnAfter.getAttribute('title'), '立即执行');
-  assert.equal(runBtnAfter.textContent, '⚡');
+  assert.equal(runBtnAfter.getAttribute('data-panel-tip'), '立即执行');
+  assert.equal(runBtnAfter.textContent, '');
+  assert.ok(runBtnAfter.querySelector('svg'));
 
   handle.destroy();
 });
@@ -1703,7 +1796,7 @@ test('settings drawer renders 引用概率 and 篇幅 with accessible help, vali
   try {
     await new Promise(r => setTimeout(r, 15));
 
-    const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+    const settingsBtn = root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]');
     settingsBtn.click();
 
     let drawer = root.querySelector('.fq-drawer');
@@ -1773,7 +1866,7 @@ test('settings drawer renders 引用概率 and 篇幅 with accessible help, vali
     assert.equal(saveCalls[0].autoPublish, false);
 
     // Header help and reopened drawer reflect persisted values
-    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /创作概率：0%；篇幅：深入/);
+    assert.match(root.querySelector('.fq-grok-status').getAttribute('data-panel-tip'), /创作概率：0%；篇幅：深入/);
     settingsBtn.click();
     drawer = root.querySelector('.fq-drawer');
     assert.equal(drawer.querySelector('#fq_quoteParticipationRate').value, '0');
@@ -1844,7 +1937,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     await new Promise(r => setTimeout(r, 15));
 
     // Default header help shows the configured publication mode
-    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /发帖形式：引用评论/);
+    assert.match(root.querySelector('.fq-grok-status').getAttribute('data-panel-tip'), /发帖形式：引用评论/);
 
     // Table evaluation badges show each evaluation's own publication mode
     const rows = root.querySelectorAll('tbody tr');
@@ -1855,7 +1948,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
     assert.match(origRow.querySelector('.fq-col-eval').textContent, /新帖/);
 
     // Open settings drawer
-    const settingsBtn = root.querySelector('.fq-header-actions button[title="关注队列设置"]');
+    const settingsBtn = root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]');
     settingsBtn.click();
 
     let drawer = root.querySelector('.fq-drawer');
@@ -1923,7 +2016,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
 
     assert.equal(saveCalls.length, 1);
     assert.equal(saveCalls[0].publicationMode, 'article');
-    assert.match(root.querySelector('.fq-grok-status .info-tip').getAttribute('data-tip'), /发帖形式：文章/);
+    assert.match(root.querySelector('.fq-grok-status').getAttribute('data-panel-tip'), /发帖形式：文章/);
 
     // Reopen settings drawer and verify 新帖 remains selected
     settingsBtn.click();
@@ -1934,7 +2027,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
 
     // Existing saved quote draft in evaluation details STILL shows 引用评论 after settings changed to 新帖
     const updatedQuoteRow = [...root.querySelectorAll('tbody tr')].find(r => r.textContent.includes('@QuoteDraftUser'));
-    const quoteTraceBtn = [...updatedQuoteRow.querySelectorAll('.fq-col-actions button')].find(b => b.textContent === '溯源详情');
+    const quoteTraceBtn = [...updatedQuoteRow.querySelectorAll('.fq-col-actions button')].find(b => b.getAttribute('aria-label') === '溯源详情');
     quoteTraceBtn.click();
     const quoteDrawer = root.querySelector('.fq-drawer');
     assert.ok(quoteDrawer);
@@ -1943,7 +2036,7 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
 
     // Original draft in evaluation details shows 新帖（独立发帖，不附带引用卡片）
     const updatedOrigRow = [...root.querySelectorAll('tbody tr')].find(r => r.textContent.includes('@OriginalDraftUser'));
-    const origTraceBtn = [...updatedOrigRow.querySelectorAll('.fq-col-actions button')].find(b => b.textContent === '溯源详情');
+    const origTraceBtn = [...updatedOrigRow.querySelectorAll('.fq-col-actions button')].find(b => b.getAttribute('aria-label') === '溯源详情');
     origTraceBtn.click();
     const origDrawer = root.querySelector('.fq-drawer');
     assert.ok(origDrawer);
@@ -1952,4 +2045,28 @@ test('publicationMode radio group enforces exclusivity, keyboard-accessible tips
   } finally {
     panel.destroy();
   }
+});
+
+test('uncertain evaluation checks only and recovered generation is labeled without publishing promises', async () => {
+  const root=createMockElement('div');const calls=[];
+  let job={id:'recovery-job',handle:'target',accountId:'owner',state:'followed',sources:[],evaluations:[{taskId:'task',status:'uncertain',reasonCode:'generation_uncertain'}]};
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async message=>{
+    calls.push(message);
+    if(message.cmd==='followQueueSettings')return{ok:true,settings:DEFAULT_SETTINGS};
+    if(message.cmd==='followQueueRetryEvaluation'){
+      job={...job,evaluations:[{...job.evaluations[0],status:'failed',reasonCode:'generation_retry_ready',recoveryDraftOnly:true,
+        recoveryHistory:[{id:'generation:1',at:1,evaluation:{status:'uncertain',reason:'原始额度异常',attempts:11,generationAttemptedAt:1}}]}]};
+      return{ok:true,evaluation:job.evaluations[0],summary:'可重新生成'};
+    }
+    return{ok:true,jobs:[job]};
+  }});
+  try{
+    await new Promise(r=>setTimeout(r,20));root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='核对评价').click();
+    await new Promise(r=>setTimeout(r,20));
+    assert.equal(calls.find(m=>m.cmd==='followQueueRetryEvaluation').verifyOnly,true);
+    assert.ok(root.querySelectorAll('button').some(b=>b.getAttribute('aria-label')==='重新生成'));
+    root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='溯源详情').click();
+    assert.match(root.querySelector('.fq-recovery-history').textContent,/原始额度异常/);
+    assert.doesNotMatch(root.querySelector('.fq-eval-card').textContent,/重新生成并发布/);
+  }finally{panel.destroy()}
 });

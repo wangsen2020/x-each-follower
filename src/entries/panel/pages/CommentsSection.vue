@@ -12,7 +12,7 @@
           <button class="follower-tab" data-comment-filter="all" role="tab" aria-selected="false">全部 <span id="commentAllCount">0</span></button>
         </div>
       </div>
-      <div class="module-header-actions"><button id="openCommentLogs" class="secondary module-log-button" type="button">执行日志</button></div>
+      <PanelActionBar class="module-header-actions"><PanelIconButton id="openCommentLogs" :icon="ScrollText" label="执行日志" /></PanelActionBar>
     </div>
     <div class="comments-toolbar">
       <div class="search-wrap"><input id="commentSearch" type="search" placeholder="账号、评论或链接" autocomplete="off"><button id="commentSearchBtn" class="secondary search-btn" type="button">搜索</button></div>
@@ -42,6 +42,9 @@
   </section>
 </template>
 <script setup>
+import PanelActionBar from '../components/PanelActionBar.vue';
+import PanelIconButton from '../components/PanelIconButton.vue';
+import {ScrollText} from 'lucide';
 import PanelPagination from '../components/PanelPagination.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 const { activeTab } = panelNavigationController;

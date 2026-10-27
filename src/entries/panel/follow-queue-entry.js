@@ -46,7 +46,7 @@ export async function openFollowQueue(root) {
     const status = document.createElement('p'); status.setAttribute('role','status');
     const content = document.createElement('div');
     host.replaceChildren(setup,help,status,content);
-    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId}); };
+    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId,accountHandle:identity.handle}); };
     if (identity.binding?.activated && identity.binding.accountId === identity.accountId) mount();
     activate.addEventListener('click',async()=>{
       if (!confirm.checked) { status.textContent = '请先确认本地数据的账号归属。'; return; }

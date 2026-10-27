@@ -15,6 +15,7 @@
       <div class="system-settings-main">
       <div class="profile-drawer-head"><strong id="systemSettingsTitle">{{ settingTabs.find(tab=>tab.key===activeSection)?.label }}</strong><PanelCloseButton @click="close" /></div>
       <div class="profile-drawer-content system-settings-content">
+        <GrokBotSettings v-if="activeSection==='grok-bot'" />
         <section v-show="activeSection==='data'" aria-labelledby="localDataTitle">
           <div class="system-section-heading"><h3 id="localDataTitle">备份概览</h3><button type="button" class="secondary system-icon" title="刷新备份状态" aria-label="刷新备份状态" :disabled="loading" @click="refresh"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
           <div v-if="loading" class="system-state" role="status">正在读取备份状态…</div>
@@ -69,7 +70,7 @@
 <p class="system-state" role="status">{{ message }}</p>
         <p v-if="error" class="system-error" role="alert">{{ error }}</p>
       </div>
-      <div v-show="!['data','versions','upgrades'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
+      <div v-show="!['data','versions','upgrades','grok-bot'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
       </div>
     </aside>
   </Teleport>
@@ -79,6 +80,8 @@ import {ref, reactive, computed, nextTick, onUnmounted} from 'vue';
 import {SYSTEM_DEFAULTS, readSystemSettings, saveSystemSettings} from '../../../shared/system-settings.js';
 import {APP_VERSION} from '../../../shared/version.js';
 import PanelCloseButton from './PanelCloseButton.vue';
+import GrokBotSettings from './GrokBotSettings.vue';
+import {grokProviderController} from '../composables/useGrokProvider.js';
 import {BACKUP_DEFAULTS, validateBackupSettings} from '../../../features/records/record-snapshots.js';
 const isOpen=ref(false), drawer=ref(null), status=ref(null), loading=ref(false), loadError=ref(''), busy=ref(false), saving=ref(false), settingsLoaded=ref(false), error=ref(''), message=ref('');
 const activeSection=ref('data');
@@ -96,6 +99,7 @@ const preferenceGroups=[
 ];
 settingTabs.push(...preferenceGroups.map(group=>({key:group.key,label:{pagination:'列表分页',logs:'执行日志',windows:'临时窗口'}[group.key],icon:{pagination:'M4 5h16 M4 12h16 M4 19h16',logs:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',windows:'M3 4h18v16H3z M3 8h18 M15 12l4 4 M19 12l-4 4'}[group.key]})));
 settingTabs.push({key:'versions',label:'版本历史',icon:'M4 5h16 M4 12h10 M4 19h16 M17 10l3 3-3 3'}, {key:'upgrades',label:'升级日志',icon:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5'});
+settingTabs.splice(2,0,{key:'grok-bot',label:'Grok Hook',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
 const versionData=reactive({versions:[],logs:[]});
 const historyLoading=ref(false),historyError=ref(''),migrationStatus=ref(null);
 let historyGeneration=0;
@@ -113,7 +117,7 @@ const formatTime=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:fal
 async function request(op,extra={}){const response=await chrome.runtime.sendMessage({action:'recordData',op,...extra});if(!response?.ok)throw new Error(response?.error||'操作未完成，请重试');return response;}
 let opener, timer, generation=0;
 async function open(){opener=document.activeElement;isOpen.value=true;message.value='';error.value='';await nextTick();drawer.value?.querySelector('button')?.focus();await Promise.all([refresh(),loadSettings()]);}
-function close(){isOpen.value=false;generation++;historyGeneration++;clearTimeout(timer);opener?.focus();}
+function close(){grokProviderController.cancel();isOpen.value=false;generation++;historyGeneration++;clearTimeout(timer);opener?.focus();}
 function selectSection(section){activeSection.value=section;message.value='';error.value='';if(section==='versions'||section==='upgrades')void loadVersionHistory();}
 async function loadVersionHistory(){const ticket=++historyGeneration;historyLoading.value=true;historyError.value='';try{const response=await chrome.runtime.sendMessage({cmd:'versionHistory'});if(!response?.ok)throw new Error(response?.error||'版本记录读取失败');if(ticket!==historyGeneration)return;versionData.versions=response.versions||[];versionData.logs=response.logs||[];if(activeSection.value==='upgrades'){let migration;try{migration=(await request('status')).status;}catch(e){migration={stage:'无法读取',error:e.message};}if(ticket===historyGeneration)migrationStatus.value=migration;}}catch(e){if(ticket===historyGeneration)historyError.value=e.message;}finally{if(ticket===historyGeneration)historyLoading.value=false;}}
 async function loadSettings(){settingsLoaded.value=false;try{await Promise.all([request('backupSettings').then(result=>Object.assign(form,result.settings)),...preferenceGroups.map(async group=>Object.assign(preferences[group.key],await readSystemSettings(group.key)))]);settingsLoaded.value=true;}catch(e){error.value=e.message;}}
@@ -122,7 +126,9 @@ async function save(){error.value='';message.value='';try{saving.value=true;if(a
 function resetDefaults(){if(activeSection.value==='backup')Object.assign(form,BACKUP_DEFAULTS);else Object.assign(preferences[activeSection.value],SYSTEM_DEFAULTS[activeSection.value]);message.value='已填入默认值，保存后生效';error.value='';}
 async function backupNow(){busy.value=true;error.value='';message.value='';try{await request('maintainBackups',{force:true});message.value='备份完成，恢复校验通过';}catch(e){error.value=e.message;}finally{busy.value=false;if(isOpen.value)await refresh();}}
 function trapFocus(event){const items=[...drawer.value.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]')].filter(e=>e.getClientRects().length);const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
-onUnmounted(()=>{generation++;historyGeneration++;clearTimeout(timer);});
+const openBot=()=>{activeSection.value='grok-bot';void open();};
+document.addEventListener('xfollower:bind-grok-bot',openBot);
+onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot);generation++;historyGeneration++;clearTimeout(timer);});
 </script>
 <style scoped>
 .local-data-entry{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0!important;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important;position:relative}

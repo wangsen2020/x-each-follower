@@ -101,6 +101,18 @@ test('candidate synchronization does not restore an old followed import after X 
   assert.equal(enqueued,0);
 });
 
+test('candidate sync does not repeatedly reopen a verified skipped fan', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const source={module:'fans',url:'',enabled:true};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding,monitor:{users:[],queue:[{handle:'target',state:'follow_back',status:'pending',relationship:{following:false,followedBy:true}}]}})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let reopened=0;
+  const prior={id:'job',handle:'target',state:'skipped',sources:[source],followResult:{relationshipDecision:{code:'follow-back'},verifiedAt:1}};
+  const store={lookup:async()=>prior,getSettings:async()=>({followBackAllowAll:true}),resolveJob:async()=>{reopened++;},enqueue:async()=>{},importOutcome:async()=>{}};
+  const runtime=createFollowQueueRuntime({api,store});
+  await runtime.syncCandidates(); await runtime.syncCandidates();
+  assert.equal(reopened,0);
+});
+
 test('followQueueVerify resolves uncertain job to followed or pending or excluded without blind re-follow',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{mutual:true}};
   const resolved=[];
@@ -176,6 +188,83 @@ test('fan reconciliation reopens only a verified ratio skip and clears stale fol
   assert.equal(patches.at(-1).changes[0].patch.status,'identity_mismatch');
 });
 
+test('fan inspection updates all stored buckets without reopening skipped jobs or performing a follow', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const rows=['users','queue','followingUsers'].map(bucket=>({sourcePath:['monitor',bucket,'42'],payload:{id:'42',handle:'target',relationship:{following:false,followedBy:true}}}));
+  const patches=[],resolved=[];
+  const job={id:'job',accountId:'123',handle:'target',state:'skipped',targetUserId:'42',followResult:{reason:'关注/粉丝比例低于 80%'}};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let following=false;
+  const runtime=createFollowQueueRuntime({api,store:{lookup:async()=>job,resolveJob:async p=>{resolved.push(p);Object.assign(job,p);return {ok:true,job};}},
+    records:{lookupAll:async({bucket})=>rows.filter(row=>row.sourcePath[1]===bucket),batch:async p=>patches.push(p)},
+    fetchUser:async()=>({id:'42',handle:'target',relationshipKnown:true,relationship:{following,followedBy:true}}),
+    performFollow:async()=>{throw new Error('inspection must never follow');}});
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});
+  assert.equal(resolved.length,0);
+  assert.deepEqual(patches[0].changes.map(x=>x.sourceBucket),['users','queue','followingUsers']);
+  following=true;
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});
+  assert.equal(resolved.at(-1).state,'followed');
+  following=false;
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});
+  assert.equal(resolved.at(-1).state,'uncertain');
+  assert.equal(resolved.at(-1).followResult.following,false);
+});
+
+test('record source synchronization ignores conflicting fans and preserves completed jobs across repeated syncs', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const source={module:'fans',url:'',enabled:true};
+  const prior={id:'done',handle:'done',state:'followed',sources:[source],followBackCandidate:false,followResult:{following:true,succeeded:true}};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let enqueued=0,resolved=0;
+  const records={sourcePage:async({sourceKey})=>({records:sourceKey==='monitor'?['done','conflict'].map(handle=>({module:'fans',sourcePath:['monitor','queue',handle],payload:{handle,state:'follow_back',relationship:{following:false,followedBy:true}}})):[]}),
+    profiles:async()=>[],lookupAll:async()=>[],fanDirectory:async()=>[{handle:'done',payload:{fanCategory:'mutual',relationship:{following:true,followedBy:true}}},{handle:'conflict',payload:{fanCategory:'unknown',relationship:{following:null,followedBy:true}}}]};
+  const store={lookup:async({handle})=>handle==='done'?prior:null,getSettings:async()=>({followBackAllowAll:true}),enqueue:async()=>{enqueued++;},resolveJob:async()=>{resolved++;},importOutcome:async()=>{throw new Error('must not replace completion');}};
+  const runtime=createFollowQueueRuntime({api,records,store});
+  await runtime.syncCandidates();await runtime.syncCandidates();
+  assert.equal(prior.state,'followed');assert.equal(enqueued,0);assert.equal(resolved,0);
+});
+
+test('fan inspection excludes former followers only for fan-only pending tasks',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const row={sourcePath:['monitor','queue','target'],payload:{handle:'target',id:'42'}};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const job={id:'job',handle:'target',state:'pending',targetUserId:'42',sources:[{module:'fans',enabled:true}]};const resolutions=[];
+  const runtime=createFollowQueueRuntime({api,store:{lookup:async()=>job,resolveJob:async p=>{resolutions.push(p);return {ok:true}}},
+    records:{lookupAll:async({bucket})=>bucket==='queue'?[row]:[],batch:async()=>{}},
+    fetchUser:async()=>({id:'42',relationshipKnown:true,relationship:{following:false,followedBy:false}})});
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});
+  assert.equal(resolutions[0].state,'excluded');
+  job.sources.push({module:'comments',enabled:true});
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});assert.equal(resolutions.length,1);
+});
+
+test('incomplete live relationship clears stale pending labels and holds an unattempted queue job',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const patches=[],resolutions=[];
+  const job={id:'job',handle:'target',state:'pending',targetUserId:'42'};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const runtime=createFollowQueueRuntime({api,store:{lookup:async()=>job,resolveJob:async p=>{resolutions.push(p);return {ok:true}}},
+    records:{lookupAll:async({bucket})=>bucket==='queue'?[{sourcePath:['monitor','queue','target'],payload:{id:'42'}}]:[],batch:async p=>patches.push(p)},
+    fetchUser:async()=>({id:'42',relationshipKnown:false,relationship:{following:false,followedBy:null}})});
+  await assert.rejects(runtime.handle({cmd:'followQueueInspectFan',handle:'target'}),/完整关注关系/);
+  assert.equal(resolutions[0].state,'uncertain');assert.equal(patches[0].changes[0].patch.state,'unknown');
+  assert.deepEqual(patches[0].changes[0].patch.relationship,{following:null,followedBy:null});
+});
+
+test('cancelled fan inspection cannot write a late profile response to records or jobs',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  let release,began,writes=0;const entered=new Promise(r=>began=r);
+  const runtime=createFollowQueueRuntime({api,store:{lookup:async()=>null,enqueue:async()=>{writes++;}},
+    records:{lookupAll:async({bucket})=>bucket==='queue'?[{sourcePath:['monitor','queue','target'],payload:{id:'42'}}]:[],batch:async()=>{writes++;}},
+    fetchUser:async()=>{began();return new Promise(r=>release=r)}});
+  const controller=new AbortController();
+  const request=runtime.handle({cmd:'followQueueInspectFan',handle:'target',signal:controller.signal});await entered;
+  controller.abort();release({id:'42',relationshipKnown:true,relationship:{following:true,followedBy:true}});
+  await assert.rejects(request,{name:'AbortError'});assert.equal(writes,0);
+});
+
 test('followQueueRetryEvaluation verifies uncertain evaluation on profile before publishing and reuses draft without re-following',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{comments:true}};
   const resolved=[];
@@ -245,6 +334,7 @@ test('quote publication risk block is a skipped result, not an uncertain externa
   const {quotePublicationState}=await import('../src/features/follow-queue/follow-queue-runtime.js');
   assert.equal(quotePublicationState({ok:false,riskBlocked:true,reason:'生成的引用评价涉政'}),'skipped');
   assert.equal(quotePublicationState({ok:false,stage:'composer'}),'failed');
+  assert.equal(quotePublicationState({ok:false,attempted:false,reason:'X disabled send'}),'draft');
   assert.equal(quotePublicationState({ok:false,reason:'网络响应不明'}),'uncertain');
 });
 

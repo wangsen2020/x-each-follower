@@ -1,6 +1,9 @@
+import {grokProviderController} from './composables/useGrokProvider.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
 import {cloudflareImagesController} from './composables/useCloudflareImages.js';
 import {watch} from 'vue';
+import {Clock3, RefreshCw, Sparkles, Settings, Zap, Square, ScrollText, UserRound, UserRoundCheck, Ban, ListTree, Trash2, RotateCcw, Send, ShieldCheck} from 'lucide';
+import {panelIcon, panelIconButton} from './panel-icon-button.js';
 import {quotePublishIssue} from '../../features/grok/quote-quality.js';
 import {originalQualityIssue,originalTextIssue} from '../../features/publishing/original-quality.js';
 import {RECOMMENDED_QUOTE_TAGS, cleanQuoteTag, normalizeQuoteTags, quoteTagSuffix, validateQuoteTags} from '../../features/grok/quote-tags.js';
@@ -69,6 +72,7 @@ export const SETTINGS_BOUNDS = Object.freeze({
   followBackAllowAll: Object.freeze({ default: false, type: 'bool' }),
   grokEnabled: Object.freeze({ default: false, type: 'bool' }),
   autoPublish: Object.freeze({ default: false, type: 'bool' }),
+  followBackSuffixEnabled: Object.freeze({ default: false, type: 'bool' }),
   publicationMode: Object.freeze({ default: 'quote', type: 'enum', values: PUBLICATION_MODES }),
   quoteParticipationRate: Object.freeze({ min: 0, max: 100, default: 60, type: 'int' }),
   quoteLengthMode: Object.freeze({ default: 'adaptive', type: 'enum', values: QUOTE_LENGTH_MODES }),
@@ -253,7 +257,7 @@ function el(tag, attrs = {}, children = []) {
  * @param {string} options.accountId Current logged-in X user ID
  * @returns {{ refresh: Function, destroy: Function }} Control handles
  */
-export function mountFollowQueuePanel(root, { request, accountId } = {}) {
+export function mountFollowQueuePanel(root, { request, accountId, accountHandle } = {}) {
   if (!root) throw new Error('mountFollowQueuePanel requires a root element');
 
   let currentAccountId = accountId || '';
@@ -284,6 +288,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   let scanStatus = '';
   let scanActive = false;
   const selectedJobIds = new Set();
+  let batchAction = null;
   let inspectingJob = null;
   let isSettingsOpen = false;
   let settingsDraft = null;
@@ -315,6 +320,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   }
 
   function clearAccountState() {
+    if (batchAction) batchAction.cancelled = true;
+    batchAction = null;
     jobs = [];
     selectedJobIds.clear();
     busyJobIds.clear();
@@ -586,6 +593,67 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     }
   }
 
+  async function handleBatchUncertain(mode) {
+    if (batchAction?.running || loading || !currentAccountId || stateFilter !== 'uncertain') return;
+    const targets = jobs.filter(job => selectedJobIds.has(job.id) && job.state === 'uncertain');
+    if (!targets.length) return;
+    const label = mode === 'delete' ? '删除' : mode === 'exclude' ? '排除' : '核对关系';
+    const impact = mode === 'delete' ? '删除队列记录并阻止旧来源重新加入，不会在 X 上取关。'
+      : mode === 'exclude' ? '将任务标为已排除，停止后续执行，不会在 X 上取关。'
+      : '逐项读取最新关注关系并更新任务状态；确认未关注的任务会恢复为待关注，开启定时调度时可能在后续执行。';
+    if (!globalThis.confirm(`对当前页选中的 ${targets.length} 项任务批量${label}？${impact}`)) return;
+    const account = currentAccountId;
+    const action = batchAction = {running:true, cancelled:false, label, total:targets.length, processed:0, success:0, failures:[]};
+    render();
+    for (const job of targets) {
+      if (isDestroyed || currentAccountId !== account || action.cancelled || batchAction !== action) break;
+      try {
+        const result = await request(mode === 'delete'
+          ? {cmd:'followQueueDelete', accountId:account, jobId:job.id, confirmed:true}
+          : {cmd:'followQueueVerify', accountId:account, jobId:job.id, mode:mode === 'exclude' ? 'exclude' : 'check'});
+        if (!result?.ok) throw new Error(result?.error || result?.reason || `${label}失败`);
+        if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
+        action.success++;
+        selectedJobIds.delete(job.id);
+      } catch (err) {
+        action.failures.push({handle:job.handle || job.targetUserId || job.id, reason:err?.message || `${label}失败`});
+      }
+      action.processed++;
+      render();
+    }
+    if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
+    action.running = false;
+    currentPage = 1;
+    startCursors = [null];
+    await fetchAll();
+  }
+
+  function renderBatchFeedback() {
+    if (!batchAction) return null;
+    const b = batchAction;
+    const message = `${b.label}${b.running ? '中' : b.cancelled ? '已停止' : '完成'}：已处理 ${b.processed}/${b.total}，成功 ${b.success}，失败 ${b.failures.length}${b.cancelled && b.running ? '；当前项完成后停止' : ''}`;
+    return el('div', {className:'fq-batch-feedback'}, [
+      el('span', {role:'status', 'aria-live':'polite'}, message),
+      b.running ? el('button', {type:'button', className:'secondary', 'data-batch-stop':'true', disabled:b.cancelled,
+        onClick:()=>{b.cancelled=true;render();}}, b.cancelled ? '正在停止' : '停止后续') : null,
+      b.failures.length ? el('details', {}, [el('summary', {}, `失败详情 ${b.failures.length}`),
+        el('ul', {}, b.failures.map(f=>el('li', {}, `@${f.handle}：${f.reason}`)))]) : null
+    ]);
+  }
+
+  function renderSelectionActions() {
+    if (!selectedJobIds.size) return null;
+    return el('div', {className:'fq-selection-info'}, [
+      el('span', {}, `已选 ${selectedJobIds.size} 项`),
+      ...(stateFilter === 'uncertain' ? [
+        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-primary', disabled:loading, onClick:()=>handleBatchUncertain('check')}, '批量核对'),
+        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', disabled:loading, onClick:()=>handleBatchUncertain('exclude')}, '批量排除'),
+        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', disabled:loading, onClick:()=>handleBatchUncertain('delete')}, '批量删除')
+      ] : []),
+      el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', onClick:()=>{selectedJobIds.clear();render();}}, '清空选择')
+    ]);
+  }
+
   async function handleVerifyJob(job, mode = 'check') {
     if (!currentAccountId || !job?.id || busyJobIds.has(job.id) || isDestroyed || typeof request !== 'function') return;
     const reqAccount = currentAccountId;
@@ -630,6 +698,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         accountId: reqAccount,
         jobId: job.id,
         taskId: ev?.taskId || '',
+        verifyOnly: ev?.status === 'uncertain',
         publish
       });
       activeEvaluations.delete(job.id);
@@ -785,14 +854,18 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
   }
 
   function applyListChange() {
+    if (batchAction?.running) return;
+    if (stateFilter === 'uncertain') selectedJobIds.clear();
     resetPageQuery();
     if (serverPaging) fetchAll();
     else render();
   }
 
   function turnPage(page) {
+    if (batchAction?.running) return;
     if (page < 1 || page === currentPage) return;
     if (serverPaging && page > 1 && !Object.prototype.hasOwnProperty.call(startCursors, page - 1)) return;
+    if (stateFilter === 'uncertain') selectedJobIds.clear();
     currentPage = page;
     if (serverPaging) fetchAll();
     else render();
@@ -840,74 +913,65 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const quoteLengthLabel = QUOTE_LENGTH_LABELS[settings.quoteLengthMode] || QUOTE_LENGTH_LABELS.adaptive;
     const grokStatus = settings.grokEnabled ? 'Grok 开启' : 'Grok 关闭';
     const grokDetails = `${grokStatus}；发帖形式：${publicationModeLabel}；创作概率：${settings.quoteParticipationRate ?? 60}%；篇幅：${quoteLengthLabel}；自动发布：${settings.autoPublish ? '开启' : '关闭'}`;
-    const grokStatusEntry = el('span', { className: 'fq-grok-status' }, [
-      el('span', {}, grokStatus),
-      el('span', {className: 'info-tip', tabindex: '0', role: 'note', 'data-tip': grokDetails, 'aria-label': grokDetails}, '?')
-    ]);
+    const openSettings = () => {
+      if(!settingsLoaded&&!settingsFetchError)return;
+      isSettingsOpen = true;
+      settingsDraft = createSettingsDraft(settings);
+      settingsFieldErrors = {};
+      settingsError = null;
+      render();
+    };
+    const grokStatusEntry = panelIconButton(Sparkles, {
+      label: 'Grok 创作设置', tip: grokDetails,
+      className: `fq-grok-status ${settings.grokEnabled ? 'is-active' : ''}`,
+      disabled: !currentAccountId || (!settingsLoaded && !settingsFetchError),
+      onClick: openSettings
+    });
+    const scheduleTip = `定时调度：${settings.enabled ? '已开启' : '已关闭'}。点击${settings.enabled ? '关闭' : '开启'}后台周期调度；立即执行可单独运行一轮。`;
     const autoScheduleSwitch = el('label', {
-      className: 'fq-header-switch-label',
-      title: '开启后后台按设定周期自动在后台调度关注任务'
+      className: `panel-icon-button fq-schedule-toggle ${settings.enabled ? 'is-active' : ''}`,
+      'data-panel-tip': scheduleTip
     }, [
       el('input', {
         type: 'checkbox',
         className: 'fq-switch-checkbox',
         checked: Boolean(settings.enabled),
         disabled: !currentAccountId,
+        'aria-label': '定时调度',
         onChange: e => handleToggleAutoSchedule(e.target.checked)
       }),
-      el('span', { className: 'fq-switch-title' }, '定时自动调度')
+      panelIcon(Clock3)
     ]);
 
-    const settingsBtn = el('button', {
-      type: 'button',
-      className: 'icon-button secondary fq-header-icon-btn',
-      title: '关注队列设置',
-      'aria-label': '关注队列设置',
+    const settingsBtn = panelIconButton(Settings, {
+      label: '关注队列设置',
+      className: 'fq-header-icon-btn',
       disabled: !currentAccountId || (!settingsLoaded && !settingsFetchError),
       'aria-busy': !settingsLoaded && !settingsFetchError ? 'true' : 'false',
-      onClick: () => {
-        if(!settingsLoaded&&!settingsFetchError)return;
-        isSettingsOpen = true;
-        settingsDraft = createSettingsDraft(settings);
-        settingsFieldErrors = {};
-        settingsError = null;
-        render();
-      }
-    }, [
-      el('span', { className: 'fq-btn-icon-symbol' }, '⚙️')
-    ]);
+      onClick: openSettings
+    });
 
-    const refreshBtn = el('button', {
-      type: 'button',
-      className: 'icon-button secondary fq-header-icon-btn',
-      title: '刷新队列',
-      'aria-label': '刷新队列',
+    const refreshBtn = panelIconButton(RefreshCw, {
+      label: '刷新队列', className: 'fq-header-icon-btn',
       onClick: () => fetchAll()
-    }, [
-      el('span', { className: 'fq-btn-icon-symbol' }, '↻')
-    ]);
+    });
 
     const execBtn = isExecuting
-      ? el('button', {
-          type: 'button',
-          className: 'icon-button fq-action-icon-btn fq-btn-danger fq-exec-stop-btn fq-btn-executing',
-          title: '停止执行',
-          'aria-label': '停止执行',
+      ? panelIconButton(Square, {
+          label: '停止执行',
+          className: 'fq-action-icon-btn fq-btn-danger fq-exec-stop-btn fq-btn-executing',
           disabled: !currentAccountId,
           onClick: handleStopExecution
-        }, [
-          el('span', { className: 'fq-btn-icon-symbol' }, '⏹')
-        ])
-      : el('button', {
-          type: 'button',
-          className: 'icon-button fq-action-icon-btn fq-btn-primary fq-exec-run-btn',
-          title: '立即执行',
-          'aria-label': '立即执行',
+        })
+      : panelIconButton(Zap, {
+          label: '立即执行',
+          className: 'fq-action-icon-btn fq-btn-primary fq-exec-run-btn',
           disabled: !currentAccountId,
           onClick: handleRunNow
-        }, [
-          el('span', { className: 'fq-btn-icon-symbol' }, '⚡')
-        ]);
+        });
+    const accountTip = currentAccountId
+      ? `队列执行账号${accountHandle ? `：@${String(accountHandle).replace(/^@/, '')}` : ''}。任务和设置按此账号隔离；关注、创作及发布使用此账号。内部用户 ID：${currentAccountId}`
+      : '未识别队列执行账号，请在 X 登录后重新识别。';
 
     return el('div', { className: 'fq-header' }, [
       el('div', { className: 'fq-header-title-wrap' }, [
@@ -917,22 +981,17 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         ]),
         el('span', { className: 'fq-header-subtitle' }, '唯一后台调度器 · 统一候选执行中心')
       ]),
-      el('div', { className: 'fq-header-actions module-header-actions' }, [
-        currentAccountId
-          ? el('span', { className: 'fq-account-badge' }, [
-              el('span', { className: 'fq-account-icon' }, '👤'),
-              `当前账号: ${currentAccountId}`
-            ])
-          : el('span', { className: 'fq-account-badge fq-account-badge-missing' }, '未登录 X 账号'),
+      el('div', { className: 'fq-header-actions module-header-actions panel-action-bar' }, [
+        el('span', { className: `panel-icon-button fq-account-badge ${currentAccountId ? '' : 'fq-account-badge-missing'}`, tabindex:'0', role:'note', 'aria-label': accountTip, 'data-panel-tip':accountTip }, [panelIcon(UserRound)]),
         autoScheduleSwitch,
         refreshBtn,
         grokStatusEntry,
         settingsBtn,
         execBtn,
-        el('button', {
-          type: 'button', className: 'fq-btn fq-btn-secondary fq-open-logs module-log-button',
+        panelIconButton(ScrollText, {
+          label:'执行日志', className: 'fq-open-logs',
           onClick: () => root.dispatchEvent(new CustomEvent('open-execution-logs', {bubbles:true, detail:{scope:'queue'}}))
-        }, '执行日志')
+        })
       ])
     ]);
   }
@@ -1192,19 +1251,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
       }
     });
 
-    const selectionInfo = selectedJobIds.size > 0
-      ? el('div', { className: 'fq-selection-info' }, [
-          el('span', {}, `已选 ${selectedJobIds.size} 项`),
-          el('button', {
-            type: 'button',
-            className: 'fq-btn fq-btn-sm fq-btn-secondary',
-            onClick: () => {
-              selectedJobIds.clear();
-              render();
-            }
-          }, '清空选择')
-        ])
-      : null;
+    const selectionInfo = renderSelectionActions();
 
     const subbarLeft = el('div', { className: 'fq-subbar-left' }, [
       el('label', { className: 'fq-filter-label' }, ['来源: ', moduleSelect]),
@@ -1221,7 +1268,8 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
 
     return el('div', { className: 'fq-filter-bar' }, [
       el('div', { className: 'fq-filter-tabs' }, stateTabs),
-      subbar
+      subbar,
+      renderBatchFeedback()
     ]);
   }
 
@@ -1403,7 +1451,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
             }, evalModeLabel);
             const statusBadge = el('span', {
               className: `fq-tag fq-eval-status-${ev.status || 'drafted'}`
-            }, ({pending:'待评论',processing:'评论中',publishing:'发布中',failed:'评论失败',uncertain:'待核实',draft:'草稿',posted:'已发布',skipped:'已跳过'})[ev.status] || ev.status || '草稿');
+            }, ev.recoveryDraftOnly && !ev.text && ev.status==='failed' ? '待生成' : ({pending:'待评论',processing:'评论中',publishing:'发布中',failed:'评论失败',uncertain:'待核实',draft:'草稿',posted:'已发布',skipped:'已跳过'})[ev.status] || ev.status || '草稿');
 
             const publishedSafe = safeHttpsUrl(ev.publishedPostUrl);
             const originalSafe = safeHttpsUrl(ev.originalPostUrl);
@@ -1439,45 +1487,48 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         const isJobBusy = busyJobIds.has(job.id);
         const actionButtons = [];
         if (job.state === 'uncertain') {
-          actionButtons.push(el('button', {
-            className: 'fq-btn fq-btn-sm fq-btn-primary',
+          actionButtons.push(panelIconButton(UserRoundCheck, {
+            label: '核对关系', tip: isJobBusy ? '核对中…' : '核对最新关注关系并更新任务状态',
+            className: 'panel-icon-primary', 'aria-busy':String(isJobBusy),
             disabled: isJobBusy,
             onClick: () => handleVerifyJob(job, 'check')
-          }, isJobBusy ? '核对中…' : '核对关系'));
-          actionButtons.push(el('button', {
-            className: 'fq-btn fq-btn-sm fq-btn-secondary',
+          }));
+          actionButtons.push(panelIconButton(Ban, {
+            label: '排除', tip:'将任务标为已排除，停止后续执行',
             disabled: isJobBusy,
             onClick: () => handleVerifyJob(job, 'exclude')
-          }, '排除'));
+          }));
         } else if (job.state === 'followed') {
           const pendingEval = evals.find(ev => ev && ev.status !== 'posted' && ev.status !== 'published');
           if (pendingEval && !['pending','processing','publishing'].includes(pendingEval.status)) {
             const retryLabel = pendingEval.status === 'uncertain'
               ? '核对评价'
-              : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : pendingEval.reasonCode==='quality_skip'?'重新评估':'重试评价');
-            actionButtons.push(el('button', {
-              className: 'fq-btn fq-btn-sm fq-btn-primary',
+              : ((pendingEval.status === 'draft' || pendingEval.status === 'drafted') && pendingEval.text ? '发布评价' : pendingEval.recoveryDraftOnly && !pendingEval.text?'重新生成':pendingEval.reasonCode==='quality_skip'?'重新评估':'重试评价');
+            const retryIcon = retryLabel === '核对评价' ? ShieldCheck : retryLabel === '发布评价' ? Send : RotateCcw;
+            actionButtons.push(panelIconButton(retryIcon, {
+              label: retryLabel, tip:isJobBusy ? '处理中…' : retryLabel,
+              className:'panel-icon-primary', 'aria-busy':String(isJobBusy),
               disabled: isJobBusy,
               onClick: () => handleRetryEvaluation(job, pendingEval, true)
-            }, isJobBusy ? '处理中…' : retryLabel));
+            }));
           }
         }
-        const traceBtn = el('button', {
-          className: 'fq-btn fq-btn-sm fq-btn-secondary',
+        const traceBtn = panelIconButton(ListTree, {
+          label: '溯源详情',
           onClick: () => {
             inspectingJob = job;
             render();
           }
-        }, '溯源详情');
+        });
         actionButtons.push(traceBtn);
-        actionButtons.push(el('button', {
-          className: 'fq-btn fq-btn-sm fq-btn-secondary fq-delete-job',
-          title: job.state === 'running' ? '任务正在执行，结束后可删除' : '删除队列记录并阻止旧来源重新加入',
+        actionButtons.push(panelIconButton(Trash2, {
+          label:'删除', className: 'fq-delete-job',
+          tip: job.state === 'running' ? '任务正在执行，结束后可删除' : '删除队列记录并阻止旧来源重新加入，不会在 X 上取关',
           disabled: isJobBusy || job.state === 'running',
           onClick: () => handleDeleteJob(job)
-        }, '删除'));
+        }));
         const actionsCell = el('td', { className: 'fq-col-actions' }, [
-          el('div', { className: 'fq-actions-group' }, actionButtons)
+          el('div', { className: 'fq-actions-group panel-action-bar' }, actionButtons)
         ]);
 
         return el('tr', {
@@ -1500,19 +1551,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const table = el('table', { className: 'fq-table' }, [thead, tbody]);
     const tableWrap = el('div', { className: 'fq-table-wrap' }, [table]);
 
-    const selectionSummary = selectedJobIds.size > 0
-      ? el('div', { className: 'fq-selection-info' }, [
-          el('span', {}, `已选 ${selectedJobIds.size} 项`),
-          el('button', {
-            type: 'button',
-            className: 'fq-btn fq-btn-sm fq-btn-secondary',
-            onClick: () => {
-              selectedJobIds.clear();
-              render();
-            }
-          }, '清空选择')
-        ])
-      : null;
+    const selectionSummary = renderSelectionActions();
 
     const paginationWrap = el('div', { className: 'fq-pagination-wrap' }, [
       selectionSummary,
@@ -1667,7 +1706,7 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
                     onClick: () => handleRetryEvaluation(job, ev, true)
                   }, isJobBusy
                     ? '处理中…'
-                    : (draftIssue ? '草稿待复核' : ev.status === 'uncertain' ? '核对发布结果' : (ev.text ? '发布现有草稿' : '重新生成并发布'))),
+                    : (draftIssue ? '草稿待复核' : ev.status === 'uncertain' ? '核对评价' : (ev.text ? '发布现有草稿' : ev.recoveryDraftOnly ? '重新生成' : '重新生成并发布'))),
                   !ev.text
                     ? el('button', {
                         className: 'fq-btn fq-btn-sm fq-btn-secondary',
@@ -1726,6 +1765,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
                 el('span', { className: 'fq-trace-val' }, String(attemptCount))
               ]),
               ev.text ? el('blockquote', { className: 'fq-eval-quote' }, ev.text) : null,
+              ev.recoveryHistory?.length ? el('details', {className:'fq-recovery-history'}, [
+                el('summary', {}, `恢复记录 ${ev.recoveryHistory.length}`),
+                ...ev.recoveryHistory.map(entry=>el('div', {className:'fq-trace-section'}, [
+                  el('p', {}, `${new Date(entry.at).toLocaleString()} · 生成未完成，未进入发布`),
+                  el('p', {}, `原状态：${entry.evaluation?.status || '-'}；原因：${entry.evaluation?.reason || '-'}`),
+                  el('p', {}, `原生成时间：${entry.evaluation?.generationAttemptedAt ? new Date(entry.evaluation.generationAttemptedAt).toLocaleString() : '-'}；原尝试次数：${Array.isArray(entry.evaluation?.attempts) ? entry.evaluation.attempts.length : entry.evaluation?.attempts || 0}`)
+                ]))
+              ]) : null,
               evalActions
             ]);
           }))
@@ -2137,8 +2184,14 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
-        el('h4', { className: 'fq-setting-section-title' }, ['🤖 Grok 创作与发布', settingHelp('仅使用 X 内置 Grok；失败时跳过本次任务，不会打开 grok.com。')]),
-        createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '关注成功后自动提取原帖，调用 Grok 按选定形式生成评论、引用评论或文章草稿。', 'grokEnabled'),
+        el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 创作与发布'),
+        el('div',{className:'fq-setting-row'},[
+          el('label',{'for':'fq_grokProvider'},[el('span',{},'生成通道'),settingHelp('Grok Hook 通过自动化 Webhook 生成，不代表独立 Bot 额度。切换立即保存，未绑定时打开向导。文章配图仍使用独立配图服务。')]),
+          el('select',{id:'fq_grokProvider',value:grokProviderController.provider.value,onChange:async event=>{const control=event.target;control.disabled=true;try{await grokProviderController.select(control.value);}catch(error){settingsError=error.message;render();}finally{control.value=grokProviderController.provider.value;control.disabled=false;}}},[
+            el('option',{value:'grok',selected:grokProviderController.provider.value==='grok'},'Grok'),
+            el('option',{value:'grok-bot',selected:grokProviderController.provider.value==='grok-bot'},'Grok Hook')])]),
+        createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '排除置顶帖后取最近最多 20 条帖子，综合分＝评论＋3×转发＋3×点赞＋3×收藏。同分保留时间线靠前的一条；指标缺失不按零处理。仅抽中参与概率的任务交给 Grok 评估并写作，质量不足跳过且不换帖。', 'grokEnabled'),
+        createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾按评价语言追加：中文“来关必回”、英文“I follow back.”，西班牙语和葡萄牙语使用对应文案；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),
         quoteRateGroup,
@@ -2223,6 +2276,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     ].filter(Boolean);
 
     root.replaceChildren(...children);
+    if (batchAction?.running) {
+      for (const tag of ['button','input','select']) for (const control of root.querySelectorAll(tag)) {
+        if (!control.hasAttribute('data-batch-stop')) control.disabled = true;
+      }
+    }
   }
 
   // Keydown listener for ESC to close drawers
@@ -2251,6 +2309,11 @@ export function mountFollowQueuePanel(root, { request, accountId } = {}) {
     const button=root.querySelector('#fq_cloudflare_connection');
     if(button)button.textContent=connected?'Cloudflare 已绑定 · 管理':'连接文章配图服务';
   }));
+  cleanups.push(watch(grokProviderController.provider,value=>{const control=document.getElementById('fq_grokProvider');if(control)control.value=value;}));
+  grokProviderController.refresh().catch(console.warn);
+  const onGrokProviderChange=(changes,area)=>{if(area==='local'&&changes['systemSettings:grokProvider'])grokProviderController.refresh().catch(console.warn);};
+  globalThis.chrome?.storage?.onChanged?.addListener(onGrokProviderChange);
+  cleanups.push(()=>globalThis.chrome?.storage?.onChanged?.removeListener(onGrokProviderChange));
   const refreshImageConnection=()=>cloudflareImagesController.refreshStatus().catch(()=>{});
   refreshImageConnection();
   globalThis.window?.addEventListener?.('focus',refreshImageConnection);

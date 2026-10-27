@@ -1,0 +1,28 @@
+{
+  "name": "grok-bot-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker relay: XFollower -> Grok Bot webhook -> callback, stored in D1.",
+  "type": "module",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute grok-bot-relay --file=./schema.sql --remote",
+    "db:init:local": "wrangler d1 execute grok-bot-relay --file=./schema.sql --local",
+    "test": "node --test test/**/*.test.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "standardwebhooks": "1.1.1",
+    "x-each-follower": "file:../.."
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261023.0-beta",
+    "wrangler": "4.153.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

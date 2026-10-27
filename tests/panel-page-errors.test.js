@@ -52,7 +52,7 @@ function harness() {
 test('page search, previous, and next use the shared action wrapper', () => {
   const bare = panelSource.match(/recordPages\.(search|previous|next)\([^)]*\)\.then\(/g);
   assert.equal(bare, null);
-  const calls = panelSource.match(/runRecordPageAction\('(fans|mutual|comments|unreciprocated)', \(\) => recordPages\.(search|previous|next)\(/g) || [];
+  const calls = panelSource.match(/runRecordPageAction\(\s*'(fans|mutual|comments|unreciprocated)'\s*,\s*\(\)\s*=>\s*recordPages\.(search|previous|next)\(/g) || [];
   assert.equal(calls.length, 12);
   for (const moduleName of ['fans', 'mutual', 'comments', 'unreciprocated']) {
     for (const op of ['search', 'previous', 'next']) {
