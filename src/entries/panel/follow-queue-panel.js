@@ -2189,7 +2189,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
           el('label',{'for':'fq_grokProvider'},[el('span',{},'生成通道'),settingHelp('Grok Hook 通过自动化 Webhook 生成，不代表独立 Bot 额度。切换立即保存，未绑定时打开向导。文章配图仍使用独立配图服务。')]),
           el('select',{id:'fq_grokProvider',value:grokProviderController.provider.value,onChange:async event=>{const control=event.target;control.disabled=true;try{await grokProviderController.select(control.value);}catch(error){settingsError=error.message;render();}finally{control.value=grokProviderController.provider.value;control.disabled=false;}}},[
             el('option',{value:'grok',selected:grokProviderController.provider.value==='grok'},'Grok'),
-            el('option',{value:'grok-bot',selected:grokProviderController.provider.value==='grok-bot'},'Grok Hook')])]),
+            el('option',{value:'grok-bot',selected:grokProviderController.provider.value==='grok-bot'},'Grok Hook'),
+            el('option',{value:'grok-local',selected:grokProviderController.provider.value==='grok-local'},'Grok Bot')])]),
         createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '排除置顶帖后取最近最多 20 条帖子，综合分＝评论＋3×转发＋3×点赞＋3×收藏。同分保留时间线靠前的一条；指标缺失不按零处理。仅抽中参与概率的任务交给 Grok 评估并写作，质量不足跳过且不换帖。', 'grokEnabled'),
         createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾按评价语言追加：中文“来关必回”、英文“I follow back.”，西班牙语和葡萄牙语使用对应文案；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,

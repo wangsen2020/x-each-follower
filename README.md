@@ -1,8 +1,8 @@
-# XFollower · 粉丝跟进 · v3.7.4
+# XFollower · 粉丝跟进 · v3.8.0 开发版
 
-管理 X 粉丝、待回关账号和关注任务，追踪帖子与作者，使用 Grok 或 Grok Hook 辅助创作与发布。
+管理 X 粉丝、待回关账号和关注任务，追踪帖子与作者，使用 Grok、Grok Hook 或本地 Grok Bot 辅助创作与发布。
 
-正式发行：[XFollower 3.7.4](https://github.com/wangsen2020/x-each-follower/releases/tag/3.7.4)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
+正式发行：[XFollower 3.7.5](https://github.com/wangsen2020/x-each-follower/releases/tag/3.7.5)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
 
 ## 主要功能
 
@@ -11,8 +11,19 @@
 - **回关监控**：取关结果与关系记录联动；单个待确认操作独立隔离，其他账号继续调度，显示排队、额度与恢复条件。
 - **Grok 创作**：支持评论、引用评论和文章。排除置顶帖，从最近最多 20 条普通帖子按评论＋3×转发＋3×点赞＋3×收藏选题；保留参与概率，未抽中不调用生成。评论和引用评论移除生成前的素材质量筛选指令。
 - **Grok Hook**：通过 Grok 自动化 Webhook 生成与回传文本，提供 Cloudflare Worker、D1 接入向导及手动教程。仍使用 Grok 用量，不代表独立 Bot 额度。
+- **Grok Bot 本地通道**：填写端口与 Token，选择 Bot 并通过生成测试后启用；配置在重开后自动还原，后台中断后按原任务查询回复。
 - **发布与恢复**：发送生成请求前保存任务 ID，回传后继续原任务；已有结果直接复用，保留发布证据并阻止重复执行。可按语言追加“来关必回”，超长内容保留草稿。
 - **文章与追踪**：文章支持配图及可选 Cloudflare 备用出图；提供帖子追踪、作者榜单、知识库和执行日志。
+
+## 3.8.0 开发版
+
+增加本地 Grok Bot 生成通道，支持端口、Token、Bot 选择及验证后保存。服务采用异步持久任务，后台中断后可查询原回复；发送结果不明时保留待确认。Windows 本地服务与安装说明见[发行页](https://github.com/wangsen2020/gbot-local-service/releases/tag/v0.2.1)。
+
+已验证真实 Bot 回复、服务重启续查、扩展后台停止后取回回复，以及配置重开还原。评论和发布由用户确认正常；本开发版尚未发行到扩展商店。
+
+## 3.7.5 更新
+
+修复教程 Worker 的源码校验值不一致，固定部署源码使用 LF 换行，并同步教程内嵌资源。此补丁延续 3.7.4 的业务功能；没有新增生成请求或修改已发布任务。发行前完成历史工作区差异核对与清理，并重新验证依赖、测试和安装包。
 
 ## 3.7.4 更新与验收边界
 
