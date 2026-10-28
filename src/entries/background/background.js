@@ -1,3 +1,11 @@
+import {createLearningRuntime} from '../../features/knowledge/learning-runtime.js';
+import {learningStore} from '../../features/knowledge/learning-store.js';
+import {createLearningSources} from '../../features/knowledge/learning-sources.js';
+import {createKnowledgeStore} from '../../features/knowledge/knowledge-store.js';
+import {createKnowledgeQueue} from '../../features/knowledge/knowledge-queue.js';
+import {createPostStore} from '../../features/post-tracking/post-store.js';
+import {grokLocal} from '../../features/grok/grok-local.js';
+import {LEARNING_ALARM,ensureLearningAlarm} from '../../features/knowledge/learning-model.js';
 import {createBotOnboarding,SETUP_ALARM} from '../../features/grok/bot-onboarding.js';
 import onboardingWorkerSource from '../../assets/grok-bot-relay-worker.txt?raw';
 import onboardingSchema from '../../../deploy/grok-bot-relay/schema.sql?raw';
@@ -26,6 +34,8 @@ import {interactionSkipReason} from '../../features/relationships/content-risk.j
 import { loadCommentTracking } from '../../platform/tracking-storage.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
 import {handleExecutionLogRequest} from '../../shared/execution-log-store.js';
+import {getDefaultExecutionLogStore} from '../../shared/execution-log-store.js';
+import {createAutomationHealthRuntime} from '../../shared/automation-health.js';
 import {createBackgroundRecords, mergeCollectedReplies, selectCommentCandidates} from '../../features/records/background-record-data.js';
 import {mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import {sendVerificationSelfMessage} from '../../features/grok/verification-self-message.js';
@@ -73,6 +83,9 @@ async function configureBackupAlarm(settings, preserveSchedule = false) {
 chrome.storage.local.get(BACKUP_SETTINGS_KEY).then(saved => configureBackupAlarm(validateBackupSettings(saved[BACKUP_SETTINGS_KEY]), true)).catch(error => console.warn('备份计划恢复失败:', error.message));
 
 const panelLauncher = createPanelLauncher({api:chrome, sendToPanel:message => safeSendMessageToPanel(message)});
+const automationHealth=createAutomationHealthRuntime({api:chrome});
+automationHealth.start().catch(error=>console.warn('异常提醒恢复失败:',error.message));
+getDefaultExecutionLogStore().ready().catch(error=>console.warn('执行日志恢复失败:',error.message));
 chrome.action.onClicked.addListener(tab => {
   void panelLauncher.openPanel(tab?.windowId);
 });
@@ -111,6 +124,15 @@ const leaderboardRuntime = createLeaderboardRuntime({
     return {accountId:identity.accountId,handle:identity.handle};
   }
 });
+const knowledgeLibrary=createKnowledgeStore();
+const knowledgeLearning=createLearningRuntime({repository:learningStore,library:knowledgeLibrary,
+  queue:createKnowledgeQueue({store:knowledgeLibrary}),bot:grokLocal,
+  sources:createLearningSources({posts:createPostStore(),leaderboard:createLeaderboardStore(),config:async()=> (await chrome.storage.local.get('ownPostTracking')).ownPostTracking||{}}),
+  owner:async()=>{const identity=await followQueueRuntime.handle({cmd:'followQueueIdentity'});return identity?.ok?identity.accountId:'';}
+});
+// Recreate on each worker start. Durable due times coalesce missed browser sessions.
+ensureLearningAlarm(chrome).catch(error=>console.warn('恢复知识库计划:',error.message));
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===LEARNING_ALARM)knowledgeLearning.tick().catch(error=>console.warn('知识库整理:',error.message));});
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -578,11 +600,16 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  if(cmd==='retryExecutionLogBackup'){
+    if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可重试备份'});return false;}
+    const store=getDefaultExecutionLogStore();
+    store.retryBackup().then(backup=>sendResponse({ok:true,backup}),error=>sendResponse({ok:false,error:error.message}));return true;
+  }
   if (cmd === 'reviewAutoUnfollowPending') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || !/^[a-z0-9_]{1,15}$/i.test(message.handle || '')) {
       sendResponse({error:'仅管理面板可核验有效的待确认账号'}); return false;
     }
-    autoUnfollowRuntime.run({reviewHandle:message.handle}).then(sendResponse,error=>sendResponse({error:error.message}));
+    autoUnfollowRuntime.run({reviewHandle:message.handle,retryConfirmed:message.retryConfirmed===true}).then(sendResponse,error=>sendResponse({error:error.message}));
     return true;
   }
   if (cmd === 'sidebarIdentity') {
@@ -618,6 +645,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (cmd === 'xLeaderboard') {
     if(!canUseLeaderboardAction({runtimeId:chrome.runtime.id,panelUrl:chrome.runtime.getURL('panel.html'),sender,action:message.action})){sendResponse({ok:false,error:'该页面无权访问 X 榜单操作'});return false;}
     leaderboardRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message||error)}));
+    return true;
+  }
+
+  if (cmd === 'knowledgeLearning') {
+    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'知识库操作仅允许从管理面板发起'});return false;}
+    knowledgeLearning.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:error.message}));
     return true;
   }
 

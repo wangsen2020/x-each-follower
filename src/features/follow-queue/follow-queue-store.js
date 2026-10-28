@@ -25,13 +25,13 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   dwellJitter: 5,
   minFollowers: 50,
   ratioThreshold: 0.8,
-  onlyRecommended: true,
   followBackAllowAll: false,
   skipRiskContent: true,
   grokProfileAssessment: true,
   grokEnabled: false,
   autoPublish: false,
   followBackSuffixEnabled: false,
+  knowledgeEnabled: false,
   publicationMode: 'quote',
   quoteParticipationRate: 60,
   quoteLengthMode: 'adaptive'
@@ -259,6 +259,7 @@ function mergeEvaluations(existing, incoming, followJobId) {
       publicationMode: resolveEvaluationPublicationMode(prev.publicationMode, item.publicationMode),
       article: isMeaningfulObject(item.article) ? clone(item.article) : (prev.article ? clone(prev.article) : null),
       coverAttemptedAt: item.coverAttemptedAt ?? prev.coverAttemptedAt ?? 0,
+      ...(Array.isArray(item.knowledgeUsed) && item.knowledgeUsed.length ? {knowledgeUsed:clone(item.knowledgeUsed).slice(0,5)} : Array.isArray(prev.knowledgeUsed) ? {knowledgeUsed:clone(prev.knowledgeUsed)} : {}),
       relayJobId: nonEmptyString(item.relayJobId, prev.relayJobId).slice(0,128),
       articleDraftUrl: item.articleDraftUrl || prev.articleDraftUrl || '',
       language: nonEmptyString(item.language, prev.language),
@@ -269,6 +270,9 @@ function mergeEvaluations(existing, incoming, followJobId) {
       status: item.status || prev.status || '',
       automaticComment,
       retryAt: item.retryAt ?? prev.retryAt ?? 0,
+      commentAttemptedAt: Math.max(0,
+        Number.isFinite(item.commentAttemptedAt) ? item.commentAttemptedAt : 0,
+        Number.isFinite(prev.commentAttemptedAt) ? prev.commentAttemptedAt : 0),
       originalPostText: nonEmptyString(item.originalPostText, prev.originalPostText),
       candidatePosts,
       publishedPostId: item.publishedPostId || prev.publishedPostId || '',
@@ -361,12 +365,12 @@ function normalizeSettings(input, base) {
   const merged = {...base, ...(input && typeof input === 'object' ? input : {})};
   const next = {...FOLLOW_QUEUE_DEFAULT_SETTINGS};
   next.enabled = merged.enabled === true;
-  next.onlyRecommended = merged.onlyRecommended !== false;
   next.followBackAllowAll = merged.followBackAllowAll === true;
   next.skipRiskContent = merged.skipRiskContent !== false;
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
+  next.knowledgeEnabled = merged.knowledgeEnabled === true;
   next.followBackSuffixEnabled = merged.followBackSuffixEnabled === true;
   next.publicationMode = PUBLICATION_MODES.includes(merged.publicationMode)
     ? merged.publicationMode

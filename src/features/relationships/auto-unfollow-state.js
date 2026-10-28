@@ -1,4 +1,3 @@
-export const PENDING_RECHECK_LIMIT = 3;
 export const PENDING_RECHECK_INTERVAL_MS = 10 * 60000;
 export const pendingHandle = user => String(user?.handle || '').replace(/^@/, '').toLowerCase();
 export const samePendingTarget = (entry, user) => Boolean(

@@ -141,7 +141,8 @@ export function createXNetworkClient(api=globalThis.chrome) {
   async function request(tabId,operation,variables={},options={}) {
     let template,dispatched=false;
     const handle=operation==='UserByScreenName'?variables.screen_name:null;
-    if(handle)await assertProfileAvailable(api,handle,'profile-network');
+    // Explicit read-only rechecks need fresh evidence rather than a terminal cache hit.
+    if(handle && options.refreshAvailability!==true)await assertProfileAvailable(api,handle,'profile-network');
     try {
       if (handle && options.preferPageResponse === true) {
         const cached = await api.scripting.executeScript({target:{tabId},world:'MAIN',func:readNativeProfileResponse,args:[handle]});
@@ -157,7 +158,11 @@ export function createXNetworkClient(api=globalThis.chrome) {
       dispatched=true;
       const results=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:executeXRequestOnPage,args:[prepared]});
       const response=results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
-      if(handle){const state=unavailableFromProfileResponse(response);if(state){await observeProfile(api,handle,state,'profile-network');if(state.status!=='ok')throw profileUnavailableError({...state,handle});}}
+      if(handle){const state=unavailableFromProfileResponse(response);if(state){
+        // A caller collecting dual evidence must confirm the page before publishing a terminal cache state.
+        if(state.status==='ok' || options.returnUnavailable!==true)await observeProfile(api,handle,state,'profile-network');
+        if(state.status!=='ok' && options.returnUnavailable!==true)throw profileUnavailableError({...state,handle});
+      }}
       return response;
     }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
   }

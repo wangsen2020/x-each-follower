@@ -187,9 +187,9 @@
                   {{ followbackLogPresentation(rawLog).label }}
                 </span>
               </div>
-              <div v-if="rawLog.summary" class="log-summary-row">{{ rawLog.summary }}</div>
+              <div v-if="followbackLogPresentation(rawLog).summary || rawLog.summary" class="log-summary-row">{{ followbackLogPresentation(rawLog).summary || rawLog.summary }}</div>
               <div class="followback-log-key-info">
-                <div v-if="followbackLogContext(rawLog).handle || followbackLogPresentation(rawLog).source.includes('取关')" class="log-card-target">
+                <div v-if="followbackLogPresentation(rawLog).showTarget !== false && (followbackLogContext(rawLog).handle || followbackLogPresentation(rawLog).source.includes('取关'))" class="log-card-target">
                   <strong>目标账号：</strong>
                   <a v-if="followbackLogContext(rawLog).handle" class="log-target-link" :href="'https://x.com/' + encodeURIComponent(followbackLogContext(rawLog).handle)" target="_blank" rel="noopener noreferrer">@{{ followbackLogContext(rawLog).handle }}</a>
                   <span v-else>{{ rawLog.result === 'started' ? '尚未选择' : '未记录' }}</span>

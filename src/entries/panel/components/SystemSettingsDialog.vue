@@ -16,6 +16,7 @@
       <div class="profile-drawer-head"><strong id="systemSettingsTitle">{{ settingTabs.find(tab=>tab.key===activeSection)?.label }}</strong><PanelCloseButton @click="close" /></div>
       <div class="profile-drawer-content system-settings-content">
         <GrokBotSettings v-if="activeSection==='grok-bot'" />
+        <GrokLocalSettings v-if="activeSection==='grok-local'" />
         <section v-show="activeSection==='data'" aria-labelledby="localDataTitle">
           <div class="system-section-heading"><h3 id="localDataTitle">备份概览</h3><button type="button" class="secondary system-icon" title="刷新备份状态" aria-label="刷新备份状态" :disabled="loading" @click="refresh"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
           <div v-if="loading" class="system-state" role="status">正在读取备份状态…</div>
@@ -70,7 +71,7 @@
 <p class="system-state" role="status">{{ message }}</p>
         <p v-if="error" class="system-error" role="alert">{{ error }}</p>
       </div>
-      <div v-show="!['data','versions','upgrades','grok-bot'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
+      <div v-show="!['data','versions','upgrades','grok-bot','grok-local'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
       </div>
     </aside>
   </Teleport>
@@ -81,6 +82,7 @@ import {SYSTEM_DEFAULTS, readSystemSettings, saveSystemSettings} from '../../../
 import {APP_VERSION} from '../../../shared/version.js';
 import PanelCloseButton from './PanelCloseButton.vue';
 import GrokBotSettings from './GrokBotSettings.vue';
+import GrokLocalSettings from './GrokLocalSettings.vue';
 import {grokProviderController} from '../composables/useGrokProvider.js';
 import {BACKUP_DEFAULTS, validateBackupSettings} from '../../../features/records/record-snapshots.js';
 const isOpen=ref(false), drawer=ref(null), status=ref(null), loading=ref(false), loadError=ref(''), busy=ref(false), saving=ref(false), settingsLoaded=ref(false), error=ref(''), message=ref('');
@@ -99,7 +101,8 @@ const preferenceGroups=[
 ];
 settingTabs.push(...preferenceGroups.map(group=>({key:group.key,label:{pagination:'列表分页',logs:'执行日志',windows:'临时窗口'}[group.key],icon:{pagination:'M4 5h16 M4 12h16 M4 19h16',logs:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',windows:'M3 4h18v16H3z M3 8h18 M15 12l4 4 M19 12l-4 4'}[group.key]})));
 settingTabs.push({key:'versions',label:'版本历史',icon:'M4 5h16 M4 12h10 M4 19h16 M17 10l3 3-3 3'}, {key:'upgrades',label:'升级日志',icon:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5'});
-settingTabs.splice(2,0,{key:'grok-bot',label:'Grok Hook',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
+settingTabs.splice(2,0,{key:'grok-bot',label:'Grok Webhook',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
+settingTabs.splice(3,0,{key:'grok-local',label:'Grok Bot',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
 const versionData=reactive({versions:[],logs:[]});
 const historyLoading=ref(false),historyError=ref(''),migrationStatus=ref(null);
 let historyGeneration=0;
@@ -127,16 +130,19 @@ function resetDefaults(){if(activeSection.value==='backup')Object.assign(form,BA
 async function backupNow(){busy.value=true;error.value='';message.value='';try{await request('maintainBackups',{force:true});message.value='备份完成，恢复校验通过';}catch(e){error.value=e.message;}finally{busy.value=false;if(isOpen.value)await refresh();}}
 function trapFocus(event){const items=[...drawer.value.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]')].filter(e=>e.getClientRects().length);const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
 const openBot=()=>{activeSection.value='grok-bot';void open();};
+const openLocal=()=>{activeSection.value='grok-local';void open();};
 document.addEventListener('xfollower:bind-grok-bot',openBot);
-onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot);generation++;historyGeneration++;clearTimeout(timer);});
+document.addEventListener('xfollower:bind-grok-local',openLocal);
+onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot);document.removeEventListener('xfollower:bind-grok-local',openLocal);generation++;historyGeneration++;clearTimeout(timer);});
 </script>
 <style scoped>
-.local-data-entry{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0!important;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important;position:relative}
+.local-data-entry{display:inline-flex;align-items:center;justify-content:center;flex:0 0 30px;width:30px;min-width:30px;height:30px;padding:0!important;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important;position:relative}
+.local-data-entry>svg{flex:0 0 20px;width:20px;height:20px}
 .local-data-entry:hover{background:#ffffff12!important}.local-data-entry::after{content:attr(data-tip);position:absolute;left:40px;bottom:0;white-space:nowrap;background:#18302e;color:white;padding:6px 9px;border-radius:5px;opacity:0;pointer-events:none;font-size:12px}.local-data-entry:hover::after,.local-data-entry:focus-visible::after{opacity:1}
-.system-settings{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(780px,calc(100vw - 40px));height:min(580px,calc(100vh - 40px));display:flex;background:#fff;border:1px solid #dce6de;border-radius:10px;box-shadow:0 16px 60px #18302e33;box-sizing:border-box;z-index:4001;overflow:hidden}
+.system-settings{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(780px,calc(100vw - 40px));height:min(580px,calc(100vh - 40px));display:flex;background:#fff;border:1px solid #dce6de;border-radius:10px;box-shadow:0 16px 60px #18302e33;box-sizing:border-box;z-index:10001;overflow:hidden}
 .system-settings-nav{width:164px;flex-shrink:0;background:#eef3ef;padding:20px 10px;box-sizing:border-box}.system-settings-nav>strong{display:block;font-size:13px;color:#607c70;margin:0 10px 24px}.system-settings-nav button{display:flex;align-items:center;width:100%;height:34px;border:0;background:transparent;color:#24483b;font-size:12px;text-align:left;margin-bottom:6px;padding:0 10px;box-shadow:none}.system-settings-nav button svg{margin-right:10px;flex-shrink:0}.system-settings-nav button.selected{background:#d4e7da;color:#1f604a}
 .system-settings-main{display:flex;flex-direction:column;flex:1;min-width:0}.system-settings .profile-drawer-head{min-height:54px;padding:0 20px}.system-settings-content{flex:1;min-height:0;overflow:auto;padding:10px 20px!important}
-.system-settings-mask{z-index:4000}.system-settings .info-tip:focus::after{opacity:1}.system-setting-row .info-tip::after{left:auto;right:0;transform:none}.backup-summary .info-tip::after,.system-switch .info-tip::after{left:0;transform:none}
+.system-settings-mask{z-index:10000}.system-settings .info-tip:focus::after{opacity:1}.system-setting-row .info-tip::after{left:auto;right:0;transform:none}.backup-summary .info-tip::after,.system-switch .info-tip::after{left:0;transform:none}
 .system-settings section{margin-bottom:16px}.system-settings h3{font-size:13px;margin:0;padding:8px 0;color:#24594a}.system-section-heading{display:flex;align-items:center;justify-content:space-between}
 .system-icon{width:30px;height:30px;padding:0!important;display:inline-flex;align-items:center;justify-content:center}
 .backup-summary{margin:0 0 10px;font-size:12px}.backup-summary>div{display:flex;align-items:center;min-height:36px;border-bottom:1px solid #e5ede8}.backup-summary dt{width:100px;flex-shrink:0;display:flex;align-items:center}.backup-summary dd{margin:0;flex:1;overflow-wrap:anywhere}.info-tip{margin-left:6px}

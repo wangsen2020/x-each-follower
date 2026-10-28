@@ -78,7 +78,7 @@ export function profileReadinessError(page) {
   });
 }
 
-export async function inspectOrActOnProfile(api, user, owner, action = 'read', {sleep = ms => new Promise(r => setTimeout(r, ms)), canAct = async () => true, timeoutMs = 60000} = {}) {
+export async function inspectOrActOnProfile(api, user, owner, action = 'read', {sleep = ms => new Promise(r => setTimeout(r, ms)), canAct = async () => true, beforeSubmit = async () => {}, timeoutMs = 60000} = {}) {
   const tab = await createProfileTab(api,{url:'https://x.com/' + user.handle,active:false},'relationship-preflight');
   let attempted = false, expired = false, timer;
   const timeoutError=()=>Object.assign(new Error('主页操作等待超时，已关闭本轮临时页面'),{code:'X_PROFILE_ACTION_UNAVAILABLE'});
@@ -115,6 +115,7 @@ export async function inspectOrActOnProfile(api, user, owner, action = 'read', {
       const check=await fresh();
       if(check.relationship.followedBy!==false || check.relationship.following!==true)return {status:409,attempted:false,live:check,error:'打开确认前后主页关系变化或无法核实，未提交取关'};
       if(!await canAct())return {status:409,attempted:false,error:'设置或保护条件已变化，未操作'};
+      await beforeSubmit();assertActive();
       attempted=true;
       if(!(await readPage('confirm'))?.clicked)return {status:409,attempted:false,live:await fresh(),error:'取关确认未通过'};
     }else attempted=true;

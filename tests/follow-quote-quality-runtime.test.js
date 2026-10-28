@@ -49,8 +49,8 @@ test('an interrupted Bot generation preserves its ID and resumes the same result
 });
 
 for(const [mode,language,body,ending] of [
- ['quote','zh','这是一个值得检查的技术细节。','来关必回'],
- ['reply','en','The tradeoff deserves a closer test.','I follow back.']
+ ['quote','zh','这是一个值得检查的技术细节。','关注我，必回关！🤝'],
+ ['reply','en','The tradeoff deserves a closer test.','Follow me and I’ll follow back! 🤝']
 ]) test(`${mode} automatically appends its localized follow-back ending when enabled`,async()=>{
  const env=await setup(async({post})=>({ok:true,reply:body,post,language,quality:{passed:true,total:8},grokCalls:1}),{publicationMode:mode,followBackSuffixEnabled:true});
  await env.runtime.runComments();const saved=await env.read();
@@ -219,4 +219,10 @@ test('manual reply waits for a populated profile timeline rather than failing on
  const api={storage:{local:{get:async key=>({[key]:data[key]}),set:async patch=>Object.assign(data,patch)}},tabs:{create:async()=>({id:900}),update:async()=>({id:900}),remove:async()=>{}},scripting:{executeScript:async({func})=>{if(func.name==='readQueueViewerOnPage')return [{result:'viewer'}];if(func.name==='readProfileBundle')return [{result:{pending:false,status:'ok',name:'author',bio:'software',posts:++reads===1?[]:[post]}}];if(func.name==='readPostMetricsOnPage')return [{result:{}}];throw Error('unexpected '+func.name)}}};
  const runtime=createFollowQueueRuntime({api,store,generateReply:async()=>({ok:true,reply:'A useful observation.',post,language:'en',grokCalls:1})});
  const result=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id});assert.equal(reads,2);assert.equal(result.ok,true);assert.equal(result.evaluation.status,'draft');assert.equal(result.evaluation.originalPostId,'789');
+});
+
+for(const enabled of [false,true])test('queue passes explicit knowledge enhancement '+enabled+' to comment generation',async()=>{
+ const used=[{id:'experience-1',revision:2,statement:'补充具体信息'}];
+ const env=await setup(async({post,args})=>{assert.equal(args[3].knowledgeEnabled,enabled);return {ok:true,reply:'补充测试结论。',post,...(enabled?{knowledgeUsed:used}:{})};},{publicationMode:'reply',knowledgeEnabled:enabled});
+ await env.runtime.runComments();const ev=(await env.read()).evaluations[0];assert.equal(ev.status,'draft');if(enabled)assert.deepEqual(ev.knowledgeUsed,used);else assert.equal(ev.knowledgeUsed,undefined);
 });

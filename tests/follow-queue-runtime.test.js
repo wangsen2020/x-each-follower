@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
 
+test('interaction exclusions block the real Arabic case before follow even when follow-back bypass is enabled', () => {
+  const settings={minFollowers:0,ratioThreshold:0,skipRiskContent:false,followBackAllowAll:true};
+  for (const text of ['يا الله لك الحمد','赞美归于真主','صاروخ باليستي','انباء اوليه سقوط عدد من المرتزقه أسرى في جبهة كحلان','war in the region','戦争の報道']) {
+    const profile={handle:'example',followersText:'200',followingText:'200',posts:[{text}]};
+    assert.match(assessQueueProfile(profile,settings,true),/互动偏好跳过/,text);
+  }
+  const posts=Array.from({length:12},()=>({text:'日常产品更新'}));
+  posts[11]={text:'يا الله لك الحمد'};
+  assert.match(assessQueueProfile({handle:'example',posts},settings),/互动偏好跳过/);
+});
+
 test('read-only run check ignores legacy cooldown and still checks account identity',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true};
   let pause=new Date(Date.now()+3600000).toISOString(),currentViewer='viewer';
@@ -30,6 +41,12 @@ test('queue eligibility uses configured ratio instead of the legacy 80 percent v
   assert.match(assessQueueProfile({...profile,followersText:''},settings),/未读全/);
   assert.equal(assessQueueProfile(profile,{...settings,ratioThreshold:.8},true),'');
   assert.match(assessQueueProfile({...profile,handle:'houthi_updates'},settings,true),/武装组织/);
+});
+
+test('removed recommendation switch cannot add a hidden intent veto after explicit thresholds pass',()=>{
+  const settings={minFollowers:0,ratioThreshold:.8,onlyRecommended:true,skipRiskContent:false};
+  assert.equal(assessQueueProfile({handle:'example',bio:'Software development',followersText:'0',followingText:'0'},settings),'');
+  assert.match(assessQueueProfile({handle:'example',bio:'互关必回',followersText:'100',followingText:'70'},settings),/80%/);
 });
 
 test('armed-group profiles are skipped even when optional broad risk filtering is disabled',()=>{
@@ -186,6 +203,50 @@ test('fan reconciliation reopens only a verified ratio skip and clears stale fol
   const mismatch=await runtime.handle({cmd:'followQueueReconcileFan',accountId:'123',handle:'target_user'});
   assert.equal(mismatch.jobState,'identity-mismatch');
   assert.equal(patches.at(-1).changes[0].patch.status,'identity_mismatch');
+});
+
+test('fan inspection moves a verified former owner without merging its handle-only queue history', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const current={accountId:'unassigned',userKey:'current',sourcePath:['monitor','users','new-id'],payload:{id:'new-id',handle:'old'}};
+  const former={accountId:'unassigned',userKey:'former',sourcePath:['monitor','followingUsers','old-id'],payload:{id:'old-id',handle:'old'}};
+  const renamed={accountId:'unassigned',userKey:'renamed',sourcePath:['monitor','users','old-id'],payload:{id:'old-id',handle:'new'}};
+  const patches=[],resolved=[];
+  const records={lookupAll:async r=>r.tweetId==='old-id'?[former,renamed]:r.bucket==='users'?[current]:r.bucket==='followingUsers'?[former]:[],batch:async p=>patches.push(p)};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const runtime=createFollowQueueRuntime({api,records,store:{lookup:async()=>({id:'history',handle:'old',state:'followed',targetUserId:''}),resolveJob:async p=>resolved.push(p)},
+    fetchUser:async(_tab,handle)=>({id:handle==='old'?'new-id':'old-id',handle,relationshipKnown:true,relationship:{following:true,followedBy:true}})});
+  const result=await runtime.handle({cmd:'followQueueInspectFan',handle:'old'});
+  assert.equal(result.ok,true);
+  assert.equal(patches[0].changes[0].patch.legacyHandleIdentityConflict,true);
+  assert.equal(patches[1].changes[0].patch.handle,'new');
+  assert.deepEqual(patches[1].changes[0].patch.previousHandles,['old']);
+  assert.equal(resolved.length,0);
+});
+
+test('fan inspection keeps mismatched records untouched when former owner cannot be verified', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const rows=[{accountId:'unassigned',userKey:'current',sourcePath:['monitor','users','new'],payload:{id:'new',handle:'old'}},
+    {accountId:'unassigned',userKey:'former',sourcePath:['monitor','followingUsers','old'],payload:{id:'old',handle:'old'}}];
+  const patches=[];
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const runtime=createFollowQueueRuntime({api,records:{lookupAll:async r=>r.tweetId?[]:rows.filter(row=>row.sourcePath[1]===r.bucket),batch:async p=>patches.push(p)},store:{lookup:async()=>null},
+    fetchUser:async()=>({id:'new',handle:'old',relationshipKnown:true,relationship:{following:true,followedBy:true}})});
+  const result=await runtime.handle({cmd:'followQueueInspectFan',handle:'old'});
+  assert.equal(result.jobState,'identity-mismatch');
+  assert.ok(patches.flatMap(p=>p.changes).every(change=>!change.patch.handle));
+});
+
+test('candidate sync leaves the former owner handle-only history untouched after reuse', async () => {
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const prior={id:'historical',handle:'old',targetUserId:'',state:'followed',sources:[],profile:{name:'former'}};
+  const record={module:'fans',sourcePath:['monitor','queue','new'],payload:{id:'new',handle:'old',state:'follow_back',relationship:{following:false,followedBy:true}}};
+  const directory={handle:'old',payload:{fanCategory:'pending',relationship:{following:false,followedBy:true},legacyHandleIdentityConflict:true}};
+  const calls=[];
+  const store={lookup:async()=>prior,getSettings:async()=>({followBackAllowAll:true}),resolveJob:async()=>calls.push('resolve'),enqueue:async()=>calls.push('enqueue'),importOutcome:async()=>calls.push('import')};
+  const records={sourcePage:async({sourceKey})=>({records:sourceKey==='monitor'?[record]:[]}),profiles:async()=>[],lookupAll:async()=>[],fanDirectory:async()=>[directory]};
+  await createFollowQueueRuntime({api,store,records}).syncCandidates();
+  assert.deepEqual(calls,[]);
 });
 
 test('fan inspection updates all stored buckets without reopening skipped jobs or performing a follow', async () => {

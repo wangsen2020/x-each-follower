@@ -1,207 +1,17 @@
 <template>
-  <section
-    id="knowledgeSection"
-    class="tab-panel knowledge-panel"
-    data-panel="knowledge"
-    :hidden="activeTab !== 'knowledge'"
-    aria-label="知识库"
-  >
-    <!-- Header -->
-    <div class="kb-head">
-      <p class="kb-context">记录写作经验，审核后采纳</p>
-      <PanelActionBar class="kb-head-actions">
-        <PanelIconButton :icon="Settings" class="kb-settings-trigger" label="知识库设置" @click="openSettings" />
-        <PanelIconButton :icon="Plus" class="kb-add-trigger" label="新增知识" :disabled="!ownerId || busy" @click="openCreateDrawer" />
-        <PanelIconButton :icon="RefreshCw" class="kb-refresh-trigger" label="刷新知识" :disabled="loading || busy" @click="loadData" />
-      </PanelActionBar>
+  <section id="knowledgeSection" class="tab-panel knowledge-panel" data-panel="knowledge" :hidden="activeTab !== 'knowledge'" aria-label="知识库">
+    <div class="kb-head"><p class="kb-context">经验持续积累，合入智慧后用于生成</p><PanelActionBar class="kb-head-actions"><KnowledgeWisdomPanel v-if="ownerId && activeTab === 'knowledge'" ref="wisdomRef" :owner-id="ownerId" @state="wisdomState=$event" @updated="onWisdomUpdated" /><PanelIconButton :icon="Settings" label="知识库设置" :disabled="!ownerId" @click="openSettings" /><PanelIconButton :icon="Plus" label="新增经验" :disabled="!ownerId || busy" @click="openCreateDrawer" /><PanelIconButton :icon="RefreshCw" label="刷新经验" :disabled="loading || busy" @click="loadData" /></PanelActionBar></div>
+    <div v-if="error" class="kb-alert kb-alert-error" role="alert"><span>{{ error }}</span><PanelCloseButton label="关闭提示" @click="error=''" /></div><div v-if="notice" class="kb-alert kb-alert-notice" role="status"><span>{{ notice }}</span><PanelCloseButton label="关闭提示" @click="notice=''" /></div>
+    <KnowledgeLearningPanel v-if="ownerId && activeTab === 'knowledge'" ref="automationRef" :owner-id="ownerId" @updated="loadData" />
+    <div class="kb-filter-row"><div class="kb-status-tabs" role="tablist" aria-label="经验状态"><button v-for="st in statusTabs" :key="st.key" type="button" class="kb-status-tab" :class="{active:currentStatus===st.key}" role="tab" :aria-selected="currentStatus===st.key" @click="setStatusFilter(st.key)">{{ st.label }} <span class="kb-tab-count">{{ countByStatus[st.key] || 0 }}</span></button></div>
+      <div class="kb-filter-controls"><label class="kb-select-field"><select v-model="sourceFilter" aria-label="经验来源"><option value="all">全部来源</option><option v-for="(label,key) in experienceChannels" :key="key" :value="key" :disabled="key==='blogger_analysis'">{{ label }}{{ key==='blogger_analysis'?' · 未接入':'' }}</option><option value="legacy">历史来源待核实</option></select></label><input v-model="searchQuery" type="search" aria-label="搜索经验" placeholder="搜索经验…"></div>
+      <div class="experience-batch"><label><input type="checkbox" :checked="pageSelected" :disabled="!selectablePage.length" aria-label="选择本页经验" @change="togglePage($event.target.checked)"> 本页</label><span>已选 {{ selectedIds.length }} 条</span><button type="button" :disabled="!selectedIds.length" @click="wisdomRef?.merge([...selectedIds])">合入智慧</button><button v-if="selectedIds.length" type="button" class="secondary" @click="selectedIds=[]">清空</button><InfoTip text="单条或批量合入均生成一个智慧版本。先预览再确认；同一条经验不会重复合入当前版本。" /></div>
+      <nav class="kb-pagination" aria-label="经验分页"><span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span><div class="kb-page-controls"><label class="kb-select-field"><span>每页</span><select v-model.number="pageSize" aria-label="经验每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select><span>条</span></label><button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--">‹</button><button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++">›</button></div></nav>
     </div>
+    <div class="kb-list-container" :aria-busy="loading || busy"><p v-if="loading && !knowledgeItems.length" class="kb-empty" role="status">正在读取经验…</p><div v-else-if="!ownerId" class="kb-empty-box"><p>请先登录 X，确认账号后刷新。</p></div><div v-else-if="!filteredItems.length" class="kb-empty-box"><p>暂无{{ currentStatus==='pending'?'待合入':'' }}经验</p><p class="kb-hint">定时总结或手动录入经验后，在这里选择合入智慧。</p></div><div v-else class="experience-table-wrap"><table class="experience-table" aria-label="经验列表"><thead><tr><th class="experience-select"></th><th>经验</th><th class="experience-source-col">来源</th><th class="experience-state-col">状态</th><th class="experience-time-col">总结时间</th><th class="experience-detail-col">操作</th></tr></thead><tbody><tr v-for="item in pagedItems" :key="item.id"><td class="experience-select"><input type="checkbox" :checked="selectedIds.includes(item.id)" :disabled="experienceState(item)!=='pending'" :aria-label="'选择经验 '+item.statement" @change="toggleItem(item.id,$event.target.checked)"></td><td class="experience-summary-col"><span class="experience-summary" :title="item.statement">{{ item.statement }}</span><span class="experience-mobile-source">{{ sourceLabel(item) }}</span></td><td class="experience-source-col"><span class="experience-source" :title="sourceLabel(item)">{{ sourceLabel(item) }}</span></td><td class="experience-state-col"><span class="kb-status-badge" :class="experienceState(item)==='included'?'active':'candidate'">{{ ({pending:'待合入',included:'已合入',ignored:'已忽略'})[experienceState(item)] }}</span></td><td class="experience-time-col">{{ formatDate(item.createdAt) }}</td><td class="experience-detail-col"><PanelIconButton :icon="Eye" label="查看经验详情" @click="openEvidence(item)" /></td></tr></tbody></table></div></div>
 
-    <!-- Alert / Notice message -->
-    <div v-if="error" class="kb-alert kb-alert-error" role="alert">
-      <span>{{ error }}</span>
-      <PanelCloseButton label="关闭提示" @click="error = ''" />
-    </div>
-    <div v-if="notice" class="kb-alert kb-alert-notice" role="status">
-      <span>{{ notice }}</span>
-      <PanelCloseButton label="关闭提示" @click="notice = ''" />
-    </div>
-
-    <!-- Status and Type Filters -->
-    <div class="kb-filter-row">
-      <div class="kb-status-tabs" role="tablist" aria-label="知识状态分类">
-        <button
-          v-for="st in statusTabs"
-          :key="st.key"
-          type="button"
-          class="kb-status-tab"
-          :class="{ active: currentStatus === st.key }"
-          role="tab"
-          :aria-selected="currentStatus === st.key"
-          @click="setStatusFilter(st.key)"
-        >
-          {{ st.label }}
-          <span class="kb-tab-count">{{ countByStatus[st.key] ?? 0 }}</span>
-        </button>
-      </div>
-
-      <div class="kb-filter-controls">
-        <label class="kb-select-field">
-          <span class="kb-field-label">类型</span>
-          <select v-model="currentType" aria-label="知识类型过滤" @change="applyFilters">
-            <option value="all">全部类型</option>
-            <option value="writing_principle">写作原则</option>
-            <option value="pitfall">常见陷阱</option>
-            <option value="conditional_observation">条件观察</option>
-          </select>
-        </label>
-
-        <div class="kb-search-wrap">
-          <input
-            v-model="searchQuery"
-            type="search"
-            placeholder="搜索知识正文…"
-            aria-label="搜索知识正文"
-            @input="applyFilters"
-          >
-        </div>
-      </div>
-    <nav class="kb-pagination" aria-label="知识分页">
-      <span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span>
-      <div class="kb-page-controls">
-        <label class="kb-select-field"><span>每页</span><select v-model.number="pageSize" aria-label="知识每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select>条</label>
-        <button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--" aria-label="知识上一页" title="上一页">‹</button>
-        <button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++" aria-label="知识下一页" title="下一页">›</button>
-      </div>
-    </nav>
-    </div>
-
-    <!-- Knowledge List Container -->
-    <div class="kb-list-container" :aria-busy="loading || busy">
-      <!-- Loading State -->
-      <p v-if="loading && !knowledgeItems.length" class="kb-empty" role="status">
-        正在读取知识库…
-      </p>
-
-      <!-- Account Unidentified State -->
-      <div v-else-if="!ownerId" class="kb-empty-box">
-        <p class="kb-empty-title">请先登录 X</p>
-        <p class="kb-empty-desc">
-          登录后点击刷新。
-        </p>
-      </div>
-
-      <!-- Honest Empty State -->
-      <div v-else-if="filteredItems.length === 0" class="kb-empty-box">
-        <p class="kb-empty-title">暂无知识</p>
-
-      </div>
-
-      <!-- Knowledge Cards -->
-      <div v-else class="kb-cards-list">
-        <article
-          v-for="item in pagedItems"
-          :key="item.id"
-          class="kb-card"
-          :class="`kb-status-${item.status}`"
-        >
-          <div class="kb-card-header">
-            <div class="kb-card-meta">
-              <span class="kb-type-badge">{{ formatType(item.type) }}</span>
-              <span class="kb-status-badge" :class="item.status">
-                {{ formatStatus(item.status) }}
-              </span>
-              <span class="kb-rev-badge">v{{ item.revision }}</span>
-              <span class="kb-date-meta">{{ formatDate(item.updatedAt) }}</span>
-            </div>
-
-            <div class="kb-card-actions">
-              <button
-                v-if="item.status === 'candidate'"
-                type="button"
-                class="kb-btn-approve"
-                :disabled="busy"
-                @click="reviewItem(item, 'approve')"
-              >
-                通过
-              </button>
-              <button
-                v-if="item.status === 'candidate'"
-                type="button"
-                class="kb-btn-reject"
-                :disabled="busy"
-                @click="reviewItem(item, 'reject')"
-              >
-                拒绝
-              </button>
-              <button
-                v-if="item.status === 'disabled'"
-                type="button"
-                class="kb-btn-approve"
-                :disabled="busy"
-                @click="reviewItem(item, 'approve')"
-              >
-                重新采纳
-              </button>
-              <button
-                v-if="item.status === 'active'"
-                type="button"
-                class="kb-btn-reject"
-                :disabled="busy"
-                @click="reviewItem(item, 'reject')"
-              >
-                停用
-              </button>
-              <button
-                type="button"
-                class="secondary kb-btn-aux"
-                @click="openEvidence(item)"
-              >
-                来源
-              </button>
-              <button
-                type="button"
-                class="secondary kb-btn-aux"
-                @click="openRevisions(item)"
-              >
-                历史
-              </button>
-            </div>
-          </div>
-
-          <div class="kb-card-body">
-            <p class="kb-statement">{{ item.statement }}</p>
-            <label class="kb-review-reason">审核理由（可选）<input v-model="reviewReasons[item.id]" aria-label="审核理由" maxlength="2000" placeholder="记录采纳、拒绝或停用的原因" :disabled="busy"></label>
-
-            <div v-if="item.originalText && item.originalText !== item.statement" class="kb-orig-box">
-              <span class="kb-orig-label">原始文本：</span>
-              <p class="kb-orig-text">{{ item.originalText }}</p>
-            </div>
-
-            <div v-if="item.scope && Object.keys(item.scope).length > 0" class="kb-scope-row">
-              <span class="kb-scope-label">适用范围：</span>
-              <span
-                v-for="(val, key) in item.scope"
-                :key="key"
-                class="kb-scope-tag"
-              >
-                {{ key === 'theme' ? '主题' : key === 'conditions' ? '条件' : key }}: {{ val }}
-              </span>
-            </div>
-          </div>
-        </article>
-      </div>
-    </div>
-
-
-
-    <ActionSettingsDrawer ref="settingsDrawerRef" title="知识库设置">
-      <label class="kb-select-field"><span>每页条数</span><select v-model.number="settingsPageSize"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
-      <p class="kb-hint">与列表分页同步，保存在当前浏览器。自动分析尚未接入。</p>
-      <p v-if="settingsError" class="kb-form-error" role="alert">{{ settingsError }}</p>
-      <template #footer><button type="button" class="secondary" @click="settingsDrawerRef?.close()">取消</button><button type="button" class="kb-btn-primary" @click="saveSettings">保存</button></template>
-    </ActionSettingsDrawer>
     <!-- Candidate Creation Drawer -->
-    <ActionSettingsDrawer ref="createDrawerRef" title="新增知识" @close="resetCandidateDraft">
+    <ActionSettingsDrawer ref="createDrawerRef" title="新增经验" @close="resetCandidateDraft">
       <div class="kb-drawer-form">
         <label class="kb-form-field">
           <span>知识类型 <strong class="kb-req">*</strong></span>
@@ -213,7 +23,7 @@
         </label>
 
         <label class="kb-form-field">
-          <span>知识核心结论/原则 <strong class="kb-req">*</strong></span>
+          <span>经验内容 <strong class="kb-req">*</strong></span>
           <textarea
             v-model="candidateDraft.statement"
             rows="3"
@@ -285,21 +95,21 @@
           :disabled="busy || !candidateDraft.statement.trim()"
           @click="submitCandidate"
         >
-          {{ busy ? '提交中…' : '新增知识' }}
+          {{ busy ? '提交中…' : '新增经验' }}
         </button>
       </template>
     </ActionSettingsDrawer>
 
     <!-- Source Evidence Viewer Drawer -->
-    <ActionSettingsDrawer ref="evidenceDrawerRef" title="来源证据详情" @close="activeEvidenceItem = null">
+    <ActionSettingsDrawer ref="evidenceDrawerRef" title="经验详情" @close="activeEvidenceItem = null">
       <div v-if="activeEvidenceItem" class="kb-drawer-content">
         <section class="kb-drawer-section">
-          <h3>知识正文</h3>
-          <p class="kb-statement-preview">{{ activeEvidenceItem.statement }}</p>
+          <h3>经验内容</h3>
+          <p class="kb-statement-preview">{{ activeEvidenceItem.statement }}</p><p v-if="activeEvidenceItem.scope?.conditions" class="kb-hint">适用条件：{{ activeEvidenceItem.scope.conditions }}</p><p class="kb-hint">{{ stateLabel(activeEvidenceItem) }} · 总结时间 {{ formatDate(activeEvidenceItem.createdAt) }}</p>
         </section>
 
         <section class="kb-drawer-section">
-          <h3>关联证据</h3>
+          <h3>来源渠道</h3><p>{{ sourceLabel(activeEvidenceItem) }}</p><article v-for="source in itemSources(activeEvidenceItem)" :key="source.key" class="kb-evidence-card"><p>{{ experienceChannels[source.channel] || '来源待核实' }}<span v-if="source.handle"> · @{{ source.handle }}</span></p><p class="kb-hint">总结时间：{{ formatDate(source.summarizedAt) }} · 采集时间：{{ formatDate(source.capturedAt) }}</p><a v-if="safeUrl(source.url)" :href="safeUrl(source.url)" target="_blank" rel="noopener noreferrer">查看来源帖子</a><small class="kb-hint" :title="source.analysisId"> 分析批次已记录</small></article><h3>原帖证据</h3>
           <p v-if="loadingEvidence" class="kb-hint">正在读取证据列表…</p>
           <div v-else-if="evidenceList.length === 0" class="kb-empty-box">
             <p class="kb-empty-title">暂无关联证据</p>
@@ -347,6 +157,7 @@
           </div>
         </section>
       </div>
+      <template #footer><template v-if="activeEvidenceItem"><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'reject')">忽略</button><button v-if="activeEvidenceItem.status==='disabled'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'candidate')">恢复待合入</button><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="kb-btn-primary" :disabled="busy" @click="mergeFromDetail(activeEvidenceItem)">合入智慧</button></template></template>
     </ActionSettingsDrawer>
 
     <!-- Revision History Drawer -->
@@ -387,13 +198,17 @@
 </template>
 
 <script setup>
+import InfoTip from '../components/InfoTip.vue';
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';
-import {Settings, Plus, RefreshCw} from 'lucide';
+import {Settings, Plus, RefreshCw, Eye} from 'lucide';
 import { ref, reactive, computed, watch, onUnmounted } from 'vue';
 import ActionSettingsDrawer from '../components/ActionSettingsDrawer.vue';
 import PanelCloseButton from '../components/PanelCloseButton.vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
+import KnowledgeWisdomPanel from '../components/KnowledgeWisdomPanel.vue';
+import {EXPERIENCE_CHANNELS as experienceChannels} from '../../../features/knowledge/wisdom.js';
+import KnowledgeLearningPanel from '../components/KnowledgeLearningPanel.vue';
 import { createKnowledgeStore } from '../../../features/knowledge/knowledge-store.js';
 import { createKnowledgeReviewService } from '../../../features/knowledge/knowledge-review.js';
 import { createKnowledgeOwner } from '../../../features/knowledge/knowledge-owner.js';
@@ -402,6 +217,7 @@ import { safeXPostUrl } from '../../../shared/urls.js';
 const { activeTab } = panelNavigationController;
 
 // Store and Review Service
+const automationRef=ref(null),wisdomRef=ref(null),wisdomState=ref(null),selectedIds=ref([]),sourceFilter=ref('all');
 const store = createKnowledgeStore();
 const reviewService = createKnowledgeReviewService({ store });
 const account = createKnowledgeOwner({resolve:() => chrome.runtime.sendMessage({cmd:'followQueueIdentity'})});
@@ -418,17 +234,14 @@ const error = ref('');
 const notice = ref('');
 
 const knowledgeItems = ref([]);
-const currentStatus = ref('all');
+const currentStatus = ref('pending');
 const currentType = ref('all');
 const searchQuery = ref('');
 const currentPage = ref(1);
 const displaySettingsKey = 'xfollower.knowledge.pageSize';
 function savedPageSize() { try { const n = Number(localStorage.getItem(displaySettingsKey)); return [20,50,100].includes(n) ? n : 20; } catch { return 20; } }
 const pageSize = ref(savedPageSize());
-const settingsDrawerRef = ref(null);
-const settingsPageSize = ref(pageSize.value);
-const settingsError = ref('');
-function openSettings() { settingsPageSize.value = pageSize.value; settingsError.value = ''; settingsDrawerRef.value?.open(); }
+function openSettings() { automationRef.value?.open(); }
 function saveSettings() {
   try { localStorage.setItem(displaySettingsKey, String(settingsPageSize.value)); pageSize.value = settingsPageSize.value; settingsDrawerRef.value?.close(); }
   catch { settingsError.value = '显示设置保存失败，请重试。'; }
@@ -464,41 +277,20 @@ const candidateDraft = reactive({
   reason: ''
 });
 
-const statusTabs = [
-  { key: 'all', label: '全部' },
-  { key: 'candidate', label: '待审核' },
-  { key: 'active', label: '已采纳' },
-  { key: 'disabled', label: '已拒绝/停用' },
-  { key: 'archived', label: '已归档' }
-];
-
-const countByStatus = computed(() => {
-  const counts = { all: knowledgeItems.value.length, candidate: 0, active: 0, disabled: 0, archived: 0 };
-  for (const item of knowledgeItems.value) {
-    if (counts[item.status] !== undefined) {
-      counts[item.status]++;
-    }
-  }
-  return counts;
-});
-
-const filteredItems = computed(() => {
-  return knowledgeItems.value.filter(item => {
-    if (currentStatus.value !== 'all' && item.status !== currentStatus.value) {
-      return false;
-    }
-    if (currentType.value !== 'all' && item.type !== currentType.value) {
-      return false;
-    }
-    if (searchQuery.value.trim()) {
-      const q = searchQuery.value.trim().toLowerCase();
-      const inStatement = (item.statement || '').toLowerCase().includes(q);
-      const inOrig = (item.originalText || '').toLowerCase().includes(q);
-      if (!inStatement && !inOrig) return false;
-    }
-    return true;
-  });
-});
+const statusTabs=[{key:'pending',label:'待合入'},{key:'included',label:'已合入'},{key:'all',label:'全部'},{key:'ignored',label:'已忽略'}];
+function experienceState(item){if(wisdomState.value?.head?.experiences.some(e=>e.id===item.id&&e.revision===item.revision))return 'included';if(['disabled','archived','merged'].includes(item.status))return 'ignored';return 'pending';}
+function stateLabel(item){return ({pending:'待合入',included:'已合入当前智慧',ignored:'已忽略'})[experienceState(item)];}
+function itemSources(item){return wisdomState.value?.sources?.filter(s=>s.knowledgeId===item.id)||[];}
+function sourceKeys(item){const sources=itemSources(item);return sources.length?[...new Set(sources.map(s=>s.channel))]:[item.scope?.sourceChannel==='manual'?'manual':'legacy'];}
+function sourceLabel(item){const sources=itemSources(item);const labels=sourceKeys(item).map(k=>experienceChannels[k]||'历史来源待核实');const handles=[...new Set(sources.map(s=>s.handle).filter(Boolean))];return labels.join('、')+(handles.length?' · @'+handles.slice(0,2).join('、@'):'');}
+const countByStatus=computed(()=>{const counts={all:knowledgeItems.value.length,pending:0,included:0,ignored:0};for(const item of knowledgeItems.value)counts[experienceState(item)]++;return counts;});
+const filteredItems=computed(()=>knowledgeItems.value.filter(item=>(currentStatus.value==='all'||experienceState(item)===currentStatus.value)&&(sourceFilter.value==='all'||sourceKeys(item).includes(sourceFilter.value))&&(!searchQuery.value.trim()||[item.statement,sourceLabel(item)].join(' ').toLowerCase().includes(searchQuery.value.trim().toLowerCase()))));
+const selectablePage=computed(()=>pagedItems.value.filter(item=>experienceState(item)==='pending'));
+const pageSelected=computed(()=>selectablePage.value.length>0&&selectablePage.value.every(item=>selectedIds.value.includes(item.id)));
+function toggleItem(id,checked){selectedIds.value=checked?[...new Set([...selectedIds.value,id])]:selectedIds.value.filter(v=>v!==id);}
+function togglePage(checked){for(const item of selectablePage.value)toggleItem(item.id,checked);}
+async function onWisdomUpdated(){selectedIds.value=[];await loadData();}
+watch([currentStatus,sourceFilter,ownerId],()=>{selectedIds.value=[];currentPage.value=1;});
 
 watch(pageCount, count => { currentPage.value = Math.min(currentPage.value, count); }, { flush: 'sync' });
 
@@ -567,6 +359,7 @@ async function loadData() {
     if (sequence !== loadSequence) return;
     // Sort by updatedAt descending
     knowledgeItems.value = (list || []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    await wisdomRef.value?.refresh();
   } catch (err) {
     if (sequence !== loadSequence) return;
     ownerId.value = '';
@@ -601,12 +394,13 @@ async function reviewItem(item, action) {
       operator: 'user'
     });
 
+    if (!result.ok) throw Error(result.error || '审核失败');
     if (result.ok) {
       if (result.idempotent) {
         notice.value = `条目已是目标状态，无需重复变更`;
       } else {
         const actionLabel = action === 'approve' ? '审核通过' : '审核拒绝';
-        notice.value = `知识条目已${actionLabel}（版本升级至 v${result.knowledge.revision}）`;
+        notice.value = `经验已${actionLabel}（版本升级至 v${result.knowledge?.revision || item.revision+1}）`;
       }
       await loadData();
     }
@@ -646,7 +440,7 @@ async function submitCandidate() {
 
   const cleanStmt = (draft.statement || '').trim();
   if (!cleanStmt) {
-    createError.value = '知识正文不能为空';
+    createError.value = '经验内容不能为空';
     return;
   }
 
@@ -661,7 +455,7 @@ async function submitCandidate() {
   busy.value = true;
   try {
     const verifiedOwner = await account.assert(ownerId.value);
-    const scope = {};
+    const scope = {sourceChannel:'manual'};
     if (draft.theme.trim()) scope.theme = draft.theme.trim();
     if (draft.conditions.trim()) scope.conditions = draft.conditions.trim();
     const res = await reviewService.createCandidate({
@@ -677,16 +471,18 @@ async function submitCandidate() {
     });
 
     if (res.ok) {
-      notice.value = '候选知识创建成功';
+      notice.value = '经验已记录，待合入智慧';
       closeCreateDrawer();
       await loadData();
     }
   } catch (err) {
-    createError.value = err.message || '新增知识失败';
+    createError.value = err.message || '新增经验失败';
   } finally {
     busy.value = false;
   }
 }
+
+function mergeFromDetail(item){const id=item.id;evidenceDrawerRef.value?.close();wisdomRef.value?.merge([id]);}
 
 async function openEvidence(item) {
   const sequence = ++evidenceSequence;
@@ -732,7 +528,7 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 
 <style scoped>
 /* Scoped layout: flex and 10px margins, avoid excessive gap */
-.knowledge-panel[hidden] { display: none; }
+.experience-batch{display:flex;align-items:center;flex-wrap:wrap;gap:10px;width:100%;font-size:12px}.experience-batch label{display:flex;align-items:center;gap:10px}.knowledge-panel[hidden] { display: none; }
 .kb-review-reason { display:flex; flex-direction:column; margin:10px 0; font-size:12px; }
 .kb-review-reason input { margin-top:5px; width:100%; box-sizing:border-box; }
 .knowledge-panel {
@@ -987,7 +783,7 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   border-bottom: 1px solid #f0f4ee;
   padding-bottom: 8px;
 }
@@ -1102,7 +898,7 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 .kb-card-body > :not(:last-child) { margin-bottom: 10px; }
 
 .kb-statement {
-  margin: 4px 0;
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
@@ -1434,4 +1230,36 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 
 @media (max-width: 1100px) { .kb-head { flex-direction: row; align-items: center; } .kb-head > :not(:last-child) { margin: 0 10px 0 0; } }
 .kb-head { justify-content: space-between; }
+
+/* One spacing owner per row: gap handles both horizontal and wrapped rows. */
+.kb-filter-row,.kb-status-tabs,.kb-filter-controls,.kb-card-header,.kb-card-meta,.kb-card-actions,.kb-page-controls { gap:10px; }
+.kb-filter-row > :not(:last-child),.kb-status-tabs > :not(:last-child),.kb-filter-controls > :not(:last-child),.kb-card-header > :not(:last-child),.kb-card-meta > :not(:last-child),.kb-card-actions > :not(:last-child),.kb-page-controls > :not(:last-child) { margin:0; }
+.kb-status-tabs,.kb-card-meta,.kb-card-actions { margin-bottom:0; }
+.kb-status-tabs > *,.kb-card-meta > *,.kb-card-actions > *,.kb-page-controls > * { margin-bottom:0; }
+.kb-form-field input,.kb-form-field textarea,.kb-form-field select { padding:10px; }
+.kb-empty-title { margin:0 0 10px; }
+
+.experience-table-wrap { max-width:100%;overflow-x:auto;border:1px solid #dce6df;border-radius:8px; }
+.experience-table { width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px; }
+.experience-table th,.experience-table td { padding:10px;text-align:left;vertical-align:middle;border-bottom:1px solid #e7ece8; }
+.experience-table th { background:#f7faf7;color:#4f6658;font-weight:600; }
+.experience-table tbody tr:last-child td { border-bottom:0; }
+.experience-table tbody tr:hover { background:#f7faf7; }
+.experience-select { width:34px;box-sizing:border-box; }
+.experience-source-col { width:170px; }
+.experience-state-col { width:80px; }
+.experience-time-col { width:140px;color:#6b7b71; }
+.experience-detail-col { width:40px; }
+.experience-summary,.experience-source { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.experience-mobile-source { display:none; }
+.experience-table .kb-status-badge { margin:0; }
+@media(max-width:600px){.experience-table .experience-source-col,.experience-table .experience-time-col{display:none}.experience-state-col{width:60px}.experience-detail-col{width:30px}.experience-table .kb-status-badge{padding:0 10px}.experience-mobile-source{display:block;margin-top:10px;font-size:12px;color:#6b7b71;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.experience-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere}}
+
+.kb-select-field{display:inline-flex;align-items:center;gap:10px}
+.kb-select-field > :not(:last-child){margin:0}
+.kb-page-controls .kb-select-field select{margin:0}
+
+.kb-pagination,.kb-page-controls,.kb-pagination .kb-select-field{align-items:center;align-content:center;gap:10px}
+.kb-pagination > span,.kb-pagination .kb-select-field > span{display:inline-flex;align-items:center;min-height:30px;line-height:30px;margin:0}
+.kb-pagination > :not(:last-child){margin-top:0;margin-bottom:0}
 </style>

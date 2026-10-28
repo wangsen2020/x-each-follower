@@ -1,5 +1,7 @@
 // Stable IDs also resolve notifications created before a service-worker restart.
 const SOURCES = [
+  ['xf-health-logs', 'followQueue', '系统异常'],
+  ['xf-health-unfollow', 'unreciprocated', '自动取关异常'],
   ['follow-queue-', 'followQueue', '关注队列'],
   ['x-comment-auto-', 'comments', '评论追踪'],
   ['x-mutual-auto-', 'candidates', '互关追踪'],

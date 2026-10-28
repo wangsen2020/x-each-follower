@@ -8,6 +8,34 @@ import {createCommentWorker} from '../src/features/follow-queue/comment-worker.j
 import {createFollowQueueRuntime} from '../src/features/follow-queue/follow-queue-runtime.js';
 globalThis.IDBKeyRange = IDBKeyRange;
 
+test('old Bot uncertainty at the queue head cannot starve new quotes or other resume tasks across restarts', async()=>{
+  let env,time=Date.now()+60000;const firstTurn=time,calls=[];
+  env=await setup(async(_binding,{jobId})=>{
+    calls.push(jobId);
+    const job=(await env.store.listByState({accountId:env.accountId,state:'followed'})).find(j=>j.id===jobId);
+    const ev=job.evaluations[0];
+    const next={...ev,status:ev.relayJobId?'uncertain':'posted',reasonCode:ev.relayJobId?'bot_pending':'generated'};
+    await env.store.resolveJob({accountId:env.accountId,id:job.id,evaluations:[next]});
+    return {ok:!ev.relayJobId,pending:!!ev.relayJobId,evaluation:next};
+  },{now:()=>time});
+  const old=(await env.read()).evaluations[0];
+  await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[{...old,status:'uncertain',reasonCode:'bot_pending',relayJobId:'local:old-job'}]});
+  const second=await env.store.enqueue({accountId:env.accountId,handle:'second'});
+  await env.store.resolveJob({accountId:env.accountId,id:second.id,state:'followed',evaluations:[{taskId:'second-task',automaticComment:true,status:'uncertain',reasonCode:'bot_pending',relayJobId:'cloud-old-job'}]});
+  const fresh=await env.store.enqueue({accountId:env.accountId,handle:'fresh'});
+  await env.store.resolveJob({accountId:env.accountId,id:fresh.id,state:'followed',evaluations:[{taskId:'fresh-task',automaticComment:true,status:'pending'}]});
+  await env.worker.run();
+  time++;await createCommentWorker(env.args).run();
+  time++;await createCommentWorker(env.args).run();
+  assert.deepEqual(new Set(calls),new Set([env.job.id,second.id,fresh.id]));
+  assert.equal(calls.length,3);
+  const persisted=(await env.store.listByState({accountId:env.accountId,state:'followed'}));
+  assert.ok(persisted.every(j=>j.evaluations[0].commentAttemptedAt>0));
+  // An older update must not erase a turn and restore head-of-line priority.
+  await env.store.resolveJob({accountId:env.accountId,id:env.job.id,evaluations:[{...old,status:'uncertain',reasonCode:'bot_pending',relayJobId:'local:old-job',commentAttemptedAt:0}]});
+  assert.equal((await env.read()).evaluations[0].commentAttemptedAt,firstTurn);
+});
+
 async function setup(execute, options = {}) {
   const store = createFollowQueueStore({indexedDB, dbName:'comments-'+crypto.randomUUID()});
   const accountId = '123';

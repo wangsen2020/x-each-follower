@@ -69,7 +69,7 @@ test('restarting with an unbacked update never overwrites it with an old backup'
   const first = createExecutionLogStore(f.options);
   await first.append(entry('same', 'old'));
   const failing = createExecutionLogStore({...f.options, durableSet: async () => { throw Error('offline'); }});
-  await assert.rejects(failing.append(entry('same', 'new')), /offline/);
+  assert.equal((await failing.append(entry('same', 'new'))).backup.ok,false);
   const restart = createExecutionLogStore(f.options);
   assert.equal((await restart.query({scope: 'comment'})).entries[0].detail, 'new');
   await restart.ready();

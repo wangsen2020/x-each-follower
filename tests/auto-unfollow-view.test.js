@@ -10,7 +10,7 @@ test('queue positions distinguish waiting from account isolation and explain rec
  assert.equal(autoUnfollowRowView({handle:'second'},v).label,'排队第 2 位');
  assert.match(autoUnfollowRowView({handle:'second'},v).tip,/前面有 1 个/);
  assert.equal(autoUnfollowRowView({handle:'renamed',id:'8'},v).label,'待确认 · 已隔离');
- assert.match(autoUnfollowRowView({handle:'blocked'},v).tip,/已达 3 次/);
+ assert.match(autoUnfollowRowView({handle:'blocked'},v).tip,/自动恢复排队/);
 });
 test('global pause, disabled, window, quota, and missing alarm have explicit explanations',()=>{
  assert.equal(view({...cfg,autoUnfollow:false}).label,'未开启');

@@ -1090,6 +1090,14 @@
 .fq-drawer-body .fq-setting-row > label { display:inline-flex; flex-direction:row; align-items:center; flex:0 0 auto; gap:10px; margin:0; }
 .fq-drawer-body .fq-setting-row > label > .info-tip { margin:0; }
 .fq-drawer-body .fq-setting-row > select { flex:0 1 140px; width:140px; min-width:100px; margin:0; }
+.fq-generation-choice { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.fq-drawer-body .fq-generation-row { flex-wrap:wrap; }
+.fq-generation-bot { flex:0 1 140px; min-width:100px; }
+.fq-generation-bot:empty { display:none; }
+.fq-generation-bot > select { width:100%; margin:0; }
+.fq-generation-details { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:var(--muted, #61766e); font-size:12px; }
+.fq-generation-details:empty { display:none; }
+.fq-generation-details .fq-btn { margin:0; }
 .fq-drawer-body .fq-setting-group { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: flex-start; gap: 0; text-align: start; }
 .fq-drawer-body .fq-setting-label { min-width: 12em; max-width: calc(100% - 90px); margin: 0 10px 0 0; line-height: 20px; flex-wrap: nowrap; }
 .fq-drawer-body .fq-setting-input { width: 80px; flex: 0 0 80px; margin: 0; text-align: start; }
