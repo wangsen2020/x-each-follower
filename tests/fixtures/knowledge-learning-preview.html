@@ -1,10 +1,9 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>知识库 · 隔离验收</title><style>body{font:13px/1.6 system-ui,"Microsoft YaHei";margin:0;background:#f4f7f5;color:#18302e}main{max-width:980px;margin:20px auto;padding:18px;background:white}button{cursor:pointer;padding:6px 12px;border:1px solid #cbd8cf;border-radius:5px;color:#234a3e;background:#f3f7f4}input,select{padding:5px;border:1px solid #ccd8cf;border-radius:4px}input[type=checkbox]{accent-color:#24594a}.info-tip{display:inline-block;border:1px solid #9bae9e;border-radius:50%;font-size:10px;line-height:14px;width:14px;height:14px;text-align:center}.info-tip:focus:after,.info-tip:hover:after{content:attr(data-tip);position:absolute;max-width:250px;background:#203e34;color:white;padding:8px;border-radius:4px;z-index:10}@media(max-width:600px){main{margin:0;padding:10px}}</style>
-<main><p><strong>知识库 · 隔离验收</strong>　独立网页数据，不修改扩展原有知识或发布内容。</p><div id="app"></div><section id="queue-tests" hidden><hr><div id="queue"></div><button id="generate">验证知识增强生成</button><button id="generate-real" hidden>验证评论草稿</button><pre id="result" style="white-space:pre-wrap"></pre></section></main>
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>知识库 · 隔离验收</title>
+<link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/admin.css"><link rel="stylesheet" href="/src/entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="/src/entries/panel/styles/follow-queue-panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/dashboard-load.css">
+<style>body main.knowledge-preview{display:block;width:100%;max-width:1040px;height:100%;max-height:100%;margin:0 auto;padding:10px;overflow:auto}main.knowledge-preview>*{margin-left:0}main.knowledge-preview #app{margin:0;background:#fff;min-width:0}main.knowledge-preview>p{margin:0 0 10px;font-size:12px}#queue-tests[hidden]{display:none}</style>
+<main class="knowledge-preview"><p><strong>知识库 · 隔离验收</strong>　独立网页数据，不修改扩展原有知识或发布内容。</p><div id="app"></div><section id="queue-tests" hidden><hr><div id="queue"></div><button id="generate">验证知识增强生成</button><button id="generate-real" hidden>验证评论草稿</button><pre id="result" style="white-space:pre-wrap"></pre></section></main>
 <script type="module">
-import {createApp} from 'vue';
-import '/src/entries/panel/styles/follow-queue-panel.css';
-import brandLayout from '/src/entries/panel/styles/brand-layout.css?raw';
-const closeStyles=document.createElement('style');const closeStart=brandLayout.indexOf('body button.panel-close-button {'),closeEnd=brandLayout.indexOf('body :is(.search-wrap',closeStart);closeStyles.textContent=brandLayout.slice(closeStart,closeEnd)+'body button.panel-close-button{height:30px;min-height:30px}';document.head.append(closeStyles);
+import {createApp,nextTick} from 'vue';
 import Dexie from 'dexie';
 const connection=await fetch('/acceptance/info').then(r=>r.json());
 const local={ownPostTracking:{ownerId:'123'},'systemSettings:grokProvider':'grok-local'};
@@ -55,5 +54,5 @@ document.querySelector('#generate-real').onclick=async()=>{
  document.querySelector('#result').textContent='正在生成验收草稿，不发布…';
  try{const result=await requestGrokComment('acceptance',[post],'验收样本',{writerAccountId:'123',knowledgeEnabled:settings.knowledgeEnabled,askers:[ask],qualityFirst:true,qualityGate:false,sleep:async()=>{}});window.acceptance.latest=result;document.querySelector('#result').textContent=JSON.stringify(result,null,2);}catch(e){document.querySelector('#result').textContent=e.message;}
 };
-window.acceptance={runtime,library,learningStore,queueStore,queuePanel,page,connection};
+window.acceptance={tick:nextTick,runtime,library,learningStore,queueStore,queuePanel,page,connection};
 </script></html>

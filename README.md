@@ -1,10 +1,10 @@
-# XFollower · 粉丝跟进 · v3.11.1
+# XFollower · 粉丝跟进 · v4.0.0
 
 管理 X 粉丝、待回关账号和关注任务，追踪帖子与作者，使用 Grok、Grok Hook 或本地 Grok Bot 辅助创作与发布。
 
-发行版本：[XFollower 3.11.1](https://github.com/wangsen2020/x-each-follower/releases/tag/3.11.1)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
+发行版本：[XFollower 4.0.0](https://github.com/wangsen2020/x-each-follower/releases/tag/4.0.0)。[下载最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)。GitHub 发行与 Chrome 商店上架是不同步骤。
 
-3.11.1 整合知识库定时学习、Grok Bot 就地选择与引导、队列和取关恢复、异常提醒及引用评价过滤修复。宗教与战争冲突过滤采用有限词表，无法覆盖所有语言、图片或视频；不能保证自动互动完全避开相关内容。
+4.0.0 整合知识库定时学习、Grok Bot 就地选择与引导、队列和取关恢复、异常提醒及引用评价过滤修复。宗教与战争冲突过滤采用有限词表，无法覆盖所有语言、图片或视频；不能保证自动互动完全避开相关内容。
 
 3.10.6 持续自动核验待确认账号；冷却后接口与主页一致且符合条件时自动恢复排队，不再三次后停止。
 
@@ -33,7 +33,9 @@
 - **知识增强**：定时总结为带来源的经验，可单条或批量合入当前智慧；智慧为可复制编辑的 Markdown 写作 Skill，多版本单选使用；支持每日总结、每周自动合并及分页执行记录。关注队列 AI 生成可选使用当前智慧，默认关闭。
 - **文章与追踪**：文章支持配图及可选 Cloudflare 备用出图；提供帖子追踪、作者榜单、知识库和执行日志。
 
-## 3.11.1 更新
+## 4.0.0 更新
+
+本版替代已撤回公开发布的 3.11.1，保留其代码与数据升级路径。修复智慧版本及执行记录分页的横排、垂直居中和10px间距，调整窄屏弹窗、版本表格、学习设置和经验列表；浏览器验收页加载完整插件样式，避免遗漏全局样式冲突。知识增强默认关闭，智慧版本可单选、复制编辑及另存。
 
 增加本地 Grok Bot 生成通道，支持端口、Token、Bot 选择及验证后保存。服务采用异步持久任务，后台中断后可查询原回复；发送结果不明时保留待确认。Windows 本地服务现更名为 Grok Bridge，[0.7.0 完整 ZIP](https://github.com/wangsen2020/grok-bot-bridge/releases/download/v0.7.0/grok-bridge-0.7.0-win-x64.zip) 已正式发布；完整解压后运行 grok-bridge.exe，无需另装 Node.js 或 CLI。
 
