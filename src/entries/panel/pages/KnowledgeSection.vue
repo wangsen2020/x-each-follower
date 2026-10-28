@@ -1255,11 +1255,18 @@ onUnmounted(() => { ++loadSequence; ++evidenceSequence; ++revisionSequence; stor
 .experience-table .kb-status-badge { margin:0; }
 @media(max-width:600px){.experience-table .experience-source-col,.experience-table .experience-time-col{display:none}.experience-state-col{width:60px}.experience-detail-col{width:30px}.experience-table .kb-status-badge{padding:0 10px}.experience-mobile-source{display:block;margin-top:10px;font-size:12px;color:#6b7b71;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.experience-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere}}
 
-.kb-select-field{display:inline-flex;align-items:center;gap:10px}
+.kb-select-field{display:inline-flex;flex-direction:row;align-items:center;gap:10px;flex-wrap:nowrap}
 .kb-select-field > :not(:last-child){margin:0}
 .kb-page-controls .kb-select-field select{margin:0}
 
 .kb-pagination,.kb-page-controls,.kb-pagination .kb-select-field{align-items:center;align-content:center;gap:10px}
 .kb-pagination > span,.kb-pagination .kb-select-field > span{display:inline-flex;align-items:center;min-height:30px;line-height:30px;margin:0}
 .kb-pagination > :not(:last-child){margin-top:0;margin-bottom:0}
+.experience-batch label{flex-direction:row}
+.experience-batch label > input[type="checkbox"]{margin:0}
+.experience-table td:first-child{min-width:0;max-width:none}
+.experience-select{width:36px}
+.experience-select input[type="checkbox"]{display:block;width:16px;height:16px;margin:0;padding:0}
+.experience-detail-col{width:50px}
+@media(max-width:600px){.experience-state-col{width:80px}.experience-detail-col{width:50px}}
 </style>

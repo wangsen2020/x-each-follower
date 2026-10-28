@@ -1,0 +1,528 @@
+[
+  {
+    "name": "experience-list",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": null,
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "markdown",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-versions",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      151,
+      151,
+      151,
+      151,
+      151,
+      151
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-next-page",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      355,
+      355,
+      355,
+      355,
+      355,
+      355
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-history",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      145,
+      145,
+      145,
+      145,
+      145,
+      145
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-next-page",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      145,
+      145,
+      145,
+      145,
+      145,
+      145
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "experience-list",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": null,
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "markdown",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 758,
+      "width": 748
+    },
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-versions",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 758,
+      "width": 748
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      151,
+      151,
+      151,
+      151,
+      151,
+      151
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-next-page",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 758,
+      "width": 748
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      355,
+      355,
+      355,
+      355,
+      355,
+      355
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-history",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 758,
+      "width": 748
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      145,
+      145,
+      145,
+      145,
+      145,
+      145
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-next-page",
+    "width": 768,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 758,
+      "width": 748
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      145,
+      145,
+      145,
+      145,
+      145,
+      145
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "experience-list",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": null,
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "markdown",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-versions",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      141,
+      141,
+      141,
+      141,
+      141,
+      141
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-next-page",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      369,
+      369,
+      369,
+      369,
+      369,
+      369
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-history",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      165,
+      165,
+      165,
+      165,
+      165,
+      165
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-next-page",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      165,
+      165,
+      165,
+      165,
+      165,
+      165
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "experience-list",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": null,
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "markdown",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 310,
+      "width": 300
+    },
+    "bodyOverflow": false,
+    "pagerDirection": null,
+    "pagerGap": null,
+    "pagerCenters": [],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-versions",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 310,
+      "width": 300
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      133.5,
+      133.5,
+      133.5,
+      133.5,
+      133.5,
+      133.5
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "wisdom-next-page",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 310,
+      "width": 300
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      360,
+      360,
+      360,
+      360,
+      360,
+      360
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-history",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 310,
+      "width": 300
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      165,
+      165,
+      165,
+      165,
+      165,
+      165
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "execution-next-page",
+    "width": 320,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 310,
+      "width": 300
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      165,
+      165,
+      165,
+      165,
+      165,
+      165
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "empty-wisdom",
+    "width": 1280,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 220,
+      "right": 1060,
+      "width": 840
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      392,
+      392,
+      392,
+      392,
+      392,
+      392
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  },
+  {
+    "name": "empty-wisdom",
+    "width": 390,
+    "pageOverflow": false,
+    "dialog": {
+      "left": 10,
+      "right": 380,
+      "width": 370
+    },
+    "bodyOverflow": false,
+    "pagerDirection": "row",
+    "pagerGap": 10,
+    "pagerCenters": [
+      412,
+      412,
+      412,
+      412,
+      412,
+      412
+    ],
+    "tableOverflow": false,
+    "cellsFit": true
+  }
+]

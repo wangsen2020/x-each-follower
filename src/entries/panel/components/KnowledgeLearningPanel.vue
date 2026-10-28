@@ -61,4 +61,9 @@ defineExpose({open});
 </script>
 <style scoped>
 .learning-panel{display:flex;flex-direction:column;gap:10px;min-width:0;font-size:12px}.learning-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.learning-panel p{margin:0;overflow-wrap:anywhere}.learning-result,.learning-hint{color:#64766c}.learning-error{color:#a52f2f}.learning-settings{display:grid;gap:10px}.learning-settings label{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.learning-log-table{overflow-x:auto}.learning-log-table table{width:100%;border-collapse:collapse;font-size:12px}.learning-log-table th,.learning-log-table td{padding:10px;border-bottom:1px solid #e4ece6;text-align:left;white-space:nowrap}.learning-log-table th{background:#f8faf8}.learning-line button[aria-pressed=true]{background:#285d49;color:white}.learning-process{display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid #dce6df;border-radius:6px}.learning-process p,.learning-process ol{margin:0}.learning-process ol{padding-left:20px}.learning-process li+li{margin-top:10px}
+.learning-settings label{flex-direction:row;line-height:1.5}
+.learning-settings label > input[type="checkbox"]{width:16px;height:16px;margin:0;flex:none}
+.learning-settings label > select{width:auto;min-width:70px;max-width:100%;margin:0;padding-right:10px;padding-left:10px;flex:none}
+.learning-log-table td{vertical-align:middle}
+.learning-log-table td:first-child{min-width:0;max-width:none}
 </style>
