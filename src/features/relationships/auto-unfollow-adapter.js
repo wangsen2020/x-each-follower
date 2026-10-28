@@ -3,6 +3,25 @@ import {createAutoUnfollow,inUnfollowWindow} from './auto-unfollow.js';
 import {networkGetUserProfile,parseNetworkUsers} from './network-api.js';
 import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
+import {readProfileOnTab,observeProfile,profileUnavailableError,unavailableFromProfileResponse} from '../../platform/x/profile-access.js';
+
+// An empty API payload is inconclusive. Confirm only X's scoped profile empty state.
+export async function inspectMissingProfile(api,user,owner,{sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}) {
+  // Deliberate read-only recheck: a cached not_found must not replace current DOM evidence.
+  const tab=await api.tabs.create({url:'https://x.com/'+user.handle,active:false});
+  try {
+    for(let i=0;i<20;i++){
+      const result=await readProfileOnTab(api,tab.id,user.handle,0,'auto-unfollow-missing');
+      if(result && !result.pending){
+        const viewer=(await api.scripting.executeScript({target:{tabId:tab.id},func:readSidebarViewerOnPage}))[0]?.result;
+        if(viewer?.handle?.toLowerCase()!==owner.toLowerCase())throw Object.assign(new Error('登录账号不一致'),{code:'X_PROFILE_OWNER_MISMATCH'});
+        return result;
+      }
+      await sleep(500);
+    }
+    return null;
+  } finally {await api.tabs.remove(tab.id).catch(()=>{});}
+}
 
 // Candidate discovery is a live keyset scan, not a revision-bound UI snapshot.
 // Every selected target is still looked up and verified again before any action.
@@ -26,7 +45,7 @@ export async function readAutoUnfollowCandidates({records,service}) {
   return [...users.values()];
 }
 
-export function createBackgroundAutoUnfollow({api,service,records,normalize,fetchProfile=networkGetUserProfile,sendUnfollow,inspectProfile=inspectOrActOnProfile,writeLog=appendExecutionLog,now=Date.now,sleep}) {
+export function createBackgroundAutoUnfollow({api,service,records,normalize,fetchProfile=networkGetUserProfile,sendUnfollow,inspectProfile=inspectOrActOnProfile,checkMissingProfile=inspectMissingProfile,writeLog=appendExecutionLog,now=Date.now,sleep}) {
   async function ownerTab(config, preferred) {
     const tabs=preferred?[{id:preferred}] : await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
     for(const tab of tabs){
@@ -61,16 +80,34 @@ export function createBackgroundAutoUnfollow({api,service,records,normalize,fetc
     },
     async profile(user,config){
       const tabId=await ownerTab(config);
-      const response=await fetchProfile(tabId,user.handle);
+      const response=await fetchProfile(tabId,user.handle,{refreshAvailability:true,returnUnavailable:true});
       await ownerTab(config,tabId);
-      if(response.status!==200)throw Object.assign(new Error(`账号核验失败（${response.status||'无响应'}），已停止本轮`),{status:response.status,code:'PROFILE_HTTP_ERROR'});
-      const target=parseNetworkUsers(response.json).find(item=>item.handle.toLowerCase()===user.handle.toLowerCase());
-      if(!target?.id)throw Object.assign(new Error('资料未返回目标账号，身份待核实'),{code:'AUTO_UNFOLLOW_TARGET_MISSING',expectedId:String(user.id||''),actualId:''});
+      const unavailable=unavailableFromProfileResponse(response);
+      if(response.status!==200 && !(response.status===404 && unavailable?.status==='not_found'))throw Object.assign(new Error(`账号核验失败（${response.status||'无响应'}），已停止本轮`),{status:response.status,code:'PROFILE_HTTP_ERROR'});
+      const users=parseNetworkUsers(response.json);
+      const target=users.find(item=>item.handle.toLowerCase()===user.handle.toLowerCase());
+      if(!target?.id){
+        const errors=response.json?.errors||[];
+        if(errors.some(error=>error.code!==50))throw Object.assign(new Error('资料接口返回错误，无法确认账号状态'),{code:'PROFILE_HTTP_ERROR',status:response.status});
+        const apiMissing=users.length===0 && (unavailable?.status==='not_found' || response.status===200 && response.json?.data && typeof response.json.data==='object');
+        const page=apiMissing ? await checkMissingProfile(api,user,config.autoUnfollowAccount.handle,{sleep}) : null;
+        await ownerTab(config,tabId);
+        if(page?.status==='not_found'){
+          await observeProfile(api,user.handle,page,'auto-unfollow-missing');
+          throw Object.assign(profileUnavailableError({...page,handle:user.handle}),{confirmedMissing:true});
+        }
+        throw Object.assign(new Error('资料未返回目标账号，身份待核实'),{code:'AUTO_UNFOLLOW_TARGET_MISSING',expectedId:String(user.id||''),actualId:''});
+      }
       if(user.id && String(user.id)!==String(target.id))throw Object.assign(new Error('目标账号 ID 与本地记录不一致，身份待核实'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH',expectedId:String(user.id),actualId:String(target.id)});
       return {...await inspectProfile(api,target,config.autoUnfollowAccount.handle,'read'),tabId};
     },
-    async unfollow(user,config){await ownerTab(config,user.tabId);return sendUnfollow ? sendUnfollow(user.tabId,user.id) : inspectProfile(api,user,config.autoUnfollowAccount.handle,'unfollow',actionOptions(user,config));},
+    async unfollow(user,config,checkpoint={}){await ownerTab(config,user.tabId);if(sendUnfollow){await checkpoint.beforeSubmit?.();return sendUnfollow(user.tabId,user.id);}return inspectProfile(api,user,config.autoUnfollowAccount.handle,'unfollow',{...actionOptions(user,config),...checkpoint});},
     async followback(user,config){return inspectProfile(api,user,config.autoUnfollowAccount.handle,'followback',actionOptions(user,config));},
+    async removeMissing(user){
+      const response=await service.handle({op:'deleteUnavailableAccount',handle:user.handle,automatic:true},api.runtime.getURL('background.js'));
+      if(!response?.ok || response.result?.skipped)throw new Error(response?.error||'账号状态已变化，未清理本地记录');
+      return response.result;
+    },
     async reconcile(user,live){
       if(live.relationship.following===false){
         // Save an independent tracker row before removing its active-following sources.

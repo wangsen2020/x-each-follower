@@ -85,7 +85,7 @@ test('Grok settings stay in accessible header help instead of the task summary',
     const status = root.querySelector('.fq-grok-status');
     assert.equal(status.textContent, '');
     assert.equal(status.getAttribute('aria-label'), 'Grok 创作设置');
-    assert.equal(status.getAttribute('data-panel-tip'), 'Grok 开启；发帖形式：文章；创作概率：75%；篇幅：深入；自动发布：关闭');
+    assert.equal(status.getAttribute('data-panel-tip'), '自动生成已开启；发帖形式：文章；创作概率：75%；篇幅：深入；自动发布：关闭');
     assert.match(status.className, /is-active/);
     const actions = root.querySelector('.fq-header-actions');
     assert.equal(actions.children.length, 7);
@@ -102,6 +102,9 @@ test('Grok settings stay in accessible header help instead of the task summary',
     assert.equal(root.querySelector('.fq-switch-checkbox').getAttribute('aria-label'), '定时调度');
     status.click();
     assert.ok(root.querySelector('.fq-drawer'));
+    assert.match(root.querySelector('.fq-drawer').textContent, /AI 生成/);
+    assert.doesNotMatch(root.querySelector('.fq-drawer').textContent, /仅推荐或互粉账号|Grok 自动创作/);
+    assert.equal(root.querySelector('#fq_onlyRecommended'), null);
   } finally { panel.destroy(); }
 });
 
@@ -499,7 +502,7 @@ test('normalizeSettings returns contract defaults when raw is empty or missing',
   assert.equal(settings.dwellJitter, 5);
   assert.equal(settings.minFollowers, 50);
   assert.equal(settings.ratioThreshold, 0.8);
-  assert.equal(settings.onlyRecommended, true);
+  assert.equal('onlyRecommended' in settings, false);
   assert.equal(settings.grokEnabled, false);
   assert.equal(settings.autoPublish, false);
   assert.equal(settings.publicationMode, 'quote');
@@ -535,7 +538,7 @@ test('normalizeSettings clamps out-of-bounds numeric values and respects bounds'
   assert.equal(clamped.dwellJitter, 30);
   assert.equal(clamped.minFollowers, 0);
   assert.equal(clamped.ratioThreshold, 1.0);
-  assert.equal(clamped.onlyRecommended, false);
+  assert.equal('onlyRecommended' in clamped, false);
   assert.equal(clamped.grokEnabled, true);
   assert.equal(clamped.autoPublish, true);
   assert.equal(clamped.enabled, true);

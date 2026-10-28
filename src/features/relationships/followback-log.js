@@ -1,7 +1,13 @@
 export function followbackLogPresentation(log){
  const source=log.source?.startsWith('greeting-auto')?'自动私信':log.source?.startsWith('greeting-')?'手动私信':(log.origin==='autoUnfollow'||log.action==='自动取关'||log.source==='unfollow-auto')?'自动取关':({'unfollow-manual':'手动取关','unfollow-batch':'批量取关',manual:'手动检测',open:'打开页面',availability:'账号状态更新',alarm:'定时检测',scheduled:'定时检测'}[log.source]||'本地检测');
- const labels={sent:'发送成功 ✓',success:'执行完成 ✓',completed:'检查完成',started:'准备发送',uncertain:'待确认 · 不重发',skipped:'已跳过',failed:'执行失败'};
- return {source,label:log.result==='started'&&(source==='自动取关'||log.source==='greeting-auto-start')?'检查开始':labels[log.result]||'状态更新',tone:['sent','success','completed'].includes(log.result)?'candidate':log.result==='failed'?'failed':'review'};
+ const details=log.details||{};
+ // Compatibility is presentation-only: never rewrite the stored historical outcome.
+ const legacyEmpty=source==='自动取关' && log.result==='success' && details['阶段']==='本轮结束' && details['成功人数']===0 && details['处理次数']===0 && Array.isArray(log.unfollowedHandles) && log.unfollowedHandles.length===0;
+ const result=legacyEmpty ? details['清理不存在账号数']>0?'cleaned':'waiting' : log.result;
+ const labels={sent:'发送成功 ✓',success:'执行完成 ✓',completed:'检查完成',cleaned:'清理完成',waiting:'等待处理',started:'准备发送',uncertain:'待确认 · 不重发',skipped:'已跳过',failed:'执行失败'};
+ const reason=details['排队人数']>0 ? '剩余账号待核实，稍后继续检查' : details['跳过原因统计']?.['上次操作待确认，已隔离']>0 ? `暂无可取关账号；${details['跳过原因统计']['上次操作待确认，已隔离']} 个账号待确认，已隔离` : '暂无符合条件的取关账号';
+ const summary=legacyEmpty ? result==='cleaned'?`已清理不存在账号 ${details['清理不存在账号数']} 个；${reason}`:`自动取关等待：${reason}` : log.summary;
+ return {source,...(source==='自动取关'?{summary,showTarget:!(details['阶段']==='本轮结束' && ['waiting','cleaned'].includes(result))}:{}),label:result==='started'&&(source==='自动取关'||log.source==='greeting-auto-start')?'检查开始':labels[result]||'状态更新',tone:['sent','success','completed','cleaned'].includes(result)?'candidate':result==='failed'?'failed':'review'};
 }
 
 // Read both current structured targets and older diagnostic-only records.

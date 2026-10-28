@@ -19,6 +19,7 @@ export default defineConfig({
       input: {
         panel: resolve(__dirname, 'src/panel.html'),
         grokBotGuide: resolve(__dirname, 'src/grok-bot-guide.html'),
+        grokLocalGuide: resolve(__dirname, 'src/grok-local-guide.html'),
         background: resolve(__dirname, 'src/entries/background/background.js')
       },
       output: {

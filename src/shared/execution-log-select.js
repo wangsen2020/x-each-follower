@@ -57,6 +57,9 @@ export async function queryUnfollowLogs(send, request) {
 
 export function collapseUnfollowSummaries(entries) {
   const round = e => e.runId || e.details?.['轮次编号'];
+  const idle = e => e.source==='unfollow-auto' && ['success','waiting'].includes(e.result) && e.details?.['阶段']==='本轮结束' && e.details['符合超时条件人数']===0 && e.details['成功人数']===0 && e.details['处理次数']===0 && !(e.details['清理不存在账号数']>0) && !(e.unfollowedHandles?.length);
+  const idleRounds=new Set(entries.filter(idle).map(round).filter(Boolean));
+  entries=entries.filter(e=>!idle(e) && !(e.source==='unfollow-auto' && e.result==='started' && idleRounds.has(round(e))));
   const detailed = new Set(entries.filter(e => isUnfollowLog(e) && e.result === 'success' && e.handle && e.details?.['阶段'] !== '本轮结束' && round(e)).map(round));
   return entries.filter(e => !(isUnfollowLog(e) && e.result === 'success' && e.details?.['阶段'] === '本轮结束' && detailed.has(round(e))));
 }

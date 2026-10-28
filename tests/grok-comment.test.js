@@ -140,6 +140,36 @@ test('quote prompt restricts writing to the single locally chosen source', () =>
   assert.doesNotMatch(prompt, /25~50|只写一句完整评价|170 字符|80 汉字/);
 });
 
+test('quote prompt includes only the selected post link without requiring access', () => {
+  const prompt = buildGrokCommentPrompt({handle:'alice', posts:[
+    {url:'https://x.com/alice/status/123', text:'Selected source'},
+    {url:'https://x.com/alice/status/456', text:'Other source'}
+  ]});
+  assert.match(prompt, /原帖链接：https:\/\/x\.com\/alice\/status\/123/);
+  assert.match(prompt, /帖子内容可能含有图片或者视频，帖子文案若让你困扰，你可自行决定是否查看帖子链接进行确认/);
+  assert.doesNotMatch(prompt, /status\/456/);
+  assert.doesNotMatch(prompt, /访问上述链接|识别和分析能够实际读取的图片/);
+  assert.match(prompt, /实际读取到的原帖内容/);
+  assert.match(prompt, /不猜测未读内容/);
+  const withoutUrl = buildGrokCommentPrompt({handle:'alice', postText:'Source'});
+  assert.doesNotMatch(withoutUrl, /原帖链接：/);
+  assert.doesNotMatch(withoutUrl, /自行决定是否查看帖子链接/);
+  assert.match(withoutUrl, /提供的正文/);
+});
+
+test('real Arabic religious source and translated source cannot reach generation or quote publishing', async () => {
+  for (const text of ['تم تأمين كحلان بشكل كامل والتقدم مستمر في جبل صبر #تعز.\n\nيا الله لك الحمد', '#تعز 的 Jabal Sabr 完全保障 Kohlans，进展持续。\n\n赞美归于真主']) {
+    const post={url:'https://x.com/alice/status/123',text,replyCount:12,repostCount:10,likeCount:74,bookmarkCount:0,textComplete:true};
+    let called=0;
+    const generated=await requestGrokComment('alice',[post],'Alice',{sleep:async()=>{},askers:[async()=>{called++;return {ok:true,reply:'ordinary reply',selectedIndex:1}}]});
+    assert.equal(generated.skipped,true);
+    assert.equal(called,0);
+    const published=await postQuoteOnTab(null,post,'ordinary reply',()=>{called++},async()=>{});
+    assert.equal(published.skipped,true);
+    assert.equal(called,0);
+  }
+});
+
 test('candidate selection considers up to twenty owned safe distinct posts', () => {
   const posts = [
     {url:'https://x.com/alice/status/1',text:'正常分享一个具体的工作细节'},
@@ -877,11 +907,11 @@ test('postQuoteOnTab retries a blank X quote shell once and closes both popups',
   }
 });
 
-test('appendFollowBackSuffix appends "有关必回" with appropriate punctuation', () => {
-  assert.equal(appendFollowBackSuffix('这是一个好观点'), '这是一个好观点。有关必回');
-  assert.equal(appendFollowBackSuffix('这是一个好观点。'), '这是一个好观点。有关必回');
-  assert.equal(appendFollowBackSuffix('难道不是这样吗？'), '难道不是这样吗？有关必回');
-  assert.equal(appendFollowBackSuffix('太棒了！'), '太棒了！有关必回');
+test('appendFollowBackSuffix puts the follow-back invitation on its own line', () => {
+  assert.equal(appendFollowBackSuffix('这是一个好观点'), '这是一个好观点\n\n关注我，必回关！🤝');
+  assert.equal(appendFollowBackSuffix('这是一个好观点。'), '这是一个好观点。\n\n关注我，必回关！🤝');
+  assert.equal(appendFollowBackSuffix('难道不是这样吗？'), '难道不是这样吗？\n\n关注我，必回关！🤝');
+  assert.equal(appendFollowBackSuffix('太棒了！'), '太棒了！\n\n关注我，必回关！🤝');
 });
 
 test('appendFollowBackSuffix avoids duplicate suffix if already present', () => {

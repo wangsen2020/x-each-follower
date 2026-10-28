@@ -34,6 +34,8 @@ import {interactionSkipReason} from '../../features/relationships/content-risk.j
 import { loadCommentTracking } from '../../platform/tracking-storage.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
 import {handleExecutionLogRequest} from '../../shared/execution-log-store.js';
+import {getDefaultExecutionLogStore} from '../../shared/execution-log-store.js';
+import {createAutomationHealthRuntime} from '../../shared/automation-health.js';
 import {createBackgroundRecords, mergeCollectedReplies, selectCommentCandidates} from '../../features/records/background-record-data.js';
 import {mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import {sendVerificationSelfMessage} from '../../features/grok/verification-self-message.js';
@@ -81,6 +83,9 @@ async function configureBackupAlarm(settings, preserveSchedule = false) {
 chrome.storage.local.get(BACKUP_SETTINGS_KEY).then(saved => configureBackupAlarm(validateBackupSettings(saved[BACKUP_SETTINGS_KEY]), true)).catch(error => console.warn('备份计划恢复失败:', error.message));
 
 const panelLauncher = createPanelLauncher({api:chrome, sendToPanel:message => safeSendMessageToPanel(message)});
+const automationHealth=createAutomationHealthRuntime({api:chrome});
+automationHealth.start().catch(error=>console.warn('异常提醒恢复失败:',error.message));
+getDefaultExecutionLogStore().ready().catch(error=>console.warn('执行日志恢复失败:',error.message));
 chrome.action.onClicked.addListener(tab => {
   void panelLauncher.openPanel(tab?.windowId);
 });
@@ -595,11 +600,16 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  if(cmd==='retryExecutionLogBackup'){
+    if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可重试备份'});return false;}
+    const store=getDefaultExecutionLogStore();
+    store.retryBackup().then(backup=>sendResponse({ok:true,backup}),error=>sendResponse({ok:false,error:error.message}));return true;
+  }
   if (cmd === 'reviewAutoUnfollowPending') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || !/^[a-z0-9_]{1,15}$/i.test(message.handle || '')) {
       sendResponse({error:'仅管理面板可核验有效的待确认账号'}); return false;
     }
-    autoUnfollowRuntime.run({reviewHandle:message.handle}).then(sendResponse,error=>sendResponse({error:error.message}));
+    autoUnfollowRuntime.run({reviewHandle:message.handle,retryConfirmed:message.retryConfirmed===true}).then(sendResponse,error=>sendResponse({error:error.message}));
     return true;
   }
   if (cmd === 'sidebarIdentity') {

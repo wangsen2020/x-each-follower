@@ -1,5 +1,5 @@
 import {eligibleAutoUnfollow, inUnfollowWindow} from './auto-unfollow.js';
-import {pendingOperations, samePendingTarget, pendingHandle, PENDING_RECHECK_LIMIT} from './auto-unfollow-state.js';
+import {pendingOperations, samePendingTarget, pendingHandle} from './auto-unfollow-state.js';
 
 export function autoUnfollowView(config = {}, ledger = {}, alarm = null, now = Date.now()) {
   const account = String(config.autoUnfollowAccount?.id || '');
@@ -27,7 +27,7 @@ export function autoUnfollowView(config = {}, ledger = {}, alarm = null, now = D
 export function autoUnfollowRowView(user, view, now = Date.now()) {
   if(view.active && samePendingTarget(view.active,user))return {label:'正在处理',tip:'正在核验或提交当前操作，完成后自动更新；不会重复提交。'};
   const pending = view.pending.find(item => samePendingTarget(item, user));
-  if (pending) return {label:'待确认 · 已隔离', tip:`${pending.reason || '上次操作结果待确认'}。不会重复操作，不影响其他账号。${pending.checks >= PENDING_RECHECK_LIMIT ? '自动核验已达 3 次，请在 X 核实后点击核验。' : '稍后自动核验，也可在待确认列表中手动核验。'}`};
+  if (pending) return {label:'待确认 · 已隔离', tip:`${pending.reason || '上次操作结果待确认'}。不影响其他账号；按计划自动核验，接口与主页确认仍关注且符合条件后自动恢复排队。`};
   const index = view.queue.indexOf(pendingHandle(user));
   if (index >= 0) return {label:`排队第 ${index + 1} 位`, tip:`当前队列前面有 ${index} 个账号；${view.label}：${view.reason}。下次检查：${view.nextText}。顺序可能随实时核验变化，不代表预计完成时间。`};
   if (view.config.autoUnfollow && eligibleAutoUnfollow(user,view.config,now)) return {label:'待入队核验', tip:'符合本地条件，下次调度将核验并加入队列；已超时不代表已执行取关。'};

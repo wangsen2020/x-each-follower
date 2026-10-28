@@ -22,7 +22,7 @@ import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {createFanInspectionBatch} from '../relationships/fan-inspection-batch.js';
 import {networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
 import {readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage, setQuoteFrameFallbackOnPage} from '../../platform/x/page-reader.js';
-import {parseCount, riskAssess, evaluateMutualProfile} from '../relationships/scoring.js';
+import {parseCount, riskAssess} from '../relationships/scoring.js';
 import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage, quoteCandidates, highestScoredPost, composeQueueFollowBack} from '../grok/grok-comment.js';
 import {interactionSkipReason} from '../relationships/content-risk.js';
 import {followerRatioDecision} from '../relationships/follower-ratio-policy.js';
@@ -43,9 +43,9 @@ export function quotePublicationState(result) {
 }
 
 export function assessQueueProfile(profile, settings, confirmedFollowBack = false) {
-  if (confirmedFollowBack && settings.followBackAllowAll === true) return '';
   const interactionReason = interactionSkipReason(profile);
   if (interactionReason) return interactionReason;
+  if (confirmedFollowBack && settings.followBackAllowAll === true) return '';
   const followers = parseCount(String(profile.followersText ?? ''));
   const following = parseCount(String(profile.followingText ?? ''));
   const risk = riskAssess(profile);
@@ -62,10 +62,7 @@ export function assessQueueProfile(profile, settings, confirmedFollowBack = fals
   if (followers < settings.minFollowers) return `粉丝数低于 ${settings.minFollowers}`;
   if (followers > 0 && following / followers < settings.ratioThreshold) return `关注/粉丝比例低于 ${Math.round(settings.ratioThreshold * 100)}%`;
   // Configurable ratio is authoritative here; do not reuse the legacy fixed 80% veto.
-  const evaluation = evaluateMutualProfile(profile);
-  const hasIntent = evaluation.promise || profile.grokMutualIntent === true;
-  const recommended = followers > 0 && following / followers >= settings.ratioThreshold;
-  return settings.onlyRecommended && !hasIntent && !recommended ? '未达到互粉意向或推荐条件' : '';
+  return '';
 }
 
 export function readQueueViewerOnPage() {
@@ -339,6 +336,10 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     const ranks = {skipped:1, uncertain:2, excluded:3, followed:4};
     for (const candidate of candidates) {
       const prior = await priorByHandle(binding.accountId, candidate.handle);
+      if (prior && !prior.targetUserId && typeof records?.fanDirectory === 'function') {
+        const directory = await records.fanDirectory([canonical(candidate.handle)]);
+        if (directory.some(row=>row.payload?.legacyHandleIdentityConflict)) continue;
+      }
       const verifiedDecision = prior?.followResult?.relationshipDecision;
       const bypass = allowAll && candidate.followBackCandidate && (!verifiedDecision || verifiedDecision.code === 'follow-back')
         && candidate.sources.some(s=>s.module === 'fans' && s.enabled);
@@ -849,7 +850,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     if (!inspectOnly && binding.sources?.fans !== true) throw new Error('粉丝来源未启用');
     if (!records) throw new Error('粉丝档案不可用');
     const queueRows = await records.lookupAll({sourceKey:'monitor', bucket:'queue', handle:key});
-    const allRows = inspectOnly ? (await Promise.all(['users','queue','followingUsers'].map(bucket => records.lookupAll({sourceKey:'monitor',bucket,handle:key})))).flat() : queueRows;
+    let allRows = inspectOnly ? (await Promise.all(['users','queue','followingUsers'].map(bucket => records.lookupAll({sourceKey:'monitor',bucket,handle:key})))).flat() : queueRows;
     signal?.throwIfAborted();
     if (!allRows.length) throw new Error('粉丝档案不存在');
     return withVerifiedXTab(binding, async tab => {
@@ -881,6 +882,32 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         }
         throw new Error(`无法核实 @${key} 的完整关注关系`);
       }
+      const mismatched = allRows.filter(row => row.payload?.id && String(row.payload.id) !== target.id);
+      if (inspectOnly && mismatched.length) {
+        const moves = [];
+        for (const row of mismatched) {
+          const oldId = String(row.payload.id);
+          const sameId = await records.lookupAll({sourceKey:'monitor',tweetId:oldId});
+          const candidates = [...new Set(sameId.filter(other => other.accountId === row.accountId && String(other.payload?.id) === oldId)
+            .map(other => canonical(other.payload?.handle || other.handle)).filter(handle => handle && handle !== key))];
+          if (candidates.length !== 1) break;
+          const candidate = candidates[0];
+          const lookup = typeof fetchUser === 'function' ? await fetchUser(tab.id,candidate) : await (async()=>{
+            const response=await networkGetUserProfile(tab.id,candidate);
+            return response.status===200 ? parseNetworkUsers(response.json).find(user=>canonical(user.handle)===candidate) : null;
+          })();
+          signal?.throwIfAborted();
+          if (!lookup || String(lookup.id) !== oldId || canonical(lookup.handle) !== candidate) break;
+          moves.push({accountId:row.accountId,userKey:row.userKey,sourceBucket:row.sourcePath?.[1],handle:key,
+            patch:{handle:lookup.handle,previousHandles:[...new Set([...(Array.isArray(row.payload.previousHandles) ? row.payload.previousHandles : []),row.payload.handle].filter(Boolean))]}});
+        }
+        if (allRows.some(row=>String(row.payload?.id || '') === String(target.id)) && moves.length === mismatched.length && moves.every(move=>move.userKey && move.accountId)) {
+          const currentRows = allRows.filter(row=>!mismatched.includes(row));
+          await records.batch({sourceKey:'monitor',changes:currentRows.map(row=>({accountId:row.accountId,userKey:row.userKey,sourceBucket:row.sourcePath?.[1],handle:key,patch:{legacyHandleIdentityConflict:true}}))});
+          await records.batch({sourceKey:'monitor',changes:moves});
+          allRows = currentRows;
+        }
+      }
       if (allRows.some(row => row.payload?.id && String(row.payload.id) !== target.id)) {
         await records.batch({sourceKey:'monitor',changes:queueRows.map(row=>({handle:key,sourceBucket:'queue',patch:{
           status:'identity_mismatch',state:'identity_mismatch',relationshipKnown:false,
@@ -889,6 +916,9 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         return {ok:true,handle:key,jobState:'identity-mismatch'};
       }
       let job = await priorByHandle(binding.accountId, key);
+      // A historical handle-only job may belong to the former owner. Preserve it
+      // without promoting or reconciling it to the newly verified user.
+      if (inspectOnly && job && !job.targetUserId && (mismatched.length || allRows.some(row=>row.payload?.legacyHandleIdentityConflict))) job=null;
       signal?.throwIfAborted();
       if (inspectOnly && job?.state === 'running') throw new Error(`@${key} 正在由关注队列处理，请稍后核验`);
       if (job?.targetUserId && job.targetUserId !== target.id) throw new Error(`@${key} 的队列用户 ID 不一致`);
@@ -970,7 +1000,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (!latest || latest.state !== 'followed') throw new Error('评论对应的关注记录已移除或变化');
       if (automatic) {
         const settings = await store.getSettings(binding.accountId);
-        if (!settings.grokEnabled || settings.quoteParticipationRate === 0) throw new Error('自动引用已暂停，未继续生成或提交');
+        if (!settings.grokEnabled || settings.quoteParticipationRate === 0) throw new Error('自动生成已暂停，未继续生成或提交');
       }
       if (signal?.aborted) throw new Error('评论任务超时，关注结果不受影响');
     }
@@ -1160,6 +1190,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,result:'skipped',detail:ev.reason});
           return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
         }
+        const sourceInteractionReason = interactionSkipReason({...safetyProfile, posts:[...candidates, ...cachedPosts]});
+        if (sourceInteractionReason) {
+          ev.status='skipped'; ev.reason=sourceInteractionReason; ev.reasonCode='interaction_scope'; ev.grokCalls=0;
+          const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+          return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
+        }
         ev.generationAttemptedAt = Date.now();
         ev.candidatePosts = candidates;
         ev.reasonCode = 'generation_started';
@@ -1238,6 +1274,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         if (!saved.ok) throw new Error('评价草稿未保存，已停止发布');
         await safeLog({scope:'comment',accountId:binding.accountId,jobId:job.id,handle:job.handle,at:new Date().toISOString(),result:'draft',detail:`${form}草稿已就绪（未开启自动发布）`});
         return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason || `${form}草稿已就绪（未自动发布）`};
+      }
+      const finalInteractionReason = interactionSkipReason({...safetyProfile, posts:[post, {text:ev.originalPostText}, {text:ev.text}, ...cachedPosts]});
+      if (finalInteractionReason) {
+        ev.status='skipped'; ev.reason=finalInteractionReason; ev.reasonCode='interaction_scope';
+        const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
+        return {ok:true,job:saved.job,evaluation:ev,summary:ev.reason};
       }
       await guardComment();
       if (automatic && !(await store.getSettings(binding.accountId)).autoPublish) {

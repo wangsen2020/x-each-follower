@@ -122,6 +122,19 @@ test('fan directory has unique counts, global search, durable updates and no his
   assert.deepEqual(current.handles,['single']);
 });
 
+test('renaming a source record refreshes both old and new directory entries without losing history', async () => {
+  const old={id:'42',handle:'old',name:'Original',relationship:{following:true,followedBy:true},relationshipObservedAt:100};
+  const service=runtime('fan-directory-rename',memoryStorage({monitor:{users:[{...old,handle:'new'}],followingUsers:[old]}}),memoryDurable());
+  await service.migrate();
+  const row=(await service.lookupAll({sourceKey:'monitor',bucket:'followingUsers',handle:'old'}))[0];
+  await service.handle({op:'batch',sourceKey:'monitor',changes:[{accountId:row.accountId,userKey:row.userKey,sourceBucket:'followingUsers',handle:'old',patch:{handle:'new',previousHandles:['old']}}]});
+  assert.equal((await service.query({module:'fans',filter:{tab:'fanAll',search:'@old'},limit:10})).records.length,0);
+  const found=await service.query({module:'fans',filter:{tab:'fanAll',search:'@new'},limit:10});
+  assert.equal(found.records.length,1);
+  assert.equal((await service.lookupAll({sourceKey:'monitor',bucket:'followingUsers',handle:'new'}))[0].payload.previousHandles[0],'old');
+  assert.equal((await service.summary({module:'fans'})).tabs.fanAll,1);
+});
+
 test('fan directory recovers a source commit interrupted before derived view refresh', async () => {
   const storage=memoryStorage({monitor:{users:[{handle:'Ada',relationship:{following:false,followedBy:true},relationshipObservedAt:100}]}});
   const durable=memoryDurable();

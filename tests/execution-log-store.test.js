@@ -267,7 +267,7 @@ test('message handler validates the extension sender and reports failures', asyn
   const durable = memoryDurable();
   const failingSet = async () => { writes += 1; throw new Error('backup down'); };
   const live = createExecutionLogStore({dbName: 'logs-backup-down', storage: legacyStorage({autoFollowLogs: [], monitorLogs: [], unreciprocatedLogs: []}), durableGet: durable.durableGet, durableSet: failingSet});
-  await assert.rejects(live.append({id: 'kept-local', scope: 'mutual', detail: 'still saved', posts: [{text: 'p'}]}), /backup down/);
+  const committed=await live.append({id: 'kept-local', scope: 'mutual', detail: 'still saved', posts: [{text: 'p'}]});assert.equal(committed.backup.ok,false);
   assert.equal((await live.query({scope: 'mutual'})).entries[0].detail, 'still saved');
   assert.equal(live.backupStatus().ok, false);
   await live.ready();
@@ -292,7 +292,7 @@ test('production append returns the stored entry instead of the legacy array', a
   };
   resetDefaultExecutionLogStore();
   try {
-    await assert.rejects(appendExecutionLog({id: 'indexed-1', scope: 'comment', detail: 'indexed', posts: [{text: 'kept'}]}));
+    const committed=await appendExecutionLog({id: 'indexed-1', scope: 'comment', detail: 'indexed', posts: [{text: 'kept'}]});assert.equal(committed.backup.ok,false);
     const page = await getDefaultExecutionLogStore().query({scope: 'comment'});
     assert.equal(page.entries[0].posts[0].text, 'kept');
     assert.equal(Array.isArray(page.entries[0]), false);
@@ -418,8 +418,8 @@ test('a warm query does not reread backups and a failed page blocks the next hea
       ordered.set(key, structuredClone(value));
     }
   });
-  await assert.rejects(gapStore.append({id: 'first', scope: 'mutual', at: '2026-10-08T00:00:00.000Z'}), /page1 down/);
-  await assert.rejects(gapStore.append({id: 'second', scope: 'mutual', at: '2026-10-08T01:00:00.000Z'}), /page1 down/);
+  assert.equal((await gapStore.append({id: 'first', scope: 'mutual', at: '2026-10-08T00:00:00.000Z'})).backup.ok,false);
+  assert.equal((await gapStore.append({id: 'second', scope: 'mutual', at: '2026-10-08T01:00:00.000Z'})).backup.ok,false);
   assert.equal(ordered.has('executionLogBackupPage:2'), false);
   assert.equal(ordered.get('executionLogBackupHead'), undefined);
   assert.deepEqual((await gapStore.query({scope: 'mutual'})).entries.map(entry => entry.id), ['second', 'first']);
