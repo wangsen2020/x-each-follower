@@ -220,3 +220,9 @@ test('manual reply waits for a populated profile timeline rather than failing on
  const runtime=createFollowQueueRuntime({api,store,generateReply:async()=>({ok:true,reply:'A useful observation.',post,language:'en',grokCalls:1})});
  const result=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id});assert.equal(reads,2);assert.equal(result.ok,true);assert.equal(result.evaluation.status,'draft');assert.equal(result.evaluation.originalPostId,'789');
 });
+
+for(const enabled of [false,true])test('queue passes explicit knowledge enhancement '+enabled+' to comment generation',async()=>{
+ const used=[{id:'experience-1',revision:2,statement:'补充具体信息'}];
+ const env=await setup(async({post,args})=>{assert.equal(args[3].knowledgeEnabled,enabled);return {ok:true,reply:'补充测试结论。',post,...(enabled?{knowledgeUsed:used}:{})};},{publicationMode:'reply',knowledgeEnabled:enabled});
+ await env.runtime.runComments();const ev=(await env.read()).evaluations[0];assert.equal(ev.status,'draft');if(enabled)assert.deepEqual(ev.knowledgeUsed,used);else assert.equal(ev.knowledgeUsed,undefined);
+});

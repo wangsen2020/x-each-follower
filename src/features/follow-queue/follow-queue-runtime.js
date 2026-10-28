@@ -1167,14 +1167,15 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         if (!started.ok) throw new Error('未能保存 Grok 请求状态，未发送请求');
         const generate=({reply:generateReply,article:generateArticle,original:generatePost})[publicationMode]||generateComment;
         progress('已按综合互动分选帖，Grok 正在生成内容…');
-        const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,
+        const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,knowledgeEnabled:commentSettings.knowledgeEnabled === true && ['quote','reply'].includes(publicationMode),
           qualityFirst:true,qualityGate:!['quote','reply'].includes(publicationMode),lengthMode:commentSettings.quoteLengthMode || 'adaptive',relayJobId:ev.relayJobId,
           onRelayJobCreated:async relay=>{
             await guardComment();
-            Object.assign(ev,{relayJobId:relay.id,channel:'grok-bot',reasonCode:'bot_pending'});
+            Object.assign(ev,{...(relay.knowledgeUsed?{knowledgeUsed:relay.knowledgeUsed}:{}),relayJobId:relay.id,channel:'grok-bot',reasonCode:'bot_pending'});
             const checkpoint=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
             if(!checkpoint.ok)throw new Error('未能保存 Bot 任务编号，未发送生成请求');
           }});
+        if(generated.knowledgeUsed)ev.knowledgeUsed=generated.knowledgeUsed;
         if(generated.pending){
           Object.assign(ev,{status:'uncertain',reasonCode:'bot_pending',relayJobId:generated.jobId,channel:'grok-bot',reason:generated.reason||'Bot 结果待确认，已保留原任务'});
           const saved=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});

@@ -1,5 +1,5 @@
 <template>
-  <Teleport to="body">
+  <Teleport :to="container">
     <div v-if="visible" id="panel-info-tip-tooltip" ref="bubble" class="panel-info-tip-tooltip" role="tooltip" :style="bubbleStyle">{{ content }}</div>
   </Teleport>
 </template>
@@ -8,6 +8,7 @@
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { positionInfoTip } from '../tooltip-position.js';
 
+const container=ref('body');
 const visible = ref(false);
 const content = ref('');
 const bubble = ref(null);
@@ -50,6 +51,8 @@ async function show(target) {
     const descriptions = [previousDescription, 'panel-info-tip-tooltip'].filter(Boolean).join(' ');
     tip.setAttribute('aria-describedby', descriptions);
   }
+  // Native dialogs paint above body-level overlays; keep the tooltip in their top layer.
+  container.value=tip.closest('dialog[open]') || 'body';
   content.value = message;
   visible.value = true;
   const current = ++sequence;

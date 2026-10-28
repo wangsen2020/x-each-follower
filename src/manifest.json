@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XFollower · 粉丝跟进",
-  "version": "3.8.0",
+  "version": "3.11.0",
   "description": "本地管理 X 粉丝画像与创作任务，支持 Grok、Grok Hook、本地 Grok Bot、任务恢复及配图。",
   "permissions": [
     "scripting",

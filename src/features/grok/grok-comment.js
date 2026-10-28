@@ -1,6 +1,7 @@
 import {readXGrokUsageCooldown, checkXGrokUsageLimit} from './grok-usage-limit.js';
-import {routeGrokRequest} from './grok-provider.js';
+import {readGrokProvider,routeGrokRequest} from './grok-provider.js';
 import {BOT_WAIT_MS} from './grok-bot-relay.js';
+import {loadExperienceContext,finishExperienceUse} from '../knowledge/learning-context.js';
 import {loadWritingContext} from '../post-tracking/writing-memory.js';
 import { isPostSafeForComment, detectContentRisks, interactionSkipReason } from '../relationships/content-risk.js';
 import {waitForGrokVerification, grokTaskNow, assertPendingGrokVerificationClear, executeGrokScript} from './grok-verification.js';
@@ -792,8 +793,8 @@ async function askOnX(prompt, nonce, sleep, candidateCount) {
   }
 }
 
-async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,onRelayJobCreated){
-  const result=await routeGrokRequest(()=>askOnX(prompt,nonce,sleep,candidateCount),prompt,{relayJobId,onJobCreated:onRelayJobCreated,requestKey:prompt.split(nonce).join('[任务凭证]')});
+async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,onRelayJobCreated,expectedBot){
+  const result=await routeGrokRequest(()=>askOnX(prompt,nonce,sleep,candidateCount),prompt,{relayJobId,expectedBot,onJobCreated:onRelayJobCreated,requestKey:prompt.split(nonce).join('[任务凭证]')});
   if(!result.ok||result.channel!=='grok-bot')return result;
   const decision=parseGrokQuoteDecision(result.text,candidateCount);
   if(!decision.skipped&&!decision.reply)return {ok:false,channel:'grok-bot',jobId:result.jobId,reason:'Bot 返回的评价格式无效，完整结果已保存在备用任务中'};
@@ -804,9 +805,10 @@ async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,o
  * 从最多二十条近期非置顶帖子中按加权互动分选定一条。
  * 成功返回选中的 post、postText、postUrl；跳过返回 {ok:false, skipped:true}。
  */
-export async function requestGrokComment(handle, posts, authorName, { sleep, fix = s => s, askers, relayJobId, onRelayJobCreated, profile = {}, writerAccountId, qualityFirst = false, lengthMode = 'adaptive', editorialInstructions = '', promptBuilder = buildGrokCommentPrompt, qualityGate = promptBuilder !== buildGrokCommentPrompt }) {
+export async function requestGrokComment(handle, posts, authorName, { sleep, fix = s => s, askers, relayJobId, onRelayJobCreated, profile = {}, writerAccountId, knowledgeEnabled = false, qualityFirst = false, lengthMode = 'adaptive', editorialInstructions = '', promptBuilder = buildGrokCommentPrompt, qualityGate = promptBuilder !== buildGrokCommentPrompt }) {
   let pendingRelayJobId=relayJobId;
-  askers ||= [(prompt,nonce,sleep,count)=>{const id=pendingRelayJobId;pendingRelayJobId=undefined;return askWithBotFallback(prompt,nonce,sleep,count,id,onRelayJobCreated);}];
+  let experience={text:'',items:[]};
+  askers ||= [(prompt,nonce,sleep,count)=>{const id=pendingRelayJobId;pendingRelayJobId=undefined;return askWithBotFallback(prompt,nonce,sleep,count,id,job=>onRelayJobCreated?.({...job,...(experience.items.length?{knowledgeUsed:experience.items}:{})}),experience.bot);}];
   const selected = quoteCandidates(handle, posts, authorName, profile);
   let {candidates} = selected;
   const {blocked, blockingRisk} = selected;
@@ -846,7 +848,8 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
   if (!candidates.length) return {ok:false, skipped:true, reason:'最近 20 条非置顶帖子没有可评价的原创正文'};
   const cleanHandle = String(handle || '').replace(/^@/, '');
   const nonce = makeNonce();
-  const writingContext=await loadWritingContext(writerAccountId);
+  try { experience=knowledgeEnabled && !relayJobId && await readGrokProvider()==='grok-local' ? await loadExperienceContext({ownerId:writerAccountId,text:candidates.map(p=>p.text).join('\n'),requestId:nonce}) : experience; } catch(error) { experience={text:'',items:[],warning:'知识增强暂不可用：'+error.message}; }
+  const writingContext=experience.text || await loadWritingContext(writerAccountId);
   const prompt = promptBuilder({ writingContext, handle: cleanHandle, name: fix(authorName || cleanHandle), posts:candidates, nonce, profile, qualityFirst, lengthMode,editorialInstructions });
   const reasons = [];
   for (const ask of qualityFirst ? askers.slice(0,1) : askers) {
@@ -879,7 +882,8 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
           if (!quality.passed && !quality.reviewRequired) return {ok:false,skipped:true,reasonCode:'quality_skip',grokCalls,quality,reason:quality.reason || '内容未达到引用质量门槛'};
           const lengthPolicy = quoteLengthPolicy(lengthMode);
           const issue = repairIssue||quoteDraftIssue(res.reply,lengthPolicy);
-          return {...res,post,postText:String(post.text || ''),postUrl:post.url || '',quality,lengthPolicy,grokCalls,
+          if(experience.items.length)await finishExperienceUse(nonce,res);
+          return {...res,...(experience.items.length?{knowledgeUsed:experience.items}:{}),post,postText:String(post.text || ''),postUrl:post.url || '',quality,lengthPolicy,grokCalls,
             reviewRequired:Boolean(issue || quality.reviewRequired),reasonCode:issue ? 'draft_too_long' : quality.reviewRequired ? 'quality_review_required' : qualityGate ? 'quality_pass' : 'generated',reason:issue || (quality.reviewRequired ? quality.reason : '')};
         }
         if (tweetWeight(res.reply) > 280) {
@@ -894,7 +898,8 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
           }
           res = revised;
         }
-        return {...res, post, postText:String(post.text || '').slice(0, 140), postUrl:post.url || ''};
+        if(experience.items.length)await finishExperienceUse(nonce,res);
+        return {...res,...(experience.items.length?{knowledgeUsed:experience.items}:{}), post, postText:String(post.text || '').slice(0, 140), postUrl:post.url || ''};
       }
       reasons.push(res.reason);
     } catch (e) { if(e.userActionRequired) return {ok:false,userActionRequired:true,reason:e.message}; reasons.push(String(e?.message || e)); }

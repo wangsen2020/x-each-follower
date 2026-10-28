@@ -32,6 +32,7 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   grokEnabled: false,
   autoPublish: false,
   followBackSuffixEnabled: false,
+  knowledgeEnabled: false,
   publicationMode: 'quote',
   quoteParticipationRate: 60,
   quoteLengthMode: 'adaptive'
@@ -259,6 +260,7 @@ function mergeEvaluations(existing, incoming, followJobId) {
       publicationMode: resolveEvaluationPublicationMode(prev.publicationMode, item.publicationMode),
       article: isMeaningfulObject(item.article) ? clone(item.article) : (prev.article ? clone(prev.article) : null),
       coverAttemptedAt: item.coverAttemptedAt ?? prev.coverAttemptedAt ?? 0,
+      ...(Array.isArray(item.knowledgeUsed) && item.knowledgeUsed.length ? {knowledgeUsed:clone(item.knowledgeUsed).slice(0,5)} : Array.isArray(prev.knowledgeUsed) ? {knowledgeUsed:clone(prev.knowledgeUsed)} : {}),
       relayJobId: nonEmptyString(item.relayJobId, prev.relayJobId).slice(0,128),
       articleDraftUrl: item.articleDraftUrl || prev.articleDraftUrl || '',
       language: nonEmptyString(item.language, prev.language),
@@ -367,6 +369,7 @@ function normalizeSettings(input, base) {
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
+  next.knowledgeEnabled = merged.knowledgeEnabled === true;
   next.followBackSuffixEnabled = merged.followBackSuffixEnabled === true;
   next.publicationMode = PUBLICATION_MODES.includes(merged.publicationMode)
     ? merged.publicationMode
