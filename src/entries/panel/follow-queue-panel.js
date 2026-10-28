@@ -1,3 +1,4 @@
+import {generationChoice, saveGenerationChoice} from './generation-choice.js';
 import {grokProviderController} from './composables/useGrokProvider.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
 import {cloudflareImagesController} from './composables/useCloudflareImages.js';
@@ -48,7 +49,6 @@ export const DEFAULT_SETTINGS = FOLLOW_QUEUE_DEFAULT_SETTINGS || Object.freeze({
   dwellJitter: 5,
   minFollowers: 50,
   ratioThreshold: 0.8,
-  onlyRecommended: true,
   followBackAllowAll: false,
   grokEnabled: false,
   autoPublish: false,
@@ -68,7 +68,6 @@ export const SETTINGS_BOUNDS = Object.freeze({
   dwellJitter: Object.freeze({ min: 1, max: 30, default: 5, type: 'int' }),
   minFollowers: Object.freeze({ min: 0, max: 100_000_000, default: 50, type: 'int' }),
   ratioThreshold: Object.freeze({ min: 0, max: 1.0, default: 0.8, type: 'float' }),
-  onlyRecommended: Object.freeze({ default: true, type: 'bool' }),
   followBackAllowAll: Object.freeze({ default: false, type: 'bool' }),
   grokEnabled: Object.freeze({ default: false, type: 'bool' }),
   autoPublish: Object.freeze({ default: false, type: 'bool' }),
@@ -810,6 +809,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     const cleanForm = { ...formValues, publicationMode: rawPublicationMode, quoteParticipationRate: parsedRate, quoteLengthMode: rawLengthMode };
+    delete cleanForm.generationProvider;
+    delete cleanForm.generationBotId;
     delete cleanForm.publicationModeRaw;
     delete cleanForm.quoteParticipationRateRaw;
     delete cleanForm.quoteLengthModeRaw;
@@ -822,7 +823,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     settingsError = null;
     render();
     try {
-      const res = await request({ cmd: 'followQueueSaveSettings', accountId: reqAccount, settings: validated });
+      const res = await saveGenerationChoice(formValues, () => request({ cmd: 'followQueueSaveSettings', accountId: reqAccount, settings: validated }));
+      await grokProviderController.refresh();
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       if (res && res.ok) {
         const persisted = normalizeSettings(res.settings || validated);
@@ -911,7 +913,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
   function renderHeader() {
     const publicationModeLabel = PUBLICATION_MODE_LABELS[settings.publicationMode] || PUBLICATION_MODE_LABELS.quote;
     const quoteLengthLabel = QUOTE_LENGTH_LABELS[settings.quoteLengthMode] || QUOTE_LENGTH_LABELS.adaptive;
-    const grokStatus = settings.grokEnabled ? 'Grok 开启' : 'Grok 关闭';
+    const grokStatus = settings.grokEnabled ? '自动生成已开启' : '自动生成已关闭';
     const grokDetails = `${grokStatus}；发帖形式：${publicationModeLabel}；创作概率：${settings.quoteParticipationRate ?? 60}%；篇幅：${quoteLengthLabel}；自动发布：${settings.autoPublish ? '开启' : '关闭'}`;
     const openSettings = () => {
       if(!settingsLoaded&&!settingsFetchError)return;
@@ -2180,19 +2182,12 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
         createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
         createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
         createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过普通关注筛选。例外：关注数超过粉丝数10倍时不回关，通过X接口移除此关注者；移除前再次核验，关系或数据不明时待核实。不影响采集、入队与评论审核。', 'followBackAllowAll'),
-        createSwitchGroup('fq_onlyRecommended', '仅推荐或互粉账号', '对方需带有互粉标签或符合推荐条件，否则自动策略跳过。', 'onlyRecommended'),
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 创作与发布'),
-        el('div',{className:'fq-setting-row'},[
-          el('label',{'for':'fq_grokProvider'},[el('span',{},'生成通道'),settingHelp('Grok Hook 通过自动化 Webhook 生成，不代表独立 Bot 额度。切换立即保存，未绑定时打开向导。文章配图仍使用独立配图服务。')]),
-          el('select',{id:'fq_grokProvider',value:grokProviderController.provider.value,onChange:async event=>{const control=event.target;control.disabled=true;try{await grokProviderController.select(control.value);}catch(error){settingsError=error.message;render();}finally{control.value=grokProviderController.provider.value;control.disabled=false;}}},[
-            el('option',{value:'grok',selected:grokProviderController.provider.value==='grok'},'Grok'),
-            el('option',{value:'grok-bot',selected:grokProviderController.provider.value==='grok-bot'},'Grok Hook'),
-            el('option',{value:'grok-local',selected:grokProviderController.provider.value==='grok-local'},'Grok Bot')])]),
-        createSwitchGroup('fq_grokEnabled', 'Grok 自动创作', '排除置顶帖后取最近最多 20 条帖子，综合分＝评论＋3×转发＋3×点赞＋3×收藏。同分保留时间线靠前的一条；指标缺失不按零处理。仅抽中参与概率的任务交给 Grok 评估并写作，质量不足跳过且不换帖。', 'grokEnabled'),
-        createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾按评价语言追加：中文“来关必回”、英文“I follow back.”，西班牙语和葡萄牙语使用对应文案；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
+        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(engine==='grok-local'?'xfollower:bind-grok-local':'xfollower:bind-grok-bot'))}),
+        createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾另起一段追加互关邀请，支持中文、英文、拉美西班牙语、巴西葡萄牙语和越南语；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),
         quoteRateGroup,
@@ -2310,7 +2305,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     const button=root.querySelector('#fq_cloudflare_connection');
     if(button)button.textContent=connected?'Cloudflare 已绑定 · 管理':'连接文章配图服务';
   }));
-  cleanups.push(watch(grokProviderController.provider,value=>{const control=document.getElementById('fq_grokProvider');if(control)control.value=value;}));
+
   grokProviderController.refresh().catch(console.warn);
   const onGrokProviderChange=(changes,area)=>{if(area==='local'&&changes['systemSettings:grokProvider'])grokProviderController.refresh().catch(console.warn);};
   globalThis.chrome?.storage?.onChanged?.addListener(onGrokProviderChange);

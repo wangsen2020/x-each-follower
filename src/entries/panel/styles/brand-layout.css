@@ -169,11 +169,11 @@ button.danger-btn:disabled{opacity:.45;background:#f5f7f5;color:#8fa197;border-c
 .mutual-field-label .info-tip::after{left:0;transform:none}
 .mutual-network-head .mutual-field input,.mutual-network-head .mutual-field select{width:100%;height:32px;padding:6px 8px;font-size:13px}
 .mutual-network-head #collectNetwork{flex:0 0 auto;width:auto;height:32px;margin:0;padding:6px 12px;font-size:12px;white-space:nowrap}
-.mutual-subbar{display:flex;align-items:center;justify-content:space-between;padding:5px 0;margin:0 0 4px;border-top:1px solid #e4ece6;border-bottom:1px solid #e4ece6;color:#63776d;font-size:12px;flex-shrink:0}
-.mutual-subbar .subbar-left{display:flex;align-items:center;flex-wrap:wrap;min-width:0}
+.mutual-subbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;padding:5px 0;margin:0 0 4px;border-top:1px solid #e4ece6;border-bottom:1px solid #e4ece6;color:#63776d;font-size:12px;flex-shrink:0}
+.mutual-subbar .subbar-left{display:flex;align-items:center;flex-wrap:wrap;row-gap:8px;min-width:0}
 .mutual-subbar .mutual-tabs{min-width:0;flex-wrap:wrap}
-.mutual-search-wrap input[type="search"]{height:28px;width:clamp(160px,17vw,230px)}
-.mutual-search-wrap .search-btn{height:28px}
+.mutual-search-wrap input[type="search"]{height:30px;width:clamp(160px,17vw,230px)}
+.mutual-search-wrap .search-btn{height:30px}
 #candidatesSection .network-status{margin:0 0 6px;min-height:18px;line-height:18px;color:#60756a;font-size:12px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mutual-subbar #mutualPagination{display:flex;align-items:center;margin-left:auto;padding:0;border:none;flex-shrink:0}
 .mutual-subbar #mutualPagination label{display:inline-flex;align-items:center;font-size:12px;white-space:nowrap;flex-direction:row}
@@ -685,7 +685,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 }
 
 /* 按钮高度统一 30px */
-#unreciprocatedSection .unreciprocated-head button:not(.settings-gear-btn) {
+#unreciprocatedSection .unreciprocated-head button:not(.settings-gear-btn):not(.panel-icon-button) {
   height: 30px;
   padding: 0 10px;
   font-size: 12px;
@@ -929,7 +929,7 @@ th .info-tip::after{top:calc(100% + 8px);bottom:auto;left:auto;right:-6px;transf
 .mutual-field-label > :not(:last-child){margin-right:4px}
 .mutual-subbar > :not(:last-child){margin-right:12px}
 .mutual-subbar .subbar-left > :not(:last-child){margin-right:10px}
-.mutual-subbar .subbar-left > :not(:last-child){margin-bottom:10px}
+.mutual-subbar .subbar-left > :not(:last-child){margin-bottom:0}
 .mutual-subbar #mutualPagination > :not(:last-child){margin-right:10px}
 .monitor-head > :not(:last-child){margin-right:12px}
 .monitor-head-right > :not(:last-child){margin-right:10px}
@@ -1034,7 +1034,7 @@ main > :not(.sidebar){margin-left:20px}
 /* Vue shell stays in source order while its children participate in the main grid. */
 #panel-vue-root, #panel-vue-container { display:contents; }
 main .vue-panel-header { padding:0 11px 4px; margin-left:0; }
-main .vue-panel-header:has(#recordMigration[hidden]) { display:none; }
+main .vue-panel-header:has(#recordMigration[hidden]):not(:has(.automation-alerts)) { display:none; }
 /* Borderless panels start their text one pixel before bordered cards. */
 #panel-vue-container:has(> :is(#candidatesSection, #followQueueSection, #knowledgeSection):not([hidden])) > .vue-panel-header { padding-left:10px; }
 #panel-vue-container > .tab-panel { padding-left:10px; padding-right:10px; }

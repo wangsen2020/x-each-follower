@@ -49,8 +49,8 @@ test('an interrupted Bot generation preserves its ID and resumes the same result
 });
 
 for(const [mode,language,body,ending] of [
- ['quote','zh','这是一个值得检查的技术细节。','来关必回'],
- ['reply','en','The tradeoff deserves a closer test.','I follow back.']
+ ['quote','zh','这是一个值得检查的技术细节。','关注我，必回关！🤝'],
+ ['reply','en','The tradeoff deserves a closer test.','Follow me and I’ll follow back! 🤝']
 ]) test(`${mode} automatically appends its localized follow-back ending when enabled`,async()=>{
  const env=await setup(async({post})=>({ok:true,reply:body,post,language,quality:{passed:true,total:8},grokCalls:1}),{publicationMode:mode,followBackSuffixEnabled:true});
  await env.runtime.runComments();const saved=await env.read();

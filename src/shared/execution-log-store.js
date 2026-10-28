@@ -2,6 +2,8 @@
 // Scope rows support newest-first [at, id] cursors. Legacy chrome.storage arrays are imported once and left in place.
 import {durableGetStrict as persistentDurableGet, durableSet as persistentDurableSet} from '../platform/persistent-db.js';
 import {selectExecutionLogs, matchesFollowbackLogKind, collapseUnfollowSummaries} from './execution-log-select.js';
+import {reportBackupHealth} from './automation-health.js';
+import {mergePendingLogs} from './log-backup-merge.js';
 
 export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
@@ -158,9 +160,10 @@ export function createExecutionLogStore(options = {}) {
   let recoveryPromise;
   let recoveryState = {phase: 'idle', current: 0, total: 0};
   let backupState = {ok: true, pending: 0, head: 0, error: ''};
+  const locks = options.locks || globalThis.navigator?.locks;
 
   function enqueue(task) {
-    const run = chain.then(task);
+    const run = chain.then(() => locks?.request ? locks.request(`xf-execution-logs:${dbName}`, {mode:'exclusive'}, task) : task());
     chain = run.then(() => {}, () => {});
     return run;
   }
@@ -222,6 +225,7 @@ export function createExecutionLogStore(options = {}) {
 
   function noteBackup(patch) {
     backupState = {...backupState, ...patch, head: durableCommitted, pending: pendingCount};
+    try { Promise.resolve(options.onBackupStatus?.({...backupState})).catch(()=>{}); } catch { /* reporting must not block logging */ }
   }
 
   async function readCursor(store, range, direction) {
@@ -276,6 +280,8 @@ export function createExecutionLogStore(options = {}) {
     }
     const outboxMax = await maxOutboxSeq();
     pendingCount = await countOutbox();
+    const failed=await firstOutboxItem();
+    if(failed?.error)backupState={...backupState,ok:false,error:failed.error};
     durableCommitted = remote;
     replayedThrough = localReady ? local : Number(recovery?.n) || 0;
     journalHead = Math.max(journalHead, local, remote, outboxMax);
@@ -286,7 +292,7 @@ export function createExecutionLogStore(options = {}) {
     const key = `executionLogBackupPage:${item.seq}`;
     const existing = await durableGet(key);
     if (existing !== undefined && !samePayload(existing, item.op)) {
-      throw new Error(`执行日志备份页 ${item.seq} 已存在且内容不同`);
+      throw Object.assign(new Error(`执行日志备份页 ${item.seq} 已存在且内容不同`),{code:'LOG_BACKUP_SEQUENCE_CONFLICT'});
     }
     const current = Number((await durableGet('executionLogBackupHead'))?.n) || 0;
     if (item.seq > current + 1) throw new Error(`执行日志备份页缺失: ${current + 1}`);
@@ -317,6 +323,7 @@ export function createExecutionLogStore(options = {}) {
 
   async function flushOutbox() {
     let guard = 0;
+    let rebases = 0;
     while (guard < 10000) {
       guard += 1;
       const item = await firstOutboxItem();
@@ -330,14 +337,7 @@ export function createExecutionLogStore(options = {}) {
         noteBackup({ok: false, error: error.message});
         throw error;
       }
-      if (item.seq <= durableCommitted) {
-        const db = await database();
-        const tx = db.transaction('backupOutbox', 'readwrite');
-        tx.objectStore('backupOutbox').delete(item.seq);
-        await transactionDone(tx);
-        pendingCount = Math.max(0, pendingCount - 1);
-        continue;
-      }
+      if ((item.error || '').includes('已存在且内容不同') && rebases++ < 3) {await reconcileBackupConflict(item);continue;}
       if ((item.attempts || 0) >= BACKUP_ATTEMPT_LIMIT) {
         const error = new Error(item.error || '执行日志备份重试已达上限');
         noteBackup({ok: false, error: error.message});
@@ -346,24 +346,63 @@ export function createExecutionLogStore(options = {}) {
       try {
         await publish(item);
       } catch (error) {
+        if(error.code==='LOG_BACKUP_SEQUENCE_CONFLICT' && rebases++ < 3){await reconcileBackupConflict(item);continue;}
         await rememberFailure(item, error);
         throw error;
       }
     }
   }
 
+  async function reconcileBackupConflict(conflict) {
+    const remoteHead=Number((await durableGet('executionLogBackupHead'))?.n)||0;
+    const head=Math.max(remoteHead,conflict.seq);
+    const db=await database();
+    const local=Number((await readMeta(db,'backupHead'))?.n)||0;
+    const pendingTx=db.transaction('backupOutbox','readonly');
+    let pending=await requestToPromise(pendingTx.objectStore('backupOutbox').getAll());
+    await transactionDone(pendingTx);
+    const remote=[];
+    // Read and validate the complete tail BEFORE changing either journal.
+    for(let n=Math.min(local,conflict.seq-1)+1;n<=head;n++){
+      const op=await durableGet(`executionLogBackupPage:${n}`);
+      const valid=op && (['put','dropScopes'].includes(op.op)?Boolean(op.record?.id):op.op==='delete'?Boolean(op.id):op.op==='prune'&&Array.isArray(op.ids));
+      if(!valid)throw new Error(`执行日志备份页缺失或无效: ${n}`);
+      remote.push(op);
+    }
+    if(head>remoteHead)await durableSet('executionLogBackupHead',{n:head});
+    pending=mergePendingLogs(remote,pending);
+    const tx=db.transaction(['logs','scopeRows','backupOutbox','meta'],'readwrite');
+    // Merge remote history, then reapply pending local updates in original order.
+    // Remote page bodies are immutable; only the local pending sequence changes.
+    for(const op of remote)await applyOpInTransaction(tx,op);
+    for(const item of pending)await applyOpInTransaction(tx,item.op);
+    tx.objectStore('backupOutbox').clear();
+    pending.forEach((item,index)=>tx.objectStore('backupOutbox').put({...item,seq:head+index+1,rebasedFrom:item.rebasedFrom||item.seq,previousError:item.error||'',attempts:0,error:''}));
+    tx.objectStore('meta').put({key:'backupHead',n:head});
+    tx.objectStore('meta').put({key:'recoveryProgress',n:head,done:true});
+    await transactionDone(tx);
+    durableCommitted=head;replayedThrough=head;journalHead=head+pending.length;pendingCount=pending.length;
+    noteBackup({pending:pendingCount});
+  }
+
+  async function syncWriterHead() {
+    const db=await database();
+    const committed=Number((await readMeta(db,'backupHead'))?.n)||0;
+    durableCommitted=Math.max(durableCommitted,committed);
+    journalHead=Math.max(journalHead,committed,await maxOutboxSeq());
+    pendingCount=await countOutbox();
+  }
+
   function queueOp(tx, op) {
     const seq = journalHead + 1;
     journalHead = seq;
     pendingCount += 1;
-    tx.objectStore('backupOutbox').put({seq, op, attempts: 0});
+    tx.objectStore('backupOutbox').put({seq, op:{...op,writtenAt:Date.now()}, attempts: 0});
     noteBackup({});
     return seq;
   }
 
-  async function applyOp(op, sequence) {
-    const db = await database();
-    const tx = db.transaction(['logs', 'scopeRows', 'meta'], 'readwrite');
+  async function applyOpInTransaction(tx, op) {
     if ((op.op === 'put' || op.op === 'dropScopes') && op.record) {
       const record = upgradeQueueMembership({...op.record});
       assignLogTime(record, op.record.atRaw !== undefined ? op.record.atRaw : op.record.at, 'replay');
@@ -373,6 +412,11 @@ export function createExecutionLogStore(options = {}) {
       await deleteLog(tx, op.id);
     }
     for (const id of op.op === 'prune' ? op.ids || [] : op.prunedIds || []) await deleteLog(tx, id);
+  }
+  async function applyOp(op, sequence) {
+    const db = await database();
+    const tx = db.transaction(['logs', 'scopeRows', 'meta'], 'readwrite');
+    await applyOpInTransaction(tx,op);
     // Commit the replay position together with the data it represents.
     tx.objectStore('meta').put({key: 'recoveryProgress', n: sequence, done: false});
     await transactionDone(tx);
@@ -589,15 +633,28 @@ export function createExecutionLogStore(options = {}) {
   return {
     backupStatus: () => ({...backupState}),
     recoveryStatus: () => ({...recoveryState}),
+    retryBackup() {
+      return enqueue(async()=>{
+        await ensureRecovered();await syncWriterHead();
+        const db=await database(),tx=db.transaction('backupOutbox','readwrite');
+        const pending=await requestToPromise(tx.objectStore('backupOutbox').getAll());
+        for(const item of pending)tx.objectStore('backupOutbox').put({...item,attempts:0});
+        await transactionDone(tx);
+        try{await flushOutbox();}catch(error){noteBackup({ok:false,error:error.message});}
+        return {...backupState};
+      });
+    },
     ready() {
       return enqueue(async () => {
         await ensureRecovered();
-        try { await flushOutbox(); } catch { /* status stays visible; ready does not claim the backup succeeded */ }
+        await syncWriterHead();
+        try { await flushOutbox(); } catch(error) { noteBackup({ok:false,error:error.message}); }
       });
     },
     append(entry) {
       return enqueue(async () => {
         await ensureRecovered();
+        await syncWriterHead();
         const db = await database();
         const origin = entry?.origin === 'monitorLogs' || entry?.origin === 'unreciprocatedLogs' ? entry.origin : 'autoFollowLogs';
         const item = {...entry, id: entry?.id || `log_${crypto.randomUUID()}`, origin};
@@ -625,13 +682,16 @@ export function createExecutionLogStore(options = {}) {
         const prunedIds = record.scope === 'queue' ? await pruneQueueRows(tx) : [];
         queueOp(tx, {op: 'put', record, prunedIds});
         await transactionDone(tx);
+        noteBackup({localFailure:false});
         try {
           await flushOutbox();
         } catch (error) {
-          throw error;
+          // The local transaction above is already committed. Backup health is
+          // reported separately and must not abort unrelated business actions.
+          noteBackup({ok:false,error:error.message});
         }
         return {entry: record, backup: {...backupState}};
-      });
+      }).catch(error=>{noteBackup({ok:false,localFailure:true,error:`执行日志不可用：${error.message}`});throw error;});
     },
     query({scope = 'autoFollow', limit = LOG_PAGE_SIZE, cursor = null, since = null, kind = null} = {}) {
       // Reads share initialization, but never wait for the mutation/backup
@@ -641,7 +701,7 @@ export function createExecutionLogStore(options = {}) {
         const bound = assertLogCursor(cursor);
         if(since!==null && (typeof since!=='string' || !Number.isFinite(Date.parse(since)) || new Date(since).toISOString()!==since))throw new Error('无效日志时间范围');
         if(bound && since && bound.at<since)throw new Error('日志游标不在查询范围内');
-        await ensureRecovered();
+        if(!recovered)await enqueue(ensureRecovered);
         const db = await database();
         const size = Math.max(1, Math.min(50, Number(limit) || LOG_PAGE_SIZE));
         const tx = db.transaction(['scopeRows', 'logs'], 'readonly');
@@ -703,6 +763,7 @@ export function createExecutionLogStore(options = {}) {
       return enqueue(async () => {
         assertLogScope(scope);
         await ensureRecovered();
+        await syncWriterHead();
         await flushOutbox();
         const scopes = new Set(clearScopesFor(scope));
         const db = await database();
@@ -754,7 +815,8 @@ export function getDefaultExecutionLogStore() {
     defaultStore = createExecutionLogStore({
       storage: globalThis.chrome?.storage?.local,
       durableGet: persistentDurableGet,
-      durableSet: persistentDurableSet
+      durableSet: persistentDurableSet,
+      onBackupStatus:status=>reportBackupHealth(status)
     });
   }
   return defaultStore;
@@ -780,7 +842,7 @@ export function handleExecutionLogRequest(message, sender, sendResponse, store =
     return true;
   }
   if (message.cmd === 'executionLogStatus') {
-    sendResponse({ok: true, recovery: store.recoveryStatus()});
+    sendResponse({ok: true, recovery: store.recoveryStatus(), backup:store.backupStatus()});
     return true;
   }
   const run = message.cmd === 'appendExecutionLog' ? store.append(message.entry)

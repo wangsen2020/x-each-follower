@@ -574,7 +574,7 @@ export function createRecordProjection({indexedDB: indexedDBImpl, IDBKeyRange: k
       const stateRequest = stateStore.get('runtime');
       stateRequest.onsuccess = () => {
         const state = stateRequest.result || blankState();
-        state.fanDirectoryDirtyHandles = [...new Set([...(state.fanDirectoryDirtyHandles || []), String(backup.handle).toLowerCase()])];
+        state.fanDirectoryDirtyHandles = [...new Set([...(state.fanDirectoryDirtyHandles || []), String(backup.handle).toLowerCase(), ...(backup.previousHandle ? [String(backup.previousHandle).toLowerCase()] : [])])];
         stateStore.put(state);
       };
     }

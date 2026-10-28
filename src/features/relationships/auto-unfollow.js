@@ -1,5 +1,5 @@
 import {createFollowbackAudit,unfollowSkipReason} from './followback-audit.js';
-import {isolatePending, samePendingTarget, targetCheckFailure, pauseDescription, PENDING_RECHECK_LIMIT, PENDING_RECHECK_INTERVAL_MS} from './auto-unfollow-state.js';
+import {isolatePending, samePendingTarget, targetCheckFailure, pauseDescription, PENDING_RECHECK_INTERVAL_MS} from './auto-unfollow-state.js';
 export const AUTO_UNFOLLOW_ALARM='x-auto-unfollow';
 export const AUTO_UNFOLLOW_STATE='autoUnfollowState';
 export const AUTO_UNFOLLOW_MIN_INTERVAL_MS=60000;
@@ -33,7 +33,7 @@ export function eligibleAutoUnfollow(user, config, now=Date.now()) {
     && user.relationship?.following===true && user.relationship?.followedBy===false
     && Number.isFinite(date) && now-date>=Math.max(1,Number(config.overdueDays)||14)*86400000;
 }
-export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshCandidate=async user=>user,verifyAccount=async()=>{},profile,unfollow,followback,reconcile,log,now=Date.now,random=Math.random}) {
+export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshCandidate=async user=>user,verifyAccount=async()=>{},profile,unfollow,followback,reconcile,removeMissing,log,now=Date.now,random=Math.random}) {
   let running=false;
   const config=async()=>normalize((await storage.get('unreciprocatedSettings')).unreciprocatedSettings||{});
   const delay=(base,jitter,min)=>Math.max(min,Number(base)+(random()*2-1)*Number(jitter||0));
@@ -47,11 +47,21 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
     await alarms.create(AUTO_UNFOLLOW_ALARM,{when});
     return when;
   }
-  async function run({reviewHandle = ''} = {}) {
+  async function run({reviewHandle = '', retryConfirmed = false} = {}) {
     if(running){await schedule(true);await log({source:'unfollow-auto',scope:'unreciprocated',result:'skipped',summary:'自动取关未执行：上一轮仍在运行，已保留下次计划'});return {skipped:'running'};}
     const audit=createFollowbackAudit('自动取关',entry=>log({source:'unfollow-auto',...entry}),now);
-    running=true;let completed=0,attempted=0,checked=0,repaired=0,currentTarget=null,state=null,persist=null,nextAt=null;const unfollowedHandles=[];
+    running=true;let completed=0,attempted=0,checked=0,repaired=0,removed=0,currentTarget=null,state=null,persist=null,nextAt=null,stopReason='';const unfollowedHandles=[],removedHandles=new Set();
+    const canCheck=(user,cfg)=>eligibleAutoUnfollow(user,cfg,now()) || Boolean(removeMissing && user?.accountAvailability?.status==='not_found');
     const status=async(phase,reason='',resume='')=>{if(!state)return;state.scheduler={phase,reason,resume,nextAt,updatedAt:now(),target:currentTarget?.handle||''};await persist();};
+    const clearMissing=async(user,error)=>{
+      if(error?.code!=='X_PROFILE_UNAVAILABLE' || error.availability!=='not_found' || error.confirmedMissing!==true || !removeMissing)return false;
+      const result=await removeMissing(user); // Durable deletion must succeed before queue/pending removal.
+      state.queue=(state.queue||[]).filter(handle=>handle!==handleOf(user));
+      state.pendingItems=state.pendingItems.filter(item=>!samePendingTarget(item,user));
+      await persist();removed++;removedHandles.add(handleOf(user));
+      await audit.event({scope:'unreciprocated',result:'skipped',handle:user.handle,summary:`@${user.handle} 此账号不存在，已清理本地记录，继续检查下一条`},{'账号状态':'不存在','清理记录数':result?.deleted||0,'提交状态':'仅清理本地数据，未新增取关请求','错误代码':error.code,'核验说明':error.message});
+      return true;
+    };
     try {
       const cfg=await config();
       audit.stage('检查配置',{'绑定账号':cfg.autoUnfollowAccount?.handle||'未绑定','超时天数':cfg.overdueDays,'执行时段':`${cfg.activeTimeStart}—${cfg.activeTimeEnd}`,'单轮上限':1,'每日上限':cfg.dailyLimit});
@@ -59,7 +69,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
       audit.stage('检查配置',{'下次计划时间':nextAt?new Date(nextAt).toISOString():'未启用','当前本地时间':new Date(now()).toLocaleString(),'最短请求间隔分钟':AUTO_UNFOLLOW_MIN_INTERVAL_MS/60000});
       if(!reviewHandle && (!cfg.autoUnfollow||!inUnfollowWindow(cfg,now()))){await audit.event({scope:'unreciprocated',result:'skipped',summary:!cfg.autoUnfollow?'自动取关未执行：开关关闭':'自动取关未执行：当前不在执行时段'});return {skipped:'disabled_or_outside_window'};}
       if(!cfg.autoUnfollowAccount?.id || !cfg.autoUnfollowAccount?.handle)throw new Error('缺少绑定账号，请重新保存自动取关设置');
-      await audit.event({scope:'unreciprocated',result:'started',summary:'开始自动取关检查'});
+
       const ledger=(await storage.get(AUTO_UNFOLLOW_STATE))[AUTO_UNFOLLOW_STATE]||{};
       const account=String(cfg.autoUnfollowAccount.id);
       const accounts={...(ledger.accounts||{})};
@@ -71,24 +81,40 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
       await verifyAccount(cfg);
       isolatePending(state);await persist();
       if(state.pendingItems.some(item=>!item?.user?.id || !handleOf(item?.user)))throw new Error('待确认记录缺少目标身份，无法安全隔离，请核对执行日志');
-      const pending=state.pendingItems.find(item=>reviewHandle ? handleOf(item.user)===handleOf({handle:reviewHandle}) : item.checks<PENDING_RECHECK_LIMIT && !(item.nextCheckAt>now()));
+      const pending=[...state.pendingItems].sort((a,b)=>(a.nextCheckAt||0)-(b.nextCheckAt||0)).find(item=>reviewHandle ? handleOf(item.user)===handleOf({handle:reviewHandle}) : !(item.nextCheckAt>now()));
       if(pending){
         currentTarget=pending.user;
         audit.stage('核验待确认账号',{'目标账号':currentTarget.handle,'目标账号ID':currentTarget.id,'目标昵称':currentTarget.name||'','提交状态':'仅核验关系，不重复操作'});
-        // Bound automatic recovery even when the worker is interrupted mid-check.
+        // Persist the next check before reading; rotate due targets without a terminal retry cap.
         if(!reviewHandle)pending.checks++;
         pending.nextCheckAt=now()+PENDING_RECHECK_INTERVAL_MS;await persist();
         let live,localError;
         try {live=await profile(pending.user,cfg);} catch(error){if(!targetCheckFailure(error))throw error;localError=error;}
         const identityMatches=live && String(live.id||'')===String(pending.user.id) && handleOf(live)===handleOf(pending.user);
         const confirmed=identityMatches && (pending.kind==='followback' ? live.relationship?.following===true && live.relationship?.followedBy===true : live.relationship?.following===false);
-        if(confirmed){
+        if(await clearMissing(pending.user,localError)){
+          // A terminal account is no longer actionable; preserve any historic usage.
+        }else if(confirmed){
           await reconcile(pending.user,live);
           state.pendingItems=state.pendingItems.filter(item=>item!==pending);await persist();
           await audit.event({scope:'unreciprocated',result:'success',handle:currentTarget.handle,summary:`@${currentTarget.handle} 的上次操作已核实，已解除待确认`},{'提交状态':'仅确认已有结果，本轮未重复提交'});
+        }else if((!reviewHandle || retryConfirmed || pending.phase==='reserved') && pending.kind!=='followback' && identityMatches &&
+          now()-Number(pending.at||now())>=PENDING_RECHECK_INTERVAL_MS &&
+          live.evidence?.page?.ready && live.evidence.page.following===true && live.evidence.api?.following===true &&
+          live.relationship?.followedBy===false){
+          const latest=await config(), candidate=await refreshCandidate(pending.user);
+          if(!latest.autoUnfollow || latest.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id)throw new Error('绑定账号或自动取关设置已变化，未恢复');
+          if(!candidate || String(candidate.id)!==String(live.id) || handleOf(candidate)!==handleOf(live) || !eligibleAutoUnfollow(candidate,latest,now())){
+            pending.reason='当前不符合取关条件，保留记录并等待后续自动核验';await persist();
+            await audit.event({scope:'unreciprocated',result:'skipped',handle:currentTarget.handle,summary:`@${currentTarget.handle} 当前不符合取关条件，未恢复`},{'核验说明':pending.reason});
+          }else{
+          state.pendingItems=state.pendingItems.filter(item=>item!==pending);
+          state.queue=[handleOf(candidate),...state.queue.filter(h=>h!==handleOf(candidate))];await persist();
+          await audit.event({scope:'unreciprocated',result:'waiting',handle:currentTarget.handle,summary:`@${currentTarget.handle} 已核实仍在关注，已恢复排队`},{'提交状态':pending.phase==='reserved'?'确认中断于提交前；接口与主页一致，恢复排队':'接口与主页双重确认仍关注，自动恢复排队，执行前再次核验','原操作时间':new Date(pending.at).toISOString(),'原提交阶段':pending.phase||'历史未记录','今日已用':state.used});
+          }
         }else{
-          pending.reason=localError?.message || '上次操作结果尚未确认';await persist();
-          await audit.event({scope:'unreciprocated',result:'skipped',handle:currentTarget.handle,summary:`@${currentTarget.handle} 待确认，已隔离；其他账号继续按计划处理`},{'核验说明':pending.reason,'自动核验次数':pending.checks,'恢复方式':pending.checks>=PENDING_RECHECK_LIMIT?'在 X 核实后，点击核验':'稍后自动核验；不会重复取关'});
+          pending.reason=localError?.message || (identityMatches && live.relationship?.following===true ? '仍在关注，等待冷却时间及完整双重证据后自动恢复' : '上次操作结果尚未确认');await persist();
+          await audit.event({scope:'unreciprocated',result:'skipped',handle:currentTarget.handle,summary:`@${currentTarget.handle} 待确认，已隔离；其他账号继续按计划处理`},{'核验说明':pending.reason,'自动核验次数':pending.checks,'恢复方式':'按计划持续核验；双重确认符合条件后自动恢复排队'});
         }
         currentTarget=null;
       }
@@ -100,12 +126,13 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
       audit.stage('筛选超时账号',{'今日已用':state.used,'本轮可用额度':cap});
       const allUsers=await candidates();
       audit.stage('筛选超时账号',{'候选记录总数':allUsers.length});
-      const users=allUsers.filter(u=>{if(state.pendingItems.some(item=>samePendingTarget(item,u))){audit.skip('上次操作待确认，已隔离',u);return false;}const eligible=eligibleAutoUnfollow(u,cfg,now());if(!eligible)audit.skip(unfollowSkipReason(u,cfg,now()),u);return eligible;}).sort((a,b)=>Date.parse(a.followedAt)-Date.parse(b.followedAt));
+      const users=allUsers.filter(u=>{if(removedHandles.has(handleOf(u)))return false;if(state.pendingItems.some(item=>samePendingTarget(item,u))){audit.skip('上次操作待确认，已隔离',u);return false;}const eligible=canCheck(u,cfg);if(!eligible)audit.skip(unfollowSkipReason(u,cfg,now()),u);return eligible;}).sort((a,b)=>Date.parse(a.followedAt)-Date.parse(b.followedAt));
       const byHandle=new Map(users.map(user=>[handleOf(user),user]));
       const queued=new Set();
       state.queue=[...(Array.isArray(state.queue)?state.queue:[]),...users.map(handleOf)]
         .filter(handle=>{if(queued.has(handle)||!byHandle.has(handle))return false;queued.add(handle);return true;});
       await persist();
+      if(state.queue.length)await audit.event({scope:'unreciprocated',result:'started',summary:'开始自动取关检查'});
       for(const handle of [...state.queue]){
         if(attempted>=cap||checked>=MAX_PROFILE_CHECKS_PER_ROUND)break;
         let user=byHandle.get(handle);
@@ -113,12 +140,12 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         currentTarget=user;
         audit.stage('实时核验取关条件',{'目标账号':user.handle,'目标账号ID':String(user.id||''),'目标昵称':user.name||'','关注时间':user.followedAt,'提交状态':'尚未操作','请求是否发出':'未操作','操作状态':'未操作','核验关系':'待核验'});
         const current=await config();
-        if(!current.autoUnfollow || current.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(current,now()))break;
-        if(!eligibleAutoUnfollow(user,current,now())){await dequeue();continue;}
+        if(!current.autoUnfollow || current.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(current,now())){stopReason='设置或执行时段已变化';break;}
+        if(!canCheck(user,current)){await dequeue();continue;}
         if(state.day!==day())state={...state,day:day(),used:0};
-        if(state.used>=current.dailyLimit)break;
+        if(state.used>=current.dailyLimit){stopReason='今日额度已用完';break;}
         user=await refreshCandidate(user);
-        if(!user || !eligibleAutoUnfollow(user,current,now())){audit.skip(unfollowSkipReason(user,current,now()),user);await dequeue();continue;}
+        if(!user || !canCheck(user,current)){audit.skip(unfollowSkipReason(user,current,now()),user);await dequeue();continue;}
         checked++;
         let live;
         try { live=await profile(user,current); }
@@ -126,6 +153,7 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
           // Only target-specific preflight failures may yield to the next candidate.
           // Pending actions and owner/session/network failures still stop the round.
           if(!targetCheckFailure(error))throw error;
+          if(await clearMissing(user,error)){checked--;continue;}
           const reason=error.code==='X_PROFILE_ACTION_UNAVAILABLE'?'主页关注入口待核实，未操作':error.code==='X_PROFILE_UNAVAILABLE'?'目标账号不可用，未操作':'目标身份待核实，未操作';
           audit.skip(reason,user);
           state.queue=state.queue.filter(item=>item!==handle);state.queue.push(handle);await persist();
@@ -152,16 +180,20 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         if(live.relationship?.following!==true || live.relationship?.followedBy!==false){audit.skip('实时关系未知，禁止取关',user);await dequeue();continue;}
         // Re-read after network lookup so disabling or adding to the whitelist takes effect.
         const latest=await config();
-        if(!latest.autoUnfollow || latest.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(latest,now()))break;
+        if(!latest.autoUnfollow || latest.autoUnfollowAccount?.id!==cfg.autoUnfollowAccount.id || !inUnfollowWindow(latest,now())){stopReason='设置或执行时段已变化';break;}
         user=await refreshCandidate(user);
         if(!user || !eligibleAutoUnfollow(user,latest,now())){await dequeue();continue;}
-        if(state.used>=latest.dailyLimit)break;
+        if(state.used>=latest.dailyLimit){stopReason='今日额度已用完';break;}
         state.used=(state.used||0)+1;attempted++;
         state.lastAttemptAt=now();
-        state.pending={user:{...user,id:live.id},at:now()};
+        state.pending={user:{...user,id:live.id},at:now(),phase:'reserved'};
         await persist(); // Reserve before the request; ambiguous attempts count too.
         audit.stage('打开主页并取消关注',{'提交状态':'已预留额度，正在核验页面操作'});
-        const result=await unfollow(live,latest);
+        await audit.event({scope:'unreciprocated',result:'started',handle,summary:`准备取关 @${handle}`},{'提交阶段':'reserved','提交状态':'已预留，尚未提交'});
+        const result=await unfollow(live,latest,{beforeSubmit:async()=>{
+          state.pending.phase='submitting';state.pending.submittingAt=now();await persist();
+        }});
+        if(state.pending){state.pending.phase='responded';state.pending.response={status:result?.status||0,attempted:result?.attempted,error:result?.error||''};await persist();}
         audit.stage('核对页面操作结果',{'操作状态':result?.status||0,'请求是否发出':result?.attempted===false?'未操作':'已点击页面操作，需核验结果'});
         if(result?.attempted===false){
           // Release only this round's reservation after a definite no-action result.
@@ -186,11 +218,12 @@ export function createAutoUnfollow({storage,alarms,normalize,candidates,refreshC
         state.pending=null;state.lastSuccessAt=now();await dequeue();
         completed++;unfollowedHandles.push(handle);
       }
-      audit.stage('本轮结束',{'提交状态':completed?'已确认取关并回写本地':'本轮未新增取关'});
+      const waitingReason=stopReason || (state.queue.length ? '剩余账号待核实，稍后继续检查' : state.pendingItems.length ? `暂无可取关账号；${state.pendingItems.length} 个账号待确认，已隔离` : '暂无符合条件的取关账号');
+      audit.stage('本轮结束',{'提交状态':completed?'已确认取关并回写本地':removed?'已清理不存在账号，未发起取关':waitingReason});
       currentTarget=null;
-      await status('waiting',state.queue.length?'等待下次执行':state.pendingItems.length?'待确认账号已隔离，暂无其他排队账号':'暂无符合条件的排队账号','下次计划重新检查候选账号');
-      if(!repaired)await audit.event({scope:'unreciprocated',summary:completed ? `自动取关 @${unfollowedHandles[0]} 成功` : `自动取关完成：成功 ${completed} 人，本轮尝试 ${attempted} 人，今日已用 ${state.used||0}/${cfg.dailyLimit}`,handle:completed?unfollowedHandles[0]:undefined,result:'success',unfollowedHandles:[...unfollowedHandles]},{'符合超时条件人数':users.length,'成功人数':completed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':attempted>=cap?'本轮已处理 1 人':checked>=MAX_PROFILE_CHECKS_PER_ROUND?'达到本轮关系核验上限':'本轮候选检查结束'});
-      return {completed,attempted,repaired};
+      await status('waiting',completed?'等待下次执行':waitingReason,'下次计划重新检查候选账号');
+      if(!repaired && (completed || removed || users.length))await audit.event({scope:'unreciprocated',summary:completed ? `自动取关 @${unfollowedHandles[0]} 成功` : removed ? `已清理不存在账号 ${removed} 个；${waitingReason}` : `自动取关等待：${waitingReason}`,handle:completed?unfollowedHandles[0]:undefined,result:completed?'success':removed?'cleaned':'waiting',unfollowedHandles:[...unfollowedHandles]},{'符合超时条件人数':users.length,'成功人数':completed,'清理不存在账号数':removed,'处理次数':attempted,'关系核验人数':checked,'排队人数':state.queue.length,'今日已用':state.used,'结束原因':completed?'本轮已确认取关 1 人':waitingReason});
+      return {completed,attempted,repaired,removed};
     } catch(error) {
       let isolated=false;
       if(state && persist){

@@ -12,8 +12,9 @@
       <ul>
         <li v-for="item in view.pending" :key="String(item.user?.id || item.user?.handle)">
           <a :href="'https://x.com/' + encodeURIComponent(item.user?.handle || '')" target="_blank" rel="noopener">@{{ item.user?.handle || '未知账号' }}</a>
-          <span>{{ item.reason || '上次操作结果待确认' }} · {{ item.checks >= 3 ? '自动核验已达上限，请在 X 核实后点击核验' : '等待自动核验' }}</span>
+          <span>{{ item.reason || '上次操作结果待确认' }} · 自动核验，符合条件后恢复排队</span>
           <button class="secondary" :disabled="Boolean(checking)" @click="review(item.user?.handle)" title="仅核验已有结果，不发送取关或回关请求">{{ checking === item.user?.handle ? '核验中…' : '核验' }}</button>
+          <button class="secondary" :disabled="Boolean(checking)" @click="review(item.user?.handle,true)" title="距原操作至少 10 分钟，接口与主页均确认仍关注且符合条件时恢复排队；下一轮重新核验后取关">核验并恢复</button>
         </li>
       </ul>
     </details>
@@ -29,14 +30,14 @@ watch(()=>JSON.stringify(view.value.pending),()=>{feedback.value='';});
 let stop;
 onMounted(()=>{stop=start();});
 onUnmounted(()=>stop?.());
-async function review(handle){
+async function review(handle,retryConfirmed=false){
   if(!handle||checking.value)return;
   checking.value=handle;feedback.value='';
   try{
-    const result=await chrome.runtime.sendMessage({cmd:'reviewAutoUnfollowPending',handle});
+    const result=await chrome.runtime.sendMessage({cmd:'reviewAutoUnfollowPending',handle,retryConfirmed});
     if(result?.error)throw new Error(result.error);
     await refresh();
-    feedback.value=result?.skipped==='running'?'当前轮次正在执行，请稍后核验':view.value.pending.some(item=>item.user?.handle===handle)?'关系仍待确认，继续隔离该账号；其他账号不受影响。':'核验完成，已解除该账号的待确认状态。';
+    feedback.value=result?.skipped==='running'?'当前轮次正在执行，请稍后核验':view.value.pending.some(item=>item.user?.handle===handle)?'关系仍待确认，继续隔离该账号；其他账号不受影响。':retryConfirmed?'核验完成，已解除待确认；符合条件的账号已恢复排队。':'核验完成，已解除该账号的待确认状态。';
   }catch(failure){feedback.value=`核验未完成：${failure.message}`;}
   finally{checking.value='';}
 }

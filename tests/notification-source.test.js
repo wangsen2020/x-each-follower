@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {notificationSource, panelSourcePath, panelSourceTab, createNotificationClickHandler} from '../src/shared/notification-source.js';
 
 test('notification IDs resolve without in-memory state and routes reject unknown targets', () => {
-  for (const [prefix, tab] of [['follow-queue-', 'followQueue'], ['x-comment-auto-', 'comments'], ['x-mutual-auto-', 'candidates'], ['x-unreciprocated-', 'unreciprocated']]) {
+  for (const [prefix, tab] of [['xf-health-logs','followQueue'],['xf-health-unfollow','unreciprocated'],['follow-queue-', 'followQueue'], ['x-comment-auto-', 'comments'], ['x-mutual-auto-', 'candidates'], ['x-unreciprocated-', 'unreciprocated']]) {
     assert.equal(notificationSource(prefix + '123').tab, tab);
     assert.equal(panelSourceTab(new URL(panelSourcePath(tab), 'https://test/').search), tab);
   }

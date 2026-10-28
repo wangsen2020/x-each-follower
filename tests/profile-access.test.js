@@ -75,3 +75,18 @@ test('unresolved identity persists across clients and blocks requests until a ve
  await observeProfile(api,'target',{status:'ok',id:'123'},'manual-check');
  await createProfileTab(api,{url:'https://x.com/target'},'follow-queue');assert.equal(calls.length,1);
 });
+
+test('explicit read-only availability recheck fetches fresh API evidence despite a cached terminal state',async()=>{
+ const {api,values}=fixture();
+ await observeProfile(api,'writer',{status:'not_found'},'prior');
+ values.networkTemplates={UserByScreenName:{origin:'https://x.com',queryId:'fixture',headers:{authorization:'Bearer fixture','x-csrf-token':'fixture'},variables:{}}};
+ const response={status:200,json:{errors:[{code:50}]}};
+ let dispatched=0;
+ api.scripting.executeScript=async options=>{if(options.args)dispatched++;return [{result:options.args?response:true}];};
+ const client=createXNetworkClient(api);
+ await assert.rejects(client.profile(12,'writer'),e=>e.code==='X_PROFILE_UNAVAILABLE');
+ assert.equal(dispatched,0);
+ assert.deepEqual(await client.profile(12,'writer',{refreshAvailability:true,returnUnavailable:true}),response);
+ assert.equal(dispatched,1);
+ await assert.rejects(client.profile(12,'writer'),e=>e.code==='X_PROFILE_UNAVAILABLE');
+});

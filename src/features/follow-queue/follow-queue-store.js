@@ -25,7 +25,6 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   dwellJitter: 5,
   minFollowers: 50,
   ratioThreshold: 0.8,
-  onlyRecommended: true,
   followBackAllowAll: false,
   skipRiskContent: true,
   grokProfileAssessment: true,
@@ -269,6 +268,9 @@ function mergeEvaluations(existing, incoming, followJobId) {
       status: item.status || prev.status || '',
       automaticComment,
       retryAt: item.retryAt ?? prev.retryAt ?? 0,
+      commentAttemptedAt: Math.max(0,
+        Number.isFinite(item.commentAttemptedAt) ? item.commentAttemptedAt : 0,
+        Number.isFinite(prev.commentAttemptedAt) ? prev.commentAttemptedAt : 0),
       originalPostText: nonEmptyString(item.originalPostText, prev.originalPostText),
       candidatePosts,
       publishedPostId: item.publishedPostId || prev.publishedPostId || '',
@@ -361,7 +363,6 @@ function normalizeSettings(input, base) {
   const merged = {...base, ...(input && typeof input === 'object' ? input : {})};
   const next = {...FOLLOW_QUEUE_DEFAULT_SETTINGS};
   next.enabled = merged.enabled === true;
-  next.onlyRecommended = merged.onlyRecommended !== false;
   next.followBackAllowAll = merged.followBackAllowAll === true;
   next.skipRiskContent = merged.skipRiskContent !== false;
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;

@@ -28,7 +28,7 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
           await save(accountId, job, {...ev,status:'uncertain',reason:'评论执行被中断，请核实后重试'});
         }
       }
-      if (settings.quoteParticipationRate === 0) return {paused:true,reason:'创作概率为 0%，自动创作已暂停'};
+      if (settings.quoteParticipationRate === 0) return {paused:true,reason:'创作概率为 0%，自动生成已暂停'};
       const ready = ev => {
         if(!ev.automaticComment || ev.recoveryDraftOnly || ev.retryAt > now())return false;
         if(ev.status==='pending')return true;
@@ -36,10 +36,17 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
           || (Array.isArray(ev.attempts) && ev.attempts.some(a=>/publish|发布/i.test(String(a?.stage || ''))));
         return ev.status==='uncertain' && ev.reasonCode==='bot_pending' && Boolean(ev.relayJobId) && !ev.text && !publicationEvidence;
       };
-      const job = jobs.find(row => !isBusy(row) && row.evaluations?.some(ev =>
-        ready(ev)));
-      if (!job) return {idle:true};
-      const ev = job.evaluations.find(ready);
+      // A waiting Bot task must not occupy the head forever. Persist the turn
+      // on each evaluation so fairness survives a service-worker restart.
+      const lastTurn = ({job, ev}) => {
+        return [ev.commentAttemptedAt, ev.generationAttemptedAt, job.createdAt]
+          .find(value=>Number.isFinite(value) && value>0) || 0;
+      };
+      const candidates = jobs.filter(row => !isBusy(row)).flatMap(job =>
+        (job.evaluations || []).filter(ready).map(ev => ({job, ev})));
+      candidates.sort((a,b)=>lastTurn(a)-lastTurn(b));
+      if (!candidates.length) return {idle:true};
+      const {job, ev} = candidates[0];
       // Existing drafts are paid-for work; legacy pending tasks are sampled once.
       if (!ev.text) {
         const sampled = await store.ensureQuoteDecision({accountId,id:job.id,rate:settings.quoteParticipationRate ?? 60,random});
@@ -60,7 +67,7 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
       }
       const cooldown = await readXGrokUsageCooldown(storage, now());
       if (cooldown && !ev.relayJobId && !await botAvailable()) return {quotaExhausted:true,retryAt:cooldown.retryAt};
-      const claimed = await save(accountId, job, {...ev,status:'processing'});
+      const claimed = await save(accountId, job, {...ev,status:'processing',commentAttemptedAt:now()});
       if (!claimed.ok) return {skipped:true};
       const controller = new AbortController();
       let timer;

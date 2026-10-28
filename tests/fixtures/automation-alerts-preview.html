@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>持续异常提醒 · 隔离验收</title>
+<style>body{font:13px/1.6 system-ui;background:#eef3ef;margin:0;color:#264b3c}main{max-width:1100px;margin:16px auto;padding:16px;background:white}button{padding:5px 10px;border:1px solid #cbd9d0;border-radius:5px;background:#f6f9f6;color:inherit;cursor:pointer}.controls{display:flex;gap:10px;margin-bottom:10px}.vue-panel-header:has(#recordMigration[hidden]):not(:has(.automation-alerts)){display:none}@media(max-width:600px){main{margin:8px;padding:10px}}</style>
+<main><h3>持续异常提醒 · 隔离验收</h3><p>使用真实提示组件；按钮只模拟备份恢复，不操作账号。</p><div class="controls"><button id="fail">注入备份故障</button><button id="recover">允许重试恢复</button></div><div id="app"></div><div style="min-height:300px;padding-top:16px">模块内容区域</div></main>
+<script type="module">
+import {createApp} from 'vue';
+const listeners=new Set();let canRecover=false;
+const data={automationHealth:{alerts:{logs:{id:'logs',title:'执行日志备份异常',reason:'执行日志备份页 8944 已存在且内容不同',impact:'依赖日志的自动任务可能受影响；本地记录和待备份内容已保留。',action:'查看详情并重试备份；重试不会重新关注或取关。',since:Date.now()-2*3600000,pending:418}}},automationHealthNotices:{}};
+const emit=()=>{for(const listener of listeners)listener({automationHealth:{newValue:structuredClone(data.automationHealth)}},'local')};
+globalThis.chrome={storage:{local:{get:async keys=>Object.fromEntries(keys.map(k=>[k,structuredClone(data[k])]))},onChanged:{addListener:f=>listeners.add(f),removeListener:f=>listeners.delete(f)}},runtime:{sendMessage:async()=>{if(!canRecover)return {ok:true,backup:{ok:false,error:'冲突仍在核对，尚未恢复'}};data.automationHealth={alerts:{}};emit();return {ok:true,backup:{ok:true,pending:0}}}}};
+const {default:PanelHeader}=await import('/src/entries/panel/components/PanelHeader.vue');createApp(PanelHeader).mount('#app');
+document.querySelector('#recover').onclick=()=>{canRecover=true};document.querySelector('#fail').onclick=()=>{data.automationHealth.alerts.logs={id:'logs',title:'执行日志备份异常',reason:'备份连接失败',since:Date.now(),pending:5};emit()};window.healthAcceptance={data};
+</script></html>

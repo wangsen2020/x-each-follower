@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createGrokLocal} from '../src/features/grok/grok-local.js';
+test('selecting a bot validates availability without consuming a generation request',async()=>{
+  let config={port:8787,token:'secret',bot:'old',testedAt:1};const calls=[];
+  const service=createGrokLocal({repository:{config:async()=>config,saveConfig:async c=>{config=c;}},fetchImpl:async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({bots:[{id:'new',name:'New Bot'}]})};}});
+  await assert.rejects(service.selectBot('missing'),/不可用/);assert.equal(config.bot,'old');
+  await service.selectBot('new');assert.equal(config.bot,'new');assert.equal(config.botName,'New Bot');
+  assert.ok(calls.every(c=>c.url.endsWith('/bots')&&!c.options.method));
+});
+test('connection diagnostics preserve the active generation bot on the same connection',async()=>{
+  let config={port:8787,token:'secret',bot:'writer',botName:'Writer',testedAt:1};
+  const service=createGrokLocal({repository:{config:async()=>config,saveConfig:async c=>{config=c;}},uuid:()=> 'test-job',fetchImpl:async(url,options)=>({ok:true,json:async()=>url.endsWith('/bots')?{bots:[{id:'writer',name:'Writer'},{id:'diagnostic',name:'Diagnostic'}]}:options.method==='POST'?{}:{jobId:'test-job',status:'completed',result:'ready'}})});
+  await service.test({port:8787,token:'secret',bot:'diagnostic'},{preserveBot:true});
+  assert.equal(config.bot,'writer');assert.equal(config.testBot,'diagnostic');
+});
 function fixture(){let config,job,requests=[],status='completed';const repository={config:async()=>config,saveConfig:async c=>{config=c;},job:async id=>job?.id===id?job:null,saveJob:async j=>{job=j;},reserve:async j=>{if(job&&!job.delivered)return {job,created:false};job=j;return {job,created:true};}};const fetchImpl=async(url,options)=>{requests.push({url,options});if(url.endsWith('/bots'))return {ok:true,json:async()=>({bots:[{id:'bot-1',name:'Bot One',kind:'bot'}]})};if(options.method==='POST')return {ok:true,json:async()=>({})};const id=url.split('/').pop();return {ok:true,json:async()=>({jobId:id,status,result:'reply'})};};let serial=0;return {repository,service:createGrokLocal({repository,fetchImpl,uuid:()=>String(++serial),now:()=>123,sleep:async()=>{}}),requests,setStatus:s=>{status=s;}};}
 test('test uses selected bot and port; only completed result enables it',async()=>{const f=fixture();assert.equal((await f.service.status()).enabled,false);assert.deepEqual(await f.service.list({port:9876,token:'secret'}),[{id:'bot-1',name:'Bot One'}]);f.setStatus('unknown');await assert.rejects(f.service.test({port:9876,token:'secret',bot:'bot-1'}));assert.equal((await f.service.status()).enabled,false);f.setStatus('completed');await f.service.test({port:9876,token:'secret',bot:'bot-1'});assert.equal((await f.service.status()).enabled,true);const ask=f.requests.find(r=>r.url.endsWith('/jobs'));assert.equal(ask.url,'http://127.0.0.1:9876/jobs');assert.equal(JSON.parse(ask.options.body).bot,'bot-1');});
 test('interrupted generation can recover original result without another POST',async()=>{const f=fixture();await f.service.test({port:8787,token:'secret',bot:'bot-1'});f.setStatus('unknown');const first=await f.service.generate('hello');assert.equal(first.pending,true);f.setStatus('completed');const recovered=await f.service.resume(first.jobId);assert.equal(recovered.text,'reply');assert.equal(f.requests.filter(r=>r.url.endsWith('/jobs')).length,2);});

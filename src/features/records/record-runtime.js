@@ -1621,12 +1621,13 @@ export function createRecordRuntime({
 
   async function commitRow(previous, row, entry) {
     const saved = present(row);
-    const backup = {...entry, status: 'pending', savedAt: now(), result: saved};
+    const backup = {...entry, ...(previous?.handle && previous.handle !== row.handle ? {previousHandle:previous.handle} : {}), status: 'pending', savedAt: now(), result: saved};
     await projection.commitWithBackup(
       previous ? [previous.accountId, previous.module, previous.userKey] : null,
       {row, membership: membershipOf(row)},
       backup
     );
+    if (previous?.handle && previous.handle !== row.handle) await recomputeHandle(previous.handle);
     if (row.handle) await recomputeHandle(row.handle);
     await bumpRevision();
     await persistIncremental(backup);
@@ -2136,6 +2137,7 @@ export function createRecordRuntime({
       row.userKey = entry.userKey;
       await replayStep('write-row', () => projection.mutateRow({row, membership: membershipOf(row)}, previous ? [previous.accountId, previous.module, previous.userKey] : null));
     }
+    if (entry.previousHandle && entry.previousHandle !== entry.handle) await recomputeHandle(entry.previousHandle, replayStep);
     if (entry.handle) await recomputeHandle(entry.handle, replayStep);
   }
 

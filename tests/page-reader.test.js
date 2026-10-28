@@ -178,7 +178,7 @@ test('profile empty state is terminal; ordinary text, loading and other routes a
   let empty='此账号不存在\n尝试搜索另一个。';
   globalThis.document={querySelector:()=>({querySelector:s=>s==='[data-testid="emptyState"]'?{innerText:empty}:null,querySelectorAll:()=>[]})};
   for(const reader of [readProfile,readProfileBundle]){
-    for(const text of ['此账号不存在\n尝试搜索另一个。',"This account doesn’t exist\nTry searching for another."]){empty=text;assert.equal(reader('missing').status,'not_found');assert.equal(reader('missing').pending,false);}
+    for(const text of ['此账号不存在\n尝试搜索另一个。','此帳號不存在',"This account doesn’t exist\nTry searching for another.","This account doesn't exist",'This account does not exist']){empty=text;assert.equal(reader('missing').status,'not_found');assert.equal(reader('missing').pending,false);}
     empty='Something went wrong. Try again.';assert.equal(reader('missing').pending,true);
     empty='';assert.equal(reader('missing').pending,true);
     empty='此账号不存在';assert.equal(reader('another').pending,true);
