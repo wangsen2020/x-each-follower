@@ -40,19 +40,18 @@ const showQueueTests=new URLSearchParams(location.search).get('queue')==='1';
 document.querySelector('#queue-tests').hidden=!showQueueTests;
 const queuePanel=showQueueTests?mountFollowQueuePanel(document.querySelector('#queue'),{accountId:'123',request}):null;
 document.querySelector('#generate').onclick=async()=>{
-  const settings=await queueStore.getSettings('123');
+  const settings=await learningStore.settings('123');
   const {loadExperienceContext}=await import('/src/features/knowledge/learning-context.js');
-  const context=settings.knowledgeEnabled?await loadExperienceContext({ownerId:'123',text:'产品功能发布与技术讨论',requestId:crypto.randomUUID()}):{text:'',items:[]};
-  document.querySelector('#result').textContent=JSON.stringify({knowledgeEnabled:settings.knowledgeEnabled,selected:context.items},null,2);
+  const context=settings?.writingKnowledgeEnabled?await loadExperienceContext({ownerId:'123',purpose:'comment',requestId:crypto.randomUUID()}):{text:'',items:[]};
+  document.querySelector('#result').textContent=JSON.stringify({writingKnowledgeEnabled:settings?.writingKnowledgeEnabled===true,selected:context.items},null,2);
 };
 document.querySelector('#generate-real').hidden=!connection.real;
 document.querySelector('#generate-real').onclick=async()=>{
- const settings=await queueStore.getSettings('123');
  const {requestGrokComment,parseGrokQuoteDecision}=await import('/src/features/grok/grok-comment.js');
  const post={url:'https://x.com/acceptance/status/222',textComplete:true,text:'我们把本地数据处理从逐条请求改为分批处理，耗时下降了，但首次加载的等待仍然比较长。'};
  const ask=async(prompt,nonce,sleep,count)=>{window.acceptance.lastCommentPrompt=prompt;const result=await bot.generate(prompt,{onJobCreated:async()=>{}});return result.ok?{...result,...parseGrokQuoteDecision(result.text,count)}:result;};
  document.querySelector('#result').textContent='正在生成验收草稿，不发布…';
- try{const result=await requestGrokComment('acceptance',[post],'验收样本',{writerAccountId:'123',knowledgeEnabled:settings.knowledgeEnabled,askers:[ask],qualityFirst:true,qualityGate:false,sleep:async()=>{}});window.acceptance.latest=result;document.querySelector('#result').textContent=JSON.stringify(result,null,2);}catch(e){document.querySelector('#result').textContent=e.message;}
+ try{const result=await requestGrokComment('acceptance',[post],'验收样本',{writerAccountId:'123',knowledgePurpose:'comment',askers:[ask],qualityFirst:true,qualityGate:false,sleep:async()=>{}});window.acceptance.latest=result;document.querySelector('#result').textContent=JSON.stringify(result,null,2);}catch(e){document.querySelector('#result').textContent=e.message;}
 };
 window.acceptance={tick:nextTick,runtime,library,learningStore,queueStore,queuePanel,page,connection};
 </script></html>

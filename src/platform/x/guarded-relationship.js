@@ -7,7 +7,12 @@ export function profileRelationshipOnPage(handle, id, owner, action = 'read') {
   const key = String(handle).toLowerCase();
   if (location.pathname.toLowerCase().replace(/\/$/, '') !== '/' + key) return {ready:false};
   const viewer = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/', '').toLowerCase();
-  if (viewer !== String(owner).toLowerCase()) return {ready:false,reason:'登录账号不一致'};
+  // A missing navigation link is not evidence of a different signed-in account.
+  // Page-only evidence requires an independently matched viewer and target ID.
+  if (viewer && viewer !== String(owner).toLowerCase()) return {ready:false,reason:'登录账号不一致'};
+  const restricted=[...(document.querySelectorAll?.('[role="alert"],[role="alertdialog"],[role="dialog"],[data-testid="toast"]')||[])].find(e=>
+    (!e.getClientRects || e.getClientRects().length>0) && /操作过于频繁|操作過於頻繁|已达到.*关注上限|已達到.*關注上限|暂时无法关注|暫時無法關注|rate limit exceeded|too many requests|unable to follow|temporarily restricted/i.test(e.innerText||''));
+  if(restricted)return {ready:false,reason:'X 页面提示操作受限，请稍后再试',code:'X_PAGE_ACTION_RESTRICTED'};
   const root = document.querySelector('[data-testid="primaryColumn"]');
   const header = root?.querySelector('[data-testid="UserName"]');
   if (!header || !header.innerText.toLowerCase().split(/\s+/).includes('@' + key)) return {ready:false};
@@ -33,7 +38,7 @@ export function profileRelationshipOnPage(handle, id, owner, action = 'read') {
   if (!button) return {ready:false,reason:'无法确认目标账号关注操作入口，已排除订阅按钮',code:'X_PROFILE_ACTION_UNAVAILABLE'};
   const following = actionState(button);
   const followedBy = /关注了你|關注了你|follows you/i.test(header.innerText) || /^(回关|follow back)$/i.test(button.innerText.trim());
-  const evidence = {ready:true,following,followedBy,handle:key,id:String(id)};
+  const evidence = {ready:true,following,followedBy,handle:key,id:String(id),ownerVerified:viewer===String(owner).toLowerCase(),identityVerified:button.getAttribute('data-testid')===id+'-follow'||button.getAttribute('data-testid')===id+'-unfollow'};
   if (action === 'read') return evidence;
   if (action === 'followback') {
     if (!followedBy || following || !/^(回关|follow back)$/i.test(button.innerText.trim())) return {...evidence,clicked:false};
@@ -89,11 +94,15 @@ export async function inspectOrActOnProfile(api, user, owner, action = 'read', {
     assertActive();return result;
   };
   const fresh = async () => {
+    const page = await readPage('read');
+    if(!page?.ready)throw profileReadinessError(page);
     const response = await createXNetworkClient(api).profile(tab.id,user.handle);
-    if(response.status !== 200) throw Object.assign(new Error('关系核验接口未成功，停止操作'),{code:'PROFILE_HTTP_ERROR',status:response.status});
+    if(response.status !== 200){
+      if(page.identityVerified && page.ownerVerified)return {...user,relationship:{following:page.following,followedBy:page.followedBy},evidence:{page,source:'profile-page',apiStatus:response.status}};
+      throw profileReadinessError({reason:'主页身份或登录账号尚未核实，未执行操作'});
+    }
     const target = parseNetworkUsers(response.json).find(e => e.handle.toLowerCase() === user.handle.toLowerCase());
     if(!target || String(target.id) !== String(user.id)) throw Object.assign(new Error('目标身份不一致，停止操作'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH'});
-    const page = await readPage('read');
     return {...target,relationship:mergeVerifiedRelationship(target.relationship,page),evidence:{page,api:target.relationship}};
   };
   const inspect=async()=>{try {

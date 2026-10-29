@@ -1,4 +1,4 @@
-export const EXPERIENCE_CHANNELS=Object.freeze({low_analysis:'低质帖分析',high_analysis:'优质帖分析',leaderboard_analysis:'榜单优质帖分析',blogger_analysis:'博主帖子总结',manual:'手动录入'});
+export const EXPERIENCE_CHANNELS=Object.freeze({low_analysis:'低表现帖分析',high_analysis:'高表现帖分析',leaderboard_analysis:'榜单优质帖分析',blogger_analysis:'博主帖子总结',manual:'手动录入'});
 
 import {jsonrepair} from 'jsonrepair';
 

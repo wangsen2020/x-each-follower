@@ -425,9 +425,9 @@
         <div class="lb-report-dates">
           <label class="lb-date-picker-label">
             <span>选择日期</span>
-            <select v-model="selectedReportDate" aria-label="日报日期" @change="loadSelectedReport">
+            <PanelSelect v-model="selectedReportDate" aria-label="日报日期" @change="loadSelectedReport">
               <option v-for="d in availableReportDates" :key="d" :value="d">{{ d }}</option>
-            </select>
+            </PanelSelect>
           </label>
         </div>
         <button
@@ -562,6 +562,7 @@
 </template>
 
 <script setup>
+import PanelSelect from "../components/PanelSelect.vue";
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';
 import {RefreshCw, Sparkles, ScrollText, Settings} from 'lucide';

@@ -26,7 +26,7 @@ defineExpose({open,close});
 .action-drawer-header { justify-content: space-between; border-bottom: 1px solid #e7ece5; }
 .action-drawer-header h2 { margin: 0 10px 0 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .action-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
-.action-drawer-footer { justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid #e7ece5; }
+.action-drawer-footer { row-gap:10px; justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid #e7ece5; }
 .action-drawer-footer :slotted(:not(:last-child)) { margin-right: 10px; }
 @media(max-width:600px) { .action-settings-drawer { width: 100vw; max-width: 100vw; } }
 </style>

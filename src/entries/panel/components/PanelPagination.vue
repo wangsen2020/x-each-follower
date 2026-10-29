@@ -2,9 +2,9 @@
   <div :id="id" class="monitor-pagination" :hidden="initiallyHidden">
     <label class="page-size-label">
       <span>每页</span>
-      <select :id="selectId" :value="defaultSize" aria-label="每页条数">
+      <PanelSelect :id="selectId" :value="defaultSize" aria-label="每页条数">
         <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ size }}</option>
-      </select>
+      </PanelSelect>
     </label>
     <span :id="summaryId" class="page-summary">{{ initialSummary }}</span>
     <div class="page-actions">
@@ -15,6 +15,7 @@
 </template>
 
 <script setup>
+import PanelSelect from "./PanelSelect.vue";
 defineProps({
   id: { type: String, required: true },
   selectId: { type: String, required: true },

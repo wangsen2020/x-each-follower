@@ -1,7 +1,7 @@
 (function () {
   if (window.__XEF_NET_HOOKED) return;
   window.__XEF_NET_HOOKED = true;
-  const OPS = ['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
+  const OPS = ['HomeTimeline','HomeLatestTimeline','UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
   const RE = new RegExp('/graphql/([^/?]+)/(' + OPS.join('|') + ')(?=[/?#]|$)');
   const wanted = ['authorization','x-csrf-token','x-client-transaction-id','x-twitter-auth-type','x-twitter-active-user','x-twitter-client-language'];
   // Only the extension-owned initialization tab may bound X's native first query.
@@ -41,6 +41,7 @@
     const u = new URL(String(url), location.origin); const q = u.searchParams;
     let vars = null; try { vars = JSON.parse(q.get('variables') || '{}'); } catch {}
     if (vars?.cursor) return;
+    if (['HomeTimeline','HomeLatestTimeline'].includes(op) && json && !json.errors?.length && location.pathname==='/home') window.__xefNativeHome={op,json,at:Date.now()};
     // Reuse only the native response from this page, never an extension replay.
     if (op === 'UserByScreenName' && json && !json.errors?.length && u.origin === location.origin) {
       const handle = String(vars?.screen_name || '').toLowerCase();

@@ -77,13 +77,15 @@ export function generationChoice({el,help,draft,provider,onConfigure,local=grokL
         el('button',{type:'button',className:'fq-btn fq-btn-secondary',onClick:refresh},'重新检测'));
     }
   }
-  const select=el('select',{id:'fq_grokProvider',value:draft.grokEnabled?draft.generationProvider:'off',onChange:e=>{
-    draft.grokEnabled=e.target.value!=='off';
-    if(draft.grokEnabled)draft.generationProvider=e.target.value;
+  const select=el('select',{id:'fq_grokProvider','aria-label':'AI 引擎',value:draft.generationProvider,onChange:e=>{
+    draft.generationProvider=e.target.value;
     void refresh();
-  }},[el('option',{value:'off',selected:!draft.grokEnabled},'关闭'),...GENERATION_ENGINES.map(engine=>el('option',{value:engine.value,selected:draft.grokEnabled&&draft.generationProvider===engine.value},engine.label))]);
+  }},GENERATION_ENGINES.map(engine=>el('option',{value:engine.value,selected:draft.generationProvider===engine.value},engine.label)));
+  const engineRow=el('div',{className:'fq-setting-row fq-generation-row'},[el('label',{'for':'fq_grokProvider'},'AI 引擎'),select,botSlot]);
+  engineRow.hidden=!draft.grokEnabled;
+  const toggle=el('input',{id:'fq_commentEnabled',type:'checkbox',checked:draft.grokEnabled,onChange:e=>{draft.grokEnabled=e.target.checked;engineRow.hidden=!draft.grokEnabled;void refresh();}});
   void refresh();
   return el('div',{className:'fq-generation-choice'},[
-    el('div',{className:'fq-setting-row fq-generation-row'},[el('label',{'for':'fq_grokProvider'},[el('span',{},'AI 生成'),help('选择引擎即启用自动生成，关闭则暂停生成、不影响关注。默认引擎为 X Grok；Grok Bot 使用所选 Bot 的额度，Webhook 仅作备用。按创作概率及内容检查决定是否产出，是否公开由“自动公开发布”控制。点击保存后生效；引擎与 Bot 为本机共用。')]),select,botSlot]),details
+    el('div',{className:'fq-setting-row'},[el('label',{'for':'fq_commentEnabled'},[toggle,el('span',{},'评论开关'),help('开启后选择 AI 引擎，关闭则暂停生成、不影响关注。是否公开由“自动公开发布”控制。点击保存后生效；引擎与 Bot 为本机共用。')])]),engineRow,details
   ]);
 }

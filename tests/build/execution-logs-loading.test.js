@@ -31,7 +31,7 @@ test('loading reports real recovery progress and closing discards a late respons
   } finally { c.close(); globalThis.chrome = prior; }
 });
 
-test('failed loading can retry and removes feedback timers after success', async t => {
+test('failed loading can retry and then refreshes without loading feedback', async t => {
   t.mock.timers.enable({apis: ['setInterval', 'Date']});
   const prior = globalThis.chrome;
   let calls = 0;
@@ -47,8 +47,35 @@ test('failed loading can retry and removes feedback timers after success', async
     assert.equal(c.status.value, 'ready');
     assert.equal(c.entries.value[0].id, 'kept');
     t.mock.timers.tick(10000);
-    assert.equal(calls, 2);
+    assert.equal(calls, 3);
+    assert.equal(c.status.value, 'ready');
   } finally { c.close(); globalThis.chrome = prior; }
+});
+
+test('open log first page receives new entries and closing discards a pending refresh', async t => {
+  t.mock.timers.enable({apis:['setInterval']});
+  const prior=globalThis.chrome;
+  let calls=0, finish;
+  globalThis.chrome={runtime:{sendMessage:async()=>{
+    calls++;
+    if(calls===3)return new Promise(resolve=>{finish=resolve;});
+    return {ok:true,entries:[{id:String(calls)}],total:calls};
+  }}};
+  const c=useExecutionLogs();
+  try {
+    await c.open();
+    t.mock.timers.tick(3000);
+    for(let i=0;i<5;i++)await Promise.resolve();
+    assert.equal(c.entries.value[0].id,'2');
+    assert.equal(c.status.value,'ready');
+    t.mock.timers.tick(3000);
+    c.close();
+    finish({ok:true,entries:[{id:'late'}],total:3});
+    for(let i=0;i<5;i++)await Promise.resolve();
+    assert.equal(c.entries.value[0].id,'2');
+    t.mock.timers.tick(6000);
+    assert.equal(calls,3);
+  } finally {c.close();globalThis.chrome=prior;}
 });
 
 test('closing during settings read prevents a late log open or query',async()=>{

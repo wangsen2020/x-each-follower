@@ -17,7 +17,8 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
   }
   async function save(value){
     const id=await currentOwner(),old=await settings(id),next=validateLearningSettings(value,id);
-    if(next.enabled||next.weeklyEnabled||next.bot){const status=await bot.status();if(!status.enabled||!next.bot||status.bot!==next.bot)throw Error('请先在系统设置连接并测试所选本地 Bot');next.botName=status.botName||next.bot;}
+    const needsBinding = next.enabled && !old.enabled || next.weeklyEnabled && !old.weeklyEnabled || next.bot !== old.bot && Boolean(next.bot);
+    if(needsBinding){const status=await bot.status();if(!status.enabled||!next.bot||status.bot!==next.bot)throw Error('请先在系统设置连接并测试所选本地 Bot');next.botName=status.botName||next.bot;}
     await assertOwner(id);
     await repository.saveSettings({...next,nextAt:old.hour===next.hour&&old.nextAt?old.nextAt:nextLearningTime(now(),next.hour),nextMergeAt:old.weeklyEnabled&&old.weeklyDay===next.weeklyDay&&old.weeklyHour===next.weeklyHour&&old.nextMergeAt?old.nextMergeAt:nextWeeklyTime(now(),next.weeklyDay,next.weeklyHour)});
     return state();

@@ -20,7 +20,7 @@ function setup(response, {pending=false,ownerId='999',page=null}={}) {
     inspectProfile:async(api,target)=>{inspected.push(target.handle);return target;},
     sendUnfollow:async()=>{throw Error('must never unfollow in this fixture');}
   });
-  return {runner,data,inspected,fetched,logs,patches,deleted};
+  return {runner,data,inspected,fetched,logs,patches,deleted,api};
 }
 
 for(const [name,response,code] of [
@@ -46,11 +46,10 @@ for(const [name,response,code] of [
   assert.equal(f.logs.some(e=>e.result==='failed'),false);
 });
 
-for(const status of [0,401,429,503])test(`HTTP ${status} still stops round`,async()=>{
-  const f=setup({status,json:null});const result=await f.runner.run();
-  assert.match(result.error,/账号核验失败/);
-  assert.deepEqual(f.fetched,['owner','missing']);
-  assert.deepEqual(f.data.autoUnfollowState.accounts['999'].queue,['missing','later']);
+for(const status of [0,401,429,503])test(`HTTP ${status} defers to the independently verified profile page`,async()=>{
+  const f=setup({status,json:null});await f.runner.run();
+  assert.equal(f.inspected.includes('missing'),true);
+  assert.equal(f.logs.some(e=>/平台限流|自动调度已暂停/.test(e.summary||'')),false);
 });
 
 test('a known pending target with unavailable live identity is isolated while later targets continue',async()=>{
@@ -58,13 +57,18 @@ test('a known pending target with unavailable live identity is isolated while la
   assert.equal((await f.runner.run()).error,undefined);
   assert.equal(f.data.autoUnfollowState.accounts['999'].pendingItems[0].user.handle,'missing');
   assert.deepEqual(f.inspected,['later']);
-  assert.deepEqual(f.fetched,['owner','missing','later']);
+  assert.deepEqual(f.fetched,['missing','later']);
 });
 
-test('owner mismatch stops before candidate checks',async()=>{
-  const f=setup({status:200,json:{data:{}}},{ownerId:'998'});
-  assert.match((await f.runner.run()).error,/绑定账号身份不一致/);
-  assert.deepEqual(f.fetched,['owner']);
+test('owner profile is never fetched; absent sidebar does not prevent target verification',async()=>{
+ const f=setup({status:200,json:{data:{}}},{ownerId:'998'});
+ f.api.scripting.executeScript=async()=>{throw Error('sidebar not mounted');};
+ assert.equal((await f.runner.run()).error,undefined);
+ assert.deepEqual(f.fetched,['missing','later']);assert.deepEqual(f.inspected,['later']);
+});
+test('no usable request tab reports the page problem without claiming owner mismatch',async()=>{
+ const f=setup({status:200,json:{data:{}}});f.api.tabs.query=async()=>[{id:1,discarded:true}];
+ assert.match((await f.runner.run()).error,/没有可用的 X 页面/);assert.deepEqual(f.fetched,[]);
 });
 
 for(const pending of [false,true])test(`explicit not-found removes local data and continues without quota use; pending=${pending}`,async()=>{

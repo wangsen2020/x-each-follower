@@ -240,3 +240,13 @@ test('page functions are self-contained and enforce owner, Snowflake ID, unique 
     globalThis.location=prevLoc;
   }
 });
+
+test('publication proof includes X emoji image alt text and still requires exact content',()=>{
+ const oldDoc=globalThis.document,oldLoc=globalThis.location;
+ const textNode=text=>({nodeType:3,textContent:text});const emoji={nodeName:'IMG',getAttribute:()=> '🤝'};
+ const body={innerText:'关注我，必回关！\n#互关',querySelector:()=>emoji,childNodes:[textNode('关注我，必回关！'),emoji,{nodeName:'BR'},textNode('#互关')]};
+ const time={getAttribute:()=>new Date(30000).toISOString()},link={href:'https://x.com/owner/status/9988',contains:()=>true,getAttribute:()=>'/owner/status/9988'};
+ const article={querySelector:s=>s==='time'?time:s.includes('tweetText')?body:null,querySelectorAll:()=>[link]};
+ globalThis.location={pathname:'/author/status/1122',origin:'https://x.com'};globalThis.document={querySelector:()=>({getAttribute:()=>'/owner'}),querySelectorAll:()=>[article,{querySelectorAll:()=>[{href:'https://x.com/author/status/1122'}],querySelector:()=>null}]};
+ try{assert.equal(readReplyPublicationOnPage('owner','https://x.com/author/status/1122','关注我，必回关！🤝\n#互关',20000)?.id,'9988');assert.equal(readReplyPublicationOnPage('owner','https://x.com/author/status/1122','关注我，必回关！😄\n#互关',20000),null);}finally{globalThis.document=oldDoc;globalThis.location=oldLoc;}
+});

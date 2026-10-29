@@ -18,7 +18,7 @@
     <label for="localPort">端口号</label><input id="localPort" v-model.number="port" type="number" min="1" max="65535" :disabled="busy">
     <label for="localToken">连接 Token</label><input id="localToken" v-model="token" type="password" autocomplete="new-password" placeholder="粘贴服务 config.json 中的 token" :disabled="busy">
     <button type="button" :disabled="busy" @click="loadBots">读取 Bot 列表</button>
-    <label for="localBot">测试 Bot</label><select id="localBot" v-model="bot" :disabled="busy || !bots.length"><option value="">请选择 Bot</option><option v-for="item in bots" :key="item.id" :value="item.id">{{ item.id===state.bot && state.botName ? state.botName : item.name }}</option></select>
+    <label for="localBot">测试 Bot</label><PanelSelect id="localBot" v-model="bot" :disabled="busy || !bots.length"><option value="">请选择 Bot</option><option v-for="item in bots" :key="item.id" :value="item.id">{{ item.id===state.bot && state.botName ? state.botName : item.name }}</option></PanelSelect>
     </div>
     <div v-if="step===4">
     <h4>验证生成与回复</h4><p>本次测试：端口 {{ port }} · {{ bots.find(item=>item.id===bot)?.name || '尚未选择 Bot' }}。<button type="button" class="secondary" @click="step=3">修改连接</button></p>
@@ -32,6 +32,7 @@
   </section>
 </template>
 <script setup>
+import PanelSelect from "./PanelSelect.vue";
 import {ref,onMounted,watch} from 'vue';
 import {grokLocal} from '../../../features/grok/grok-local.js';
 import {grokProviderController} from '../composables/useGrokProvider.js';

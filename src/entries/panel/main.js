@@ -1,3 +1,4 @@
+import './styles/select-control.css';
 import { createApp } from 'vue';
 import App from './App.vue';
 import { logsModalController } from './composables/useExecutionLogs.js';

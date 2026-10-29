@@ -4,10 +4,31 @@ export const HEALTH_ALARM='x-automation-health-check';
 export const HEALTH_REMINDER_MS=30*60000;
 let writes=Promise.resolve();
 
-function mutate(storage,work){
+export function mutateAutomationHealth(storage,work){
   const task=async()=>{const state=(await storage.get(HEALTH_KEY))[HEALTH_KEY]||{alerts:{}};const next=work(structuredClone(state));if(JSON.stringify(next)!==JSON.stringify(state))await storage.set({[HEALTH_KEY]:next});return next;};
   const next=writes.then(()=>globalThis.navigator?.locks?.request ? navigator.locks.request('xf-automation-health',{mode:'exclusive'},task):task());
   writes=next.catch(()=>{});return next;
+}
+const mutate=mutateAutomationHealth;
+// Retire the old API-status pause without changing task switches or histories.
+export async function retireApiStatusPause(api){
+  const saved=(await api.storage.local.get(HEALTH_KEY))[HEALTH_KEY]?.alerts?.['x-rate-limit'];
+  for(const [i,name] of (saved?.deferredAlarms||[]).entries()){
+    if(!await api.alarms.get(name))await api.alarms.create(name,{delayInMinutes:1+i*0.5});
+  }
+  const d=await api.storage.local.get('autoUnfollowState'),ledger=d.autoUnfollowState;
+  let changed=false;
+  for(const account of Object.values(ledger?.accounts||{})){
+    if(/X 请求受限.*自动调度已暂停/.test(account.scheduler?.reason||'')){
+      account.scheduler={...account.scheduler,phase:'waiting',reason:'等待下次执行',resume:'下次计划重新核验主页状态'};changed=true;
+    }
+  }
+  if(changed)await api.storage.local.set({autoUnfollowState:ledger});
+  await mutate(api.storage.local,state=>{
+    if(state.alerts){delete state.alerts['x-rate-limit'];if(/X 请求受限.*自动调度已暂停/.test(state.alerts.unfollow?.reason||''))delete state.alerts.unfollow;}
+    return state;
+  });
+  await api.notifications.clear('xf-health-x-rate-limit');
 }
 export function reportBackupHealth(status,storage=globalThis.chrome?.storage?.local,now=Date.now()){
   if(!storage)return Promise.resolve();
@@ -65,6 +86,7 @@ export function createAutomationHealthRuntime({api,now=Date.now}){
   };
   async function checkUnfollow(){const d=await api.storage.local.get(['autoUnfollowState','unreciprocatedSettings']);await reportUnfollowHealth(d.unreciprocatedSettings,d.autoUnfollowState,api.storage.local,now());}
   return {sync,async start(){
+    await retireApiStatusPause(api);
     api.storage.onChanged.addListener((changes,area)=>{if(area!=='local')return;if(changes[HEALTH_KEY])void sync();if(changes.autoUnfollowState||changes.unreciprocatedSettings)void checkUnfollow().catch(()=>{});});
     api.alarms.onAlarm.addListener(alarm=>{if(alarm.name===HEALTH_ALARM)void sync();});
     await checkUnfollow();await sync();

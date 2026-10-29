@@ -16,6 +16,14 @@ test('batch snapshots unique targets, contains per-item errors and retains resul
   assert.equal(state.results[1].status,'failed');assert.equal(state.results[2].status,'verified');
 });
 
+test('batch waits a random 2 to 5 seconds between reads, including after an item failure',async()=>{
+  const delays=[];let index=0;
+  const {options}=setup(async handle=>{if(handle==='b')throw Error('资料不完整');return {ok:true}},async ms=>delays.push(ms));
+  const batch=createFanInspectionBatch({...options,random:()=>[0,0.999999][index++]});
+  await batch.start('owner',{});await batch.settled();
+  assert.deepEqual(delays,[2000,5000]);
+});
+
 test('rate limit pauses without advancing the unfinished item and explicit resume skips completed reads',async()=>{
   const seen=[];let limited=true;
   const {batch}=setup(async handle=>{seen.push(handle);if(handle==='b'&&limited){const e=Error('HTTP 429');e.status=429;throw e}return {ok:true}});

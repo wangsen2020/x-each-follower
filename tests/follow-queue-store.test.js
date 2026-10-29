@@ -1296,6 +1296,15 @@ test('quote tag settings survive partial settings saves and custom tag removal',
  assert.deepEqual((await store.getSettings('123')).quoteSelectedTags,['互关']);
 });
 
+test('blue-only setting defaults off and persists per account across partial saves',async()=>{
+ const store=createFollowQueueStore({indexedDB:createFakeIndexedDB()});
+ assert.equal((await store.getSettings('one')).blueVerifiedOnly,false);
+ await store.saveSettings('one',{blueVerifiedOnly:true});
+ await store.saveSettings('one',{every:9});
+ assert.equal((await store.getSettings('one')).blueVerifiedOnly,true);
+ assert.equal((await store.getSettings('two')).blueVerifiedOnly,false);
+});
+
 test('follow-back ending is off by default and persists independently per account across saves',async()=>{
  const store=createFollowQueueStore({indexedDB:createFakeIndexedDB()});
  assert.equal((await store.getSettings('one')).followBackSuffixEnabled,false);

@@ -65,12 +65,14 @@ function onPointerOut(event) {
   if (!active || !active.contains(event.target) || active.contains(event.relatedTarget)) return;
   if (!active.contains(document.activeElement)) hide();
 }
-function onFocusIn(event) { show(event.target); }
+function onFocusIn(event) { hide(); show(event.target); }
 function onFocusOut(event) {
   if (active?.contains(event.target) && !active.contains(event.relatedTarget)) hide();
 }
 function onKeyDown(event) { if (event.key === 'Escape') hide(); }
-function onDocumentClick(event) { if (active && !active.contains(event.target)) hide(); }
+// A click activates the control, including opening a native dialog. Dismiss its
+// hover hint before the action moves focus or paints a new top layer.
+function onDocumentClick() { hide(); }
 function onVisibilityChange() { if (document.hidden) hide(); }
 function onViewportChange() { if (visible.value) place(); }
 

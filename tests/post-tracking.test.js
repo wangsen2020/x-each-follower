@@ -38,13 +38,14 @@ test('latest thirty uses timestamps and exact Snowflake ordering instead of impr
  assert.equal(selectPostPage(rows,{onlyMonitored:true,pageSize:100},NOW).total,30);
  const tied=[post({postId:'2112818349029900798'}),post({postId:'2112818349029900799'})];assert.equal(selectPostPage(tied,{},NOW).rows[0].postId,'2112818349029900799');
 });
-test('snapshot merging survives refresh while preserving protection, review, and deletion tombstones',()=>{
- const first=mergePost(null,post());first.protected=true;first.retained=true;first.grokReview={keep:true,score:8,reason:'具体价值'};first.review={score:8};first.deletion={status:'uncertain'};
- const second=mergePost(first,post({capturedAt:NOW+1000}));assert.equal(second.snapshots.length,1);assert.equal(second.review.score,8);assert.equal(second.protected,true);assert.equal(second.retained,true);assert.equal(second.grokReview.score,8);assert.equal(second.deletion.status,'uncertain');
- const changed=mergePost(second,post({text:'修改后的正文',capturedAt:NOW+3600000}));assert.equal(changed.review,null);assert.equal(changed.grokReview,null);assert.equal(changed.snapshots.length,2);
+test('snapshot merging preserves protection and deletion tombstones while dropping removed review fields',()=>{
+ const first=mergePost(null,post());first.protected=true;first.retained=true;first.grokReview={keep:true,score:8,reason:'旧字段'};first.review={score:8};first.deletion={status:'uncertain'};
+ const second=mergePost(first,post({capturedAt:NOW+1000}));assert.equal(second.snapshots.length,1);assert.equal(second.protected,true);assert.equal(second.retained,true);assert.equal(second.deletion.status,'uncertain');
+ assert.equal('grokReview' in second,false);assert.equal('review' in second,false);
+ const changed=mergePost(second,post({text:'修改后的正文',capturedAt:NOW+3600000}));assert.equal(changed.snapshots.length,2);assert.equal('grokReview' in changed,false);assert.equal('review' in changed,false);
 });
 test('unavailable metrics cannot participate in low-value decisions and automatic sources are exact',()=>{
- const unknown=post({availability:'unavailable',review:{score:1,reason:'旧审核'}});
+ const unknown=post({availability:'unavailable'});
  assert.equal(evaluatePost(unknown,[unknown],NOW).low,false);assert.equal(evaluatePost(unknown,[unknown],NOW).deleteSuggested,false);
  const rows=[post({postId:'1',source:{kind:'auto-quote'}}),post({postId:'2',text:'普通手动帖 #互关'})];
  assert.equal(selectPostPage(rows,{type:'auto-quote'},NOW).total,1);
@@ -56,18 +57,18 @@ test('mature automatic quotes outside the latest thirty retain daily follow-up w
  assert.equal(dueReviewPosts([{...due,protected:true}],new Set(),NOW).length,0);
  assert.equal(dueReviewPosts([{...due,source:null}],new Set(),NOW).length,0);
 });
-test('metrics determine initial value while Grok advice stays advisory and human decisions prevail',()=>{
+test('metrics determine initial value and human decisions prevail',()=>{
  const peers=Array.from({length:25},(_,i)=>post({postId:String(i+1),metrics:{impressions:100},metricStates:{impressions:'explicit'}}));
  const candidate=evaluatePost(post({metrics:{impressions:1}}),peers,NOW);
- assert.equal(candidate.low,true);assert.equal(candidate.contentScore,null);assert.equal(candidate.deleteSuggested,false);assert.match(candidate.reason,/指标匹配/);
- assert.equal(evaluatePost(post({review:{score:9,reason:'旧人工结论'},grokReview:{keep:true,score:9,reason:'值得保留'},metrics:{impressions:1}}),peers,NOW).low,true);
+ assert.equal(candidate.low,true);assert.equal('contentScore' in candidate,false);assert.equal(candidate.deleteSuggested,false);assert.match(candidate.reason,/指标匹配/);
+ assert.equal(evaluatePost(post({metrics:{impressions:1}}),peers,NOW).low,true);
  assert.equal(evaluatePost(post({retained:true,metrics:{impressions:1}}),peers,NOW).low,false);
- assert.equal(evaluatePost(post({protected:true,review:{score:1}}),peers,NOW).low,false);
- assert.equal(evaluatePost(post({createdAt:NOW-3600000,review:{score:1}}),peers,NOW).low,false);
+ assert.equal(evaluatePost(post({protected:true,metrics:{impressions:1}}),peers,NOW).low,false);
+ assert.equal(evaluatePost(post({createdAt:NOW-3600000,metrics:{impressions:1}}),peers,NOW).low,false);
 });
 test('repeated text alone cannot change metrics-first classification',()=>{
  const p=post({text:'这是一条重复的具体内容 #互关'});const other=post({postId:'55',text:'这是一条重复的具体内容 #互粉'});
- const e=evaluatePost(p,[p,other],NOW);assert.equal(e.low,false);assert.equal(e.contentScore,null);assert.equal(e.deleteSuggested,false);
+ const e=evaluatePost(p,[p,other],NOW);assert.equal(e.low,false);assert.equal('contentScore' in e,false);assert.equal(e.deleteSuggested,false);
 });
 test('posting range uses UTC calendar boundaries and page filters keep unknown metrics at bottom',()=>{
  const r=analyticsRange(14,NOW);assert.equal(r.from_time,'2026-10-08T00:00:00.000Z');assert.equal(r.to_time,'2026-10-21T23:59:59.999Z');
@@ -107,9 +108,9 @@ test('switching away and back invalidates prepared approvals even for the same a
  f.advance(15*60000);f.setLive(payload({owner:'456'}));await f.runtime.sync();f.advance(MIN_BATCH_DELAY);f.setLive(payload());await f.runtime.sync();assert.notEqual(f.settings.ownPostTracking.bindingNonce,oldIntent.bindingNonce);
  await assert.rejects(f.runtime.handle({op:'confirmDelete',approvalId:a.approvalId,confirmed:true}),/账号已切换/);assert.equal(f.deletes(),0);
 });
-test('stale review text cannot apply an old assessment to a changed post',async()=>{
- const f=fixture();await f.runtime.sync();await assert.rejects(f.runtime.handle({op:'mark',postId:'2112818349029900798',score:2,reason:'旧文本',expectedText:'不是当前正文'}),/正文已变更/);
- assert.equal((await f.store.get('123','2112818349029900798')).review, null);
+test('stale text cannot change retention state on a changed post',async()=>{
+ const f=fixture();await f.runtime.sync();await assert.rejects(f.runtime.handle({op:'mark',postId:'2112818349029900798',retained:true,expectedText:'不是当前正文'}),/正文已变更/);
+ assert.equal((await f.store.get('123','2112818349029900798')).retained, undefined);
 });
 test('HTTP 200 and missing post are not deletion proof; confirmation is never replayed',async()=>{
  const f=fixture();await f.runtime.sync();const a=await f.runtime.handle({op:'prepareDelete',postId:'2112818349029900798'});
@@ -220,7 +221,7 @@ test('low rules change maturity and relative exposure gates without manual scori
  const young=post({createdAt:NOW-48*3600000,metrics:{impressions:1}}),youngPeers=peers.map(p=>({...p,createdAt:young.createdAt}));
  assert.equal(evaluatePost(young,youngPeers,NOW).low,false);
  assert.equal(evaluatePost(young,youngPeers,NOW,undefined,{matureHours:24}).low,true);
- assert.equal(evaluatePost(post({review:{score:9},metrics:{impressions:1}}),peers,NOW).low,true);
+ assert.equal(evaluatePost(post({metrics:{impressions:1}}),peers,NOW).low,true);
  assert.equal(evaluatePost(post({metrics:{impressions:1}}),peers,NOW,undefined,{sampleMin:30}).low,false);
  assert.equal(evaluatePost(post({metrics:{impressions:20}}),peers,NOW,undefined,{medianPercent:10}).performance,'normal');
  const varied=peers.map((p,i)=>({...p,metrics:{impressions:i<4?0:100}}));
@@ -241,7 +242,7 @@ test('configurable stagnation is a metric signal and never authorizes deletion',
 });
 
 test('saved low rules immediately affect pages, survive reconstruction and reach scheduled review',async()=>{
- const f=fixture();await f.runtime.sync();const p=await f.store.get('123','2112818349029900798');p.review={score:1};p.metrics.impressions=1;p.createdAt=NOW-48*3600000;p.source={kind:'auto-quote'};await f.store.putMany([p,...Array.from({length:25},(_,i)=>post({postId:String(i+1000),createdAt:p.createdAt,metrics:{impressions:100}}))]);
+ const f=fixture();await f.runtime.sync();const p=await f.store.get('123','2112818349029900798');p.metrics.impressions=1;p.createdAt=NOW-48*3600000;p.source={kind:'auto-quote'};await f.store.putMany([p,...Array.from({length:25},(_,i)=>post({postId:String(i+1000),createdAt:p.createdAt,metrics:{impressions:100}}))]);
  assert.equal((await f.runtime.handle({op:'page',options:{view:'low'}})).total,0);
  const {normalizeLowRules}=await import('../src/features/post-tracking/post-rules.js');
  const rules=normalizeLowRules({matureHours:24});
@@ -373,11 +374,11 @@ test('1000 batch limit also survives first-use bootstrap without a request templ
 
 test('manual history imports a 90-day window with 1000 rows without advancing periodic lanes or changing batch size',async()=>{
  const f=fixture();await f.runtime.sync();const scanner=structuredClone((await f.store.meta('123')).scanner);
- const original=await f.store.get('123','2112818349029900798');original.protected=true;original.retained=true;original.grokReview={keep:true,score:8,reason:'具体观点'};await f.store.put(original);
+ const original=await f.store.get('123','2112818349029900798');original.protected=true;original.retained=true;await f.store.put(original);
  f.advance(MIN_BATCH_DELAY);const result=await f.runtime.handle({op:'sync',history:true});const variables=f.requests.at(-1);
  assert.equal(Date.parse(variables.to_time)-Date.parse(variables.from_time),90*86400000);assert.equal(variables.max_results,1000);assert.equal(variables.query_page_size,1000);assert.equal(result.historyComplete,true);
  const meta=await f.store.meta('123');assert.deepEqual(meta.scanner,scanner);assert.equal(meta.historyImport.complete,true);assert.equal(f.settings.ownPostTracking.days,90);assert.notEqual(f.settings.ownPostTracking.batchLimit,1000);
- const retained=await f.store.get('123',original.postId);assert.equal(retained.protected,true);assert.equal(retained.retained,true);assert.deepEqual(retained.grokReview,original.grokReview);assert.equal(f.deletes(),0);
+ const retained=await f.store.get('123',original.postId);assert.equal(retained.protected,true);assert.equal(retained.retained,true);assert.equal(f.deletes(),0);
  await assert.rejects(f.runtime.sync({history:true}),/下批检测/);
 });
 
@@ -386,13 +387,12 @@ test('history import refuses native six-hour bootstrap and cannot run as a backg
  await assert.rejects(f.runtime.sync({history:true,background:true}),/仅支持手动/);assert.equal(f.requests.length,0);
 });
 
-test('a review arriving during an analytics request survives both periodic and history imports',async()=>{
+test('a retention decision arriving during an analytics request survives both periodic and history imports',async()=>{
  for(const history of [false,true]){
   const f=fixture();await f.runtime.sync();f.advance(MIN_BATCH_DELAY);
-  const review={keep:true,score:8,reason:'请求等待时完成的二审'};
-  const sources=async()=>{await f.store.update('123','2112818349029900798',p=>({...p,grokReview:review,retained:true,protected:true}));return new Map();};
+  const sources=async()=>{await f.store.update('123','2112818349029900798',p=>({...p,retained:true,protected:true}));return new Map();};
   const runtime=createPostRuntime({api:f.api,store:f.store,now:()=>NOW+MIN_BATCH_DELAY,sleep:async()=>{},fetchAnalytics:async()=>({status:200,json:payload()}),publishedSources:sources});
-  await runtime.sync({history});const saved=await f.store.get('123','2112818349029900798');assert.deepEqual(saved.grokReview,review);assert.equal(saved.retained,true);assert.equal(saved.protected,true);
+  await runtime.sync({history});const saved=await f.store.get('123','2112818349029900798');assert.equal(saved.retained,true);assert.equal(saved.protected,true);
  }
 });
 

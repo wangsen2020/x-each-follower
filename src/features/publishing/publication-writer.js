@@ -18,7 +18,7 @@ export function parseXArticleDraft(text) {
 }
 
 export async function generateDirectReply(handle, posts, name, options = {}) {
-  const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,qualityGate:false,promptBuilder:buildDirectReplyPrompt});
+  const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,qualityGate:false,knowledgePurpose:'reply',promptBuilder:buildDirectReplyPrompt});
   if (!result.ok) return result;
   if (tweetWeight(result.reply) > 280) return {...result,reviewRequired:true,reason:'评论超过280个加权字符，保留草稿待编辑，未截断',publicationMode:'reply'};
   return {...result,publicationMode:'reply'};
@@ -27,7 +27,7 @@ export async function generateDirectReply(handle, posts, name, options = {}) {
 export async function generateXArticle(handle, posts, name, options = {}) {
   let correction='',lastResult,grokCalls=0;
   for(let attempt=0;attempt<2;attempt++){
-    const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,promptBuilder:context=>buildXArticlePrompt(context)+(correction?`\n上一轮未通过发布前检查：${correction}。请重新撰写完整JSON；description使用一句简短说明，不超过180加权字符。正文必须独立分析，不复制素材段落；严格区分材料主张与事实，检查因果和数量关系；没有收益再投入机制时，不把固定奖励加成称为复利。不要为了通过格式检查给原文加标题了事。`:'')});
+    const result = await requestGrokComment(handle, posts, name, {...options,qualityFirst:true,knowledgePurpose:'article',promptBuilder:context=>buildXArticlePrompt(context)+(correction?`\n上一轮未通过发布前检查：${correction}。请重新撰写完整JSON；description使用一句简短说明，不超过180加权字符。正文必须独立分析，不复制素材段落；严格区分材料主张与事实，检查因果和数量关系；没有收益再投入机制时，不把固定奖励加成称为复利。不要为了通过格式检查给原文加标题了事。`:'')});
     grokCalls+=result.grokCalls||1;
     if (!result.ok) return {...result,grokCalls,publicationMode:'article'};
     const issue = originalQualityIssue(result.quality);

@@ -6,6 +6,7 @@
     try {
       if (typeof chrome === 'undefined' || !chrome.runtime?.id) return;
       const payload = event.data.payload;
+      if(payload?.kind==='x-rate-limit')return; // Ignore retired observers in existing tabs.
       if (payload?.kind === 'grok') {
         chrome.runtime.sendMessage({cmd: 'grokStreamAnswer', text: payload.text, raw: payload.raw}).catch(() => {});
         return;

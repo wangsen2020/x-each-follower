@@ -1,6 +1,6 @@
 <template>
   <button id="openSystemSettings" type="button" class="local-data-entry" title="系统设置" aria-label="系统设置" data-tip="系统设置" @click="open">
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 3-2 2 1 3-2-1-3 2-2-2-3-3-1-1-3z"/><circle cx="12" cy="11" r="3"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
 
   </button>
   <Teleport to="body">
@@ -65,7 +65,7 @@
         <section v-for="group in preferenceGroups" v-show="activeSection===group.key" :key="group.key">
 <h3>{{ group.label }}</h3><div v-for="field in group.fields" :key="field.key" class="system-setting-row">
 <label :for="`system-${group.key}-${field.key}`">{{ field.label }}</label>
-<select v-if="field.options" :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" :disabled="saving"><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+<PanelSelect v-if="field.options" :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" :disabled="saving"><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></PanelSelect>
 <input v-else :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" type="number" :min="field.min" :max="field.max" :disabled="saving">
 <span class="info-tip" tabindex="0" role="note" :data-tip="field.tip" :aria-label="field.tip">?</span></div></section>
 <p class="system-state" role="status">{{ message }}</p>
@@ -77,6 +77,7 @@
   </Teleport>
 </template>
 <script setup>
+import PanelSelect from "./PanelSelect.vue";
 import {ref, reactive, computed, nextTick, onUnmounted} from 'vue';
 import {SYSTEM_DEFAULTS, readSystemSettings, saveSystemSettings} from '../../../shared/system-settings.js';
 import {APP_VERSION} from '../../../shared/version.js';

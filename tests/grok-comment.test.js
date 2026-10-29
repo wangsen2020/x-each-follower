@@ -1105,3 +1105,24 @@ test('quote writing prompt never delegates source selection or filtering back to
 });
 
 test('direct reply uses the chosen source without model filtering or scoring',()=>{const prompt=buildDirectReplyPrompt({handle:'alice',posts:[{text:'Chosen source'}]});assert.match(prompt,/1:3:3:3/);assert.match(prompt,/必须给出一条完整评论/);assert.doesNotMatch(prompt,/跳过评价|跳过原因|质量评分|评分口径/);});
+
+test('resumed Bot generation retains the original wisdom snapshot instead of selecting a new version',async()=>{
+  const snapshot={text:'原请求的智慧版本',items:[{id:'wisdom',wisdomVersion:3}],source:'wisdom',wisdomVersion:3,requestId:'original-request'};
+  const result=await requestGrokComment('alice',[{url:'https://x.com/alice/status/123',text:'分享今天的产品设计经验',replyCount:1,repostCount:1,likeCount:1,bookmarkCount:1}],'Alice',{
+    sleep:async()=>{},relayJobId:'local:old',knowledgeSnapshot:snapshot,writerAccountId:'123',
+    askers:[async prompt=>{assert.match(prompt,/原请求的智慧版本/);return {ok:true,selectedIndex:1,reply:'这个设计取舍很有启发。'};}]
+  });
+  assert.equal(result.ok,true);assert.equal(result.wisdomVersion,3);assert.deepEqual(result.knowledgeUsed,snapshot.items);
+});
+
+test('direct reply includes only the selected source link and permits reading its media without guessing',()=>{
+  const prompt=buildDirectReplyPrompt({handle:'alice',profile:{description:'Profile description'},posts:[{url:'https://x.com/alice/status/123',text:'Selected source'},{url:'https://x.com/alice/status/456',text:'Other source'}]});
+  assert.match(prompt,/原帖链接：https:\/\/x\.com\/alice\/status\/123/);
+  assert.doesNotMatch(prompt,/status\/456|Other source/);
+  assert.match(prompt,/自行决定是否查看帖子链接/);
+  assert.match(prompt,/实际读取到的原帖内容/);
+  assert.match(prompt,/不猜测未读内容/);
+  assert.match(prompt,/账号简介：Profile description/);
+  assert.match(prompt,/ISO 639-1/);
+  assert.doesNotMatch(buildDirectReplyPrompt({handle:'alice',posts:[{text:'Source'}]}),/原帖链接：/);
+});

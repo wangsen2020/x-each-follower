@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assessQueueProfile,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
+import {assessQueueProfile,blueVerifiedDecision,createFollowQueueRuntime,QUEUE_ALARM} from '../src/features/follow-queue/follow-queue-runtime.js';
+
+test('blue verification filter distinguishes verified, nonverified and missing evidence',()=>{
+  assert.equal(blueVerifiedDecision({},false),null);
+  assert.equal(blueVerifiedDecision({is_blue_verified:true},true),null);
+  assert.equal(blueVerifiedDecision({is_blue_verified:false},true).state,'skipped');
+  assert.equal(blueVerifiedDecision({verified:true},true).state,'uncertain');
+});
 
 test('interaction exclusions block the real Arabic case before follow even when follow-back bypass is enabled', () => {
   const settings={minFollowers:0,ratioThreshold:0,skipRiskContent:false,followBackAllowAll:true};
@@ -58,7 +65,7 @@ test('armed-group profiles are skipped even when optional broad risk filtering i
 
 test('worker recovery preserves queued alarm deadline and clears only old follow schedules',async()=>{
   const clears=[], creates=[];
-  const api={storage:{local:{get:async()=>({followQueueBinding:{accountId:'123',activated:true}})}},
+  const api={storage:{local:{get:async()=>({followQueueBinding:{accountId:'123',activated:true}}),set:async()=>{}}},
     alarms:{clear:async n=>clears.push(n),getAll:async()=>[{name:QUEUE_ALARM,scheduledTime:12345}],create:async(...a)=>creates.push(a)}};
   const runtime=createFollowQueueRuntime({api,store:{getSettings:async()=>({enabled:true,every:8,jitter:2})}});
   await runtime.schedule({preserve:true});
@@ -72,6 +79,25 @@ test('queue does not open tabs, create a database or migrate before explicit act
   await runtime.schedule({preserve:true});
   await assert.rejects(runtime.handle({cmd:'followQueueActivate',confirmed:false}),/确认/);
   await assert.rejects(runtime.handle({cmd:'followQueueRun',accountId:'123'}),/确认队列账号/);
+});
+
+test('runtime enqueue and non-timing saves retain a deadline; changing the interval resets it',async()=>{
+  const binding={accountId:'123',activated:true},data={followQueueBinding:binding};
+  let settings={enabled:true,every:20,jitter:0},alarm={name:QUEUE_ALARM,scheduledTime:Date.now()+60000};
+  const creates=[];
+  const api={storage:{local:{get:async()=>data,set:async patch=>Object.assign(data,patch)}},
+    alarms:{getAll:async()=>alarm?[alarm]:[],clear:async name=>{if(name===QUEUE_ALARM)alarm=null;},
+      create:async(name,options)=>{if(name===QUEUE_ALARM){creates.push(options);alarm={name,scheduledTime:options.when};}}}};
+  const store={getSettings:async()=>settings,saveSettings:async(_account,patch)=>(settings={...settings,...patch}),
+    enqueue:async item=>item};
+  const runtime=createFollowQueueRuntime({api,store}),deadline=alarm.scheduledTime;
+  await runtime.handle({cmd:'followQueueEnqueue',handle:'candidate',sourceModule:'mutual'});
+  await runtime.handle({cmd:'followQueueSaveSettings',settings:{batchLimit:7}});
+  assert.equal(alarm.scheduledTime,deadline);
+  assert.equal(creates.length,0);
+  await runtime.handle({cmd:'followQueueSaveSettings',settings:{every:30}});
+  assert.ok(alarm.scheduledTime>deadline);
+  assert.equal(creates.length,1);
 });
 
 test('candidate synchronization stores a profile from one snapshot without enqueueing an unchanged source',async()=>{
@@ -524,4 +550,20 @@ test('queue quote confirmation keeps an unverified result uncertain and honours 
  const args={api,tabId:7,handle:'viewer',originalId:'original',text:'quote',after:1,wait:async ms=>{clock+=ms;},now:()=>clock};
  assert.equal(await confirmPublishedQueueQuote({...args,timeoutMs:20000}),null);assert.equal(reloads,1);
  assert.equal(await confirmPublishedQueueQuote({...args,canContinue:()=>false}),null);
+});
+
+
+test('manual retry persists selected ids and arms a dedicated alarm without changing automatic settings',async()=>{
+  const created=[],calls=[];
+  const api={storage:{local:{get:async()=>({followQueueBinding:{accountId:'123',activated:true}})}},
+    alarms:{get:async()=>null,create:async(...args)=>created.push(args)}};
+  const runtime=createFollowQueueRuntime({api,store:{
+    requestRetryBatch:async value=>{calls.push(value);return {accepted:['a'],rejected:[]};},
+    pendingRetryBatch:async()=>1
+  }});
+  const result=await runtime.handle({cmd:'followQueueRetryBatch',accountId:'123',jobIds:['a']});
+  assert.equal(result.ok,true);assert.deepEqual(calls,[{accountId:'123',jobIds:['a']}]);
+  assert.equal(created[0][0],'x-follow-queue-retry-batch');
+  assert.ok(created[0][1].when<=Date.now()+1000);
+  await assert.rejects(runtime.handle({cmd:'followQueueRetryBatch',accountId:'other',jobIds:['a']}));
 });

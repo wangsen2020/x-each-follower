@@ -2793,7 +2793,8 @@ async function visitScrollAndFollowCandidate(user, cfg) {
           Object.assign(comment, {status: 'skipped', reason: '没有读到带链接的帖子，无法定位评论目标'});
         } else {
             networkStatus(`正在让 Grok 为 @${handle} 的帖子写引用评价…`);
-          const g = await requestGrokComment(handle, withUrl, updatedProfile.name, {sleep, fix:repairMojibake, profile:updatedProfile});
+          const writerAccountId=(await chrome.storage.local.get('followQueueBinding')).followQueueBinding?.accountId;
+          const g = await requestGrokComment(handle, withUrl, updatedProfile.name, {sleep, fix:repairMojibake, profile:updatedProfile,writerAccountId,knowledgePurpose:'comment'});
           if (!g.ok) {
             Object.assign(comment, {status: g.skipped || g.riskBlocked ? 'skipped' : 'grok_failed', reason: g.reason});
           } else {
@@ -5478,7 +5479,7 @@ async function handleTestGrokClick(buttonId, displayId, scope) {
     const testAuthorName = testUser.name || testUser.handle;
 
     if (handleEl) { handleEl.textContent = `正在让 X 内置 Grok 为 @${testHandle} 的真实帖子写引用评价…`; handleEl.style.color = '#536558'; }
-    const testRes = await requestGrokComment(testHandle, testPosts, testAuthorName, {sleep, fix:repairMojibake, profile:{...testUser,...profileCache[String(testHandle).toLowerCase()]}});
+    const testRes = await requestGrokComment(testHandle, testPosts, testAuthorName, {sleep, fix:repairMojibake, profile:{...testUser,...profileCache[String(testHandle).toLowerCase()]},knowledgePurpose:'test'});
     if (testRes?.ok) {
       const testPost = testRes.post;
       let isPublished = false;

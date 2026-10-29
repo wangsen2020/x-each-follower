@@ -1,7 +1,6 @@
 import {normalizeLowRules,validateLowRules} from './post-rules.js';
 import {parseOwnAnalytics, mergePost, selectPostPage} from './post-model.js';
 import {planBatch,batchVariables,finishBatch,monitorInterval,batchLimit,reviewInterval,MIN_BATCH_DELAY} from './post-scanner.js';
-import {createPostLearning} from './post-learning.js';
 import {createPostStore} from './post-store.js';
 import {networkFetchOwnPostAnalytics, networkDeleteOwnPost, networkFetch} from '../relationships/network-api.js';
 import {createFollowQueueStore} from '../follow-queue/follow-queue-store.js';
@@ -18,9 +17,8 @@ export function publishedQueueSources(jobs) {
   return result;
 }
 
-export function createPostRuntime({api=chrome, store=createPostStore(), fetchAnalytics=networkFetchOwnPostAnalytics, deletePost=networkDeleteOwnPost, fetchDetail=networkFetch, sleep=wait, now=()=>Date.now(), publishedSources, askGrok}={}) {
+export function createPostRuntime({api=chrome, store=createPostStore(), fetchAnalytics=networkFetchOwnPostAnalytics, deletePost=networkDeleteOwnPost, fetchDetail=networkFetch, sleep=wait, now=()=>Date.now(), publishedSources}={}) {
   let task=null, publishedStore;
-  const learning=createPostLearning({api,store,ask:askGrok,now});
   const config=async()=> (await api.storage.local.get(POST_CONFIG))[POST_CONFIG] || {};
   const readPublished=publishedSources || (async ownerId=>{
     const {followQueueBinding}=await api.storage.local.get('followQueueBinding');
@@ -103,8 +101,8 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
           const split=history?false:scanner.last.split;
           if(!split){
             const sources=await readPublished(result.owner.id);
-            // Grok finishes outside the scan lock. Merge against the latest row
-            // in one transaction so a network wait cannot erase a new review.
+            // Merge against the latest row in one transaction so a network wait
+            // cannot erase a concurrent retain/protect decision.
             for(const p of result.posts)await store.update(result.owner.id,p.postId,current=>mergePost(current,{...p,...(sources.has(p.postId)?{source:sources.get(p.postId)}:{})}));
             for(const id of result.unavailableIds)await store.update(result.owner.id,id,current=>current?{...current,availability:'unavailable'}:null);
           }
@@ -140,23 +138,19 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
     const posts=await store.list(cfg.ownerId);
     const requested=Array.isArray(options.selectedPostIds)?options.selectedPostIds:[];
     const selectedPostIds=posts.filter(post=>requested.includes(post.postId)&&post.text&&!post.protected&&(!post.deletion||post.deletion.status==='failed')).map(post=>post.postId);
-    return {...selectPostPage(posts,options,now(),cfg.lowRules),selectedPostIds,config:cfg,meta:await store.meta(cfg.ownerId),learning:await learning.state(cfg.ownerId)};
+    return {...selectPostPage(posts,options,now(),cfg.lowRules),selectedPostIds,config:cfg,meta:await store.meta(cfg.ownerId)};
   }
   async function getPost(postId) {
     const cfg=await config();if(!cfg.ownerId)throw new Error('请先同步帖子');
     const post=await store.get(cfg.ownerId,postId);if(!post)throw new Error('帖子不存在');return post;
   }
-  async function mark({postId,protected:protect,retained,score,reason,valuableDiscussion,expectedText}) {
+  async function mark({postId,protected:protect,retained,expectedText}) {
     return exclusive(async()=>{
       const post=await getPost(postId);
       if(expectedText!=null&&expectedText!==post.text)throw new Error('正文已变更，请重新打开帖子再审核');
-      if(post.deletion&&post.deletion.status!=='failed')throw new Error('删除中的帖子不能修改审核结论');
+      if(post.deletion&&post.deletion.status!=='failed')throw new Error('删除中的帖子不能修改保留状态');
       if(typeof protect==='boolean')post.protected=protect;
       if(typeof retained==='boolean')post.retained=retained;
-      if(score!=null) {
-        if(!Number.isInteger(score)||score<0||score>10||!String(reason||'').trim())throw new Error('请填写0–10分和具体审核依据');
-        post.review={score,reason:String(reason).slice(0,1000),valuableDiscussion:valuableDiscussion===true,at:now(),source:'manual'};
-      }
       await store.put(post);return {ok:true};
     });
   }
@@ -265,8 +259,6 @@ export function createPostRuntime({api=chrome, store=createPostStore(), fetchAna
         return {ok:true,status:batch.status,total:batch.items.length,processed:batch.results.length,current:batch.status==='running'?batch.currentIndex||0:batch.results.length};
       }
       case 'page':return page(request.options);
-      case 'learn':return exclusive(async()=>{const cfg=await config();if(!cfg.ownerId||request.ownerId!==cfg.ownerId)throw new Error('当前账号已更新，请刷新后重试');return learning.start({ownerId:cfg.ownerId,kind:request.kind,postIds:request.postIds});});
-      case 'saveMemory':return exclusive(async()=>{const cfg=await config();if(!cfg.ownerId||request.ownerId!==cfg.ownerId)throw new Error('当前账号已更新，请刷新后重试');return learning.save(cfg.ownerId,request);});
       case 'sync':return sync(request);
       case 'mark':return mark(request);
       case 'prepareDelete':return prepareDelete(request);

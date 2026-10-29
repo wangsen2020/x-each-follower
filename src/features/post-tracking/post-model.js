@@ -38,7 +38,10 @@ export function mergePost(previous, incoming) {
   // Retain at least hourly evidence; manual refresh must not evict the 48h baseline.
   if (!last || incoming.capturedAt - last.at >= 3600000) snapshots.push({at:incoming.capturedAt, metrics:incoming.metrics, states:incoming.metricStates});
   const current = {at:incoming.capturedAt, metrics:incoming.metrics, states:incoming.metricStates};
-  return {...previous, ...incoming, protected:previous?.protected === true, review:previous?.text === incoming.text ? previous.review : null, grokReview:previous?.text === incoming.text ? previous.grokReview : null,
+  // Drop removed review fields explicitly; spreading would carry them forever.
+  const {review:_removedReview, grokReview:_removedGrokReview, ...previousBase} = previous || {};
+  const {review:_incomingReview, grokReview:_incomingGrokReview, ...incomingBase} = incoming || {};
+  return {...previousBase, ...incomingBase, protected:previous?.protected === true,
     deletion:previous?.deletion, snapshots:snapshots.slice(-336), current};
 }
 export function dueReviewPosts(posts, refreshedIds, now=Date.now()) {
@@ -47,10 +50,9 @@ export function dueReviewPosts(posts, refreshedIds, now=Date.now()) {
 export function evaluatePost(post, peers = [], now = Date.now(), context, rules) {
   const thresholds=normalizeLowRules(rules);
   const age = now - post.createdAt;
-  const contentScore = post.grokReview?.keep===true ? post.grokReview.score : null;
-  if(post.availability==='unavailable')return {contentScore,performance:'unknown',low:false,high:false,deleteSuggested:false,reason:'当前分析数据不可用，保留历史，需重新核实',delta:null,sampleSize:0};
+  if(post.availability==='unavailable')return {performance:'unknown',low:false,high:false,deleteSuggested:false,reason:'当前分析数据不可用，保留历史，需重新核实',delta:null,sampleSize:0};
   const sample = peers.filter(p=>p.createdAt >= now-30*86400000 && p.type === post.type && p.availability!=='unavailable' && (!p.deletion || p.deletion.status==='failed') && Math.abs((p.capturedAt-p.createdAt) - (post.capturedAt-post.createdAt)) <= 86400000 && p.metricStates.impressions === 'explicit').map(p=>p.metrics.impressions).sort((a,b)=>a-b);
-  let performance = 'unknown'; let reason = '指标未匹配低价值条件';
+  let performance = 'unknown'; let reason = '指标未匹配低表现条件';
   if (sample.length >= 20 && age >= 86400000 && post.metricStates.impressions === 'explicit') {
     const median = (sample[Math.floor((sample.length-1)/2)] + sample[Math.floor(sample.length/2)])/2;
     if (post.metrics.impressions >= sample[Math.floor(sample.length*.8)] && post.metrics.impressions > 0) performance = 'high';
@@ -61,8 +63,8 @@ export function evaluatePost(post, peers = [], now = Date.now(), context, rules)
   const delta = old && old.states.impressions === 'explicit' && post.metricStates.impressions === 'explicit' ? post.metrics.impressions-old.metrics.impressions : null;
   const stagnant = delta !== null && delta >= 0 && delta <= Math.max(thresholds.stagnantAbsolute,old.metrics.impressions*thresholds.stagnantPercent/100);
   const low = !post.protected && !post.retained && age >= thresholds.matureHours*3600000 && performance==='low';
-  reason=post.protected?'已保护保留':post.retained?'已保留':low?'指标匹配低价值候选':performance==='unknown'?'指标样本不足，暂不判定低价值':'指标未匹配低价值条件';
-  return {contentScore,performance,low,high:performance==='high',deleteSuggested:false,reason,delta,stagnant,sampleSize:sample.length};
+  reason=post.protected?'已保护保留':post.retained?'已保留':low?'指标匹配低表现候选':performance==='unknown'?'指标样本不足，暂不判定低表现':'指标未匹配低表现条件';
+  return {performance,low,high:performance==='high',deleteSuggested:false,reason,delta,stagnant,sampleSize:sample.length};
 }
 export function selectPostPage(posts, {view='latest', search='', sort='date', direction='desc', type='all', page=1, pageSize=20, days=14, onlyMonitored=false} = {}, now=Date.now(), rules) {
   const sorted = [...posts].filter(p=>p.deletion?.status !== 'verified').sort(comparePosts);

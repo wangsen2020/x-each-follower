@@ -1,6 +1,6 @@
 // Persist only this read-only business workflow; individual observations are
 // committed by the existing record service before advancing the checkpoint.
-export function createFanInspectionBatch({storage, binding, targets, inspect, wait = ms => new Promise(resolve => setTimeout(resolve,ms)), now = Date.now} = {}) {
+export function createFanInspectionBatch({storage, binding, targets, inspect, wait = ms => new Promise(resolve => setTimeout(resolve,ms)), random = Math.random, now = Date.now} = {}) {
   let active = null;
   let starting = false;
   let generation=0,preparation=null,finishPreparation=null;
@@ -43,7 +43,7 @@ export function createFanInspectionBatch({storage, binding, targets, inspect, wa
             state.results.push({handle,status:'failed',error:reason,at:now()});
           }
           state.nextIndex++;state.updatedAt=now();await save(state);
-          if (state.nextIndex<state.handles.length && !token.stop) await Promise.race([wait(1000),cancelled]);
+          if (state.nextIndex<state.handles.length && !token.stop) await Promise.race([wait(2000 + Math.floor(random() * 3001)),cancelled]);
         }
         state.stage=state.nextIndex===state.handles.length?'completed':'paused';
       } catch (error) {state.stage='paused';state.reason=String(error.message || error);}
