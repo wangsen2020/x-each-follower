@@ -37,7 +37,8 @@ test('usePanelNavigation initializes with default tab and titles', () => {
   assert.equal(nav.activeTab.value, 'monitor');
   assert.equal(nav.currentTitle.value, '粉丝跟进');
   assert.equal(nav.version.value, JSON.parse(readFileSync(new URL('../../src/manifest.json', import.meta.url))).version);
-  assert.equal(nav.tabs.length, 8);
+  assert.equal(nav.tabs.length, 9);
+  assert.equal(nav.tabs.find(tab => tab.key === 'mutualComments')?.label, '互粉评论');
   assert.equal(TAB_TITLES.knowledge, '知识库');
   assert.equal(TAB_TITLES.postTracking, '帖子追踪');
   assert.equal(TAB_TITLES.leaderboard, 'X 榜单');

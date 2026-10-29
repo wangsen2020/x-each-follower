@@ -186,8 +186,8 @@ export function createFollowQueueScheduler({
       runId: activeRun?.runId || '',
       lastRunAt: lastRunAt || null,
       lastCompletedAt: lastCompletedAt || null,
-      summary: lastSummary,
-      counters: clone(lastCounters)
+      summary: activeRun ? `正在执行：已检查 ${activeRun.counters.inspected} 人，新增关注 ${activeRun.counters.followed} 人。` : lastSummary,
+      counters: clone(activeRun?.counters || lastCounters)
     };
   }
 
@@ -217,7 +217,7 @@ export function createFollowQueueScheduler({
     };
   }
 
-  async function run({accountId, manual = false} = {}) {
+  async function run({accountId, manual = false, retryBatchOnly = false} = {}) {
     const account = requireAccountId(accountId);
     lastAccountId = account;
 
@@ -244,6 +244,7 @@ export function createFollowQueueScheduler({
       accountId: account,
       manual: Boolean(manual),
       startedAt,
+      counters,
       paused: false,
       jobId: '',
       stage: 'starting',
@@ -350,9 +351,13 @@ export function createFollowQueueScheduler({
         const claimed = await store.claim({
           accountId: account,
           owner: workerOwner,
-          leaseMs: claimLeaseMs, excludeIds: inspectedJobIds
+          leaseMs: claimLeaseMs, excludeIds: inspectedJobIds, retryBatchOnly
         });
         if (!claimed) {
+          if (typeof store.listByState === 'function') {
+            const running = await store.listByState({accountId:account,state:'running'});
+            state.waitingForLease = running.some(job => job.lease?.expiresAt > now());
+          }
           break;
         }
 
@@ -379,6 +384,7 @@ export function createFollowQueueScheduler({
 
       const paused = state.paused || pausedAccounts.has(account);
       const stopReason = paused ? 'paused'
+        : state.waitingForLease ? 'active-lease'
         : state.rateLimited ? 'rate-limited'
         : state.blockReason ? 'account-blocked'
         : counters.followed >= batchLimit ? 'batch-limit'
@@ -391,7 +397,9 @@ export function createFollowQueueScheduler({
         'time-budget': `已达本轮时限 ${settings.timeBudgetMinutes} 分钟，剩余候选留待下轮。`,
         'no-candidates': '当前无更多可执行候选。'
       }[stopReason] || '';
-      const summary = formatSummary(counters, {paused, enabled: settings.enabled || manual, manual})
+      const summary = (state.waitingForLease && counters.inspected === 0
+        ? '上一项任务仍被占用，本轮暂缓；待占用到期后恢复检查，不代表候选为空。'
+        : formatSummary(counters, {paused, enabled: settings.enabled || manual, manual}))
         + (counters.inspected > 0 ? stopMessage : '')
         + (state.rateLimited ? state.accountFollowLimit
           ? ' X 已限制继续关注（错误 161），本轮停止；请在 X 核实限制，当前任务结果待核实。'

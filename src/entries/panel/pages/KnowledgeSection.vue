@@ -4,9 +4,9 @@
     <div v-if="error" class="kb-alert kb-alert-error" role="alert"><span>{{ error }}</span><PanelCloseButton label="关闭提示" @click="error=''" /></div><div v-if="notice" class="kb-alert kb-alert-notice" role="status"><span>{{ notice }}</span><PanelCloseButton label="关闭提示" @click="notice=''" /></div>
     <KnowledgeLearningPanel v-if="ownerId && activeTab === 'knowledge'" ref="automationRef" :owner-id="ownerId" @updated="loadData" />
     <div class="kb-filter-row"><div class="kb-status-tabs" role="tablist" aria-label="经验状态"><button v-for="st in statusTabs" :key="st.key" type="button" class="kb-status-tab" :class="{active:currentStatus===st.key}" role="tab" :aria-selected="currentStatus===st.key" @click="setStatusFilter(st.key)">{{ st.label }} <span class="kb-tab-count">{{ countByStatus[st.key] || 0 }}</span></button></div>
-      <div class="kb-filter-controls"><label class="kb-select-field"><select v-model="sourceFilter" aria-label="经验来源"><option value="all">全部来源</option><option v-for="(label,key) in experienceChannels" :key="key" :value="key" :disabled="key==='blogger_analysis'">{{ label }}{{ key==='blogger_analysis'?' · 未接入':'' }}</option><option value="legacy">历史来源待核实</option></select></label><input v-model="searchQuery" type="search" aria-label="搜索经验" placeholder="搜索经验…"></div>
+      <div class="kb-filter-controls"><label class="kb-select-field"><PanelSelect v-model="sourceFilter" aria-label="经验来源"><option value="all">全部来源</option><option v-for="(label,key) in experienceChannels" :key="key" :value="key" :disabled="key==='blogger_analysis'">{{ label }}{{ key==='blogger_analysis'?' · 未接入':'' }}</option><option value="legacy">历史来源待核实</option></PanelSelect></label><input v-model="searchQuery" type="search" aria-label="搜索经验" placeholder="搜索经验…"></div>
       <div class="experience-batch"><label><input type="checkbox" :checked="pageSelected" :disabled="!selectablePage.length" aria-label="选择本页经验" @change="togglePage($event.target.checked)"> 本页</label><span>已选 {{ selectedIds.length }} 条</span><button type="button" :disabled="!selectedIds.length" @click="wisdomRef?.merge([...selectedIds])">合入智慧</button><button v-if="selectedIds.length" type="button" class="secondary" @click="selectedIds=[]">清空</button><InfoTip text="单条或批量合入均生成一个智慧版本。先预览再确认；同一条经验不会重复合入当前版本。" /></div>
-      <nav class="kb-pagination" aria-label="经验分页"><span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span><div class="kb-page-controls"><label class="kb-select-field"><span>每页</span><select v-model.number="pageSize" aria-label="经验每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select><span>条</span></label><button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--">‹</button><button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++">›</button></div></nav>
+      <nav class="kb-pagination" aria-label="经验分页"><span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span><div class="kb-page-controls"><label class="kb-select-field"><span>每页</span><PanelSelect v-model.number="pageSize" aria-label="经验每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></PanelSelect><span>条</span></label><button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--">‹</button><button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++">›</button></div></nav>
     </div>
     <div class="kb-list-container" :aria-busy="loading || busy"><p v-if="loading && !knowledgeItems.length" class="kb-empty" role="status">正在读取经验…</p><div v-else-if="!ownerId" class="kb-empty-box"><p>请先登录 X，确认账号后刷新。</p></div><div v-else-if="!filteredItems.length" class="kb-empty-box"><p>暂无{{ currentStatus==='pending'?'待合入':'' }}经验</p><p class="kb-hint">定时总结或手动录入经验后，在这里选择合入智慧。</p></div><div v-else class="experience-table-wrap"><table class="experience-table" aria-label="经验列表"><thead><tr><th class="experience-select"></th><th>经验</th><th class="experience-source-col">来源</th><th class="experience-state-col">状态</th><th class="experience-time-col">总结时间</th><th class="experience-detail-col">操作</th></tr></thead><tbody><tr v-for="item in pagedItems" :key="item.id"><td class="experience-select"><input type="checkbox" :checked="selectedIds.includes(item.id)" :disabled="experienceState(item)!=='pending'" :aria-label="'选择经验 '+item.statement" @change="toggleItem(item.id,$event.target.checked)"></td><td class="experience-summary-col"><span class="experience-summary" :title="item.statement">{{ item.statement }}</span><span class="experience-mobile-source">{{ sourceLabel(item) }}</span></td><td class="experience-source-col"><span class="experience-source" :title="sourceLabel(item)">{{ sourceLabel(item) }}</span></td><td class="experience-state-col"><span class="kb-status-badge" :class="experienceState(item)==='included'?'active':'candidate'">{{ ({pending:'待合入',included:'已合入',ignored:'已忽略'})[experienceState(item)] }}</span></td><td class="experience-time-col">{{ formatDate(item.createdAt) }}</td><td class="experience-detail-col"><PanelIconButton :icon="Eye" label="查看经验详情" @click="openEvidence(item)" /></td></tr></tbody></table></div></div>
 
@@ -15,11 +15,11 @@
       <div class="kb-drawer-form">
         <label class="kb-form-field">
           <span>知识类型 <strong class="kb-req">*</strong></span>
-          <select v-model="candidateDraft.type">
+          <PanelSelect v-model="candidateDraft.type">
             <option value="writing_principle">写作原则</option>
             <option value="pitfall">常见陷阱</option>
             <option value="conditional_observation">条件观察</option>
-          </select>
+          </PanelSelect>
         </label>
 
         <label class="kb-form-field">
@@ -54,11 +54,11 @@
 
         <label v-if="candidateDraft.sourceUrl.trim()" class="kb-form-field">
           <span>证据关联关系</span>
-          <select v-model="candidateDraft.relation">
+          <PanelSelect v-model="candidateDraft.relation">
             <option value="support">正向支撑</option>
             <option value="counterexample">反例/避坑</option>
             <option value="scope_limitation">范围局限</option>
-          </select>
+          </PanelSelect>
         </label>
 
         <label class="kb-form-field">
@@ -198,6 +198,7 @@
 </template>
 
 <script setup>
+import PanelSelect from "../components/PanelSelect.vue";
 import InfoTip from '../components/InfoTip.vue';
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';

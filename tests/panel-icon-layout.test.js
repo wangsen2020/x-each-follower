@@ -13,4 +13,6 @@ test('sidebar system settings button and its icon cannot shrink', () => {
   const component = readFileSync(new URL('../src/entries/panel/components/SystemSettingsDialog.vue', import.meta.url), 'utf8');
   assert.match(component, /\.local-data-entry\{[^}]*flex:0 0 30px;[^}]*min-width:30px/);
   assert.match(component, /\.local-data-entry>svg\{[^}]*flex:0 0 20px/);
+  assert.match(component, /<circle cx="12" cy="12" r="3"\/>/);
+  assert.match(component, /M9\.671 4\.136a2\.34 2\.34/);
 });

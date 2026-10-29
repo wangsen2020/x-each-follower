@@ -14,7 +14,7 @@ export async function inspectMissingProfile(api,user,owner,{sleep=ms=>new Promis
       const result=await readProfileOnTab(api,tab.id,user.handle,0,'auto-unfollow-missing');
       if(result && !result.pending){
         const viewer=(await api.scripting.executeScript({target:{tabId:tab.id},func:readSidebarViewerOnPage}))[0]?.result;
-        if(viewer?.handle?.toLowerCase()!==owner.toLowerCase())throw Object.assign(new Error('登录账号不一致'),{code:'X_PROFILE_OWNER_MISMATCH'});
+        if(viewer?.handle && viewer.handle.toLowerCase()!==owner.toLowerCase())throw Object.assign(new Error('登录账号不一致'),{code:'X_PROFILE_OWNER_MISMATCH'});
         return result;
       }
       await sleep(500);
@@ -46,14 +46,14 @@ export async function readAutoUnfollowCandidates({records,service}) {
 }
 
 export function createBackgroundAutoUnfollow({api,service,records,normalize,fetchProfile=networkGetUserProfile,sendUnfollow,inspectProfile=inspectOrActOnProfile,checkMissingProfile=inspectMissingProfile,writeLog=appendExecutionLog,now=Date.now,sleep}) {
-  async function ownerTab(config, preferred) {
-    const tabs=preferred?[{id:preferred}] : await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
-    for(const tab of tabs){
-      if(!tab.id||tab.discarded)continue;
-      const result=await api.scripting.executeScript({target:{tabId:tab.id},func:readSidebarViewerOnPage}).catch(()=>[]);
-      if(result[0]?.result?.handle?.toLowerCase()===config.autoUnfollowAccount.handle.toLowerCase())return tab.id;
-    }
-    throw new Error('请保留绑定账号的已登录 X 页面；账号不一致时不会取关');
+  async function requestTab(preferred) {
+    // X tabs share the current browser session. Page chrome is not a login probe:
+    // sidebar loading must not pause a round before any target is inspected.
+    const tabs=await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
+    const available=tabs.filter(tab=>tab.id&&!tab.discarded);
+    const tab=available.find(tab=>tab.id===preferred) || available.find(tab=>tab.status==='complete'&&tab.active) || available.find(tab=>tab.status==='complete') || available[0];
+    if(!tab)throw Object.assign(new Error('没有可用的 X 页面，请打开 X 后等待下次计划'),{code:'X_REQUEST_TAB_UNAVAILABLE'});
+    return tab.id;
   }
   const actionOptions = (user,config) => ({canAct:async()=>{
     const current=normalize((await api.storage.local.get('unreciprocatedSettings')).unreciprocatedSettings||{});
@@ -67,21 +67,14 @@ export function createBackgroundAutoUnfollow({api,service,records,normalize,fetc
     async candidates(){
       return readAutoUnfollowCandidates({records,service});
     },
-    async verifyAccount(config){
-      const tabId=await ownerTab(config);
-      const response=await fetchProfile(tabId,config.autoUnfollowAccount.handle);
-      const owner=response.status===200 && parseNetworkUsers(response.json).find(item=>item.handle.toLowerCase()===config.autoUnfollowAccount.handle.toLowerCase());
-      await ownerTab(config,tabId);
-      if(!owner || String(owner.id)!==String(config.autoUnfollowAccount.id))throw new Error('当前登录账号与绑定账号身份不一致，已停止本轮');
-    },
     async refreshCandidate(user){
       const rows=[...await service.lookupAll({sourceKey:'unreciprocatedTracker',handle:user.handle}),...await service.lookupAll({sourceKey:'derived:tracker',handle:user.handle})];
       return rows.find(row=>row.module==='unreciprocated')?.payload || null;
     },
     async profile(user,config){
-      const tabId=await ownerTab(config);
+      const tabId=await requestTab();
       const response=await fetchProfile(tabId,user.handle,{refreshAvailability:true,returnUnavailable:true});
-      await ownerTab(config,tabId);
+      if(response.status!==200 && response.status!==404 && /^\d+$/.test(String(user.id||'')))return {...await inspectProfile(api,user,config.autoUnfollowAccount.handle,'read'),tabId};
       const unavailable=unavailableFromProfileResponse(response);
       if(response.status!==200 && !(response.status===404 && unavailable?.status==='not_found'))throw Object.assign(new Error(`账号核验失败（${response.status||'无响应'}），已停止本轮`),{status:response.status,code:'PROFILE_HTTP_ERROR'});
       const users=parseNetworkUsers(response.json);
@@ -91,8 +84,7 @@ export function createBackgroundAutoUnfollow({api,service,records,normalize,fetc
         if(errors.some(error=>error.code!==50))throw Object.assign(new Error('资料接口返回错误，无法确认账号状态'),{code:'PROFILE_HTTP_ERROR',status:response.status});
         const apiMissing=users.length===0 && (unavailable?.status==='not_found' || response.status===200 && response.json?.data && typeof response.json.data==='object');
         const page=apiMissing ? await checkMissingProfile(api,user,config.autoUnfollowAccount.handle,{sleep}) : null;
-        await ownerTab(config,tabId);
-        if(page?.status==='not_found'){
+          if(page?.status==='not_found'){
           await observeProfile(api,user.handle,page,'auto-unfollow-missing');
           throw Object.assign(profileUnavailableError({...page,handle:user.handle}),{confirmedMissing:true});
         }
@@ -101,7 +93,7 @@ export function createBackgroundAutoUnfollow({api,service,records,normalize,fetc
       if(user.id && String(user.id)!==String(target.id))throw Object.assign(new Error('目标账号 ID 与本地记录不一致，身份待核实'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH',expectedId:String(user.id),actualId:String(target.id)});
       return {...await inspectProfile(api,target,config.autoUnfollowAccount.handle,'read'),tabId};
     },
-    async unfollow(user,config,checkpoint={}){await ownerTab(config,user.tabId);if(sendUnfollow){await checkpoint.beforeSubmit?.();return sendUnfollow(user.tabId,user.id);}return inspectProfile(api,user,config.autoUnfollowAccount.handle,'unfollow',{...actionOptions(user,config),...checkpoint});},
+    async unfollow(user,config,checkpoint={}){if(sendUnfollow){await checkpoint.beforeSubmit?.();return sendUnfollow(user.tabId,user.id);}return inspectProfile(api,user,config.autoUnfollowAccount.handle,'unfollow',{...actionOptions(user,config),...checkpoint});},
     async followback(user,config){return inspectProfile(api,user,config.autoUnfollowAccount.handle,'followback',actionOptions(user,config));},
     async removeMissing(user){
       const response=await service.handle({op:'deleteUnavailableAccount',handle:user.handle,automatic:true},api.runtime.getURL('background.js'));

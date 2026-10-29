@@ -1,11 +1,11 @@
 import {computeTextHash,KNOWLEDGE_TYPES} from './knowledge-model.js';
 export const LEARNING_ALARM='xef-knowledge-learning';
 export const DAY=86400000;
-export const defaultLearningSettings=ownerId=>({ownerId,enabled:false,weeklyEnabled:false,weeklyDay:0,weeklyHour:22,hour:9,dailyBudget:2,bot:'',botName:'',nextAt:0,nextMergeAt:0});
+export const defaultLearningSettings=ownerId=>({ownerId,enabled:false,weeklyEnabled:false,weeklyDay:0,weeklyHour:22,hour:9,dailyBudget:2,bot:'',botName:'',writingKnowledgeEnabled:false,nextAt:0,nextMergeAt:0});
 export function validateLearningSettings(value,ownerId){
   if(typeof value.enabled!=='boolean'||!Number.isInteger(value.hour)||value.hour<0||value.hour>23||!Number.isInteger(value.dailyBudget)||value.dailyBudget<1||value.dailyBudget>5||typeof value.bot!=='string'||value.bot.length>200)throw Error('知识库设置无效');
   const weeklyDay=value.weeklyDay??0,weeklyHour=value.weeklyHour??22;if(!Number.isInteger(weeklyDay)||weeklyDay<0||weeklyDay>6||!Number.isInteger(weeklyHour)||weeklyHour<0||weeklyHour>23)throw Error('每周合并时间无效');
-  return {...defaultLearningSettings(ownerId),...value,ownerId,weeklyEnabled:value.weeklyEnabled===true,weeklyDay,weeklyHour};
+  return {...defaultLearningSettings(ownerId),...value,ownerId,writingKnowledgeEnabled:value.writingKnowledgeEnabled===true,weeklyEnabled:value.weeklyEnabled===true,weeklyDay,weeklyHour};
 }
 export function nextLearningTime(now,hour){
   const local=new Date(now+8*3600000);local.setUTCHours(hour,0,0,0);

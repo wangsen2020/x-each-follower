@@ -14,11 +14,12 @@
     <ActionSettingsDrawer ref="drawer" title="自动学习设置">
       <div class="learning-settings">
         <label><input v-model="draft.enabled" type="checkbox">每日总结<InfoTip text="只在有新增成熟样本时生成经验。浏览器关闭时暂停，恢复后合并检查。" /></label>
-        <label>时间 <select v-model.number="draft.hour" aria-label="每日总结时间"><option v-for="hour in 24" :key="hour" :value="hour-1">{{ String(hour-1).padStart(2,'0') }}:00</option></select></label>
+        <label>时间 <PanelSelect v-model.number="draft.hour" aria-label="每日总结时间"><option v-for="hour in 24" :key="hour" :value="hour-1">{{ String(hour-1).padStart(2,'0') }}:00</option></PanelSelect></label>
         <label><input v-model="draft.weeklyEnabled" type="checkbox">每周合并<InfoTip text="将待合入经验融合成新的Markdown写作Skill，自动保存并设为使用。可以随时在智慧版本弹窗选择其他版本。存在冲突时暂停，等待人工处理。" /></label>
-        <label>时间 <select v-model.number="draft.weeklyDay" aria-label="每周合并星期"><option v-for="(day,i) in days" :key="i" :value="i">{{ day }}</option></select><select v-model.number="draft.weeklyHour" aria-label="每周合并时间"><option v-for="hour in 24" :key="hour" :value="hour-1">{{ String(hour-1).padStart(2,'0') }}:00</option></select></label>
+        <label>时间 <PanelSelect v-model.number="draft.weeklyDay" aria-label="每周合并星期"><option v-for="(day,i) in days" :key="i" :value="i">{{ day }}</option></PanelSelect><PanelSelect v-model.number="draft.weeklyHour" aria-label="每周合并时间"><option v-for="hour in 24" :key="hour" :value="hour-1">{{ String(hour-1).padStart(2,'0') }}:00</option></PanelSelect></label>
+        <label><input v-model="draft.writingKnowledgeEnabled" type="checkbox">生成时使用当前智慧<InfoTip text="开启后，面板评论与关注队列的引用/回复在生成时参考当前选中的智慧版本。文章、原创与测试连接不使用。经验需先合入智慧。" /></label>
         <p class="learning-hint">北京时间 · 下次总结 {{ draft.enabled ? date(state?.config.nextAt) : '未安排' }} · 下次合并 {{ draft.weeklyEnabled ? date(state?.config.nextMergeAt) : '未安排' }}</p>
-        <label>每日预算 <select v-model.number="draft.dailyBudget" aria-label="每日整理预算"><option v-for="n in 5" :key="n" :value="n">{{ n }} 次</option></select><InfoTip text="经验总结和智慧融合共用预算。查询、选择智慧、手动编辑保存均不增加AI调用。" /></label>
+        <label>每日预算 <PanelSelect v-model.number="draft.dailyBudget" aria-label="每日整理预算"><option v-for="n in 5" :key="n" :value="n">{{ n }} 次</option></PanelSelect><InfoTip text="经验总结和智慧融合共用预算。查询、选择智慧、手动编辑保存均不增加AI调用。" /></label>
         <p>已绑定：{{ draft.botName || draft.bot || '无' }}</p><button type="button" class="secondary" :disabled="!localBot?.enabled" @click="bind">绑定当前 Bot</button><p class="learning-hint">当前连接：{{ localBot?.botName || '请先在系统设置连接并测试本地 Grok Bot' }}</p>
         <p class="learning-hint">今日已用 {{ state?.budgetUsed || 0 }} / {{ state?.config.dailyBudget || 2 }} 次</p>
         <p v-if="settingsError" role="alert" class="learning-error">{{ settingsError }}</p>
@@ -28,6 +29,7 @@
   </section>
 </template>
 <script setup>
+import PanelSelect from "./PanelSelect.vue";
 import InfoTip from './InfoTip.vue';
 import {computed,onBeforeUnmount,reactive,ref,watch} from 'vue';
 import {Eye} from 'lucide';

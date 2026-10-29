@@ -161,7 +161,14 @@ export function readReplyPublicationOnPage(owner, sourcePostUrl, text, after=0) 
     const attached=(onSourceThread&&hasSourceArticle)
       ||links.some(a=>new RegExp(`/status/${sourceId}(?:/|$)`).test(String(a.getAttribute('href')||'').split('?')[0]));
     if(!attached)continue;
-    const actual=normalize(article.querySelector('[data-testid="tweetText"]')?.innerText);
+    const body=article.querySelector('[data-testid="tweetText"]');
+    // X renders Unicode emoji as images. Preserve their alt text for exact verification.
+    let actualText=body?.innerText||'';
+    if(body?.querySelector?.('img[alt]')){
+      const read=node=>node.nodeType===3?node.textContent:node.nodeName==='IMG'?node.getAttribute('alt')||'':node.nodeName==='BR'?'\n':Array.from(node.childNodes).map(read).join('');
+      actualText=read(body);
+    }
+    const actual=normalize(actualText);
     if(actual===wanted)return {id:statusId,url:statusUrl.href,textComplete:true,sourcePostId:sourceId};
     const prefix=actual.replace(/(?:…|\.\.\.)$/,'');
     if(article.querySelector('[data-testid="tweet-text-show-more-link"]')&&prefix.length>=40&&wanted.startsWith(prefix)){

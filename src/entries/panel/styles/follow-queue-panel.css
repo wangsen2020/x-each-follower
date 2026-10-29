@@ -1116,3 +1116,9 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+.fq-batch-feedback.fq-batch-toast { position:fixed; z-index:10050; top:20px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100vw - 32px); padding:10px 14px; background:#edf7f1; color:#20573f; border:1px solid #b8d9c6; border-radius:8px; box-shadow:0 4px 16px #173e3526; display:flex; align-items:center; }
+.fq-batch-toast > * { margin-right:10px; }
+.fq-batch-toast > *:last-child { margin-right:0; }
+.fq-batch-toast .fq-btn { height:28px; line-height:26px; font-size:12px; white-space:nowrap; }
+.fq-batch-countdown { color:#567368; white-space:nowrap; font-size:12px; }

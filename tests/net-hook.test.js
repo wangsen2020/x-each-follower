@@ -12,6 +12,15 @@ function fixture(response,location={origin:'https://x.com'}){
 }
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('stream observation did not settle');}
 
+test('ordinary profile API 429 responses do not emit global pause events',async()=>{
+ for(const operation of ['UsersByRestIds','UserByScreenName']){
+   const f=fixture(new Response('limited',{status:429}));
+   const response=await f.window.fetch(`https://x.com/i/api/graphql/runtime/${operation}?variables=%7B%7D`);
+   assert.equal(response.status,429);await new Promise(resolve=>setImmediate(resolve));
+   assert.equal(f.messages.some(m=>m.payload?.kind==='x-rate-limit'),false);
+ }
+});
+
 test('Grok fetch observer tracks chunks and EOF without consuming the application response',async()=>{
  let controller;const response=new Response(new ReadableStream({start(c){controller=c;}}));
  const f=fixture(response);
@@ -110,7 +119,7 @@ test('ordinary analytics pages retain native requests and are never limited by b
 });
 
 test('bootstrap HTTP failures relay status and cooldown instead of waiting for a nonexistent success',async()=>{
- const f=bootstrapFixture(true,429);await f.window.fetch('https://x.com/i/api/graphql/id/contentPageQuery?variables=%7B%7D');await until(()=>f.messages.length>0);assert.equal(f.messages[0].payload.httpStatus,429);assert.equal(f.messages[0].payload.retryAfterSeconds,7200);
+ const f=bootstrapFixture(true,429);await f.window.fetch('https://x.com/i/api/graphql/id/contentPageQuery?variables=%7B%7D');await until(()=>f.messages.some(m=>m.payload.bootstrapId));const payload=f.messages.find(m=>m.payload.bootstrapId).payload;assert.equal(payload.httpStatus,429);assert.equal(payload.retryAfterSeconds,7200);
 });
 
 test('bootstrap honors the configured ceiling of 1000 and still sends only one query',async()=>{

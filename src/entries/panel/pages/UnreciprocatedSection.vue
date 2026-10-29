@@ -20,20 +20,20 @@
           <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="all" role="tab" aria-selected="false">全部 <span id="tabAllCount">0</span></button>
           <span class="info-tip" tabindex="0" role="note" data-tip="未回关：我们关注对方但对方目前未关注我们；已互关：双方已形成互相关注；已取关：本地记录的取关账号及时间；全部：当前主动关注的全部账号，不含已取关。" aria-label="回关状态说明">?</span>
         </div>
-        <select id="unreciprocatedOverdueFilter" class="unreciprocated-filter-select" title="期限状态筛选" aria-label="期限状态筛选">
+        <PanelSelect id="unreciprocatedOverdueFilter" class="unreciprocated-filter-select" title="期限状态筛选" aria-label="期限状态筛选">
           <option value="all">全部期限</option>
           <option value="overdue">已超时</option>
           <option value="within">未超时</option>
           <option value="unknown">时间未知</option>
-        </select>
-        <select id="unreciprocatedAvailabilityFilter" class="unreciprocated-filter-select" title="账号状态筛选" aria-label="账号状态筛选">
+        </PanelSelect>
+        <PanelSelect id="unreciprocatedAvailabilityFilter" class="unreciprocated-filter-select" title="账号状态筛选" aria-label="账号状态筛选">
           <option value="all">全部账号</option>
           <option value="unavailable">账号不可用</option>
           <option value="not_found">账号不存在</option>
           <option value="suspended">已封禁</option>
           <option value="ok">账号正常</option>
           <option value="unknown">待确认</option>
-        </select>
+        </PanelSelect>
         <div class="search-wrap unreciprocated-search-wrap">
           <input id="unreciprocatedSearch" type="search" placeholder="搜索账号、名称或简介" autocomplete="off">
           <button id="unreciprocatedSearchBtn" type="button" class="secondary search-btn">搜索</button>
@@ -82,6 +82,7 @@
 </template>
 
 <script setup>
+import PanelSelect from "../components/PanelSelect.vue";
 import AutoUnfollowStatus from '../components/AutoUnfollowStatus.vue';
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';

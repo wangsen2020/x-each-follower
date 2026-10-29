@@ -10,6 +10,28 @@ test('profile loading timeout isolates the target while wrong viewer still pause
  assert.equal(profileReadinessError({code:'X_PROFILE_ACTION_UNAVAILABLE'}).code,'X_PROFILE_ACTION_UNAVAILABLE');
 });
 
+test('profile DOM can confirm an unfollow despite an auxiliary API 429 without pausing anything',async()=>{
+ let following=true,confirmations=0;const data={networkTemplates:{UserByScreenName:{origin:'https://x.com',queryId:'test',headers:{authorization:'test','x-csrf-token':'test'}}}};
+ const api={storage:{local:{get:async key=>({[key]:data[key]}),set:async()=>assert.fail('must not create global pause')}},tabs:{create:async()=>({id:1}),remove:async()=>{}},scripting:{executeScript:async request=>{
+   if(request.func?.name==='executeXRequestOnPage')return [{result:{status:429,attempted:true}}];
+   if(request.func?.name==='profileRelationshipOnPage'){
+     if(request.args[3]==='confirm'){confirmations++;following=false;return [{result:{ready:true,clicked:true}}];}
+     return [{result:{ready:true,following,followedBy:false,ownerVerified:true,identityVerified:true,clicked:request.args[3]==='unfollow'}}];
+   }
+   return [{result:true}];
+ }}};
+ const result=await inspectOrActOnProfile(api,{handle:'target',id:'12'},'owner','unfollow',{sleep:async()=>{}});
+ assert.equal(result.status,200);assert.equal(result.attempted,true);assert.equal(confirmations,1);assert.equal(result.live.relationship.following,false);
+});
+
+test('visible page action restrictions block DOM operations while hidden text does not',()=>{
+ const oldDocument=globalThis.document,oldLocation=globalThis.location;let visible=true,clicks=0;
+ const button={innerText:'Following',getAttribute:k=>k==='data-testid'?'12-unfollow':'Following @target',closest:()=>null,click:()=>clicks++};
+ const root={querySelector:()=>({innerText:'@target'}),querySelectorAll:()=>[button]};
+ globalThis.location={pathname:'/target'};globalThis.document={querySelector:s=>s.startsWith('a[')?{getAttribute:()=>'/owner'}:s.includes('primaryColumn')?root:null,querySelectorAll:()=>[{innerText:'Rate limit exceeded',getClientRects:()=>visible?[{}]:[]}]};
+ try{assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').code,'X_PAGE_ACTION_RESTRICTED');assert.equal(clicks,0);visible=false;assert.equal(profileRelationshipOnPage('target','12','owner').ready,true);}finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
+});
+
 test('a stuck page read times out, closes only its owned tab and cannot advance after a late response',async()=>{
  let release,calls=0;const closed=[];
  const api={tabs:{create:async()=>({id:123}),remove:async id=>closed.push(id)},scripting:{executeScript:async()=>{calls++;return await new Promise(resolve=>{release=resolve;});}}};
@@ -128,4 +150,13 @@ for(const selector of ['[data-testid="confirmationSheetDialog"]','[role="alertdi
   assert.equal(clicks,1);
   assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').clicked,false);
  }finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
+});
+
+test('missing sidebar is not owner mismatch when target header and action are verified',()=>{
+ const oldDocument=globalThis.document,oldLocation=globalThis.location;let viewer=null;
+ const button={innerText:'Following',getAttribute:k=>k==='data-testid'?'12-unfollow':'Following @target',closest:()=>null};
+ const root={querySelector:()=>({innerText:'@target'}),querySelectorAll:()=>[button]};
+ globalThis.location={pathname:'/target'};globalThis.document={querySelector:s=>s.startsWith('a[')?(viewer?{getAttribute:()=>viewer}:null):s.includes('primaryColumn')?root:null};
+ try{assert.equal(profileRelationshipOnPage('target','12','owner').following,true);viewer='/other';assert.equal(profileRelationshipOnPage('target','12','owner').reason,'登录账号不一致');}
+ finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
 });

@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+test('clicking a tooltip control dismisses it before opening a dialog and focus can move elsewhere',async()=>{
+ const listeners=new Map(),attrs=new Map();const tip={isConnected:true,closest:s=>s==='dialog[open]'?null:tip,getAttribute:k=>k==='data-panel-tip'?'设置':attrs.get(k)??null,setAttribute:(k,v)=>attrs.set(k,v),removeAttribute:k=>attrs.delete(k),getBoundingClientRect:()=>({left:0,top:0,width:30,height:30}),contains:n=>n===tip};
+ const context=vm.createContext({ref:value=>({value}),nextTick:()=>Promise.resolve(),onMounted:f=>f(),onUnmounted(){},positionInfoTip:()=>({left:8,top:8,width:100}),document:{body:{classList:{add(){},remove(){}}},addEventListener:(k,f)=>listeners.set(k,f),removeEventListener(){},activeElement:tip},window:{innerWidth:1000,innerHeight:800,addEventListener(){},removeEventListener(){}}});
+ const source=fs.readFileSync('src/entries/panel/components/InfoTipLayer.vue','utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*;\r?\n/gm,'');vm.runInContext(source,context);vm.runInContext('bubble.value={getBoundingClientRect:()=>({width:100,height:30})}',context);
+ listeners.get('pointerover')({target:tip});await Promise.resolve();assert.equal(vm.runInContext('visible.value',context),true);listeners.get('click')({target:tip});assert.equal(vm.runInContext('visible.value',context),false);assert.equal(attrs.has('aria-describedby'),false);
+ listeners.get('focusin')({target:tip});await Promise.resolve();assert.equal(vm.runInContext('visible.value',context),true);listeners.get('focusin')({target:{closest:()=>null}});assert.equal(vm.runInContext('visible.value',context),false);
+});

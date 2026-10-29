@@ -18,6 +18,7 @@ import {createPostPublisher} from '../publishing/post-publisher.js';
 import {originalQualityIssue,originalTextIssue} from '../publishing/original-quality.js';
 import {createFollowQueueStore} from './follow-queue-store.js';
 import {createFollowQueueScheduler} from './follow-queue-scheduler.js';
+import {createQueueAlarmPlan} from './queue-alarm-plan.js';
 import {collectFollowQueueCandidates} from './follow-queue-sources.js';
 import {createFanInspectionBatch} from '../relationships/fan-inspection-batch.js';
 import {networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, mergeRecentPosts} from '../relationships/network-api.js';
@@ -27,12 +28,13 @@ import {requestGrokComment, postQuoteOnTab, resolveCommentLanguage, quoteCandida
 import {interactionSkipReason} from '../relationships/content-risk.js';
 import {followerRatioDecision} from '../relationships/follower-ratio-policy.js';
 import {removeRatioFollower} from '../../platform/x/remove-follower.js';
-import {randomizedSeconds, randomizedInteger} from '../../shared/timing.js';
+import {randomizedSeconds} from '../../shared/timing.js';
 import {appendExecutionLog, normalizeQueueExecutionLog} from '../../shared/execution-log.js';
 import {readAutoFollowAttempts} from '../../shared/auto-follow-history.js';
 import {ACCOUNT_FOLLOW_LIMIT_MESSAGE, isAccountFollowLimit} from '../../shared/follow-limit.js';
 
 export const QUEUE_ALARM = 'x-unified-follow-queue';
+export const RETRY_BATCH_ALARM = 'x-follow-queue-retry-batch';
 const BINDING_KEY = 'followQueueBinding';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const canonical = value => String(value || '').replace(/^@/, '').toLowerCase();
@@ -40,6 +42,13 @@ const canonical = value => String(value || '').replace(/^@/, '').toLowerCase();
 export function quotePublicationState(result) {
   if (result?.riskBlocked) return 'skipped';
   return result?.attempted === false ? 'draft' : result?.stage === 'composer' ? 'failed' : 'uncertain';
+}
+
+export function blueVerifiedDecision(target, enabled) {
+  if (!enabled) return null;
+  if (target?.is_blue_verified === true) return null;
+  if (target?.is_blue_verified === false) return {state:'skipped', reason:'非蓝 V，按配置跳过关注'};
+  return {state:'uncertain', reason:'蓝 V 状态未能核实，未执行关注'};
 }
 
 export function assessQueueProfile(profile, settings, confirmedFollowBack = false) {
@@ -147,6 +156,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   const writeLocal = payload => api.storage.local.set(payload);
   let syncing = Promise.resolve();
   const readBinding = async () => (await api.storage.local.get(BINDING_KEY))[BINDING_KEY];
+  const alarmPlan = createQueueAlarmPlan({api,name:QUEUE_ALARM});
   const diagnostics=createQueueDiagnostics({api});
   const failureNotice=f=>`异常账号 ${f.diagnostic.handle?'@'+f.diagnostic.handle:'批次级'}，阶段：${f.diagnostic.stageLabel}。详情见执行日志，诊断 ${f.diagnostic.id.slice(0,8)}。`;
   const script = async (tabId, func, args = []) => {try{if(func===readProfileBundle)return await readProfileOnTab(api,tabId,args[0],args[1],'follow-queue');return (await api.scripting.executeScript({target:{tabId},func,args}))?.[0]?.result;}catch(error){error.pageContext={...error.pageContext,tabId,operation:func.name,callerStack:new Error('队列页面读取调用位置').stack};throw error;}};
@@ -554,6 +564,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (target.relationship?.following === true || (target.relationship?.following !== false && profile.relationship?.following === true)) {
         return {state:'followed',followResult:{...followResult,succeeded:true,alreadyFollowing:true,targetUserId:target.id,at:Date.now()},evaluations};
       }
+      const blueDecision = blueVerifiedDecision(target, (await store.getSettings(job.accountId)).blueVerifiedOnly === true);
+      if (blueDecision) return {...blueDecision,followResult:{...followResult,targetUserId:target.id,reason:blueDecision.reason}};
       if (relationshipDecision.code==='follow-back' && (await store.getSettings(job.accountId)).followBackAllowAll===true) {
         const ratio=followerRatioDecision(target);
         if(!ratio.known)return {state:'uncertain',reason:ratio.reason,followResult};
@@ -625,6 +637,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       followResult = {...followResult, relationshipDecision:audit.relationshipDecision};
       if (reason) return {state:'skipped',reason,followResult};
       await guard();
+      const finalBlueDecision = blueVerifiedDecision(target, (await store.getSettings(job.accountId)).blueVerifiedOnly === true);
+      if (finalBlueDecision) return {...finalBlueDecision,followResult:{...followResult,targetUserId:target.id,reason:finalBlueDecision.reason}};
       await control.checkpoint({stage:'following',followResult:{attemptedAt:Date.now(),targetUserId:target.id}});
       stage('following');
       attemptedFollow = true;
@@ -689,6 +703,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   }
   let reflectJobs = null,runFailures=null,runPromise=null;
   const scheduler = createFollowQueueScheduler({store,execute,canRun,getBlockReason:()=>runBlockReason,onEvent:async event => {
+    if (event.type === 'run-start') await alarmPlan.record(event.accountId,{lastRunId:event.runId,lastRunAt:event.at || Date.now()});
     const job = event.jobId ? await readJob(event.accountId, event.jobId) || {} : {};
     if (reflectJobs && (event.type === 'job-complete' || event.state === 'followed') && (event.state === 'followed' || event.followResult?.succeeded)) {
       reflectJobs.push({handle:event.handle || job.handle, followResult:event.followResult || job.followResult, updatedAt:event.at || job.updatedAt});
@@ -696,6 +711,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     if (event.type === 'job-start') executionAudits.delete(event.jobId);
     const audit = executionAudits.get(event.jobId) || {};
     await appendExecutionLog(normalizeQueueExecutionLog(event,job,audit),api.storage.local);
+    if (event.type === 'job-complete') await alarmPlan.record(event.accountId,{lastJobAt:event.at || Date.now(),lastJobHandle:event.handle || job.handle});
     if (event.type === 'job-complete' || event.type === 'job-settle-failed') executionAudits.delete(event.jobId);
   }});
   async function reflectFollowed(accountId, jobs) {
@@ -1203,11 +1219,11 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
         if (!started.ok) throw new Error('未能保存 Grok 请求状态，未发送请求');
         const generate=({reply:generateReply,article:generateArticle,original:generatePost})[publicationMode]||generateComment;
         progress('已按综合互动分选帖，Grok 正在生成内容…');
-        const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,knowledgeEnabled:commentSettings.knowledgeEnabled === true && ['quote','reply'].includes(publicationMode),
-          qualityFirst:true,qualityGate:!['quote','reply'].includes(publicationMode),lengthMode:commentSettings.quoteLengthMode || 'adaptive',relayJobId:ev.relayJobId,
+        const generated = await generate(job.handle,candidates,job.handle,{sleep,profile:safetyProfile,writerAccountId:job.accountId,knowledgePurpose:['quote','reply'].includes(publicationMode)?publicationMode:'article',
+          qualityFirst:true,qualityGate:!['quote','reply'].includes(publicationMode),lengthMode:commentSettings.quoteLengthMode || 'adaptive',relayJobId:ev.relayJobId,knowledgeSnapshot:ev.knowledgeSnapshot,
           onRelayJobCreated:async relay=>{
             await guardComment();
-            Object.assign(ev,{...(relay.knowledgeUsed?{knowledgeUsed:relay.knowledgeUsed}:{}),relayJobId:relay.id,channel:'grok-bot',reasonCode:'bot_pending'});
+            Object.assign(ev,{...(relay.knowledgeUsed?{knowledgeUsed:relay.knowledgeUsed}:{}),...(relay.knowledgeSnapshot?{knowledgeSnapshot:relay.knowledgeSnapshot}:{}),relayJobId:relay.id,channel:'grok-bot',reasonCode:'bot_pending'});
             const checkpoint=await store.resolveJob({accountId:binding.accountId,id:job.id,evaluations:[ev]});
             if(!checkpoint.ok)throw new Error('未能保存 Bot 任务编号，未发送生成请求');
           }});
@@ -1337,7 +1353,24 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     readBinding, execute:retryEvaluation,
     onSkip:entry=>safeLog({...entry,scope:'comment',result:'skipped',detail:entry.reason,at:new Date().toISOString()}),
     isBusy:job => commentLocks.has(job.accountId+':'+job.id)});
-  async function schedule({preserve = false} = {}) {
+  async function scheduleRetryBatch(delayMs = 5*60000) {
+    const binding = await readBinding();
+    if (!binding?.activated || !store.pendingRetryBatch) return;
+    if (await store.pendingRetryBatch(binding.accountId)) {
+      const alarm = await api.alarms.get(RETRY_BATCH_ALARM);
+      const when = Date.now()+delayMs;
+      if (!alarm || (delayMs === 1 && alarm.scheduledTime > when)) await api.alarms.create(RETRY_BATCH_ALARM, {when});
+    } else await api.alarms.clear(RETRY_BATCH_ALARM);
+  }
+  async function runRetryBatch() {
+    // A one-shot alarm is already consumed. Recreate it if the shared worker is busy.
+    if (runPromise) { await scheduleRetryBatch(30000); return {ok:true,summary:'当前任务结束后处理重试批次'}; }
+    const binding = await readBinding();
+    if (!binding?.activated || !await store.pendingRetryBatch(binding.accountId)) return {ok:true};
+    try { return await run(true, true); }
+    finally { await scheduleRetryBatch(5*60000); }
+  }
+  async function schedule({reset = false, reason = 'ensure'} = {}) {
     const binding = await readBinding();
     if (!binding?.activated) return;
     await api.alarms.create(COMMENT_ALARM,{periodInMinutes:1}).catch(error=>console.warn('评论调度创建失败:',error.message));
@@ -1345,37 +1378,56 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     await api.alarms.clear('x-mutual-auto-follow');
     await api.alarms.clear('x-comment-auto-follow');
     const settings = await store.getSettings(binding.accountId);
-    if (preserve && settings.enabled && (await api.alarms.getAll()).some(alarm=>alarm.name === QUEUE_ALARM)) return;
-    await api.alarms.clear(QUEUE_ALARM);
-    if (settings.enabled) await api.alarms.create(QUEUE_ALARM,{delayInMinutes:randomizedInteger(settings.every,settings.jitter,1,240)});
+    await alarmPlan.schedule(binding.accountId,settings,{reset,reason});
+    await scheduleRetryBatch();
   }
-  async function run(manual=false){
+  async function run(manual=false,retryBatchOnly=false){
     if(runPromise)return {ok:false,notify:false,summary:'队列正在执行，已跳过重复触发。'};
-    runPromise=runCycle(manual);try{return await runPromise;}finally{runPromise=null;}
+    runPromise=runCycle(manual,retryBatchOnly);try{return await runPromise;}finally{runPromise=null;}
   }
-  async function runCycle(manual = false) {
+  async function runCycle(manual = false, retryBatchOnly = false) {
     const binding = await readBinding();
     if (!binding?.activated) throw new Error('请先确认统一队列的数据归属和来源');
     // Create only one temporary tab if a scheduled task has no X tab available.
     let bootstrap,runStage='bootstrap';
+    const stage = async value => {
+      runStage=value;
+      await alarmPlan.record(binding.accountId,{lastStage:value,lastStageAt:Date.now(),lastTrigger:manual?'manual':'scheduled'});
+    };
     try {
+      const previous = await alarmPlan.read(binding.accountId);
+      const recovered = typeof store.recoverInterrupted === 'function'
+        ? await store.recoverInterrupted({accountId:binding.accountId,currentOwner:scheduler.status().owner}) : [];
+      for (const job of recovered) await appendExecutionLog({scope:'queue',type:'job-interrupted-recovered',
+        result:job.state,accountId:binding.accountId,jobId:job.id,handle:job.handle,runId:previous.lastRunId || '',
+        source:manual?'manual':'scheduled',detail:job.state==='pending'?'上次执行中断已归档；尚未发送操作，恢复待处理。'
+          :job.state==='followed'?'上次执行中断已归档；保留已成功关注结果。'
+          :'上次执行中断已归档；已尝试操作，转为待核实并释放执行占用。'},api.storage.local);
+      if (previous.lastStage && previous.lastStage !== 'idle') {
+        await appendExecutionLog({scope:'queue',type:'dispatch-interrupted',result:'uncertain',accountId:binding.accountId,
+          source:manual?'manual':'scheduled',runId:previous.lastRunId || '',
+          detail:`上次调度在 ${previous.lastStage} 阶段中断。已保存的逐项结果保留；已尝试关注或发布但未确认的任务需核实，未自动重发。`},api.storage.local).catch(()=>{});
+      }
+      await stage('bootstrap');
+      await appendExecutionLog({scope:'queue',type:'dispatch-start',result:'started',accountId:binding.accountId,
+        source:manual?'manual':'scheduled',detail:manual?'手动调度已接收，准备同步候选。':'定时调度已触发，准备同步候选。'},api.storage.local).catch(error=>console.warn('队列触发日志写入失败:',error.message));
       if (!(await api.tabs.query({url:['https://x.com/*','https://twitter.com/*']})).length) {
         bootstrap = await createProfileTab(api,{url:'https://x.com/home',active:false},'follow-queue');
         for(let i=0;i<30;i++) { if(await viewer(bootstrap.id).catch(error=>{if(isPageFailure(error))throw error;return '';})) break; await sleep(500); }
       }
       reflectJobs = [];runFailures=[];
-      runStage='sync-candidates';
+      await stage('sync-candidates');
       try{await syncCandidates();}catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:binding.handle,requestedUrl:`https://x.com/${binding.handle}`});runFailures.push(failure);}
       // A source/backup failure must not prevent already queued jobs from running.
       // The scheduler still validates the live account before every job.
-      runStage='run-queue';
-      const result = await scheduler.run({accountId:binding.accountId,manual});
-      runStage='reflect-results';
+      await stage('run-queue');
+      const result = await scheduler.run({accountId:binding.accountId,manual,retryBatchOnly});
+      await stage('reflect-results');
       try{await reflectFollowed(binding.accountId, reflectJobs);}catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:reflectJobs?.at(-1)?.handle||'',runId:result.runId});return {...result,summary:result.summary+' 本地同步暂未完成。'+failureNotice(failure),notify:failure.notify};}
       if(runFailures.length)return {...result,notify:runFailures.some(f=>f.notify),summary:result.summary+' '+failureNotice(runFailures[0])};
       return result;
     } catch(error){const failure=await diagnostics.record(error,{stage:runStage,manual,accountId:binding.accountId,handle:binding.handle,runId:scheduler.status().runId,requestedUrl:`https://x.com/${binding.handle}`,tabId:bootstrap?.id});return {ok:false,error:failure.message,summary:failure.message+' '+failureNotice(failure),notify:failure.notify};}
-    finally { reflectJobs = null;runFailures=null; if(bootstrap) await api.tabs.remove(bootstrap.id).catch(()=>{}); await schedule().catch(async error=>{await diagnostics.record(error,{stage:'schedule-next',accountId:binding.accountId,handle:binding.handle});}); }
+    finally { reflectJobs = null;runFailures=null; if(bootstrap) await api.tabs.remove(bootstrap.id).catch(()=>{}); await alarmPlan.record(binding.accountId,{lastStage:'idle',lastCompletedAt:Date.now()}).catch(()=>{}); await schedule({reset:true,reason:'cycle-complete'}).catch(async error=>{await diagnostics.record(error,{stage:'schedule-next',accountId:binding.accountId,handle:binding.handle});}); }
   }
   async function handle(message) {
     if (message.cmd === 'followQueueIdentityStatus') return {ok:true,stage:identityStage};
@@ -1424,16 +1476,24 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
           scanBatch: page.scanBatch,
           scanLimited: page.scanLimited === true,
           scanExhausted: page.scanExhausted === true,
-          summary: {...scheduler.status(), isPaused: !settings.enabled, stats: page.stats}
+          summary: {...scheduler.status(), ...await alarmPlan.read(binding.accountId), isPaused: !settings.enabled, stats: page.stats}
         };
       }
       case 'followQueueRunCheck': return {ok:true,allowed:await canRun(binding.accountId),blockReason:runBlockReason};
       case 'followQueueSyncSources': await syncCandidates(); return {ok:true};
       case 'followQueueSettings': return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueSaveSettings': {
-        const settings = await store.saveSettings(binding.accountId,message.settings); await schedule(); return {ok:true,settings};
+        const previous = await store.getSettings(binding.accountId);
+        const settings = await store.saveSettings(binding.accountId,message.settings);
+        const reset = settings.enabled && (!previous.enabled || settings.every !== previous.every || settings.jitter !== previous.jitter);
+        await schedule({reset,reason:reset?'timing-changed':'settings-saved'}); return {ok:true,settings};
       }
-      case 'followQueuePause': await scheduler.pause(binding.accountId); await schedule(); return {ok:true,settings:await store.getSettings(binding.accountId)};
+      case 'followQueueRetryBatch': {
+        const result = await store.requestRetryBatch({accountId:binding.accountId,jobIds:message.jobIds});
+        await scheduleRetryBatch(1);
+        return {ok:true,...result};
+      }
+      case 'followQueuePause': await store.pendingRetryBatch(binding.accountId,{cancel:true}); await api.alarms.clear(RETRY_BATCH_ALARM); await scheduler.pause(binding.accountId); await schedule(); return {ok:true,settings:await store.getSettings(binding.accountId)};
       case 'followQueueRun': return run(true);
       case 'followQueueVerify': return verifyUncertain(binding, message);
       case 'followQueueDelete': {
@@ -1478,5 +1538,5 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       default: throw new Error('未知队列操作');
     }
   }
-  return {handle,schedule,run,runComments:commentWorker.run,syncCandidates,backfillProfiles,reflectFollowed,store};
+  return {handle,schedule,run,runRetryBatch,runComments:commentWorker.run,syncCandidates,backfillProfiles,reflectFollowed,store};
 }

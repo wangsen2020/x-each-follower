@@ -24,7 +24,7 @@ export function targetCheckFailure(error) {
 }
 
 export function pauseDescription(error) {
-  if (Number(error?.status) === 429) return {reason:'平台限流', resume:'等待下次计划重试；持续限流时请延长执行周期'};
+  if (error?.code === 'X_PAGE_ACTION_RESTRICTED') return {reason:'X 页面提示操作受限', resume:'等待页面限制解除后，下次计划重新核验'};
   if ([401, 403].includes(Number(error?.status))) return {reason:'登录或权限异常', resume:'恢复绑定账号的登录与权限后，下次计划重新核验'};
   if (/绑定账号|登录账号|登录 X|账号不一致/.test(error?.message || '')) return {reason:'绑定账号未就绪', resume:'保留绑定账号的已登录 X 页面，下次计划重新核验'};
   return {reason:error?.message || '执行异常', resume:'本轮已停止，下次计划重新核验；未确认操作不会重复提交'};

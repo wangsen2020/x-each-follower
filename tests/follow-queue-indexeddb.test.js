@@ -13,6 +13,38 @@ function storeFor(name, clock = {t: 5_000}) {
   });
 }
 
+test('restart archives old worker checkpoints, releases leases and preserves uncertain actions',async()=>{
+  const name=`restart-${crypto.randomUUID()}`,store=storeFor(name);
+  const ids=[];
+  for(const handle of ['Unread','Attempted','Succeeded','Current','Other']){
+    const job=await store.enqueue({accountId:handle==='Other'?'other':'owner',handle,sources:[{module:'fans',enabled:true}]});
+    ids.push(job.id);
+  }
+  const db=await new Promise(r=>{const q=indexedDB.open(name);q.onsuccess=()=>r(q.result);});
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction('jobs','readwrite');tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);
+    ids.forEach((id,i)=>{const q=tx.objectStore('jobs').get(id);q.onsuccess=()=>{
+      const job=q.result;job.state='running';job.stage=i===0?'read-posts':'following';
+      job.lease={owner:i===3?'new':'old',version:1,expiresAt:999999};
+      job.followResult=i===1?{attemptedAt:4000}:i===2?{succeeded:true,at:4000}:{};
+      tx.objectStore('jobs').put(job);
+    };});
+  });
+  const recovered=await store.recoverInterrupted({accountId:'owner',currentOwner:'new'});
+  assert.equal(recovered.length,3);
+  assert.equal((await store.get(ids[0])).state,'pending');
+  assert.equal((await store.get(ids[1])).state,'uncertain');
+  assert.equal((await store.get(ids[2])).state,'followed');
+  assert.equal((await store.get(ids[3])).lease.owner,'new');
+  assert.equal((await store.get(ids[4])).lease.owner,'old');
+  assert.equal((await store.get(ids[0])).lease.owner,'');
+  assert.deepEqual(await store.recoverInterrupted({accountId:'owner',currentOwner:'new'}),[]);
+  assert.equal((await store.settle({id:ids[0],owner:'old',version:1,state:'followed'})).ok,false);
+  const archives=await new Promise(r=>{const q=db.transaction('meta').objectStore('meta').getAll();q.onsuccess=()=>r(q.result);});
+  assert.equal(archives.filter(row=>row.key.startsWith('interrupted:')).length,3);
+  db.close();
+});
+
 test('manual deletion removes rows, updates paging and suppresses stale sources after restart without blocking another account or reused handle', async () => {
   const name = `delete-queue-${crypto.randomUUID()}`;
   const store = storeFor(name);
@@ -544,4 +576,46 @@ test('unavailable handles without an existing job cannot enter later from old so
  await store.markDeletedHandle({accountId:'owner',handle:'GoneUser'});
  assert.equal((await store.enqueue({accountId:'owner',handle:'GoneUser',targetUserId:'123',sources:[{module:'fans',enabled:true}]})).deleted,true);
  assert.equal((await store.enqueue({accountId:'other',handle:'GoneUser',sources:[{module:'fans',enabled:true}]})).deleted,undefined);
+});
+
+
+test('manual retry batch prioritizes existing jobs once, retains backoff history and refuses uncertain effects', async () => {
+  const store=storeFor(`manual-retry-${crypto.randomUUID()}`);
+  const a=await store.enqueue({accountId:'owner',handle:'retryme',sources:[{module:'fans',enabled:true}]});
+  const running=await store.claim({accountId:'owner',owner:'worker',leaseMs:10000});
+  await store.settle({id:a.id,owner:'worker',version:running.lease.version,state:'retry',patch:{followResult:{retryCount:2},nextEligibleAt:999999}});
+  const high=await store.enqueue({accountId:'owner',handle:'higher',profile:{followersText:'100000'},sources:[{module:'fans',enabled:true}]});
+  assert.deepEqual(await store.requestRetryBatch({accountId:'owner',jobIds:[a.id,a.id,high.id]}),{accepted:[a.id],rejected:[{id:high.id,handle:'higher',reason:'任务已不在等待重试状态'}]});
+  assert.equal(await store.pendingRetryBatch('owner'),1);
+  await store.enqueue({accountId:'owner',handle:'retryme',sources:[{module:'mutual',enabled:true}]});
+  assert.equal(await store.pendingRetryBatch('owner'),1,'source sync preserves requested batch');
+  const picked=await store.claim({accountId:'owner',owner:'worker',leaseMs:10000,retryBatchOnly:true});
+  assert.equal(picked.id,a.id);assert.equal(picked.followResult.retryCount,2);
+  assert.equal(picked.manualRetryRequestedAt,undefined);
+  assert.equal(await store.claim({accountId:'owner',owner:'other',leaseMs:10000,retryBatchOnly:true}),null,'no concurrent claim');
+  await store.settle({id:a.id,owner:'worker',version:picked.lease.version,state:'retry',patch:{nextEligibleAt:999999,followResult:{attemptedAt:5000}}});
+  assert.equal(await store.claim({accountId:'owner',owner:'worker',leaseMs:10000,retryBatchOnly:true}),null,'does not pick unrelated tasks');
+  assert.match((await store.requestRetryBatch({accountId:'owner',jobIds:[a.id]})).rejected[0].reason,/先核实/);
+  assert.equal((await store.requestRetryBatch({accountId:'other',jobIds:[a.id]})).accepted.length,0);
+  assert.equal(await store.pendingRetryBatch('owner'),0);
+});
+
+
+test('one-shot batch runs with automatic switch off, excludes unrelated tasks and does not repeat failures',async()=>{
+  const store=storeFor(`batch-one-shot-${crypto.randomUUID()}`),accountId='owner';
+  const retry=await store.enqueue({accountId,handle:'retryme',sources:[{module:'fans',enabled:true}]});
+  await store.resolveJob({accountId,id:retry.id,state:'retry',stage:'retry',nextEligibleAt:999999});
+  const other=await store.enqueue({accountId,handle:'ordinary',sources:[{module:'fans',enabled:true}]});
+  await store.requestRetryBatch({accountId,jobIds:[retry.id]});
+  const dispatched=[];
+  const scheduler=createFollowQueueScheduler({store,now:()=>5000,execute:async job=>{dispatched.push(job.id);return {state:'retry',reason:'temporary page error'};}});
+  const result=await scheduler.run({accountId,manual:true,retryBatchOnly:true});
+  assert.equal(result.ok,true);assert.deepEqual(dispatched,[retry.id]);
+  assert.equal((await store.get(other.id)).state,'pending');
+  assert.equal((await store.get(retry.id)).state,'retry');
+  assert.ok((await store.get(retry.id)).nextEligibleAt>5000);
+  assert.equal(await store.pendingRetryBatch(accountId),0);
+  await store.requestRetryBatch({accountId,jobIds:[retry.id]});
+  await store.pendingRetryBatch(accountId,{cancel:true});
+  assert.equal(await store.pendingRetryBatch(accountId),0);
 });

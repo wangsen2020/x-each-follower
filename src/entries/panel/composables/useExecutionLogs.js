@@ -1,6 +1,6 @@
 import {queryUnfollowLogs} from '../../../shared/execution-log-select.js';
 import {readSystemSettings} from '../../../shared/system-settings.js';
-import { ref, computed } from 'vue';
+import { ref, computed, getCurrentScope, onScopeDispose } from 'vue';
 import { createLogPager, LOG_PAGE_SIZE } from '../../../shared/execution-log-store.js';
 
 /**
@@ -28,6 +28,18 @@ export function useExecutionLogs() {
   const elapsedSeconds = ref(0);
   const recovery = ref(null);
   let loadingTimer;
+  let refreshTimer, refreshing = false;
+  function stopRefresh() { clearInterval(refreshTimer); refreshTimer = undefined; }
+  function startRefresh() {
+    stopRefresh();
+    refreshTimer = setInterval(async () => {
+      if (!isOpen.value || status.value !== 'ready' || logPager.canPrev() || refreshing) return;
+      refreshing = true;
+      try { await loadPage(true); } finally { refreshing = false; }
+    }, 3000);
+    refreshTimer?.unref?.();
+  }
+  if (getCurrentScope()) onScopeDispose(() => { stopRefresh(); stopLoadingFeedback(); logPager.reset(); });
   const loadingTitle = computed(() => recovery.value?.phase === 'recovering' ? '正在恢复历史日志…' : '正在加载执行日志…');
   const loadingDetail = computed(() => {
     const state = recovery.value;
@@ -141,12 +153,12 @@ export function useExecutionLogs() {
     canNext.value = status.value !== 'loading' && logPager.canNext();
   }
 
-  async function loadPage() {
+  async function loadPage(silent = false) {
     const token = logPager.begin();
-    status.value = 'loading';
+    if (!silent) status.value = 'loading';
     errorMessage.value = '';
     updatePaginationFlags();
-    startLoadingFeedback(token);
+    if (!silent) startLoadingFeedback(token);
 
     let saved;
     try {
@@ -171,6 +183,7 @@ export function useExecutionLogs() {
       }
     } catch (err) {
       if (!logPager.current(token)) return;
+      if (silent) return;
       stopLoadingFeedback();
       status.value = 'error';
       errorMessage.value = err?.message || '日志后台未响应，请重新加载扩展';
@@ -182,6 +195,7 @@ export function useExecutionLogs() {
     if (!logPager.current(token)) return;
     stopLoadingFeedback();
     if (!saved?.ok) {
+      if (silent) return;
       status.value = 'error';
       errorMessage.value = saved?.error || '日志后台未响应，请重新加载扩展';
       entries.value = [];
@@ -218,12 +232,14 @@ export function useExecutionLogs() {
       status.value='error';errorMessage.value=error.message;return;
     }
     await loadPage();
+    if (isOpen.value) startRefresh();
   }
 
   function close() {
     isOpen.value = false;
     logPager.reset();
     stopLoadingFeedback();
+    stopRefresh();
   }
 
   async function prevPage() {

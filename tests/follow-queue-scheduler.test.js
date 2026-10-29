@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-store.js';
 import {createFollowQueueScheduler} from '../src/features/follow-queue/follow-queue-scheduler.js';
 
+test('an active lease is reported as waiting rather than an empty queue',async()=>{
+  const store={getSettings:async()=>({enabled:true}),claim:async()=>null,
+    listByState:async()=>[{state:'running',lease:{expiresAt:2000}}]};
+  const scheduler=createFollowQueueScheduler({store,now:()=>1000,canRun:async()=>true,execute:async()=>assert.fail('occupied')});
+  const result=await scheduler.run({accountId:'owner'});
+  assert.equal(result.stopReason,'active-lease');
+  assert.match(result.summary,/占用/);
+  assert.doesNotMatch(result.summary,/无可执行/);
+});
+
 function installKeyRange() {
   if (globalThis.IDBKeyRange) return;
   globalThis.IDBKeyRange = {

@@ -2,7 +2,7 @@
   <div id="candidatesSection" class="tab-panel" data-panel="candidates" :hidden="activeTab !== 'candidates'">
     <div class="mutual-network-head">
       <label class="mutual-field mutual-anchor-field"><span class="mutual-field-label">互粉锚点 <span class="info-tip" data-tip="输入一个以互关为主、粉丝数和关注数接近的账号。插件读取其 following 和 followers，并将两侧账号去重合并到互关追踪列表。" aria-label="互粉锚点说明">?</span></span><input id="networkAnchor" placeholder="@username 或主页链接" autocomplete="off"></label>
-      <label class="mutual-field mutual-limit-field"><span class="mutual-field-label">每侧上限 <span class="info-tip" data-tip="每次最多读取锚点 following 和 followers 的数量；更大的范围需要更多时间。" aria-label="每侧上限说明">?</span></span><select id="networkLimit"><option value="100">100</option><option value="250">250</option><option value="500" selected>500</option></select></label>
+      <label class="mutual-field mutual-limit-field"><span class="mutual-field-label">每侧上限 <span class="info-tip" data-tip="每次最多读取锚点 following 和 followers 的数量；更大的范围需要更多时间。" aria-label="每侧上限说明">?</span></span><PanelSelect id="networkLimit"><option value="100">100</option><option value="250">250</option><option value="500" selected>500</option></PanelSelect></label>
       <button id="collectNetwork">开始新追踪</button>
       <PanelActionBar class="module-header-actions">
         <PanelIconButton id="batchRefreshMutual" :icon="RefreshCw" label="批量更新" tip="更新已选账号；未选择时更新当前页的公开资料及关注关系" />
@@ -71,6 +71,7 @@
   </div>
 </template>
 <script setup>
+import PanelSelect from "../components/PanelSelect.vue";
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';
 import {RefreshCw, Sparkles, ScrollText} from 'lucide';

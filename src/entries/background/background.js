@@ -1,10 +1,17 @@
 import {createLearningRuntime} from '../../features/knowledge/learning-runtime.js';
+import {createMutualCommentRuntime} from '../../features/mutual-comments/runtime.js';
+import {createMutualCommentStore} from '../../features/mutual-comments/store.js';
+import {createHomeScanner} from '../../features/mutual-comments/home-reader.js';
+import {MUTUAL_COMMENT_ALARM,MUTUAL_SCAN_ALARM} from '../../features/mutual-comments/model.js';
+import {createReplyPublisher} from '../../features/publishing/reply-publisher.js';
+import {resolveWritingContext} from '../../features/knowledge/writing-context.js';
 import {learningStore} from '../../features/knowledge/learning-store.js';
 import {createLearningSources} from '../../features/knowledge/learning-sources.js';
 import {createKnowledgeStore} from '../../features/knowledge/knowledge-store.js';
 import {createKnowledgeQueue} from '../../features/knowledge/knowledge-queue.js';
 import {createPostStore} from '../../features/post-tracking/post-store.js';
 import {grokLocal} from '../../features/grok/grok-local.js';
+import {grokBotRelay} from '../../features/grok/grok-bot-relay.js';
 import {LEARNING_ALARM,ensureLearningAlarm} from '../../features/knowledge/learning-model.js';
 import {createBotOnboarding,SETUP_ALARM} from '../../features/grok/bot-onboarding.js';
 import onboardingWorkerSource from '../../assets/grok-bot-relay-worker.txt?raw';
@@ -22,8 +29,8 @@ import {createVersionHistory} from '../../shared/version-history.js';
 import {createSidebarIdentity} from '../../platform/x/sidebar-identity.js';
 import {createPanelLauncher} from '../../platform/panel-launcher.js';
 import {createNotificationClickHandler, notificationSource} from '../../shared/notification-source.js';
-import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady} from '../../features/grok/temporary-windows.js';
-import {createFollowQueueRuntime, QUEUE_ALARM, COMMENT_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
+import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady,createTemporaryWindow,closeTemporaryWindow} from '../../features/grok/temporary-windows.js';
+import {createFollowQueueRuntime, QUEUE_ALARM, COMMENT_ALARM, RETRY_BATCH_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
 import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
 import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental, durableCompactSnapshots } from '../../platform/persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
@@ -125,6 +132,13 @@ const leaderboardRuntime = createLeaderboardRuntime({
   }
 });
 const knowledgeLibrary=createKnowledgeStore();
+const mutualComments=createMutualCommentRuntime({store:createMutualCommentStore(),
+  validateEngine:async config=>{if(config.generationProvider==='grok')return;const status=await (config.generationProvider==='grok-local'?grokLocal:grokBotRelay).status();if(!status.enabled||config.generationProvider==='grok-local'&&!(await grokLocal.list(await grokLocal.configuration())).some(bot=>bot.id===config.generationBotId))throw Error('所选 AI 引擎未连接，或 Bot 已变化，请重新选择');},
+  owner:async()=>{const value=await followQueueRuntime.handle({cmd:'followQueueIdentity'});if(!value?.ok)throw Error('无法确认 X 账号');return value;},
+  scan:createHomeScanner({api:chrome,openPage:async()=>{const win=await createTemporaryWindow({url:'https://x.com/home',type:'popup',focused:false,width:1000,height:800},'mutual-home');return {tabId:win.tabs[0].id,close:()=>closeTemporaryWindow(win.id)};}}),analyze:requestGrokText,publisher:createReplyPublisher({api:chrome}),knowledge:resolveWritingContext});
+chrome.alarms.clear('xef-mutual-comments').catch(console.warn);
+for(const name of [MUTUAL_SCAN_ALARM,MUTUAL_COMMENT_ALARM])chrome.alarms.get(name).then(alarm=>{if(alarm?.periodInMinutes!==1)return chrome.alarms.create(name,{periodInMinutes:1});}).catch(console.warn);
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===MUTUAL_SCAN_ALARM)mutualComments.tick('scan').catch(console.warn);if(alarm.name===MUTUAL_COMMENT_ALARM)mutualComments.tick('comment').catch(console.warn);});
 const knowledgeLearning=createLearningRuntime({repository:learningStore,library:knowledgeLibrary,
   queue:createKnowledgeQueue({store:knowledgeLibrary}),bot:grokLocal,
   sources:createLearningSources({posts:createPostStore(),leaderboard:createLeaderboardStore(),config:async()=> (await chrome.storage.local.get('ownPostTracking')).ownPostTracking||{}}),
@@ -132,7 +146,7 @@ const knowledgeLearning=createLearningRuntime({repository:learningStore,library:
 });
 // Recreate on each worker start. Durable due times coalesce missed browser sessions.
 ensureLearningAlarm(chrome).catch(error=>console.warn('恢复知识库计划:',error.message));
-chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===LEARNING_ALARM)knowledgeLearning.tick().catch(error=>console.warn('知识库整理:',error.message));});
+chrome.alarms.onAlarm.addListener(async alarm=>{if(alarm.name===LEARNING_ALARM)knowledgeLearning.tick().catch(error=>console.warn('知识库整理:',error.message));});
 let networkTemplateWrite = Promise.resolve();
 const commentJobs = new Map();
 const COMMENT_REPLY_LIMIT = 3000;
@@ -648,6 +662,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (cmd === 'mutualComments') {
+    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'互粉评论仅允许从管理面板操作'});return false;}
+    mutualComments.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:error.message}));
+    return true;
+  }
+
   if (cmd === 'knowledgeLearning') {
     if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'知识库操作仅允许从管理面板发起'});return false;}
     knowledgeLearning.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:error.message}));
@@ -876,6 +896,10 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === SETUP_ALARM) {await botOnboarding.advance();return;}
   if (alarm.name === COMMENT_ALARM) {
     await followQueueRuntime.runComments().catch(error=>console.warn('独立评论任务:',error.message));
+    return;
+  }
+  if (alarm.name === RETRY_BATCH_ALARM) {
+    await followQueueRuntime.runRetryBatch().catch(error=>console.warn('批量重试:',error.message));
     return;
   }
   if (alarm.name === QUEUE_ALARM) {

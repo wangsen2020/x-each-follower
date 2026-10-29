@@ -69,9 +69,9 @@ export const SETTINGS_BOUNDS = Object.freeze({
   minFollowers: Object.freeze({ min: 0, max: 100_000_000, default: 50, type: 'int' }),
   ratioThreshold: Object.freeze({ min: 0, max: 1.0, default: 0.8, type: 'float' }),
   followBackAllowAll: Object.freeze({ default: false, type: 'bool' }),
+  blueVerifiedOnly: Object.freeze({ default: false, type: 'bool' }),
   grokEnabled: Object.freeze({ default: false, type: 'bool' }),
   autoPublish: Object.freeze({ default: false, type: 'bool' }),
-  knowledgeEnabled: Object.freeze({ default: false, type: 'bool' }),
   followBackSuffixEnabled: Object.freeze({ default: false, type: 'bool' }),
   publicationMode: Object.freeze({ default: 'quote', type: 'enum', values: PUBLICATION_MODES }),
   quoteParticipationRate: Object.freeze({ min: 0, max: 100, default: 60, type: 'int' }),
@@ -257,7 +257,7 @@ function el(tag, attrs = {}, children = []) {
  * @param {string} options.accountId Current logged-in X user ID
  * @returns {{ refresh: Function, destroy: Function }} Control handles
  */
-export function mountFollowQueuePanel(root, { request, accountId, accountHandle } = {}) {
+export function mountFollowQueuePanel(root, { request, accountId, accountHandle, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
   if (!root) throw new Error('mountFollowQueuePanel requires a root element');
 
   let currentAccountId = accountId || '';
@@ -289,6 +289,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
   let scanActive = false;
   const selectedJobIds = new Set();
   let batchAction = null;
+  let batchFeedbackTimer = null;
+  const clearBatchFeedbackTimer = () => { clearTimeout(batchFeedbackTimer); batchFeedbackTimer = null; };
   let inspectingJob = null;
   let isSettingsOpen = false;
   let settingsDraft = null;
@@ -320,6 +322,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
   }
 
   function clearAccountState() {
+    clearBatchFeedbackTimer();
     if (batchAction) batchAction.cancelled = true;
     batchAction = null;
     jobs = [];
@@ -357,7 +360,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
   let drawerOverlay = null;
 
   async function fetchAll(cursorRetries = 0, options = {}) {
-    if (isDestroyed) return;
+    if (isDestroyed || batchAction?.running) return;
     const preserveSettings = options?.preserveSettings === true;
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
@@ -543,6 +546,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     isExecuting = true;
+    clearBatchFeedbackTimer();
+    if (!batchAction?.running) batchAction = null;
     render();
     try {
       const res = await request({ cmd: 'followQueueRun', accountId: reqAccount });
@@ -575,6 +580,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     const reqAccount = currentAccountId;
     busyJobIds.add(job.id);
     error = null;
+    clearBatchFeedbackTimer();
+    if (!batchAction?.running) batchAction = null;
     render();
     try {
       const res = await request({cmd:'followQueueDelete', accountId:reqAccount, jobId:job.id, confirmed:true});
@@ -595,7 +602,10 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
 
   async function handleBatchUncertain(mode) {
     if (batchAction?.running || loading || !currentAccountId || stateFilter !== 'uncertain') return;
-    const targets = jobs.filter(job => selectedJobIds.has(job.id) && job.state === 'uncertain');
+    const filtered = getFilteredJobs();
+    const startIndex = (currentPage - 1) * pageSize;
+    const visibleJobs = serverPaging ? filtered : filtered.slice(startIndex, startIndex + pageSize);
+    const targets = visibleJobs.filter(job => selectedJobIds.has(job.id) && job.state === 'uncertain');
     if (!targets.length) return;
     const label = mode === 'delete' ? '删除' : mode === 'exclude' ? '排除' : '核对关系';
     const impact = mode === 'delete' ? '删除队列记录并阻止旧来源重新加入，不会在 X 上取关。'
@@ -603,6 +613,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
       : '逐项读取最新关注关系并更新任务状态；确认未关注的任务会恢复为待关注，开启定时调度时可能在后续执行。';
     if (!globalThis.confirm(`对当前页选中的 ${targets.length} 项任务批量${label}？${impact}`)) return;
     const account = currentAccountId;
+    clearBatchFeedbackTimer();
     const action = batchAction = {running:true, cancelled:false, label, total:targets.length, processed:0, success:0, failures:[]};
     render();
     for (const job of targets) {
@@ -614,27 +625,80 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
         if (!result?.ok) throw new Error(result?.error || result?.reason || `${label}失败`);
         if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
         action.success++;
-        selectedJobIds.delete(job.id);
+        (action.completedIds ||= []).push(job.id);
       } catch (err) {
+        if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
         action.failures.push({handle:job.handle || job.targetUserId || job.id, reason:err?.message || `${label}失败`});
       }
       action.processed++;
       render();
+      if (mode === 'check' && action.processed < action.total && !action.cancelled && !isDestroyed && currentAccountId === account && batchAction === action) {
+        await batchVerifyWait(2000 + Math.floor(batchVerifyRandom() * 3001));
+      }
     }
     if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
     action.running = false;
+    for (const id of action.completedIds || []) selectedJobIds.delete(id);
     currentPage = 1;
     startCursors = [null];
     await fetchAll();
+    if (!isDestroyed && batchAction === action && !action.cancelled && !action.failures.length && action.processed === action.total) {
+      action.dismissAt = Date.now() + 3000;
+      const tick = () => {
+        if (isDestroyed || batchAction !== action || currentAccountId !== account) return;
+        if (Date.now() >= action.dismissAt) { batchAction = null; batchFeedbackTimer = null; render(); return; }
+        render();
+        batchFeedbackTimer = setTimeout(tick, Math.min(1000, Math.max(1, action.dismissAt - Date.now())));
+      };
+      tick();
+    }
+  }
+
+  async function handleBatchRetry() {
+    if (batchAction?.running || loading || !currentAccountId || stateFilter !== 'retry') return;
+    const account = currentAccountId;
+    const filtered = getFilteredJobs();
+    const startIndex = (currentPage - 1) * pageSize;
+    const visibleJobs = serverPaging ? filtered : filtered.slice(startIndex, startIndex + pageSize);
+    const ids = visibleJobs.filter(job => job.state === 'retry' && selectedJobIds.has(job.id)).map(job => job.id);
+    if (!ids.length) return;
+    clearBatchFeedbackTimer();
+    const action = {label:'重试排队',running:true,total:ids.length,processed:0,success:0,failures:[]};
+    batchAction = action; render();
+    try {
+      const response = await request({cmd:'followQueueRetryBatch',accountId:account,jobIds:ids});
+      if (isDestroyed || account !== currentAccountId || batchAction !== action) return;
+      if (!response?.ok) throw new Error(response?.error || '重试排队失败');
+      action.success = response.accepted.length;
+      action.failures = response.rejected || [];
+      response.accepted.forEach(id => selectedJobIds.delete(id));
+    } catch (err) {
+      if (isDestroyed || account !== currentAccountId || batchAction !== action) return;
+      action.failures = [{handle:'批次',reason:err.message}];
+    }
+    action.running = false; action.processed = ids.length;
+    await fetchAll();
+    if (isDestroyed || account !== currentAccountId || batchAction !== action) return;
+    {
+      action.dismissAt = Date.now()+3000;
+      const tick = () => {
+        if (isDestroyed || batchAction !== action || currentAccountId !== account) return;
+        if (Date.now() >= action.dismissAt) {batchAction=null;batchFeedbackTimer=null;render();return;}
+        render();batchFeedbackTimer=setTimeout(tick,Math.min(1000,Math.max(1,action.dismissAt-Date.now())));
+      };
+      tick();
+    }
   }
 
   function renderBatchFeedback() {
     if (!batchAction) return null;
     const b = batchAction;
-    const message = `${b.label}${b.running ? '中' : b.cancelled ? '已停止' : '完成'}：已处理 ${b.processed}/${b.total}，成功 ${b.success}，失败 ${b.failures.length}${b.cancelled && b.running ? '；当前项完成后停止' : ''}`;
-    return el('div', {className:'fq-batch-feedback'}, [
+    const message = b.label === '重试排队' ? (b.running ? '正在加入重试批次…' : `已加入优先重试 ${b.success} 项，未加入 ${b.failures.length} 项；当前任务结束后处理`) : `${b.label}${b.running ? '中' : b.cancelled ? '已停止' : '完成'}：已处理 ${b.processed}/${b.total}，成功 ${b.success}，失败 ${b.failures.length}${b.cancelled && b.running ? '；当前项完成后停止' : ''}`;
+    return el('div', {className:'fq-batch-feedback fq-batch-toast'}, [
       el('span', {role:'status', 'aria-live':'polite'}, message),
-      b.running ? el('button', {type:'button', className:'secondary', 'data-batch-stop':'true', disabled:b.cancelled,
+      b.dismissAt ? el('span', {className:'fq-batch-countdown', 'aria-hidden':'true'}, `${Math.max(1, Math.ceil((b.dismissAt-Date.now())/1000))} 秒后关闭`) : null,
+      b.dismissAt ? el('button', {type:'button',className:'fq-btn fq-btn-sm fq-btn-secondary','aria-label':'关闭完成提示',onClick:()=>{clearBatchFeedbackTimer();batchAction=null;render();}}, '关闭') : null,
+      b.running && b.label !== '重试排队' ? el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', 'data-batch-stop':'true', disabled:b.cancelled,
         onClick:()=>{b.cancelled=true;render();}}, b.cancelled ? '正在停止' : '停止后续') : null,
       b.failures.length ? el('details', {}, [el('summary', {}, `失败详情 ${b.failures.length}`),
         el('ul', {}, b.failures.map(f=>el('li', {}, `@${f.handle}：${f.reason}`)))]) : null
@@ -645,6 +709,9 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     if (!selectedJobIds.size) return null;
     return el('div', {className:'fq-selection-info'}, [
       el('span', {}, `已选 ${selectedJobIds.size} 项`),
+      ...(stateFilter === 'retry' ? [el('button', {type:'button',className:'fq-btn fq-btn-sm fq-btn-primary',
+        disabled:loading || batchAction?.running, title:'所选任务优先重试一次；当前任务结束后处理，仍遵守每日上限和执行核验',
+        onClick:handleBatchRetry}, '批量重试')] : []),
       ...(stateFilter === 'uncertain' ? [
         el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-primary', disabled:loading, onClick:()=>handleBatchUncertain('check')}, '批量核对'),
         el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', disabled:loading, onClick:()=>handleBatchUncertain('exclude')}, '批量排除'),
@@ -659,6 +726,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     const reqAccount = currentAccountId;
     busyJobIds.add(job.id);
     error = null;
+    clearBatchFeedbackTimer();
+    if (!batchAction?.running) batchAction = null;
     render();
     try {
       const res = await request({
@@ -858,7 +927,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
 
   function applyListChange() {
     if (batchAction?.running) return;
-    if (stateFilter === 'uncertain') selectedJobIds.clear();
+    if (stateFilter === 'uncertain' || stateFilter === 'retry') selectedJobIds.clear();
     resetPageQuery();
     if (serverPaging) fetchAll();
     else render();
@@ -868,7 +937,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     if (batchAction?.running) return;
     if (page < 1 || page === currentPage) return;
     if (serverPaging && page > 1 && !Object.prototype.hasOwnProperty.call(startCursors, page - 1)) return;
-    if (stateFilter === 'uncertain') selectedJobIds.clear();
+    if (stateFilter === 'uncertain' || stateFilter === 'retry') selectedJobIds.clear();
     currentPage = page;
     if (serverPaging) fetchAll();
     else render();
@@ -1229,8 +1298,13 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
       type: 'button',
       className: `fq-filter-tab ${stateFilter === s.id ? 'active' : ''}`,
       onClick: () => {
-        stateFilter = s.id;
-        applyListChange();
+        if (stateFilter !== s.id) {
+          clearBatchFeedbackTimer();
+          if (batchAction && !batchAction.running) batchAction = null;
+          selectedJobIds.clear();
+          stateFilter = s.id;
+          applyListChange();
+        }
       }
     }, s.label));
 
@@ -1238,6 +1312,9 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
       className: 'fq-select fq-module-select',
       value: moduleFilter,
       onChange: e => {
+        clearBatchFeedbackTimer();
+        if (batchAction && !batchAction.running) batchAction = null;
+        selectedJobIds.clear();
         moduleFilter = e.target.value || 'all';
         applyListChange();
       }
@@ -1413,7 +1490,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
 
         // State cell
         const stateClass = `fq-status-${job.state || 'pending'}`;
-        const stateText = STATE_LABELS[job.state] || job.state || '待关注';
+        const stateText = job.manualRetryRequestedAt && job.state === 'retry' ? '优先重试' : STATE_LABELS[job.state] || job.state || '待关注';
         const stateBadge = el('span', { className: `fq-tag ${stateClass}` }, stateText);
         const stageText = job.stage ? el('span', { className: 'fq-tag fq-stage-tag' }, job.stage) : null;
         const leaseBadge = job.lease?.owner ? el('span', { className: 'fq-tag fq-stage-tag' }, `租约: ${job.lease.owner}`) : null;
@@ -2183,13 +2260,13 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
         createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
         createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
         createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过普通关注筛选。例外：关注数超过粉丝数10倍时不回关，通过X接口移除此关注者；移除前再次核验，关系或数据不明时待核实。不影响采集、入队与评论审核。', 'followBackAllowAll'),
+        createSwitchGroup('fq_blueVerifiedOnly', '只关蓝 V', '默认关闭。开启后，执行前核验蓝 V；非蓝 V 跳过，状态未知时待核实。适用于所有来源，待回关放行也不例外；不影响采集和入队。', 'blueVerifiedOnly'),
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 创作与发布'),
         generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(engine==='grok-local'?'xfollower:bind-grok-local':'xfollower:bind-grok-bot'))}),
         createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾另起一段追加互关邀请，支持中文、英文、拉美西班牙语、巴西葡萄牙语和越南语；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
-        createSwitchGroup('fq_knowledgeEnabled', '知识增强', '默认关闭。开启后，使用绑定的本地 Grok Bot 生成评论与引用评论时，参考当前账号的当前智慧版本。经验需先合入智慧；先在知识库绑定当前 Bot。自动总结独立设置，文章暂不使用。', 'knowledgeEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),
         quoteRateGroup,
@@ -2261,6 +2338,12 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle 
     if (isDestroyed) return;
 
     const filteredJobs = getFilteredJobs();
+
+    if (!loading && !batchAction?.running) {
+      const start = (currentPage - 1) * pageSize;
+      const visibleIds = new Set((serverPaging ? filteredJobs : filteredJobs.slice(start, start + pageSize)).map(job => job.id));
+      for (const id of selectedJobIds) if (!visibleIds.has(id)) selectedJobIds.delete(id);
+    }
 
     const children = [
       renderHeader(),

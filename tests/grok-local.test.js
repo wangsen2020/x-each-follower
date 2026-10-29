@@ -21,3 +21,9 @@ test('interrupted generation can recover original result without another POST',a
 test('reopening restores the verified port, secret and bot; public status excludes the secret',async()=>{const f=fixture();await f.service.test({port:9876,token:'saved-secret',bot:'bot-1'});const reopened=createGrokLocal({repository:f.repository});const c=await reopened.configuration();assert.deepEqual({port:c.port,token:c.token,bot:c.bot,botName:c.botName},{port:9876,token:'saved-secret',bot:'bot-1',botName:'Bot One'});const status=await reopened.status();assert.equal(status.enabled,true);assert.equal(status.botName,'Bot One');assert.equal('token' in status,false);});
 
 test('fixed knowledge Bot mismatch cannot dispatch to another configured Bot',async()=>{const f=fixture();await f.service.test({port:8787,token:'secret',bot:'bot-1'});const before=f.requests.length;const result=await f.service.generate('hello',{expectedBot:'another-bot'});assert.equal(result.ok,false);assert.match(result.reason,/固定 Bot/);assert.equal(f.requests.length,before);});
+
+test('per-request Bot selection does not mutate the shared connection selection',async()=>{
+ const f=fixture();await f.service.test({port:8787,token:'secret',bot:'bot-1'});await f.repository.saveConfig({...await f.repository.config(),bot:'shared-bot'});
+ const result=await f.service.generate('batch tags',{botId:'bot-1'});assert.equal(result.ok,true);assert.equal((await f.repository.config()).bot,'shared-bot');const sent=f.requests.filter(r=>r.options.method==='POST').at(-1);assert.equal(JSON.parse(sent.options.body).bot,'bot-1');
+ const count=f.requests.filter(r=>r.options.method==='POST').length;const missing=await f.service.generate('bad',{botId:'missing'});assert.equal(missing.ok,false);assert.equal(f.requests.filter(r=>r.options.method==='POST').length,count);
+});

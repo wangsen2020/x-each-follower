@@ -26,12 +26,12 @@ export const FOLLOW_QUEUE_DEFAULT_SETTINGS = Object.freeze({
   minFollowers: 50,
   ratioThreshold: 0.8,
   followBackAllowAll: false,
+  blueVerifiedOnly: false,
   skipRiskContent: true,
   grokProfileAssessment: true,
   grokEnabled: false,
   autoPublish: false,
   followBackSuffixEnabled: false,
-  knowledgeEnabled: false,
   publicationMode: 'quote',
   quoteParticipationRate: 60,
   quoteLengthMode: 'adaptive'
@@ -366,11 +366,11 @@ function normalizeSettings(input, base) {
   const next = {...FOLLOW_QUEUE_DEFAULT_SETTINGS};
   next.enabled = merged.enabled === true;
   next.followBackAllowAll = merged.followBackAllowAll === true;
+  next.blueVerifiedOnly = merged.blueVerifiedOnly === true;
   next.skipRiskContent = merged.skipRiskContent !== false;
   next.grokProfileAssessment = merged.grokProfileAssessment !== false;
   next.grokEnabled = merged.grokEnabled === true;
   next.autoPublish = merged.autoPublish === true;
-  next.knowledgeEnabled = merged.knowledgeEnabled === true;
   next.followBackSuffixEnabled = merged.followBackSuffixEnabled === true;
   next.publicationMode = PUBLICATION_MODES.includes(merged.publicationMode)
     ? merged.publicationMode
@@ -1305,7 +1305,79 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       });
     },
 
-    async claim({accountId, owner, leaseMs, excludeIds = []} = {}) {
+    // Only the singleton background runtime calls this before a new cycle.
+    // A different owner belongs to a terminated worker; fence its late writes
+    // and preserve its last checkpoints before making remaining work runnable.
+    async recoverInterrupted({accountId, currentOwner} = {}) {
+      const account = requireAccountId(accountId);
+      if (!currentOwner) throw new Error('current worker owner is required');
+      const seenAt = now();
+      return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
+        const recovered=[];
+        await cursorWalk(jobs.index('byState'), keyRange().only('running'), cursor => {
+          const job=cursor.value;
+          if(job.accountId!==account || job.lease?.owner===currentOwner)return;
+          const before=cloneJob(job),result=job.followResult || {};
+          if (!applyImportedHold(job)) {
+            const attempted = result.attemptedAt || result.followerRemoval?.attemptedAt
+              || (job.evaluations || []).some(ev=>ev.generationAttemptedAt || ev.publishedAttemptedAt || ev.publishedPostId || ev.publishedPostUrl);
+            job.state=succeededFollowResult(result)?'followed':attempted?'uncertain':'pending';
+            job.stage=job.state==='uncertain'?'verify':job.state==='followed'?'followed':'queued';
+            if(job.state==='pending')job.nextEligibleAt=seenAt;
+          }
+          job.updatedAt=seenAt;
+          releaseLease(job);
+          jobs.put(job);rememberOutcome(outcomes,job);
+          const entry={id:job.id,handle:job.handle,previousOwner:before.lease?.owner,state:job.state,before,recoveredAt:seenAt};
+          meta.put({key:`interrupted:${account}:${job.id}:${before.lease?.version || 0}`, ...entry});
+          recovered.push({id:entry.id,handle:entry.handle,state:entry.state});
+        });
+        if(recovered.length)await bumpRevision(meta);
+        return recovered;
+      });
+    },
+
+    async requestRetryBatch({accountId, jobIds} = {}) {
+      const account = requireAccountId(accountId);
+      if (!Array.isArray(jobIds) || !jobIds.length || jobIds.length > 200) throw new Error('请选择 1 至 200 个重试任务');
+      return withTransaction('readwrite', async ({jobs, meta}) => {
+        const accepted = [], rejected = [];
+        for (const id of new Set(jobIds)) {
+          const job = await requestResult(jobs.get(id));
+          const result = job?.followResult || {};
+          let reason = '';
+          if (!job || job.accountId !== account || job.redirectTo) reason = '任务不存在或账号已变化';
+          else if (job.state !== 'retry') reason = '任务已不在等待重试状态';
+          else if (!sourceAuthorized(job) || importedHoldActive(job)) reason = '来源未启用或数据待核实';
+          else if (result.attemptedAt || result.followerRemoval?.attemptedAt || succeededFollowResult(result)
+            || (job.evaluations || []).some(ev => ev.generationAttemptedAt || ev.publishedPostId || ev.publishedPostUrl || ['generating','publishing','published','posted','uncertain'].includes(ev.status))) reason = '已有操作记录，请先核实结果';
+          if (reason) { rejected.push({id, handle:job?.handle || '', reason}); continue; }
+          job.manualRetryRequestedAt ||= now();
+          job.nextEligibleAt = 0;
+          job.updatedAt = now();
+          jobs.put(job); accepted.push(id);
+        }
+        if (accepted.length) await bumpRevision(meta);
+        return {accepted, rejected};
+      });
+    },
+
+    async pendingRetryBatch(accountId, {cancel = false} = {}) {
+      const account = requireAccountId(accountId);
+      return withTransaction(cancel ? 'readwrite' : 'readonly', async ({jobs, meta}) => {
+        let count = 0;
+        await cursorWalk(jobs.index('byState'), keyRange().only('retry'), cursor => {
+          const job = cursor.value;
+          if (job.accountId !== account || !job.manualRetryRequestedAt) return;
+          count++;
+          if (cancel) { delete job.manualRetryRequestedAt; cursor.update(job); }
+        });
+        if (cancel && count) await bumpRevision(meta);
+        return count;
+      });
+    },
+
+    async claim({accountId, owner, leaseMs, excludeIds = [], retryBatchOnly = false} = {}) {
       const account = requireAccountId(accountId);
       if (typeof owner !== 'string' || owner === '') throw new Error('lease owner is required');
       if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('leaseMs must be a positive number');
@@ -1348,7 +1420,15 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         // Read the best ready candidate in each executable state, then compare them.
         // Followers who already follow us retain priority 100; other profiles use
         // the locally observed follower-count bands from follow-queue-priority.js.
-        for (const state of ['pending', 'retry']) {
+        await cursorWalk(jobs.index('byState'), keyRange().only('retry'), cursor => {
+          const candidate = cursor.value;
+          if (candidate.accountId !== account || !candidate.manualRetryRequestedAt || candidate.redirectTo
+            || excludeIds.includes(candidate.id) || !sourceAuthorized(candidate) || importedHoldActive(candidate)
+            || candidate.nextEligibleAt > seenAt) return;
+          if (!job || candidate.manualRetryRequestedAt < job.manualRetryRequestedAt
+            || (candidate.manualRetryRequestedAt === job.manualRetryRequestedAt && candidate.id < job.id)) job = candidate;
+        });
+        for (const state of job || retryBatchOnly ? [] : ['pending', 'retry']) {
           await cursorWalk(jobs.index('accountStatePriorityDesc'), keyRange().bound(
             [account, state], [account, state, []], false, true
           ), cursor => {
@@ -1366,6 +1446,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
         job.priority = followQueuePriority(job);
         job.priorityDescending = -job.priority;
+        delete job.manualRetryRequestedAt;
         job.state = 'running';
         job.stage = job.stage === 'queued' ? 'claimed' : job.stage;
         job.updatedAt = seenAt;

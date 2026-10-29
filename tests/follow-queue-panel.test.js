@@ -14,6 +14,32 @@ import {
   mountFollowQueuePanel
 } from '../src/entries/panel/follow-queue-panel.js';
 
+test('retry refresh prunes stale selections and defers list refresh until the batch finishes', async () => {
+  const root=createMockElement('div');
+  let jobs=['a','b','c','d'].map(id=>({id,handle:id,state:'retry',sources:[]}));
+  let release,reads=0;const calls=[];
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
+    if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+    if(m.cmd==='followQueueList'){reads++;return {ok:true,jobs};}
+    if(m.cmd==='followQueueRetryBatch'){calls.push(m);return new Promise(resolve=>release=()=>resolve({ok:true,accepted:[],rejected:[{id:'a',handle:'a',reason:'暂不可重试'}]}));}
+    return {ok:true};
+  }});
+  const wait=()=>new Promise(r=>setTimeout(r,20));
+  try {
+    await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='等待重试').click();
+    root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+    jobs=jobs.slice(0,1);await panel.refresh();
+    assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
+    root.querySelectorAll('button').find(b=>b.textContent==='批量重试').click();await wait();
+    const before=reads;await panel.refresh();assert.equal(reads,before);
+    assert.equal(root.querySelector('tbody input').checked,true);
+    assert.deepEqual(calls[0].jobIds,['a']);
+    release();await wait();assert.equal(reads,before+1);
+    assert.match(root.querySelector('.fq-batch-toast').textContent,/暂不可重试/);
+    assert.match(root.querySelector('.fq-batch-countdown').textContent,/3 秒后关闭/);
+  } finally {panel.destroy();}
+});
+
 test('uncertain batch verification is sequential, confirms once and retains failures for retry', async () => {
   const root=createMockElement('div');
   let jobs=['a','b','c'].map(id=>({id,handle:id,state:'uncertain',sources:[]}));
@@ -30,7 +56,11 @@ test('uncertain batch verification is sequential, confirms once and retains fail
     }
     return {ok:true};
   };
-  const panel=mountFollowQueuePanel(root,{accountId:'owner',request});
+  const delays=[];
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request,batchVerifyWait:async ms=>{
+    delays.push(ms);
+    assert.ok(root.querySelectorAll('tbody input').every(input=>input.checked), 'selection stays checked between verification requests');
+  },batchVerifyRandom:()=>0.5});
   const wait=()=>new Promise(r=>setTimeout(r,20));
   try {
     await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
@@ -42,6 +72,7 @@ test('uncertain batch verification is sequential, confirms once and retains fail
     assert.match(root.querySelector('.fq-batch-feedback').textContent,/已处理 0\/3/);
     release();await wait();
     assert.deepEqual(calls.map(m=>m.jobId),['a','b','c']);
+    assert.deepEqual(delays,[3500,3500]);
     assert.ok(calls.every(m=>m.accountId==='owner'&&m.mode==='check'));
     assert.equal(confirmations,2);
     assert.match(root.querySelector('.fq-batch-feedback').textContent,/成功 2，失败 1/);
@@ -102,7 +133,7 @@ test('Grok settings stay in accessible header help instead of the task summary',
     assert.equal(root.querySelector('.fq-switch-checkbox').getAttribute('aria-label'), '定时调度');
     status.click();
     assert.ok(root.querySelector('.fq-drawer'));
-    assert.match(root.querySelector('.fq-drawer').textContent, /AI 生成/);
+    assert.match(root.querySelector('.fq-drawer').textContent, /评论开关/);
     assert.doesNotMatch(root.querySelector('.fq-drawer').textContent, /仅推荐或互粉账号|Grok 自动创作/);
     assert.equal(root.querySelector('#fq_onlyRecommended'), null);
   } finally { panel.destroy(); }
@@ -880,6 +911,11 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.equal(fanBypass.checked, false);
   fanBypass.checked = true;
   fanBypass.dispatchEvent({type:'change',target:{checked:true}});
+  const blueOnly = drawer.querySelector('#fq_blueVerifiedOnly');
+  assert.ok(blueOnly);
+  assert.equal(blueOnly.checked, false);
+  blueOnly.checked = true;
+  blueOnly.dispatchEvent({type:'change',target:{checked:true}});
 
   // Edit fields
   batchInput.value = '10';
@@ -899,9 +935,11 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.equal(savedSettings.autoPublish, true);
   assert.equal(savedSettings.followBackSuffixEnabled, true);
   assert.equal(savedSettings.followBackAllowAll, true);
+  assert.equal(savedSettings.blueVerifiedOnly, true);
   assert.equal(savedSettings.enabled, false);
   root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]').click();
   assert.equal(root.querySelector('#fq_followBackSuffixEnabled').checked,true);
+  assert.equal(root.querySelector('#fq_blueVerifiedOnly').checked,true);
 
   handle.destroy();
 });
@@ -2072,4 +2110,121 @@ test('uncertain evaluation checks only and recovered generation is labeled witho
     assert.match(root.querySelector('.fq-recovery-history').textContent,/原始额度异常/);
     assert.doesNotMatch(root.querySelector('.fq-eval-card').textContent,/重新生成并发布/);
   }finally{panel.destroy()}
+});
+
+test('successful verification shows a three-second toast and refresh does not resurrect it', async()=>{
+ const root=createMockElement('div');let jobs=[{id:'a',handle:'a',state:'uncertain',sources:[]}];
+ const prior=globalThis.confirm;globalThis.confirm=()=>true;
+ const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
+  if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+  if(m.cmd==='followQueueList')return {ok:true,jobs};
+  if(m.cmd==='followQueueVerify'){jobs=[];return {ok:true};}return {ok:true};
+ }});
+ try{
+  await new Promise(r=>setTimeout(r,20));root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
+  root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+  root.querySelectorAll('button').find(b=>b.textContent==='批量核对').click();await new Promise(r=>setTimeout(r,30));
+  assert.match(root.querySelector('.fq-batch-toast').textContent,/3 秒后关闭/);
+  await new Promise(r=>setTimeout(r,1050));assert.match(root.querySelector('.fq-batch-countdown').textContent,/2 秒后关闭/);
+  await panel.refresh();await new Promise(r=>setTimeout(r,2050));assert.equal(root.querySelector('.fq-batch-feedback'),null);
+  await panel.refresh();assert.equal(root.querySelector('.fq-batch-feedback'),null);
+ }finally{panel.destroy();globalThis.confirm=prior;}
+});
+
+
+test('retry selection submits one scoped batch and reports queued rather than followed', async () => {
+  const root=createMockElement('div'),calls=[];
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
+    if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+    if(m.cmd==='followQueueList')return {ok:true,jobs:[{id:'a',handle:'alpha',state:'retry',sources:[]},{id:'b',handle:'beta',state:'retry',sources:[]}]};
+    if(m.cmd==='followQueueRetryBatch'){calls.push(m);return {ok:true,accepted:['a'],rejected:[{id:'b',handle:'beta',reason:'已有操作记录，请先核实结果'}]};}
+    return {ok:true};
+  }});
+  const wait=()=>new Promise(r=>setTimeout(r,20));
+  try {
+    await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='等待重试').click();
+    root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+    root.querySelectorAll('button').find(b=>b.textContent==='批量重试').click();await wait();
+    assert.deepEqual(calls,[{cmd:'followQueueRetryBatch',accountId:'owner',jobIds:['a','b']}]);
+    assert.match(root.querySelector('.fq-batch-feedback').textContent,/已加入优先重试 1 项，未加入 1 项/);
+    assert.match(root.querySelector('.fq-batch-feedback').textContent,/@beta：已有操作记录/);
+    assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
+  } finally {panel.destroy();}
+});
+
+test('switching filter clears batch timer, dismisses toast, and resets row selection', async () => {
+  const root = createMockElement('div');
+  let jobs = [
+    {id: 'a', handle: 'alpha', state: 'uncertain', sources: []},
+    {id: 'b', handle: 'beta', state: 'retry', sources: []}
+  ];
+  const prior = globalThis.confirm; globalThis.confirm = () => true;
+  const panel = mountFollowQueuePanel(root, {accountId: 'owner', request: async m => {
+    if (m.cmd === 'followQueueSettings') return {ok: true, settings: DEFAULT_SETTINGS};
+    if (m.cmd === 'followQueueList') return {ok: true, jobs};
+    if (m.cmd === 'followQueueVerify') { jobs = jobs.filter(j => j.id !== m.jobId); return {ok: true}; }
+    return {ok: true};
+  }});
+  const wait = () => new Promise(r => setTimeout(r, 20));
+  try {
+    await wait();
+    root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '待核实').click();
+    await wait();
+    root.querySelector('thead input').dispatchEvent({type: 'change', target: {checked: true}});
+    root.querySelectorAll('button').find(b => b.textContent === '批量核对').click();
+    await wait();
+    assert.ok(root.querySelector('.fq-batch-toast'), 'toast is shown after full success');
+
+    // Switch filter tab
+    root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '等待重试').click();
+    await wait();
+    assert.equal(root.querySelector('.fq-batch-feedback'), null, 'toast dismissed on filter switch');
+
+    // Select row in retry tab
+    root.querySelector('thead input').dispatchEvent({type: 'change', target: {checked: true}});
+    assert.ok(root.querySelector('.fq-selection-info'), 'selection info present');
+
+    // Switch filter tab again to '全部'
+    root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '全部状态').click();
+    await wait();
+    assert.equal(root.querySelector('.fq-selection-info'), null, 'selection cleared across filter switch');
+  } finally {
+    panel.destroy();
+    globalThis.confirm = prior;
+  }
+});
+
+test('triggering next action clears existing batch toast and timer', async () => {
+  const root = createMockElement('div');
+  let jobs = [
+    {id: 'a', handle: 'alpha', state: 'uncertain', sources: []},
+    {id: 'b', handle: 'beta', state: 'uncertain', sources: []}
+  ];
+  const prior = globalThis.confirm; globalThis.confirm = () => true;
+  const panel = mountFollowQueuePanel(root, {accountId: 'owner', request: async m => {
+    if (m.cmd === 'followQueueSettings') return {ok: true, settings: DEFAULT_SETTINGS};
+    if (m.cmd === 'followQueueList') return {ok: true, jobs};
+    if (m.cmd === 'followQueueVerify') { return {ok: true}; }
+    return {ok: true};
+  }});
+  const wait = () => new Promise(r => setTimeout(r, 20));
+  try {
+    await wait();
+    root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '待核实').click();
+    await wait();
+    // Select only item a
+    root.querySelectorAll('tbody input')[0].dispatchEvent({type: 'change', target: {checked: true}});
+    root.querySelectorAll('button').find(b => b.textContent === '批量核对').click();
+    await wait();
+    assert.ok(root.querySelector('.fq-batch-toast'), 'toast is displayed');
+
+    // Trigger single verify on remaining item b as next action
+    const singleVerifyBtn = root.querySelectorAll('button').find(b => b.getAttribute('aria-label') === '核对关系');
+    assert.ok(singleVerifyBtn, 'single verification control must exist');
+    singleVerifyBtn.click();
+    assert.equal(root.querySelector('.fq-batch-toast'), null, 'toast cleared when next action starts');
+  } finally {
+    panel.destroy();
+    globalThis.confirm = prior;
+  }
 });

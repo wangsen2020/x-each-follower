@@ -11,7 +11,7 @@ import {loadExperienceContext} from '../src/features/knowledge/learning-context.
 async function fixture(t){
   const indexedDB=new IDBFactory(),repository=createLearningStore({name:'wisdom-test',dependencies:{indexedDB,IDBKeyRange}}),library=createKnowledgeStore({indexedDB,IDBKeyRange}),review=createKnowledgeReviewService({store:library});
   let account='123',count=0,calls=0,queries=0,mode='ok';
-  await repository.saveSettings({ownerId:'123',bot:'bot1',dailyBudget:5});
+  await repository.saveSettings({ownerId:'123',bot:'bot1',dailyBudget:5,writingKnowledgeEnabled:true});
   for(const [id,statement] of [['a','补充具体的技术取舍'],['b','缺少原帖依据时不虚构数字']])await review.createCandidate({ownerId:'123',id,statement,scope:{sourceChannel:'manual'}});
   await repository.addSources([{ownerId:'123',knowledgeId:'a',key:'analysis-a:111',channel:'high_analysis',postId:'111',authorId:'123',analysisId:'analysis-a'}]);
   const result=async()=>{

@@ -1,6 +1,6 @@
 import {assertProfileAvailable,observeProfile,unavailableFromProfileResponse,profileUnavailableError} from './profile-access.js';
 // Transport owns session mechanics; confirmation, scheduling and retries belong to callers.
-export const X_QUERY_OPERATIONS=Object.freeze(['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery']);
+export const X_QUERY_OPERATIONS=Object.freeze(['HomeTimeline','HomeLatestTimeline','UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery']);
 const FORMS=Object.freeze({Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'});
 const SESSION_HEADERS=['authorization','x-csrf-token','x-twitter-auth-type','x-twitter-active-user','x-twitter-client-language'];
 
@@ -65,7 +65,7 @@ export async function executeXRequestOnPage(request) {
   };
   try {
     if(!['https://x.com','https://twitter.com'].includes(location.origin)||location.origin!==request.origin)throw new Error('X 请求页面来源不匹配');
-    const allowedQueries=['UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
+    const allowedQueries=['HomeTimeline','HomeLatestTimeline','UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery'];
     const allowedForms={Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'};
     if(request.kind==='query') {
       const match=/^\/i\/api\/graphql\/[\w-]+\/([\w]+)\?/.exec(request.path||'');

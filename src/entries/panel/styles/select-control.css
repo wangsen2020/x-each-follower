@@ -1,0 +1,19 @@
+/* Shared native select primitive. Legacy controls and PanelSelect use the same rule. */
+body select:not([multiple]):not([size]),
+body select[size="1"] {
+  appearance:none !important;
+  -webkit-appearance:none !important;
+  box-sizing:border-box;
+  padding-right:32px !important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%2352675d' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat:no-repeat !important;
+  background-position:right 10px center !important;
+  background-size:12px 12px !important;
+  text-overflow:ellipsis;
+}
+/* Three digits, text inset, arrow and its 10px right inset must all fit. */
+body :is(.monitor-pagination,.panel-pager,.post-page-size,.lb-page-size) select {
+  width:72px !important;
+  min-width:72px !important;
+  padding-left:10px !important;
+}

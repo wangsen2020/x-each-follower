@@ -41,3 +41,12 @@ test('click contains open errors and preserves the notification', async () => {
   });
   await handler('follow-queue-123'); assert.equal(warned, true);
 });
+
+test('rate-limit and newly added health notifications open their handling page after worker restart',async()=>{
+  const calls=[];
+  const handler=createNotificationClickHandler({api:{notifications:{clear:async id=>calls.push(['clear',id])}},launcher:{openPanel:async(window,tab)=>{calls.push(['open',tab]);return {ok:true};}}});
+  for(const id of ['xf-health-x-rate-limit','xf-health-future-alert']){
+    calls.length=0;await handler(id);assert.deepEqual(calls,[['open','followQueue'],['clear',id]]);
+  }
+  assert.equal(notificationSource('xf-health-unfollow').tab,'unreciprocated');
+});

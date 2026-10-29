@@ -1,0 +1,6 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>批量重试验收</title><style>body{font:14px sans-serif;margin:24px;background:#f4f8f5}button{cursor:pointer}</style><div id="root"></div><script type="module">
+import {mountFollowQueuePanel,DEFAULT_SETTINGS} from '../../src/entries/panel/follow-queue-panel.js';
+import '../../src/entries/panel/styles/follow-queue-panel.css';
+window.calls=[];let jobs=['alpha','beta'].map(id=>({id,handle:id,state:'retry',stage:'retry',sources:[],profile:{name:'测试账号 '+id}}));
+window.panel=mountFollowQueuePanel(document.querySelector('#root'),{accountId:'fixture-owner',request:async m=>{if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};if(m.cmd==='followQueueList')return {ok:true,jobs};if(m.cmd==='followQueueRetryBatch'){window.calls.push(m);jobs=jobs.map(j=>({...j,manualRetryRequestedAt:Date.now()}));return {ok:true,accepted:m.jobIds,rejected:[]};}return {ok:true};}});
+</script></html>

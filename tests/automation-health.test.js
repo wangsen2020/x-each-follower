@@ -1,10 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HEALTH_KEY,HEALTH_NOTICE_KEY,HEALTH_ALARM,HEALTH_REMINDER_MS,reportBackupHealth,reportUnfollowHealth,createAutomationHealthRuntime} from '../src/shared/automation-health.js';
+import {HEALTH_KEY,HEALTH_NOTICE_KEY,HEALTH_ALARM,HEALTH_REMINDER_MS,reportBackupHealth,reportUnfollowHealth,createAutomationHealthRuntime,retireApiStatusPause} from '../src/shared/automation-health.js';
 function fixture(){const data={},shown=[],cleared=[],alarms=new Map(),listeners=[];let clock=1000000;
  const local={get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,structuredClone(data[k])])),set:async value=>Object.assign(data,structuredClone(value))};
  const api={storage:{local,onChanged:{addListener:f=>listeners.push(f)}},runtime:{getURL:p=>'chrome-extension://ext/'+p},notifications:{getPermissionLevel:async()=>'granted',clear:async id=>cleared.push(id),create:async(id,options)=>shown.push({id,options})},alarms:{create:async(k,v)=>alarms.set(k,v),clear:async k=>alarms.delete(k),onAlarm:{addListener(){}}}};
  return {api,data,shown,cleared,alarms,now:()=>clock,advance:ms=>clock+=ms};}
+
+test('retiring API-status pause preserves history, settings and unrelated alerts and restores missed plans',async()=>{
+ const f=fixture();f.api.alarms.get=async name=>f.alarms.get(name);
+ f.data[HEALTH_KEY]={alerts:{'x-rate-limit':{deferredAlarms:['queue']},logs:{reason:'keep'}}};
+ f.data.unreciprocatedSettings={autoUnfollow:true};
+ f.data.autoUnfollowState={accounts:{1:{used:5,pendingItems:[{user:{id:'12'}}],scheduler:{phase:'paused',reason:'X 请求受限（HTTP 429），自动调度已暂停'}}}};
+ await retireApiStatusPause(f.api);
+ assert.equal(f.data[HEALTH_KEY].alerts['x-rate-limit'],undefined);assert.equal(f.data[HEALTH_KEY].alerts.logs.reason,'keep');
+ assert.equal(f.data.unreciprocatedSettings.autoUnfollow,true);assert.equal(f.data.autoUnfollowState.accounts[1].used,5);assert.equal(f.data.autoUnfollowState.accounts[1].pendingItems.length,1);assert.equal(f.data.autoUnfollowState.accounts[1].scheduler.phase,'waiting');assert.ok(f.alarms.has('queue'));
+ await retireApiStatusPause(f.api);assert.equal(f.alarms.size,1);
+});
 test('unresolved health persists through acknowledgement, repeated failures, and worker restart',async()=>{
  const f=fixture();await reportBackupHealth({ok:false,error:'sequence conflict',pending:8},f.api.storage.local,f.now());
  const runtime=createAutomationHealthRuntime({api:f.api,now:f.now});await runtime.sync();assert.equal(f.shown.length,1);assert.equal(f.shown[0].options.requireInteraction,true);

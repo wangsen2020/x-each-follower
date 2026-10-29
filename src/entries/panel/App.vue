@@ -6,6 +6,7 @@
     <MonitorSection />
     <CandidatesSection />
     <CommentsSection />
+    <MutualCommentsSection />
     <PostTrackingSection />
     <LeaderboardSection />
     <UnreciprocatedSection />
@@ -32,6 +33,7 @@ import FollowQueueSection from './pages/FollowQueueSection.vue';
 import MonitorSection from './pages/MonitorSection.vue';
 import CandidatesSection from './pages/CandidatesSection.vue';
 import CommentsSection from './pages/CommentsSection.vue';
+import MutualCommentsSection from './pages/MutualCommentsSection.vue';
 import PostTrackingSection from './pages/PostTrackingSection.vue';
 import LeaderboardSection from './pages/LeaderboardSection.vue';
 import UnreciprocatedSection from './pages/UnreciprocatedSection.vue';

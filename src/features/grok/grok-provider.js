@@ -8,7 +8,7 @@ export async function selectGrokProvider(value,{storage=globalThis.chrome?.stora
   await storage.set({[GROK_PROVIDER_KEY]:value});return {provider:value};
 }
 export async function routeGrokRequest(primary,prompt,options={}){
-  const {service=grokBotRelay,localService=grokLocal,readProvider=readGrokProvider,relayJobId,...generationOptions}=options;
+  const {service=grokBotRelay,localService=grokLocal,readProvider=readGrokProvider,provider:selectedProvider,relayJobId,...generationOptions}=options;
   if(relayJobId)return relayJobId.startsWith('local:')?localService.resume(relayJobId):service.resume(relayJobId);
-  const provider=await readProvider();if(generationOptions.expectedBot&&provider!=='grok-local')return {ok:false,reason:'知识增强固定 Bot 通道已变化，已停止提交'};return provider==='grok-local'?localService.generate(prompt,generationOptions):provider==='grok-bot'?service.generate(prompt,generationOptions):primary();
+  const provider=selectedProvider ?? await readProvider();if(!['grok','grok-local','grok-bot'].includes(provider))throw Error('请选择 AI 引擎');if(generationOptions.expectedBot&&provider!=='grok-local')return {ok:false,reason:'固定 Bot 通道已变化，已停止提交'};return provider==='grok-local'?localService.generate(prompt,generationOptions):provider==='grok-bot'?service.generate(prompt,generationOptions):primary();
 }
