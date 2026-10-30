@@ -1,14 +1,15 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>互粉评论 · 隔离验收</title>
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>首页跟评 · 隔离验收</title>
 <link rel="stylesheet" href="/src/entries/panel/styles/select-control.css"><link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/admin.css"><link rel="stylesheet" href="/src/entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="/src/entries/panel/styles/follow-queue-panel.css">
 <style>body main.preview{display:block;width:100%;max-width:1100px;height:100%;margin:auto;padding:12px;overflow:auto}main.preview #app{margin:0;background:white;min-width:0}main.preview>*{margin-left:0}</style>
-<main class="preview"><p>互粉评论 · 隔离验收，无真实发送</p><div id="app"></div></main>
+<main class="preview"><p>首页跟评 · 隔离验收，无真实发送</p><div id="app"></div></main>
 <script type="module">
 import {createApp} from 'vue';
 const config={ownerId:'123',scanEnabled:false,commentEnabled:true,scanProvider:'grok',commentProvider:'grok',scanIntervalMinutes:10,scanIntervalMaxMinutes:15,commentIntervalMinutes:3,commentIntervalMaxMinutes:8,scrollRounds:2,batchSize:30,perRun:1,dailyLimit:300,followBackSuffixEnabled:false,quoteTagsEnabled:false,quoteSelectedTags:['互关','互关呀','互关互赞','互关互粉','互关必回','FollowBack','FollowForFollow','MutualFollow','F4F','LetsConnect'],quoteCustomTags:[]};
 const items=[{ownerId:'123',postId:'111',handle:'example',text:'正在做独立产品，欢迎互关交流，分享开发中的小心得。',reply:'很期待看到你的开发记录，一起交流产品思路，也欢迎关注！',reason:'作者明确邀请互关和产品交流',status:'posted',url:'https://x.com/example/status/111',publishedPostUrl:'https://x.com/me/status/222',createdAt:Date.now(),knowledge:{wisdomVersion:3}},{ownerId:'123',postId:'112',handle:'example_two',text:'今天读了一本关于设计的书。',reason:'未表达互关意愿',status:'skipped',url:'https://x.com/example_two/status/112',createdAt:Date.now()}];
+items.unshift(...[1999,1200,0].map((weight,index)=>({ownerId:'123',postId:String(200+index),handle:'priority_'+weight,text:'用于核对独立权重列的产品交流样本。',tag:'mutual',status:'ready',following:index<2?false:null,priority:{weight,engagementScore:index===0?999:index===1?1200:null},url:'https://x.com/example/status/'+(200+index),createdAt:Date.now()})));
 globalThis.chrome={runtime:{getURL:p=>'/'+p,sendMessage:async m=>{if(m.action==='save')Object.assign(config,m.config);return {ok:true,account:{accountId:'123',handle:'me'},config:{...config},items,allTotal:items.length,total:items.length,page:1,scans:[{at:Date.now(),status:'completed',received:18,added:2}],running:{scan:false,comment:false}};}},storage:{onChanged:{addListener(){},removeListener(){}}}};
 const {panelNavigationController}=await import('/src/entries/panel/composables/usePanelNavigation.js');panelNavigationController.setTab('mutualComments');
 const {default:Page}=await import('/src/entries/panel/pages/MutualCommentsSection.vue');createApp(Page).mount('#app');
 const {default:Tips}=await import('/src/entries/panel/components/InfoTipLayer.vue');const root=document.createElement('div');document.body.append(root);createApp(Tips).mount(root);
-window.previewConfig=config;
+window.previewConfig=config;window.previewItems=items;
 </script></html>

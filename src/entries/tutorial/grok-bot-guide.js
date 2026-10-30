@@ -56,6 +56,6 @@ document.querySelector('#copyToken').addEventListener('click',()=>{const token=d
 document.querySelector('#copyAll').addEventListener('click',()=>{
   const instruction=document.querySelector('#botInstruction').textContent;
   const body=document.querySelector('#agentPrompt').textContent;
-  const content='# XFollower Grok Hook 备用通道实施包\n\n'+body+'\n\n## 配置教程\n'+[...document.querySelectorAll('main>section')].filter(s=>!['agent','code'].includes(s.id)).map(s=>s.innerText).join('\n\n')+'\n\n## Grok 固定指令\n'+instruction+'\n\n'+files.map(([,name,source])=>'## '+name+'\n```\n'+source+'\n```').join('\n\n');
+  const content='# XFollower 云端事件 Cloud Event 备用通道实施包\n\n'+body+'\n\n## 配置教程\n'+[...document.querySelectorAll('main>section')].filter(s=>!['agent','code'].includes(s.id)).map(s=>s.innerText).join('\n\n')+'\n\n## Grok 固定指令\n'+instruction+'\n\n'+files.map(([,name,source])=>'## '+name+'\n```\n'+source+'\n```').join('\n\n');
   void copy(content);
 });

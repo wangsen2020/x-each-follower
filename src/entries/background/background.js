@@ -663,7 +663,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (cmd === 'mutualComments') {
-    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'互粉评论仅允许从管理面板操作'});return false;}
+    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'首页跟评仅允许从管理面板操作'});return false;}
     mutualComments.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:error.message}));
     return true;
   }

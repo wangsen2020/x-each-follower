@@ -21,7 +21,12 @@ export function parseHomeTimeline(json) {
       const author=tweet.core?.user_results?.result,handle=author?.core?.screen_name||author?.legacy?.screen_name;
       const postId=String(tweet.rest_id||''),text=tweet.note_tweet?.note_tweet_results?.result?.text||legacy.full_text;
       if(!/^\d+$/.test(postId)||!/^\w{1,15}$/.test(handle||'')||!text)continue;
-      posts.set(postId,{postId,handle,authorId:author.rest_id,text,url:`https://x.com/${handle}/status/${postId}`});
+      const flags=[author.relationship_perspectives?.following,author.relationship?.following,author.legacy?.following,author.following].filter(v=>typeof v==='boolean');
+      const following=flags.length&&new Set(flags).size===1?flags[0]:null;
+      const metric=value=>Number.isFinite(value)&&value>=0?value:null;
+      posts.set(postId,{postId,handle,authorId:author.rest_id,text,url:`https://x.com/${handle}/status/${postId}`,
+        following,replyCount:metric(legacy.reply_count),repostCount:metric(legacy.retweet_count),
+        likeCount:metric(legacy.favorite_count),bookmarkCount:metric(legacy.bookmark_count)});
     }
   }
   return {posts:[...posts.values()],cursor};
@@ -39,6 +44,8 @@ export function createHomeScanner({api,openPage,network=createXNetworkClient(api
       await check(session);
       if(!session?.native)throw Error('首页网络响应尚未就绪，请稍后重试');
       const operation=session.native.op;
+      // Pin this scan to its native first-page request, not another tab's template.
+      const requestOptions=session.native.template?{template:session.native.template}:{};
       // Recommendations are reordered: one old snowflake is not a safe stopping point.
       const boundary=new Set(anchor?.operation===operation?(anchor.postIds||[]):[]);
       let batch=parseHomeTimeline(session.native.json),pages=0,duplicates=0,stopped='page-limit';
@@ -48,7 +55,8 @@ export function createHomeScanner({api,openPage,network=createXNetworkClient(api
         let fresh=0,hits=0;
         for(const post of batch.posts){
           if(boundary.has(post.postId))hits++;
-          if((retiredPostId&&BigInt(post.postId)<=BigInt(retiredPostId))||known.has(post.postId)||collected.has(post.postId)){duplicates++;continue;}
+          if(retiredPostId&&BigInt(post.postId)<=BigInt(retiredPostId)){duplicates++;continue;}
+          if(known.has(post.postId)||collected.has(post.postId)){duplicates++;collected.set(post.postId,post);continue;}
           collected.set(post.postId,post);fresh++;
         }
         await checkpoint({posts:[...collected.values()],anchor:{operation,postIds:head,cursor:batch.cursor,at:Date.now()},pages,duplicates});
@@ -58,8 +66,8 @@ export function createHomeScanner({api,openPage,network=createXNetworkClient(api
         if(pages>=rounds+1)break;
         seenCursors.add(batch.cursor);
         await sleep(1200);await check(await read());
-        const response=await network.query(page.tabId,operation,{count:20,cursor:batch.cursor});
-        if(response.status!==200)throw Error(response.error||`首页接口请求失败（${response.status}）`);
+        const response=await network.query(page.tabId,operation,{count:20,cursor:batch.cursor},requestOptions);
+        if(response.status!==200||response.error)throw Error(`首页第 ${pages+1} 页读取失败（${operation}，HTTP ${response.status}）：${response.error||'接口未返回有效数据'}`);
         batch=parseHomeTimeline(response.json);
       }
       return {posts:[...collected.values()],anchor:{operation,postIds:head,cursor:batch.cursor,at:Date.now()},pages,duplicates,stopped,source:'network'};

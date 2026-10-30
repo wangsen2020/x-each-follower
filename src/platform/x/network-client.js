@@ -44,7 +44,10 @@ export function buildXRequest(operation,template,variables={}) {
     return {operation,origin:template.origin,method:'POST',kind:'mutation',headers,variables:{tweet_id:variables.tweet_id}};
   }
   if(!/^[\w-]+$/.test(template.queryId || '')||template.op&&template.op!==operation)throw new Error(`未捕获 ${operation} 模板`);
-  const query=new URLSearchParams({variables:JSON.stringify(prepareNetworkVariables(template.variables,variables)),...(template.features?{features:template.features}:{}),...(template.fieldToggles?{fieldToggles:template.fieldToggles}:{})});
+  const preparedVariables=prepareNetworkVariables(template.variables,variables);
+  // X accepts some native first-page requests without this flag but rejects pagination (422).
+  if(['HomeTimeline','HomeLatestTimeline'].includes(operation)&&typeof preparedVariables.includePromotedContent!=='boolean')preparedVariables.includePromotedContent=true;
+  const query=new URLSearchParams({variables:JSON.stringify(preparedVariables),...(template.features?{features:template.features}:{}),...(template.fieldToggles?{fieldToggles:template.fieldToggles}:{})});
   return {operation,origin:template.origin,path:`/i/api/graphql/${template.queryId}/${operation}?${query}`,method:'GET',kind:'query',headers};
 }
 
@@ -148,7 +151,7 @@ export function createXNetworkClient(api=globalThis.chrome) {
         const cached = await api.scripting.executeScript({target:{tabId},world:'MAIN',func:readNativeProfileResponse,args:[handle]});
         if (cached?.[0]?.result?.status === 200) return cached[0].result;
       }
-      const {networkTemplates={}}=await api.storage.local.get('networkTemplates');
+      const {networkTemplates={}}=options.template ? {networkTemplates:{[operation]:options.template}} : await api.storage.local.get('networkTemplates');
       template=networkTemplates[operation];
       if(FORMS[operation]||['DeleteTweet','RemoveFollower'].includes(operation))template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
       if(!template)return {status:0,json:null,error:`未捕获 ${operation} 模板`,attempted:false};
@@ -167,7 +170,7 @@ export function createXNetworkClient(api=globalThis.chrome) {
     }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
   }
   return {
-    query:(tabId,operation,variables)=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
+    query:(tabId,operation,variables,options={})=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables,options):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),
     removeFollower:(tabId,targetId)=>request(tabId,'RemoveFollower',{target_user_id:targetId}),
     profile:(tabId,handle,options)=>request(tabId,'UserByScreenName',{screen_name:String(handle).replace(/^@/,'')},options),
     userPosts:(tabId,userId,variables={})=>request(tabId,'UserTweets',{...variables,userId}),
