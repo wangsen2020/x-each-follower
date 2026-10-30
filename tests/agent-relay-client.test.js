@@ -45,3 +45,9 @@ test('additive shared connection preserves the original Grok config and job rows
 test('a terminal failed result remains recorded without masquerading as an ongoing generation',async()=>{
  const f=fixture();f.setState('failed');const result=await f.client.generate('sample');assert.equal(result.ok,false);assert.equal(result.pending,false);assert.equal(f.jobs.get(result.jobId).status,'failed');
 });
+
+test('an unavailable engine provides an actionable message and preserves the configured session',async()=>{
+ const config={engine:'antigravity',port:8787,token:'secret',bot:'original',testedAt:42};let saved=false;
+ const client=createAgentRelayClient({engine:'antigravity',repository:{config:async()=>config,saveConfig:async()=>{saved=true;}},fetchImpl:async()=>({ok:false,status:503,json:async()=>({error:'unavailable'})})});
+ await assert.rejects(client.list(config),/暂不可用.*AgentRelay.*客户端/);assert.equal(saved,false);assert.equal((await client.configuration()).bot,'original');
+});
