@@ -45,3 +45,13 @@ test('additive shared connection preserves the original Grok config and job rows
 test('a terminal failed result remains recorded without masquerading as an ongoing generation',async()=>{
  const f=fixture();f.setState('failed');const result=await f.client.generate('sample');assert.equal(result.ok,false);assert.equal(result.pending,false);assert.equal(f.jobs.get(result.jobId).status,'failed');
 });
+
+ test('session menu labels collapse whitespace and controls, bound long text and retain stable IDs',async()=>{
+ const {sessionLabel}=await import('../src/features/grok/agent-relay-client.js');
+ assert.equal(sessionLabel(' \n\t标题\u200b '),'标题');
+ assert.match(sessionLabel('  ','thread-id'),/未命名会话.*thread-id/);
+ assert.equal(Array.from(sessionLabel('中'.repeat(5000))).length,48);
+ const client=createAgentRelayClient({engine:'codex',fetchImpl:async()=>({ok:true,json:async()=>({sessions:[{id:'stable',name:'\n'.repeat(10)+'长'.repeat(9000)}]})})});
+ const rows=await client.list({baseUrl:'http://127.0.0.1:8787',token:'test',engine:'codex'});
+ assert.equal(rows[0].id,'stable');assert.equal(rows[0].name.length,48);assert.ok(!rows[0].name.includes('\n'));
+ });

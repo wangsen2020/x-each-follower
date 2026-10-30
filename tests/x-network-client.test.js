@@ -154,3 +154,17 @@ test('failed reads leave no pending cache and permit the next attempt',async()=>
    await executeXRequestOnPage(req);assert.equal(calls.length,2);assert.equal(window.__xefPendingReads.size,0);
  },()=>{throw Error('offline');});
 });
+test('query can pin a native page template without reading a competing global cache',async()=>{
+ const native={...template,op:'HomeLatestTimeline',queryId:'same-page',features:'{"required_flag":true}'};let sent;
+ const api={storage:{local:{get:async()=>{throw Error('global cache must not be used');}}},scripting:{executeScript:async args=>{if(args.func===executeXRequestOnPage){sent=args.args[0];return [{result:{status:200,json:{data:{}}}}];}return [{result:true}];}}};
+ const r=await createXNetworkClient(api).query(7,'HomeLatestTimeline',{cursor:'next'},{template:native});
+ assert.equal(r.status,200);const url=new URL(sent.path,'https://x.com');assert.match(url.pathname,/same-page/);assert.equal(JSON.parse(url.searchParams.get('features')).required_flag,true);assert.equal(JSON.parse(url.searchParams.get('variables')).cursor,'next');
+});
+test('home pagination supplies required includePromotedContent while preserving explicit false',()=>{
+ for(const op of ['HomeTimeline','HomeLatestTimeline'])for(const flag of [undefined,null,true,false]){
+  const request=buildXRequest(op,{...template,op,variables:JSON.stringify({count:20,includePromotedContent:flag})},{cursor:'next'});
+  const vars=JSON.parse(new URL(request.path,'https://x.com').searchParams.get('variables'));
+  assert.equal(vars.includePromotedContent,typeof flag==='boolean'?flag:true);assert.equal(vars.cursor,'next');
+ }
+ const request=buildXRequest('Followers',template,{cursor:'next'});assert.equal(Object.hasOwn(JSON.parse(new URL(request.path,'https://x.com').searchParams.get('variables')),'includePromotedContent'),false);
+});

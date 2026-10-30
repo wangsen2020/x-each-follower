@@ -41,7 +41,7 @@
     const u = new URL(String(url), location.origin); const q = u.searchParams;
     let vars = null; try { vars = JSON.parse(q.get('variables') || '{}'); } catch {}
     if (vars?.cursor) return;
-    if (['HomeTimeline','HomeLatestTimeline'].includes(op) && json && !json.errors?.length && location.pathname==='/home') window.__xefNativeHome={op,json,at:Date.now()};
+    if (['HomeTimeline','HomeLatestTimeline'].includes(op) && json && !json.errors?.length && location.pathname==='/home') window.__xefNativeHome={op,json,at:Date.now(),template:{op,queryId:match[1],origin:u.origin,features:q.get('features'),fieldToggles:q.get('fieldToggles'),variables:q.get('variables'),headers:head}};
     // Reuse only the native response from this page, never an extension replay.
     if (op === 'UserByScreenName' && json && !json.errors?.length && u.origin === location.origin) {
       const handle = String(vars?.screen_name || '').toLowerCase();

@@ -34,7 +34,17 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
     await db.scans.bulkDelete(scans.slice(10).map(row=>row.id));
   };
   const prune=ownerId=>db.transaction('rw',db.posts,db.settings,db.batches,db.scans,()=>trim(ownerId));
-  const add=async rows=>{for(const row of rows){const config=await db.settings.get(row.ownerId);if(config?.retiredPostId&&newer(row.postId,config.retiredPostId)<=0)continue;if(!await db.posts.get([row.ownerId,row.postId]))await db.posts.add(row);}};
+  const add=async rows=>{for(const row of rows){
+    const config=await db.settings.get(row.ownerId);
+    const key=[row.ownerId,row.postId],existing=await db.posts.get(key);
+    if(existing){
+      // Refresh observations only, never reset labels, drafts or publication receipts.
+      if(existing.authorId && row.authorId && String(existing.authorId)!==String(row.authorId))continue;
+      const observations={};
+      for(const field of ['following','replyCount','repostCount','likeCount','bookmarkCount'])if(Object.hasOwn(row,field))observations[field]=row[field];
+      if(Object.keys(observations).length)await db.posts.update(key,observations);
+    }else if(!config?.retiredPostId||newer(row.postId,config.retiredPostId)>0)await db.posts.add(row);
+  }};
   return {db,
     enabled:async phase=>(await db.settings.toArray()).some(row=>row[phase+'Enabled']),
     config:id=>db.settings.get(id),saveConfig:row=>db.settings.put(row),updateConfig:(id,value)=>db.settings.update(id,value),

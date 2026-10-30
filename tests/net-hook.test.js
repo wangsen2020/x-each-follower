@@ -139,3 +139,11 @@ test('native profile capture is tab-local and ignores internal requests, failure
    await new Promise(r=>setTimeout(r,10));assert.equal(x.window.__xefNativeProfile,undefined);
  }
 });
+test('native home response retains its own complete request template for pagination',async()=>{
+ const f=fixture(new Response(JSON.stringify({data:{home:{}}})),{origin:'https://x.com',pathname:'/home'});
+ const params=new URLSearchParams({variables:JSON.stringify({count:20,requestContext:'launch'}),features:JSON.stringify({required_flag:true}),fieldToggles:JSON.stringify({withArticlePlainText:false})});
+ await f.window.fetch('https://x.com/i/api/graphql/native/HomeLatestTimeline?'+params,{headers:{authorization:'Bearer fixture','x-csrf-token':'fixture'}});
+ await until(()=>f.window.__xefNativeHome);
+ const t=f.window.__xefNativeHome.template;
+ assert.equal(t.queryId,'native');assert.equal(t.op,'HomeLatestTimeline');assert.equal(t.features,params.get('features'));assert.equal(t.variables,params.get('variables'));assert.equal(t.fieldToggles,params.get('fieldToggles'));assert.equal(t.headers['x-csrf-token'],'fixture');
+});

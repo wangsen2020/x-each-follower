@@ -17,3 +17,14 @@ body :is(.monitor-pagination,.panel-pager,.post-page-size,.lb-page-size) select 
   min-width:72px !important;
   padding-left:10px !important;
 }
+
+/* Keep AI session menus inside the viewport, including very long titles. */
+@supports (appearance:base-select) {
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select), body select:is(#ai-session,#fq_generationBot,.ai-session-select)::picker(select) { appearance:base-select !important; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select) { display:inline-flex; align-items:center; line-height:normal; overflow:hidden; white-space:nowrap; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select)::picker-icon { display:none; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select)::picker(select) { box-sizing:border-box; width:anchor-size(width); min-width:min(320px,calc(100vw - 24px)); max-width:calc(100vw - 24px); max-height:320px; overflow:auto; padding:4px; border:1px solid #b9cec0; border-radius:6px; background:#fff; color:#24483b; font:12px/1.6 system-ui; box-shadow:0 4px 16px #18302e26; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select) option { padding:6px 8px; white-space:normal; overflow-wrap:anywhere; color:#24483b; background:#fff; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select) option:checked { background:#e4f0e8; }
+ body select:is(#ai-session,#fq_generationBot,.ai-session-select) option:hover { background:#edf5ef; }
+}
