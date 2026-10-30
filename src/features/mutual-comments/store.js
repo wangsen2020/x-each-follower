@@ -1,5 +1,6 @@
 import Dexie from 'dexie';
 import {defaults} from './model.js';
+export const MUTUAL_RECORD_LIMIT=5000;
 export function createMutualCommentStore({name='xef-mutual-comments-v1',dependencies}={}){
   const db=new Dexie(name,dependencies);
   db.version(1).stores({settings:'ownerId',posts:'[ownerId+postId],ownerId,[ownerId+createdAt]',scans:'id,ownerId'});
@@ -17,14 +18,16 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
   const newer=(a,b)=>a.length-b.length||a.localeCompare(b);
   const trim=async ownerId=>{
     const rows=await db.posts.where('ownerId').equals(ownerId).toArray();
-    rows.sort((a,b)=>b.createdAt-a.createdAt||newer(b.postId,a.postId));
-    const expired=rows.slice(1000);
+    // Protect paid-for work and mutual posts; remove non-mutual records first.
+    const priority=row=>['publishing','generating'].includes(row.status)||row.tag==='tagging'?3:row.tag==='mutual'?2:row.tag==='not_mutual'?0:1;
+    rows.sort((a,b)=>priority(b)-priority(a)||b.createdAt-a.createdAt||newer(b.postId,a.postId));
+    const expired=rows.slice(MUTUAL_RECORD_LIMIT);
     if(expired.length){
       await db.posts.bulkDelete(expired.map(row=>[ownerId,row.postId]));
       const config=await db.settings.get(ownerId),retired=expired.map(r=>r.postId).filter(id=>/^\d+$/.test(id)).sort(newer).at(-1);
       if(retired&&(!config?.retiredPostId||newer(retired,config.retiredPostId)>0))await db.settings.update(ownerId,{retiredPostId:retired});
     }
-    const retained=rows.slice(0,1000),refs=new Set(retained.map(row=>row.tagBatchId));
+    const retained=rows.slice(0,MUTUAL_RECORD_LIMIT),refs=new Set(retained.map(row=>row.tagBatchId));
     const batches=await db.batches.where('ownerId').equals(ownerId).toArray();
     await db.batches.bulkDelete(batches.filter(b=>!refs.has(b.id)).map(b=>b.id));
     const scans=(await db.scans.where('ownerId').equals(ownerId).toArray()).sort((a,b)=>b.at-a.at);

@@ -41,12 +41,12 @@ test('prepared batch resumes after worker restart and storage failure rolls back
  await assert.rejects(f.store.checkpoint('123',[{ownerId:'123'}],{postIds:['bad']},{id:'bad',ownerId:'123'}));assert.equal((await f.store.config('123')).anchor,undefined);
 });
 
-test('retention caps each owner at 1000, cleans orphan history and keeps anchor and latest records',async t=>{
- const f=await fixture(t);const rows=Array.from({length:1005},(_,i)=>({...post(String(10000+i)),ownerId:'123',createdAt:i,tag:'pending',status:'idle',tagBatchId:i===0?'expired':i===1004?'keep':undefined}));
+test('retention caps each owner at 5000, cleans orphan history and keeps anchor and latest records',async t=>{
+ const f=await fixture(t);const rows=Array.from({length:5005},(_,i)=>({...post(String(10000+i)),ownerId:'123',createdAt:i,tag:'pending',status:'idle',tagBatchId:i===0?'expired':i===5004?'keep':undefined}));
  await f.store.addPosts([{...post('99999'),ownerId:'456',createdAt:1,tag:'pending',status:'idle'}]);
- await f.store.saveBatch({id:'expired',ownerId:'123',postIds:['10000']});await f.store.saveBatch({id:'keep',ownerId:'123',postIds:['11004']});
- await f.store.checkpoint('123',rows,{postIds:['11004'],cursor:'anchor'},{id:'scan',ownerId:'123',at:1});
- const retained=await f.store.list('123');assert.equal(retained.length,1000);assert.equal(await f.store.get('123','10004'),undefined);assert.ok(await f.store.get('123','10005'));assert.ok(await f.store.get('123','11004'));assert.equal((await f.store.list('456')).length,1);assert.equal(await f.store.getBatch('expired'),undefined);assert.ok(await f.store.getBatch('keep'));assert.equal((await f.store.config('123')).anchor.cursor,'anchor');
+ await f.store.saveBatch({id:'expired',ownerId:'123',postIds:['10000']});await f.store.saveBatch({id:'keep',ownerId:'123',postIds:['15004']});
+ await f.store.checkpoint('123',rows,{postIds:['15004'],cursor:'anchor'},{id:'scan',ownerId:'123',at:1});
+ const retained=await f.store.list('123');assert.equal(retained.length,5000);assert.equal(await f.store.get('123','10004'),undefined);assert.ok(await f.store.get('123','10005'));assert.ok(await f.store.get('123','15004'));assert.equal((await f.store.list('456')).length,1);assert.equal(await f.store.getBatch('expired'),undefined);assert.ok(await f.store.getBatch('keep'));assert.equal((await f.store.config('123')).anchor.cursor,'anchor');
  await f.store.addPosts([rows[0]]);assert.equal(await f.store.get('123','10000'),undefined);await f.store.updatePost({...rows[0],status:'posted'});assert.equal(await f.store.get('123','10000'),undefined);
 });
 
@@ -75,4 +75,12 @@ test('in-flight comment freezes original tag and ending choices across settings 
 });
 test('overlength invitation preserves the base draft and never silently publishes without the requested ending',async t=>{
  const f=await fixture(t);f.posts.splice(1);await f.store.updateConfig('123',{followBackSuffixEnabled:true});await f.runtime.tick('scan');f.deps.analyze=async()=>({ok:true,text:'【评论开始】'+JSON.stringify({postId:'111',reply:'好'.repeat(137)})+'【评论结束】'});await f.make().tick('comment');const row=await f.store.get('123','111');assert.equal(row.status,'draft');assert.match(row.decorationIssue,/正文过长/);assert.equal(row.reply,'好'.repeat(137));f.advance(301000);await f.make().tick('comment');assert.equal(f.sends,0);
+});
+
+
+test('retention removes newer non-mutual posts before older mutual posts and preserves active work',async t=>{
+ const f=await fixture(t);const rows=Array.from({length:5000},(_,i)=>({...post(String(10000+i)),ownerId:'123',createdAt:i+100,tag:'not_mutual',status:'skipped'}));
+ await f.store.addPosts(rows);
+ await f.store.addPosts([{...post('111'),ownerId:'123',createdAt:1,tag:'mutual',status:'posted',reply:'paid reply',publishedPostId:'900'},{...post('112'),ownerId:'123',createdAt:2,tag:'tagging',status:'idle',tagBatchId:'in-flight'}]);
+ assert.equal((await f.store.list('123')).length,5000);assert.equal((await f.store.get('123','111')).reply,'paid reply');assert.ok(await f.store.get('123','112'));assert.equal(await f.store.get('123','10000'),undefined);assert.equal(await f.store.get('123','10001'),undefined);
 });

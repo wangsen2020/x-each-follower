@@ -1,54 +1,58 @@
 <template>
-  <section class="local-bot">
-    <div class="local-heading"><h3>Grok Bot</h3><a :href="tutorialUrl" target="_blank" rel="noopener">图解教程</a></div>
-    <p class="local-muted">通过本机 Grok Bridge 调用已登录的 Grok Bot。</p>
-    <nav class="local-steps" aria-label="本地接入步骤"><button v-for="(label,index) in steps" :key="label" type="button" :class="{selected:step===index+1}" :aria-current="step===index+1?'step':undefined" @click="step=index+1">{{ index+1 }} {{ label }}</button></nav>
-    <div v-if="step===1">
-      <h4>下载并运行 Grok Bridge</h4><p>先打开 Grok Bot 桌面端并登录，确认能正常对话。下载 Windows x64 正式版到固定文件夹，运行后保持 Grok Bot 与 Bridge 开启。</p>
-      <div class="local-actions"><a class="local-link" href="https://github.com/wangsen2020/grok-bot-bridge/releases/download/v0.7.0/grok-bridge-0.7.0-win-x64.zip" target="_blank" rel="noopener">下载 Grok Bridge</a><a :href="tutorialUrl+'#download'" target="_blank" rel="noopener">查看下载步骤</a></div>
-      <p class="local-muted">下载 0.7.0 Windows x64 完整 ZIP，完整解压后运行 grok-bridge.exe，无需另装 Node.js 或 CLI。保留配套服务 EXE 与三个 DLL，不下载 Source code。</p>
+  <section class="ai-settings" aria-label="AI 引擎设置">
+    <div class="ai-heading"><h3>AI 引擎</h3><a href="https://github.com/wangsen2020/grok-bot-bridge/releases/latest" target="_blank" rel="noopener">下载 AgentRelay</a></div>
+    <p class="ai-muted">Grok Bot、Codex 和 Antigravity 共用服务连接，各自保存生成会话。</p>
+    <div class="ai-form">
+      <label for="ai-url">服务地址<InfoTip text="填写 AgentRelay 首页显示的根地址。三个引擎自动使用对应接口前缀，无需填写 /grokbot、/codex 或 /antigravity。" /></label>
+      <input id="ai-url" v-model.trim="baseUrl" type="url" spellcheck="false" :disabled="busy" placeholder="http://127.0.0.1:8787">
+      <label for="ai-token">连接 Token</label><input id="ai-token" v-model.trim="token" type="password" autocomplete="new-password" :disabled="busy" placeholder="AgentRelay 访问凭证">
     </div>
-    <div v-if="step===2">
-      <h4>允许当前扩展连接</h4><p>在 Bridge「设置」点击「打开配置文件夹」，编辑 config.json。把下面地址加入 allowedOrigins 数组，保留已有地址；保存后在 Bridge 首页点击「重启服务」。</p>
-      <code class="local-origin">{{ extensionOrigin }}</code><button type="button" @click="copyOrigin">复制扩展地址</button>
-      <p class="local-muted">端口和 Token 保留原值。只允许自己的扩展，不填写通配符。<a :href="tutorialUrl+'#allow'" target="_blank" rel="noopener">查看配置示例</a></p>
+    <nav class="ai-tabs" aria-label="引擎配置"><button v-for="item in LOCAL_AI_ENGINES" :key="item.provider" type="button" :disabled="busy" :aria-pressed="provider===item.provider" @click="switchEngine(item.provider)">{{ item.label }}</button></nav>
+    <div class="ai-form">
+      <label for="ai-session">生成会话</label><PanelSelect id="ai-session" v-model="session" :disabled="busy||!sessions.length"><option value="">请选择会话</option><option v-for="item in sessions" :key="item.id" :value="item.id">{{ item.name }}</option></PanelSelect>
+      <span class="ai-label">连接状态</span><span class="ai-state" role="status">{{ saved.enabled ? '已验证 · '+(saved.botName||saved.bot) : '尚未验证' }}</span>
     </div>
-    <div v-show="step===3">
-    <h4>连接并选择测试 Bot</h4><p>从 Bridge 首页「访问凭证」复制 Token，填写同一页面显示的端口，读取列表后选择具体 Bot。</p>
-    <label for="localPort">端口号</label><input id="localPort" v-model.number="port" type="number" min="1" max="65535" :disabled="busy">
-    <label for="localToken">连接 Token</label><input id="localToken" v-model="token" type="password" autocomplete="new-password" placeholder="粘贴服务 config.json 中的 token" :disabled="busy">
-    <button type="button" :disabled="busy" @click="loadBots">读取 Bot 列表</button>
-    <label for="localBot">测试 Bot</label><PanelSelect id="localBot" v-model="bot" :disabled="busy || !bots.length"><option value="">请选择 Bot</option><option v-for="item in bots" :key="item.id" :value="item.id">{{ item.id===state.bot && state.botName ? state.botName : item.name }}</option></PanelSelect>
-    </div>
-    <div v-if="step===4">
-    <h4>验证生成与回复</h4><p>本次测试：端口 {{ port }} · {{ bots.find(item=>item.id===bot)?.name || '尚未选择 Bot' }}。<button type="button" class="secondary" @click="step=3">修改连接</button></p>
-    <p>测试会向所选 Bot 发送一条消息。生成时使用的 Bot 请在创作配置中选择；同一连接下的测试不会切换生成 Bot。</p>
-    <button type="button" :disabled="busy || !bot || !token" @click="test">{{ busy ? '处理中…' : '测试并启用' }}</button>
-    <p v-if="state.enabled">已保存：端口 {{ state.port }} · {{ state.botName || state.bot }} <span class="info-tip" tabindex="0" role="note" data-tip="端口、Token 和 Bot 仅保存在本机扩展数据库。重新打开设置自动还原，Token 不进入业务备份。" aria-label="端口、Token 和 Bot 仅保存在本机扩展数据库。重新打开设置自动还原，Token 不进入业务备份。">?</span></p>
-    <p v-if="state.enabled" class="local-muted">在创作配置中选择「Grok Bot」及生成 Bot 后使用。关闭设置会保留连接，关闭 Bridge 会暂停本地生成。</p>
-    </div>
-    <p v-if="message" role="status">{{ message }}</p><p v-if="error" role="alert" class="error">{{ error }}</p>
-    <div class="local-actions local-navigation"><button v-if="step>1" type="button" class="secondary" :disabled="busy" @click="step--">上一步</button><button v-if="step<4" type="button" :disabled="busy || step===3 && (!bot || !token)" @click="step++">{{ step===3 ? '下一步：测试' : '下一步' }}</button></div>
+    <div class="ai-actions"><button type="button" class="secondary" :disabled="busy||!token" @click="loadSessions">读取会话</button><button type="button" :disabled="busy||!session||!token" @click="test">{{ busy?'处理中…':'测试并保存' }}</button></div>
+    <div v-if="provider!=='grok-local'" class="ai-create"><label for="ai-session-name">新会话</label><div class="ai-create-controls"><input id="ai-session-name" v-model.trim="sessionName" maxlength="100" :disabled="busy" placeholder="例如：XFollower 评论"><button type="button" class="secondary" :disabled="busy||!sessionName||!token" @click="createSession">创建会话</button></div></div>
+    <p v-if="message" class="ai-feedback" role="status">{{ message }}</p><p v-if="error" class="ai-feedback ai-error" role="alert">{{ error }}</p>
+    <p class="ai-muted">测试会发送一条验证消息，收到完整回复后保存。采集、评论和知识库可分别选择引擎与会话；切换配置不会重发已有任务。</p>
+    <details class="ai-help"><summary>连接帮助</summary><p>运行 AgentRelay，并确认对应客户端已登录。如提示来源未授权，在 AgentRelay 中允许当前扩展来源：</p><code>{{ extensionOrigin }}</code><button type="button" class="secondary" @click="copyOrigin">复制扩展地址</button><p>配置和 Token 仅保存在本机扩展数据库。旧 Grok Bot 配置会自动读取，已有任务仍通过原连接查询。</p></details>
   </section>
 </template>
 <script setup>
-import PanelSelect from "./PanelSelect.vue";
 import {ref,onMounted,watch} from 'vue';
-import {grokLocal} from '../../../features/grok/grok-local.js';
+import PanelSelect from './PanelSelect.vue';
+import InfoTip from './InfoTip.vue';
+import {LOCAL_AI_ENGINES,getLocalAiService,isLocalAiProvider,connectionUrl} from '../../../features/grok/grok-local.js';
 import {grokProviderController} from '../composables/useGrokProvider.js';
+// Keep the internal component/event names for existing entry points.
+const props=defineProps({initialProvider:{type:String,default:'grok-local'}});
+const provider=ref(isLocalAiProvider(props.initialProvider)?props.initialProvider:'grok-local'),baseUrl=ref('http://127.0.0.1:8787'),token=ref(''),session=ref(''),sessions=ref([]),saved=ref({}),busy=ref(false),message=ref(''),error=ref(''),sessionName=ref('');
 const extensionOrigin=`chrome-extension://${chrome.runtime.id}`;
-const tutorialUrl=chrome.runtime.getURL('grok-local-guide.html');
-const steps=['下载','授权','连接','测试'],step=ref(1);
-async function copyOrigin(){try{await navigator.clipboard.writeText(extensionOrigin);message.value='扩展地址已复制';}catch{error.value='复制失败，请选中上方扩展地址手动复制';}}
-const port=ref(8787),token=ref(''),bot=ref(''),bots=ref([]),busy=ref(false),message=ref(''),error=ref(''),state=ref({});
-let restoring=true;
-watch([port,token],()=>{if(!restoring){bots.value=[];bot.value='';message.value='';error.value='';}},{flush:'sync'});
-onMounted(async()=>{try{const saved=await grokLocal.configuration();state.value=await grokLocal.status();port.value=saved?.port||8787;token.value=saved?.token||'';bots.value=saved?.bot?[{id:saved.bot,name:saved.botName||saved.bot}]:[];bot.value=saved?.bot||'';step.value=state.value.enabled?4:saved?3:1;}catch(e){error.value=e.message;}finally{restoring=false;}});
-function loadBots(){const permission=chrome.permissions.request({origins:['http://127.0.0.1/*']});void run(async()=>{if(!await permission)throw Error('请允许访问本地服务');bots.value=await grokLocal.list({port:port.value,token:token.value});bot.value=bots.value.some(b=>b.id===state.value.bot)?state.value.bot:'';message.value=bots.value.length?'请选择 Bot':'未找到可用 Bot';});}
-function test(){void run(async()=>{await grokLocal.test({port:port.value,token:token.value,bot:bot.value},{preserveBot:true});state.value=await grokLocal.status();message.value='测试通过，配置已保存';await grokProviderController.complete('grok-local');});}
+let initialized=false,restoreRevision=0;
+const service=()=>getLocalAiService(provider.value);
+const input=()=>({baseUrl:baseUrl.value,token:token.value,bot:session.value,engine:LOCAL_AI_ENGINES.find(e=>e.provider===provider.value).engine,protocol:'unified'});
+async function restore(connection=false){
+  const ticket=++restoreRevision,client=service();
+  const [config,status]=await Promise.all([client.configuration(),client.status()]);
+  if(ticket!==restoreRevision)return;
+  if(connection){baseUrl.value=config?connectionUrl(config):baseUrl.value;token.value=config?.token||'';}
+  const same=config&&connectionUrl(config)===connectionUrl(input())&&config.token===token.value;
+  saved.value=same?status:{};
+  session.value=same?config.bot||'':'';
+  sessions.value=same&&config.bot?[{id:config.bot,name:config.botName||config.bot}]:[];
+}
 async function run(work){if(busy.value)return;busy.value=true;error.value='';message.value='';try{await work();}catch(e){error.value=e.message;}finally{busy.value=false;}}
+async function switchEngine(value){if(busy.value)return;provider.value=value;message.value='';error.value='';sessionName.value='';try{await restore();}catch(e){error.value=e.message;}}
+onMounted(async()=>{try{await restore(true);}catch(e){error.value=e.message;}finally{initialized=true;}});
+watch(()=>props.initialProvider,value=>{if(isLocalAiProvider(value))void switchEngine(value);});
+watch([baseUrl,token],()=>{if(initialized){sessions.value=[];session.value='';saved.value={};message.value='';}});
+function withAccess(work){let permission;try{permission=chrome.permissions.request({origins:[connectionUrl(input())+'/*']});}catch(e){error.value=e.message;return;}void run(async()=>{if(!await permission)throw Error('请允许访问 AI 服务');await work();});}
+function loadSessions(){withAccess(async()=>{await service().health(input());const previous=session.value;sessions.value=await service().list(input());session.value=sessions.value.some(s=>s.id===previous)?previous:'';message.value=sessions.value.length?'连接正常，请选择会话并测试保存':'连接正常，暂无可用会话';});}
+function test(){withAccess(async()=>{await service().test(input(),{preserveBot:false});saved.value=await service().status();message.value='测试通过，连接和会话已保存';await grokProviderController.complete(provider.value);});}
+function createSession(){withAccess(async()=>{const result=await service().createSession(input(),sessionName.value);sessions.value=await service().list(input());session.value=result.session?.id||result.id||'';sessionName.value='';message.value='会话已创建，请测试并保存';});}
+async function copyOrigin(){try{await navigator.clipboard.writeText(extensionOrigin);message.value='扩展地址已复制';}catch{error.value='复制失败，请手动复制上方扩展地址';}}
 </script>
 <style scoped>
-.local-bot{font-size:12px;color:#24483b}.local-bot p{line-height:1.6}.local-bot label{display:block;margin:10px 0 6px}.local-bot input,.local-bot select{display:block;width:100%;height:34px;box-sizing:border-box}.local-bot button{margin-top:10px;font-size:12px;min-height:30px}.local-bot code{overflow-wrap:anywhere}.error{color:#b42318}
-.local-heading,.local-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.local-heading h3{margin:0}.local-muted{color:#607c70}.local-bot h4{font-size:13px;margin:16px 0 8px}.local-steps{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.local-steps button{margin:0;background:#eef3ef;color:#24594a;border:1px solid #dce6de;padding:0 10px}.local-steps button.selected{background:#24594a;color:#fff}.local-origin{display:block;user-select:all;background:#f0f5f1;padding:10px;border-radius:6px}.local-link{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;background:#eef3ef;border:1px solid #bed2c4;border-radius:5px;color:#24594a;text-decoration:none}.local-actions{justify-content:flex-start;margin-top:12px}.local-navigation{border-top:1px solid #dce6de;padding-top:6px;margin-top:16px}.local-bot button.secondary{background:#eef3ef;color:#24594a}
+.ai-settings{display:flex;flex-direction:column;gap:10px;min-width:0;font-size:12px;color:#24483b}.ai-settings p,.ai-settings h3{margin:0;line-height:1.6}.ai-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.ai-heading h3{font-size:14px}.ai-form{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px;align-items:center}.ai-form label,.ai-label{display:flex;align-items:center;gap:10px;min-height:30px;font-weight:600;margin:0}.ai-settings input,.ai-settings select{box-sizing:border-box;width:100%;min-width:0;height:30px;margin:0;padding:0 10px;border:1px solid #c8d8ce;border-radius:6px;font:inherit;color:inherit}.ai-settings button{min-height:30px;margin:0;padding:0 10px;font:inherit;white-space:nowrap}.ai-tabs,.ai-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}.ai-tabs{border-top:1px solid #dce6de;padding-top:10px}.ai-tabs button{background:#eef3ef;color:#24594a;border:1px solid #dce6de;border-radius:6px}.ai-tabs button[aria-pressed=true]{background:#24594a;border-color:#24594a;color:white}.ai-actions{justify-content:flex-end}.ai-state,.ai-muted{color:#60776a}.ai-create{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px;align-items:center;padding-top:10px;border-top:1px solid #dce6de}.ai-create>label{font-weight:600}.ai-create-controls{display:flex;gap:10px;align-items:center;min-width:0}.ai-feedback{padding:10px;border:1px solid #c8d8ce;background:#f3f8f4;border-radius:6px;overflow-wrap:anywhere}.ai-error{color:#a52f2f;border-color:#f2cccc;background:#fff6f5}.ai-help{border-top:1px solid #dce6de;padding-top:10px}.ai-help summary{cursor:pointer}.ai-help p,.ai-help code,.ai-help button{margin-top:10px}.ai-help code{display:block;padding:10px;background:#f3f6f3;border-radius:6px;overflow-wrap:anywhere;user-select:all}@media(max-width:440px){.ai-form,.ai-create{grid-template-columns:80px minmax(0,1fr)}.ai-create-controls{flex-wrap:wrap}}
 </style>

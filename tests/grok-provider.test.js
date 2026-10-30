@@ -27,3 +27,14 @@ test('a saved per-feature engine overrides system selection while resumption kee
   await routeGrokRequest(()=>assert.fail('must not call X'),'prompt',{provider:'grok-local',expectedBot:'chosen',readProvider:async()=>'grok',localService});
   assert.equal(generated,1);await assert.rejects(routeGrokRequest(()=>{},'prompt',{provider:'invalid'}),/请选择/);
 });
+
+test('Codex and Antigravity selections persist and route through their adapter without opening X',async()=>{
+ const {getLocalAiService}=await import('../src/features/grok/grok-local.js');
+ for(const provider of ['codex','antigravity']){
+  const adapter=getLocalAiService(provider),original={status:adapter.status,generate:adapter.generate},local=storage();let called=0;
+  try{adapter.status=async()=>({enabled:true});adapter.generate=async(prompt,options)=>{called++;assert.equal(options.botId,'chosen-session');return {ok:true,text:provider+':'+prompt};};
+   await selectGrokProvider(provider,{storage:local});assert.equal(await readGrokProvider(local),provider);
+   const result=await routeGrokRequest(()=>assert.fail('must not open X'),'sample',{provider,botId:'chosen-session'});assert.equal(result.text,provider+':sample');assert.equal(called,1);
+  }finally{Object.assign(adapter,original);}
+ }
+});

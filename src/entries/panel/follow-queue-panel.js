@@ -1,3 +1,4 @@
+import {isLocalAiProvider} from '../../features/grok/grok-local.js';
 import {generationChoice, saveGenerationChoice} from './generation-choice.js';
 import {grokProviderController} from './composables/useGrokProvider.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
@@ -2265,7 +2266,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 创作与发布'),
-        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(engine==='grok-local'?'xfollower:bind-grok-local':'xfollower:bind-grok-bot'))}),
+        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(isLocalAiProvider(engine)?'xfollower:bind-grok-local':'xfollower:bind-grok-bot',{detail:{provider:engine}}))}),
         createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾另起一段追加互关邀请，支持中文、英文、拉美西班牙语、巴西葡萄牙语和越南语；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),

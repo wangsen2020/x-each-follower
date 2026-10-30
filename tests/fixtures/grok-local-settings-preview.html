@@ -1,16 +1,21 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grok Bot 分步接入 · 隔离验收</title>
-<style>body{margin:0;padding:20px;background:#eef3ef;color:#24483b;font:13px/1.6 system-ui}main{max-width:575px;margin:auto;background:white;padding:20px;border-radius:10px}button{border:1px solid #bed2c4;border-radius:5px;padding:5px 10px;background:#24594a;color:white;cursor:pointer}input,select{border:1px solid #bed2c4;border-radius:5px;padding:0 10px}h1{font-size:16px}.preview-note{color:#607c70;font-size:12px}a{color:#24594a}</style>
-<main><h1>Grok Bot 分步接入 · 隔离验收</h1><p class="preview-note">真实 Vue 组件，使用公开示例连接。不会发送网络请求或改变扩展数据。</p><div id="app"></div></main>
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 引擎 · 隔离验收</title>
+<style>body{margin:0;padding:10px;background:#eef3ef;color:#24483b;font:12px/1.6 system-ui}main{max-width:575px;margin:auto;background:white;padding:10px;border-radius:10px}button{border:1px solid #bed2c4;border-radius:6px;padding:0 10px;background:#24594a;color:white;cursor:pointer}button.secondary{background:#eef3ef;color:#24594a}button:disabled{opacity:.55}input,select{border:1px solid #bed2c4;border-radius:6px;padding:0 10px}h1{font-size:16px}.preview-note{color:#607c70;font-size:12px}a{color:#24594a}</style>
+<main><h1>AI 引擎 · 隔离验收</h1><p class="preview-note">真实 Vue 组件，使用示例连接和模拟回复，不访问 AI 或扩展业务数据。</p><div id="app"></div></main>
 <script type="module">
 import {createApp,nextTick} from 'vue';
-globalThis.chrome={runtime:{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',getURL:path=>'http://127.0.0.1:18798/src/'+path},permissions:{request:async()=>true}};
-const {grokLocal}=await import('/src/features/grok/grok-local.js');
-let saved=null,calls={list:0,test:0};
-grokLocal.configuration=async()=>saved;
-grokLocal.status=async()=>saved?{enabled:true,configured:true,port:saved.port,bot:saved.bot,botName:saved.botName}:{};
-grokLocal.list=async()=>{calls.list++;return [{id:'example-bot',name:'示例创作 Bot'}];};
-grokLocal.test=async config=>{calls.test++;saved={...config,botName:'示例创作 Bot',testedAt:Date.now()};return {ok:true};};
+import '/src/entries/panel/styles/select-control.css';
+globalThis.chrome={runtime:{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},permissions:{request:async()=>true}};
+const {LOCAL_AI_ENGINES,getLocalAiService}=await import('/src/features/grok/grok-local.js');
+const profiles=new Map([['grok-local',{port:9876,token:'example-secret',bot:'grokbot-example',botName:'原有 Grok 会话',testedAt:42}]]),calls={list:0,test:0,create:0};let shared={port:9876,baseUrl:'http://127.0.0.1:9876',token:'example-secret'};
+for(const {provider,engine,label} of LOCAL_AI_ENGINES){const client=getLocalAiService(provider);let created=false;
+ client.configuration=async()=>({...profiles.get(provider),...shared,engine});
+ client.status=async()=>({enabled:Boolean(profiles.get(provider)?.testedAt),...profiles.get(provider),baseUrl:shared.baseUrl});
+ client.health=async()=>({ok:true,status:'ready'});
+ client.list=async()=>{calls.list++;return [{id:engine+'-example',name:label+' 专用会话'},...(created?[{id:engine+'-new',name:'新建会话'}]:[])];};
+ client.test=async config=>{calls.test++;shared={baseUrl:config.baseUrl,token:config.token};profiles.set(provider,{...config,botName:(await client.list()).find(s=>s.id===config.bot)?.name,testedAt:Date.now()});return 'XFollower 连接成功。';};
+ client.createSession=async()=>{calls.create++;created=true;return {session:{id:engine+'-new',name:'新建会话'}};};
+}
 const {default:Settings}=await import('/src/entries/panel/components/GrokLocalSettings.vue');let app;
 function mount(){app=createApp(Settings);app.mount('#app');}
-window.guideAcceptance={calls,reopen:async()=>{app.unmount();mount();await nextTick();},saved:()=>saved};mount();
+window.guideAcceptance={calls,reopen:async()=>{app.unmount();mount();await nextTick();},saved:()=>Object.fromEntries(profiles)};mount();
 </script></html>

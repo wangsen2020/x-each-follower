@@ -20,7 +20,7 @@
         <label><input v-model="draft.writingKnowledgeEnabled" type="checkbox">生成时使用当前智慧<InfoTip text="开启后，面板评论与关注队列的引用/回复在生成时参考当前选中的智慧版本。文章、原创与测试连接不使用。经验需先合入智慧。" /></label>
         <p class="learning-hint">北京时间 · 下次总结 {{ draft.enabled ? date(state?.config.nextAt) : '未安排' }} · 下次合并 {{ draft.weeklyEnabled ? date(state?.config.nextMergeAt) : '未安排' }}</p>
         <label>每日预算 <PanelSelect v-model.number="draft.dailyBudget" aria-label="每日整理预算"><option v-for="n in 5" :key="n" :value="n">{{ n }} 次</option></PanelSelect><InfoTip text="经验总结和智慧融合共用预算。查询、选择智慧、手动编辑保存均不增加AI调用。" /></label>
-        <p>已绑定：{{ draft.botName || draft.bot || '无' }}</p><button type="button" class="secondary" :disabled="!localBot?.enabled" @click="bind">绑定当前 Bot</button><p class="learning-hint">当前连接：{{ localBot?.botName || '请先在系统设置连接并测试本地 Grok Bot' }}</p>
+        <label class="learning-engine">AI 引擎<PanelSelect v-model="draft.generationProvider" @change="changeEngine"><option v-for="item in LOCAL_AI_ENGINES" :key="item.provider" :value="item.provider">{{ item.label }}</option></PanelSelect></label><label class="learning-engine">生成会话<PanelSelect v-model="draft.bot" :disabled="!localBots.length" @change="draft.botName=localBots.find(item=>item.id===draft.bot)?.name||''"><option value="">请选择会话</option><option v-if="draft.bot&&!localBots.some(item=>item.id===draft.bot)" :value="draft.bot">{{ draft.botName||'已保存的会话' }}（待确认）</option><option v-for="item in localBots" :key="item.id" :value="item.id">{{ item.name }}</option></PanelSelect></label><div class="learning-engine-actions"><button type="button" class="secondary" @click="configureEngine">管理连接</button><button type="button" class="secondary" @click="refreshEngine">重新检测</button></div>
         <p class="learning-hint">今日已用 {{ state?.budgetUsed || 0 }} / {{ state?.config.dailyBudget || 2 }} 次</p>
         <p v-if="settingsError" role="alert" class="learning-error">{{ settingsError }}</p>
       </div>
@@ -37,9 +37,9 @@ import ActionSettingsDrawer from './ActionSettingsDrawer.vue';
 import PanelModal from './PanelModal.vue';
 import PanelPager from './PanelPager.vue';
 import PanelIconButton from './PanelIconButton.vue';
-import {grokLocal} from '../../../features/grok/grok-local.js';
+import {getLocalAiService,LOCAL_AI_ENGINES} from '../../../features/grok/grok-local.js';
 const props=defineProps({ownerId:{type:String,required:true}}),emit=defineEmits(['updated']);
-const state=ref(null),error=ref(''),notice=ref(''),settingsError=ref(''),busy=ref(false),drawer=ref(null),localBot=ref(null),draft=reactive({});
+const state=ref(null),error=ref(''),notice=ref(''),settingsError=ref(''),busy=ref(false),drawer=ref(null),localBot=ref(null),localBots=ref([]),draft=reactive({});
 const logsModal=ref(null),logsOpen=ref(false),history=ref({items:[],page:1,pageSize:10,total:0}),historyBusy=ref(false),historyError=ref(''),scope=ref('all'),selectedLog=ref(null);
 const days=['周日','周一','周二','周三','周四','周五','周六'],logTabs=[{key:'all',label:'全部'},{key:'daily',label:'每日总结'},{key:'weekly',label:'每周合并'}];
 let sequence=0,historySequence=0;
@@ -53,8 +53,11 @@ async function refresh(){const ticket=++sequence,id=props.ownerId;try{const resu
 async function loadHistory(page=1,pageSize=history.value.pageSize,reset=true){const ticket=++historySequence,id=props.ownerId;historyBusy.value=true;historyError.value='';try{const r=await request('history',{page,pageSize,scope:scope.value});if(ticket===historySequence&&id===props.ownerId){history.value=r;selectedLog.value=reset?null:r.items.find(i=>i.id===selectedLog.value?.id)||null;}}catch(e){if(ticket===historySequence)historyError.value=e.message;}finally{if(ticket===historySequence)historyBusy.value=false;}}
 async function openLogs(){logsOpen.value=true;await loadHistory(1);logsModal.value?.open();}
 async function act(action,extra={}){busy.value=true;error.value='';notice.value='';try{const id=props.ownerId;const result=await request(action,extra);if(id!==props.ownerId)return;state.value=result;notice.value=result.empty?'没有新的可处理材料':result.pending?'原任务已保留，稍后继续查询':result.blocked?'有待处理事项，请查看执行记录':'本次执行完成';emit('updated');}catch(e){error.value=e.message;}finally{busy.value=false;await refresh();if(logsOpen.value)await loadHistory(history.value.page,history.value.pageSize,false);}}
-async function open(){await refresh();localBot.value=await grokLocal.status();Object.assign(draft,{weeklyEnabled:false,weeklyDay:0,weeklyHour:22},state.value?.config||{});settingsError.value='';drawer.value?.open();}
-function bind(){draft.bot=localBot.value.bot;draft.botName=localBot.value.botName;}
+async function open(){await refresh();Object.assign(draft,{weeklyEnabled:false,weeklyDay:0,weeklyHour:22,generationProvider:'grok-local'},state.value?.config||{});settingsError.value='';await refreshEngine();drawer.value?.open();}
+let engineRevision=0;
+async function refreshEngine(){const ticket=++engineRevision;localBots.value=[];try{const service=getLocalAiService(draft.generationProvider),status=await service.status();const rows=status.enabled?await service.list(await service.configuration()):[];if(ticket!==engineRevision)return;localBot.value=status;localBots.value=rows;if(!status.enabled)settingsError.value='请先连接并测试所选 AI 引擎';else settingsError.value='';}catch(e){if(ticket===engineRevision)settingsError.value=e.message;}}
+async function changeEngine(){draft.bot='';draft.botName='';await refreshEngine();}
+function configureEngine(){document.dispatchEvent(new CustomEvent('xfollower:bind-grok-local',{detail:{provider:draft.generationProvider}}));}
 async function save(){busy.value=true;try{state.value=await request('save',{config:{...draft}});drawer.value?.close();notice.value='自动学习设置已保存';}catch(e){settingsError.value=e.message;}finally{busy.value=false;}}
 watch(()=>props.ownerId,()=>{++sequence;++historySequence;state.value=null;error.value='';drawer.value?.close();logsModal.value?.close();history.value={items:[],page:1,pageSize:10,total:0};selectedLog.value=null;if(props.ownerId)refresh();},{immediate:true});
 const timer=setInterval(async()=>{if(!busy.value&&props.ownerId){await refresh();if(logsOpen.value)await loadHistory(history.value.page,history.value.pageSize,false);}},15000);
@@ -68,4 +71,6 @@ defineExpose({open});
 .learning-settings label > select{width:auto;min-width:70px;max-width:100%;margin:0;padding-right:10px;padding-left:10px;flex:none}
 .learning-log-table td{vertical-align:middle}
 .learning-log-table td:first-child{min-width:0;max-width:none}
+.learning-settings .learning-engine{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px}.learning-settings .learning-engine>select{width:100%;min-width:0}
+.learning-engine-actions{display:flex;justify-content:flex-end;gap:10px}
 </style>
