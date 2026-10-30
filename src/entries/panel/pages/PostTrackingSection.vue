@@ -1,13 +1,13 @@
 <template>
   <section id="postTrackingSection" class="tab-panel own-posts" data-panel="postTracking" :hidden="activeTab !== 'postTracking'" aria-label="帖子追踪">
     <div class="post-head">
+    <div class="follower-tabs" role="tablist" aria-label="帖子价值视图"><button v-for="tab in views" :key="tab.key" class="follower-tab" :class="{active:options.view===tab.key}" role="tab" :aria-selected="options.view===tab.key" @click="changeView(tab.key)">{{ tab.label }} <span>{{ data.counts?.[tab.key] || 0 }}</span></button></div>
       <div class="post-heading"><div class="post-title-row"></div><div class="post-subtitle"><span>{{ data.config?.owner ? '@'+data.config.owner.handle : '待识别账号' }}</span><span class="post-monitor-count" title="最近30条监控">◉ {{ data.monitored || 0 }}/30</span><span class="post-task-state" :class="{'is-cooling':cooling}" :title="statusTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>{{ taskLabel }}</span><time v-if="data.config?.enabled && data.config?.ownerId && !scanning" :datetime="nextAt ? new Date(nextAt).toISOString() : undefined">{{ countdown }}</time></span></div></div>
       <PanelActionBar class="post-head-icons">
         <PanelIconButton :icon="RefreshCw" class="post-refresh-trigger" label="立即更新帖子" :tip="manualBlockedUntil>clockNow ? '请求冷却至 '+date(manualBlockedUntil) : '立即更新帖子'" :disabled="busy || loading || manualBlockedUntil>clockNow" @click="refresh(true)" />
         <PanelIconButton :icon="Settings" class="post-settings-trigger" label="帖子追踪设置" @click="openSettings" />
       </PanelActionBar>
     </div>
-    <div class="follower-tabs" role="tablist" aria-label="帖子价值视图"><button v-for="tab in views" :key="tab.key" class="follower-tab" :class="{active:options.view===tab.key}" role="tab" :aria-selected="options.view===tab.key" @click="changeView(tab.key)">{{ tab.label }} <span>{{ data.counts?.[tab.key] || 0 }}</span></button></div>
     <div class="post-filters">
       <input v-model="options.search" class="post-search" type="search" placeholder="正文或帖子 ID" aria-label="搜索帖子" @input="search">
       <label>范围 <PanelSelect v-model.number="options.days" :disabled="busy" @change="rangeChanged"><option :value="7">7天</option><option :value="14">14天</option><option :value="28">28天</option><option :value="90">90天</option></PanelSelect></label>
@@ -337,4 +337,5 @@ onUnmounted(()=>{stopBatchProgress();clearInterval(timer);clearInterval(clockTim
   #postTrackingSection { height: calc(100dvh - 130px); min-height: 500px; }
   .post-filters .post-search { max-width: none; flex-basis: 100%; }
   .post-page-summary { width: 100%; }
-}</style>
+}.post-head{gap:10px;flex-wrap:wrap}.post-head>.follower-tabs{margin:0;flex:none}.post-head>.post-heading{flex:1;min-width:0}.post-head>.post-head-icons{margin-left:auto}.post-head .post-title-row:empty{display:none}
+</style>

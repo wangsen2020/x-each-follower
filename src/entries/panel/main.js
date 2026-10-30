@@ -1,3 +1,4 @@
+import './styles/table-scroll.css';
 import './styles/select-control.css';
 import { createApp } from 'vue';
 import App from './App.vue';

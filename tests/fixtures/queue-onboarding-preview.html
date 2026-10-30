@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>队列接入隔离验收</title>
+<link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="/src/entries/panel/styles/follow-queue-panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/table-scroll.css">
+<main><aside class="sidebar">隔离验收</aside><section id="followQueueSection" class="tab-panel" data-panel="followQueue"><div id="followQueueContent"></div></section></main>
+<script type="module">
+let activated=new URLSearchParams(location.search).get('activated')==='1';window.activationCalls=0;
+globalThis.chrome={runtime:{getURL:p=>'/'+p,sendMessage:async m=>{if(m.cmd==='followQueueIdentity')return {ok:true,accountId:'999',handle:'fixture',binding:activated?{accountId:'999',activated:true,sources:{fans:true,mutual:true,comments:true}}:null};if(m.cmd==='followQueueActivate'){window.activationCalls++;activated=true;return {ok:true};}if(m.cmd==='followQueueSettings')return {ok:true,settings:{}};if(m.cmd==='followQueueList')return {ok:true,jobs:[]};return {ok:true};}},storage:{local:{get:async()=>({})}}};
+const {openFollowQueue}=await import('/src/entries/panel/follow-queue-entry.js');await openFollowQueue(document.querySelector('#followQueueSection'));window.previewReady=true;
+</script>
