@@ -7,7 +7,7 @@ export const GENERATION_ENGINES = Object.freeze([
   {value:'grok-local',label:'Grok Bot'},
   {value:'codex',label:'Codex'},
   {value:'antigravity',label:'Antigravity'},
-  {value:'grok-bot',label:'Grok Webhook'}
+  {value:'grok-bot',label:'云端事件'}
 ]);
 
 // Connection checks never send a generation request or change the selected engine.
@@ -63,9 +63,9 @@ export function generationChoice({el,help,draft,provider,onConfigure,local=grokL
       details.replaceChildren();
       if(isLocalAiProvider(engine) && state.ready){
         if(!draft.generationBotId)draft.generationBotId=state.bot || state.bots[0]?.id || '';
-        const control=el('select',{id:'fq_generationBot','aria-label':'生成会话',value:draft.generationBotId,onChange:e=>{draft.generationBotId=e.target.value;}},[
+        const control=el('select',{id:'fq_generationBot','aria-label':'生成会话',title:state.bots.find(b=>b.id===draft.generationBotId)?.title||'',value:draft.generationBotId,onChange:e=>{draft.generationBotId=e.target.value;e.target.title=state.bots.find(b=>b.id===e.target.value)?.title||'';}},[
           el('option',{value:'',selected:!state.bots.some(b=>b.id===draft.generationBotId)},'请选择会话'),
-          ...state.bots.map(bot=>el('option',{value:bot.id,selected:bot.id===draft.generationBotId},bot.name))
+          ...state.bots.map(bot=>el('option',{value:bot.id,title:bot.title||bot.name,selected:bot.id===draft.generationBotId},bot.name))
         ]);
         botSlot.appendChild(control);
       }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {GENERATION_ENGINES,inspectGenerationEngine,saveGenerationChoice} from '../src/entries/panel/generation-choice.js';
 
 test('engine order and labels keep webhook last without changing persisted routing IDs',()=>{
-  assert.deepEqual(GENERATION_ENGINES.map(e=>[e.value,e.label]),[['grok','X Grok'],['grok-local','Grok Bot'],['codex','Codex'],['antigravity','Antigravity'],['grok-bot','Grok Webhook']]);
+  assert.deepEqual(GENERATION_ENGINES.map(e=>[e.value,e.label]),[['grok','X Grok'],['grok-local','Grok Bot'],['codex','Codex'],['antigravity','Antigravity'],['grok-bot','云端事件']]);
 });
 test('detect local readiness by listing bots without generating content',async()=>{
   const config={testedAt:1,bot:'one'};

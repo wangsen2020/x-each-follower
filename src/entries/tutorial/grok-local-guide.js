@@ -2,7 +2,7 @@ import './grok-bot-guide.css';
 import './grok-local-guide.css';
 
 const screenshots=import.meta.glob('../../assets/grok-local-tutorial/*.png',{eager:true,query:'?url',import:'default'});
-const names={download:'01-download.png',home:'02-bridge-home.png',settings:'03-bridge-settings.png',connect:'04-plugin-connect.png',test:'05-plugin-test.png',provider:'06-provider.png'};
+const names={home:'02-bridge-home.png',settings:'03-bridge-settings.png',connect:'04-plugin-connect.png',test:'05-plugin-test.png',provider:'06-provider.png'};
 for(const figure of document.querySelectorAll('[data-image]')){
   const url=screenshots['../../assets/grok-local-tutorial/'+names[figure.dataset.image]];
   if(!url)throw Error('Missing tutorial screenshot: '+figure.dataset.image);
@@ -14,7 +14,7 @@ const id=globalThis.chrome?.runtime?.id;
 const origin=id?`chrome-extension://${id}`:'chrome-extension://你的扩展ID';
 input.value=origin;
 config.textContent='"allowedOrigins": [\n  "'+origin+'"\n]';
-document.querySelector('#originHint').textContent=id?'已读取当前扩展地址。保留已有地址，把这一项加入数组。':'请从插件「系统设置 → Grok Bot → 授权」复制实际地址，替换示例。';
+document.querySelector('#originHint').textContent=id?'已读取当前扩展地址。保留已有地址，把这一项加入数组。':'请从插件「系统设置 → AI 引擎 → 连接帮助」复制实际地址，替换示例。';
 const status=document.querySelector('#copyStatus');let timer;
 async function copy(text){
   try{await navigator.clipboard.writeText(text);status.textContent='已复制';}

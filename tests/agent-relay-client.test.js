@@ -51,3 +51,12 @@ test('an unavailable engine provides an actionable message and preserves the con
  const client=createAgentRelayClient({engine:'antigravity',repository:{config:async()=>config,saveConfig:async()=>{saved=true;}},fetchImpl:async()=>({ok:false,status:503,json:async()=>({error:'unavailable'})})});
  await assert.rejects(client.list(config),/暂不可用.*AgentRelay.*客户端/);assert.equal(saved,false);assert.equal((await client.configuration()).bot,'original');
 });
+ test('session menu labels collapse whitespace and controls, bound long text and retain stable IDs',async()=>{
+ const {sessionLabel}=await import('../src/features/grok/agent-relay-client.js');
+ assert.equal(sessionLabel(' \n\t标题\u200b '),'标题');
+ assert.match(sessionLabel('  ','thread-id'),/未命名会话.*thread-id/);
+ assert.equal(Array.from(sessionLabel('中'.repeat(5000))).length,48);
+ const client=createAgentRelayClient({engine:'codex',fetchImpl:async()=>({ok:true,json:async()=>({sessions:[{id:'stable',name:'\n'.repeat(10)+'长'.repeat(9000)}]})})});
+ const rows=await client.list({baseUrl:'http://127.0.0.1:8787',token:'test',engine:'codex'});
+ assert.equal(rows[0].id,'stable');assert.equal(rows[0].name.length,48);assert.ok(!rows[0].name.includes('\n'));
+ });

@@ -1,6 +1,6 @@
 <template>
   <section class="bot-settings" aria-labelledby="botSettingsTitle">
-    <div class="bot-heading"><h3 id="botSettingsTitle">Grok Webhook</h3><a :href="tutorialUrl" target="_blank" rel="noopener">图解教程</a></div>
+    <div class="bot-heading"><h3 id="botSettingsTitle">云端事件</h3><a :href="tutorialUrl" target="_blank" rel="noopener">图解教程</a></div>
     <p class="bot-muted">通过 Grok 自动化 Webhook 生成文本，不代表独立 Bot 额度。</p>
     <BotOnboardingWizard @completed="refresh" />
     <details class="bot-manual"><summary>已有接口 / 手动配置</summary>
@@ -26,7 +26,7 @@
       <h4>验证生成与回传</h4><p>发送一句测试文本，检查自动化任务是否运行并将结果送回。测试会消耗一次生成用量。</p>
       <p v-if="state.pendingOrigin" class="bot-muted">待验证：{{ state.pendingOrigin }}。测试通过后替换当前连接，期间继续保留原连接。</p>
       <button type="button" :disabled="busy || !state.connected || testPending" @click="test">{{ testPending ? '正在等待回传…' : '开始生成测试' }}</button>
-      <label class="bot-toggle"><input type="checkbox" :checked="state.enabled" :disabled="busy || !state.testedAt" @change="toggle($event.target.checked)" />启用连接 <span class="info-tip" tabindex="0" role="note" data-tip="启用并通过生成测试后，可在 Grok 创作设置中选择 Grok Webhook。未知结果仅查询原任务。" aria-label="启用并通过生成测试后，可在 Grok 创作设置中选择 Grok Webhook。未知结果仅查询原任务。">?</span></label>
+      <label class="bot-toggle"><input type="checkbox" :checked="state.enabled" :disabled="busy || !state.testedAt" @change="toggle($event.target.checked)" />启用连接 <span class="info-tip" tabindex="0" role="note" data-tip="启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。" aria-label="启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。">?</span></label>
       <p class="bot-muted">每30秒查询一次。关闭面板不取消云端任务，重新打开可继续查询。结果保留在下方。</p>
     </div>
     <p v-if="message" role="status" class="bot-status">{{ message }}</p><p v-if="error" role="alert" class="bot-error">{{ error }}</p>
@@ -55,7 +55,7 @@ function bind(){
 }
 const disconnect=()=>task(async()=>{await service.disconnect();await grokProviderController.select('grok');token.value='';origin.value='';message.value='已解绑。云端任务仍保留；撤销连接请在 Worker 更换 CLIENT_TOKEN。';});
 const toggle=value=>task(async()=>{await service.enable(value);if(!value)await grokProviderController.select('grok');message.value=value?'备用通道已启用':'备用通道已暂停';});
-const test=()=>task(async()=>{const result=await service.generate('请仅返回：XFollower Grok Webhook 连接成功。',{test:true,requestKey:'connection-test-'+(state.value.pendingOrigin||state.value.origin),timeoutMs:0});const job=(await service.jobs()).find(j=>j.id===result.jobId);message.value=result.ok?'测试通过，备用通道已启用':result.pending&&job?.status==='accepted'?'测试任务已接收，每30秒查询一次':result.reason;if(!result.ok&&!result.pending)throw Error(result.reason);});
+const test=()=>task(async()=>{const result=await service.generate('请仅返回：XFollower 云端事件 连接成功。',{test:true,requestKey:'connection-test-'+(state.value.pendingOrigin||state.value.origin),timeoutMs:0});const job=(await service.jobs()).find(j=>j.id===result.jobId);message.value=result.ok?'测试通过，备用通道已启用':result.pending&&job?.status==='accepted'?'测试任务已接收，每30秒查询一次':result.reason;if(!result.ok&&!result.pending)throw Error(result.reason);});
 const resume=id=>task(async()=>{const job=await service.query(id);message.value=job.status==='completed'?'结果已收到':`任务状态：${labels[job.status]}`;});
 const copy=async text=>{try{await navigator.clipboard.writeText(text);message.value='已复制结果';}catch{error.value='复制失败，请选中结果复制';}};
 async function poll(){
