@@ -45,11 +45,22 @@ export async function openFollowQueue(root) {
     help.textContent = '账号已识别。下一步：选择候选来源 → 确认数据属于此账号 → 点击接入队列。没有候选时，先在粉丝跟进、互关追踪或评论追踪收集用户。接入后可在队列齿轮设置中配置并开启定时调度，默认不会自动关注或发布。';
     const status = document.createElement('p'); status.setAttribute('role','status');
     const content = document.createElement('div');
-    host.replaceChildren(setup,help,status,content);
-    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId,accountHandle:identity.handle}); };
-    if (identity.binding?.activated && identity.binding.accountId === identity.accountId) mount();
+    let activated=identity.binding?.activated===true&&identity.binding.accountId===identity.accountId;
+    let sourceDialog=null;
+    function openSources(){
+      if(sourceDialog?.open)return;
+      status.textContent='';confirmLabel.hidden=true;activate.textContent='保存来源';
+      help.textContent='队列会自动同步已启用来源的本地候选。各来源负责采集，执行由队列调度开关控制。';
+      sourceDialog=document.createElement('dialog');sourceDialog.className='fq-source-dialog';sourceDialog.setAttribute('aria-label','队列账号与来源');
+      const header=document.createElement('header'),name=document.createElement('strong'),close=document.createElement('button');name.textContent='队列账号与来源';close.type='button';close.className='panel-close-button';close.setAttribute('aria-label','关闭账号与来源');close.addEventListener('click',()=>sourceDialog.close());header.append(name,close);
+      const body=document.createElement('div');body.className='fq-source-body';body.append(setup,help,status);sourceDialog.append(header,body);host.append(sourceDialog);
+      const opened=sourceDialog;opened.addEventListener('close',()=>opened.remove());opened.showModal();
+    }
+    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId,accountHandle:identity.handle,onManageSources:openSources}); };
+    const showList=()=>{sourceDialog?.close();host.replaceChildren(content);mount();};
+    if(activated)showList();else host.replaceChildren(setup,help,status,content);
     activate.addEventListener('click',async()=>{
-      if (!confirm.checked) { status.textContent = '请先确认本地数据的账号归属。'; return; }
+      if (!activated && !confirm.checked) { status.textContent = '请先确认本地数据的账号归属。'; return; }
       if (!Object.values(checks).some(input => input.checked)) { status.textContent = '请至少选择一个候选来源。'; return; }
       activate.disabled = true;
       status.textContent = '正在确认账号并接入来源；首次恢复较多候选时需要一些时间，请稍候…';
@@ -58,7 +69,7 @@ export async function openFollowQueue(root) {
           sources:Object.fromEntries(Object.entries(checks).map(([k,v])=>[k,v.checked]))});
         if (!response?.ok) throw new Error(response?.error || '接入失败');
         if (current !== generation) return;
-        status.textContent = '已接入统一队列，原模块定时关注已停止。'; mount();
+        activated=true;showList();
       } catch(error) { status.textContent = error.message; }
       finally { activate.disabled = false; }
     });

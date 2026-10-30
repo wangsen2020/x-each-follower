@@ -257,7 +257,7 @@ function el(tag, attrs = {}, children = []) {
  * @param {string} options.accountId Current logged-in X user ID
  * @returns {{ refresh: Function, destroy: Function }} Control handles
  */
-export function mountFollowQueuePanel(root, { request, accountId, accountHandle, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
+export function mountFollowQueuePanel(root, { request, accountId, accountHandle, onManageSources, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
   if (!root) throw new Error('mountFollowQueuePanel requires a root element');
 
   let currentAccountId = accountId || '';
@@ -1042,7 +1042,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
           onClick: handleRunNow
         });
     const accountTip = currentAccountId
-      ? `队列执行账号${accountHandle ? `：@${String(accountHandle).replace(/^@/, '')}` : ''}。任务和设置按此账号隔离；关注、创作及发布使用此账号。内部用户 ID：${currentAccountId}`
+      ? `队列执行账号${accountHandle ? `：@${String(accountHandle).replace(/^@/, '')}` : ''}。任务和设置按此账号隔离；关注、创作及发布使用此账号。内部用户 ID：${currentAccountId}${onManageSources?'。点击管理账号与来源。':''}`
       : '未识别队列执行账号，请在 X 登录后重新识别。';
 
     return el('div', { className: 'fq-header' }, [
@@ -1054,7 +1054,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
         el('span', { className: 'fq-header-subtitle' }, '唯一后台调度器 · 统一候选执行中心')
       ]),
       el('div', { className: 'fq-header-actions module-header-actions panel-action-bar' }, [
-        el('span', { className: `panel-icon-button fq-account-badge ${currentAccountId ? '' : 'fq-account-badge-missing'}`, tabindex:'0', role:'note', 'aria-label': accountTip, 'data-panel-tip':accountTip }, [panelIcon(UserRound)]),
+        el(onManageSources?'button':'span', { type:onManageSources?'button':undefined,onClick:onManageSources, className: `panel-icon-button fq-account-badge ${currentAccountId ? '' : 'fq-account-badge-missing'}`, tabindex:'0', role:onManageSources?undefined:'note', 'aria-label': accountTip, 'data-panel-tip':accountTip }, [panelIcon(UserRound)]),
         autoScheduleSwitch,
         refreshBtn,
         grokStatusEntry,
@@ -1631,16 +1631,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const table = el('table', { className: 'fq-table' }, [thead, tbody]);
     const tableWrap = el('div', { className: 'fq-table-wrap' }, [table]);
 
-    const selectionSummary = renderSelectionActions();
-
-    const paginationWrap = el('div', { className: 'fq-pagination-wrap' }, [
-      selectionSummary,
-      renderPaginationControls(totalCount)
-    ].filter(Boolean));
-
     return el('div', { className: 'fq-list-section' }, [
-      tableWrap,
-      paginationWrap
+      tableWrap
     ]);
   }
 

@@ -1,0 +1,31 @@
+/* A bounded panel owns fixed controls and one flexible scrolling list. */
+body :is(#monitorSection,#candidatesSection,#commentsSection,#unreciprocatedSection,#postTrackingSection,#leaderboardSection,#knowledgeSection,#followQueueSection,.mutual-comments) {
+  grid-column:2; grid-row:2; height:100%; max-height:100%; min-height:0; min-width:0; overflow:hidden;
+}
+body .mutual-comments,body #followQueueSection { display:flex; flex-direction:column; }
+body :is(.mutual-comments,#followQueueSection)[hidden] { display:none; }
+body .mutual-comments > .mc-card,body #followQueueContent {
+  display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden;
+}
+body :is(.mc-card,#followQueueContent,#followQueueContent .fq-panel-root) > * { flex-shrink:0; }
+body #followQueueContent > .fq-panel-root { flex:1 1 0;min-height:0;overflow:hidden; }
+body .mc-card > .mc-table,body #followQueueContent .fq-list-section {
+  display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden;
+}
+body .mc-card > .mc-table { display:block; overflow:auto; }
+body #followQueueContent .fq-list-section > .fq-table-wrap { flex:1 1 0; min-height:0; max-height:none; overflow:auto; }
+body #followQueueContent .fq-pagination-wrap { flex:none; }
+body :is(#postTrackingSection,#leaderboardSection,#knowledgeSection) > :not(.post-table-wrap,.lb-table-wrap,.kb-list-container) { flex-shrink:0; }
+body :is(#postTrackingSection .post-table-wrap,#leaderboardSection .lb-table-wrap,#knowledgeSection .kb-list-container) {
+  flex:1 1 0; min-height:0; max-height:none; overflow:auto;
+}
+/* One scroll owner for knowledge tables, including horizontal overflow. */
+body #knowledgeSection .experience-table-wrap { overflow:visible; }
+body :is(.mc-table,.fq-table-wrap,.post-table-wrap,.lb-table-wrap,.kb-list-container,.comments-table-wrap,.unreciprocated-table-wrap,.monitor-list,#candidatesSection .table-wrap) th {
+  position:sticky; top:0; z-index:1;
+}
+@media(max-width:600px){
+  body main { display:flex; flex-direction:column; height:100dvh; max-height:100dvh; min-height:0; overflow:hidden; }
+  body main .sidebar { flex:none; margin:0 0 10px; position:static; }
+  body main :is(#monitorSection,#candidatesSection,#commentsSection,#unreciprocatedSection,#postTrackingSection,#leaderboardSection,#knowledgeSection,#followQueueSection,.mutual-comments)[data-panel] { flex:1 1 0; height:0; min-height:0; max-height:100%; }
+}
