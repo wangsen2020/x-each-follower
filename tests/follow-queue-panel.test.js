@@ -2228,3 +2228,13 @@ test('triggering next action clears existing batch toast and timer', async () =>
     globalThis.confirm = prior;
   }
 });
+
+test('queue renders only top pagination while page turning and selection stay usable',async()=>{
+ const root=createMockElement('div'),jobs=Array.from({length:25},(_,i)=>({id:String(i),handle:'account'+i,state:'pending',sources:[]}));
+ const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>m.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:m.cmd==='followQueueList'?{ok:true,jobs}:{ok:true}});
+ try{await new Promise(r=>setTimeout(r,25));assert.equal(root.querySelectorAll('.fq-pagesize-select').length,1);assert.equal(root.querySelector('.fq-pagination-wrap'),null);assert.equal(root.querySelector('tbody').children.length,20);root.querySelector('[aria-label="下一页"]').click();await new Promise(r=>setTimeout(r,25));assert.equal(root.querySelector('tbody').children.length,5);assert.equal(root.querySelectorAll('.fq-pagesize-select').length,1);}finally{panel.destroy();}
+});
+
+test('queue account icon opens explicit source management without running or activating queue',async()=>{
+ const root=createMockElement('div');let opened=0;const calls=[];const panel=mountFollowQueuePanel(root,{accountId:'owner',accountHandle:'owner',onManageSources:()=>opened++,request:async m=>{calls.push(m.cmd);return m.cmd==='followQueueSettings'?{ok:true,settings:DEFAULT_SETTINGS}:{ok:true,jobs:[]};}});try{await new Promise(r=>setTimeout(r,25));root.querySelector('.fq-account-badge').click();assert.equal(opened,1);assert.equal(calls.includes('followQueueActivate'),false);assert.equal(calls.includes('followQueueRun'),false);}finally{panel.destroy();}
+});

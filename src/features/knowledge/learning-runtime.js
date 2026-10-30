@@ -13,12 +13,12 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
     const id=await currentOwner(),config=await settings(id),runs=(await repository.runs(id)).sort((a,b)=>b.at-a.at);
     const day=new Date(now()+8*3600000).toISOString().slice(0,10);
     const [dailyPage,weeklyPage]=await Promise.all([repository.historyPage(id,{scope:'daily'}),repository.historyPage(id,{scope:'weekly'})]);
-    return {config,daily:dailyPage.items[0]||null,weekly:weeklyPage.items[0]||null,budgetUsed:[...runs,...await repository.drafts(id)].filter(r=>r.day===day&&r.dispatched).length,runs:runs.slice(0,10),uses:await repository.uses(id),botReady:(await bot.status()).enabled};
+    return {config,daily:dailyPage.items[0]||null,weekly:weeklyPage.items[0]||null,budgetUsed:[...runs,...await repository.drafts(id)].filter(r=>r.day===day&&r.dispatched).length,runs:runs.slice(0,10),uses:await repository.uses(id),botReady:(await bot.status(config.generationProvider||'grok-local')).enabled};
   }
   async function save(value){
     const id=await currentOwner(),old=await settings(id),next=validateLearningSettings(value,id);
-    const needsBinding = next.enabled && !old.enabled || next.weeklyEnabled && !old.weeklyEnabled || next.bot !== old.bot && Boolean(next.bot);
-    if(needsBinding){const status=await bot.status();if(!status.enabled||!next.bot||status.bot!==next.bot)throw Error('请先在系统设置连接并测试所选本地 Bot');next.botName=status.botName||next.bot;}
+    const needsBinding = next.enabled && !old.enabled || next.weeklyEnabled && !old.weeklyEnabled || (next.bot !== old.bot || next.generationProvider !== (old.generationProvider||'grok-local')) && Boolean(next.bot);
+    if(needsBinding){const status=await bot.status(next.generationProvider||'grok-local',next.bot);if(!status.enabled||!next.bot||status.bot!==next.bot)throw Error('请先在系统设置连接并测试所选本地 Bot');next.botName=status.botName||next.bot;}
     await assertOwner(id);
     await repository.saveSettings({...next,nextAt:old.hour===next.hour&&old.nextAt?old.nextAt:nextLearningTime(now(),next.hour),nextMergeAt:old.weeklyEnabled&&old.weeklyDay===next.weeklyDay&&old.weeklyHour===next.weeklyHour&&old.nextMergeAt?old.nextMergeAt:nextWeeklyTime(now(),next.weeklyDay,next.weeklyHour)});
     return state();
@@ -33,7 +33,7 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
     }
     if(config.lastMessage)await repository.saveSettings({...config,lastMessage:''});
     const isMerge=manual==='merge';
-    let run={id:uuid(),ownerId:id,kind:isMerge?'merge':'extract',at:now(),day:today,status:'prepared',bot:config.bot};
+    let run={id:uuid(),ownerId:id,kind:isMerge?'merge':'extract',at:now(),day:today,status:'prepared',bot:config.bot,provider:config.generationProvider||'grok-local'};
     if(isMerge){
       const rows=await library.listKnowledge(id);
       // Proposals are never fed back into summarization until reviewed.
@@ -49,7 +49,7 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
       }
       if(!samples.length){await repository.saveRun({...run,status:'skipped',finishedAt:now(),result:{knowledgeCreated:0,knowledgeReused:0,note:'没有新增可总结材料'}});await repository.saveSettings({...config,nextAt:nextLearningTime(now(),config.hour)});return null;}
       run={...run,samples,purpose:samples[0].purpose};
-      const enqueued=await queue.enqueueAnalysis({ownerId:id,clientRequestId:run.id,producer:'scheduled-experience',sourceRefs:samples,analysisSpec:{version:'1',kind:'experience',channel:'grok-local'}});
+      const enqueued=await queue.enqueueAnalysis({ownerId:id,clientRequestId:run.id,producer:'scheduled-experience',sourceRefs:samples,analysisSpec:{version:'1',kind:'experience',channel:run.provider}});
       run.libraryJobId=enqueued.jobId;
       const job=await library.getJob(id,enqueued.jobId);
       await library.putJob({...job,inputManifest:{...job.inputManifest,frozen:true}});
@@ -61,10 +61,9 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
   async function execute(manual){
     const id=await currentOwner(),config=await settings(id);
     if(!config.enabled&&!manual)return;
-    const info=await bot.status();
-    if(!config.bot||!info.enabled||info.bot!==config.bot)throw Error('固定 Bot 尚未连接，或系统设置中的 Bot 已变化');
-    const pending=(await repository.runs(id)).some(r=>['prepared','submitted','result_saved'].includes(r.status));
-    if(!manual&&!pending&&config.nextAt>now())return;
+    const existing=(await repository.runs(id)).find(r=>['prepared','submitted','result_saved','failed'].includes(r.status));
+    if(!manual&&!existing&&config.nextAt>now())return;
+    if(!existing?.relayJobId&&!existing?.raw){const info=await bot.status(existing?.provider||config.generationProvider||'grok-local',existing?.bot||config.bot);if(!(existing?.bot||config.bot)||!info.enabled||info.bot!==(existing?.bot||config.bot))throw Error('固定 Bot 尚未连接，或系统设置中的 Bot 已变化');}
     let run=await prepare(id,config,manual);if(!run)return {empty:true};
     if(run.status==='failed'&&!manual)return {blocked:true};
     if(run.status==='failed')throw Error(run.error||'上次整理结果无效，请先终止该任务');
@@ -78,7 +77,7 @@ export function createLearningRuntime({repository,library,queue,sources,bot,owne
           const day=new Date(now()+8*3600000).toISOString().slice(0,10);
           if([...(await repository.runs(id)),...await repository.drafts(id)].filter(r=>r.day===day&&r.dispatched).length>=config.dailyBudget)throw Error('今日整理预算已用完，明日继续');
           run=await repository.claimDispatch('runs',{...run,day,dispatched:true,status:'submitted'},config.dailyBudget);
-          result=await bot.generate(run.prompt,{requestKey:'knowledge:'+run.id,expectedBot:run.bot,onJobCreated:async job=>{run={...run,relayJobId:job.id};await repository.saveRun(run);}});
+          result=await bot.generate(run.prompt,{requestKey:'knowledge:'+run.id,expectedBot:run.bot,botId:run.bot,provider:run.provider||'grok-local',onJobCreated:async job=>{run={...run,relayJobId:job.id};await repository.saveRun(run);}});
         }
         await assertOwner(id);
         if(!result?.ok){run={...run,status:'submitted',error:result?.reason||'等待原任务回复'};await repository.saveRun(run);return {pending:true};}

@@ -1,3 +1,4 @@
+import {isLocalAiProvider} from '../../features/grok/grok-local.js';
 import {generationChoice, saveGenerationChoice} from './generation-choice.js';
 import {grokProviderController} from './composables/useGrokProvider.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
@@ -257,7 +258,7 @@ function el(tag, attrs = {}, children = []) {
  * @param {string} options.accountId Current logged-in X user ID
  * @returns {{ refresh: Function, destroy: Function }} Control handles
  */
-export function mountFollowQueuePanel(root, { request, accountId, accountHandle, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
+export function mountFollowQueuePanel(root, { request, accountId, accountHandle, onManageSources, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
   if (!root) throw new Error('mountFollowQueuePanel requires a root element');
 
   let currentAccountId = accountId || '';
@@ -1042,7 +1043,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
           onClick: handleRunNow
         });
     const accountTip = currentAccountId
-      ? `队列执行账号${accountHandle ? `：@${String(accountHandle).replace(/^@/, '')}` : ''}。任务和设置按此账号隔离；关注、创作及发布使用此账号。内部用户 ID：${currentAccountId}`
+      ? `队列执行账号${accountHandle ? `：@${String(accountHandle).replace(/^@/, '')}` : ''}。任务和设置按此账号隔离；关注、创作及发布使用此账号。内部用户 ID：${currentAccountId}${onManageSources?'。点击管理账号与来源。':''}`
       : '未识别队列执行账号，请在 X 登录后重新识别。';
 
     return el('div', { className: 'fq-header' }, [
@@ -1054,7 +1055,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
         el('span', { className: 'fq-header-subtitle' }, '唯一后台调度器 · 统一候选执行中心')
       ]),
       el('div', { className: 'fq-header-actions module-header-actions panel-action-bar' }, [
-        el('span', { className: `panel-icon-button fq-account-badge ${currentAccountId ? '' : 'fq-account-badge-missing'}`, tabindex:'0', role:'note', 'aria-label': accountTip, 'data-panel-tip':accountTip }, [panelIcon(UserRound)]),
+        el(onManageSources?'button':'span', { type:onManageSources?'button':undefined,onClick:onManageSources, className: `panel-icon-button fq-account-badge ${currentAccountId ? '' : 'fq-account-badge-missing'}`, tabindex:'0', role:onManageSources?undefined:'note', 'aria-label': accountTip, 'data-panel-tip':accountTip }, [panelIcon(UserRound)]),
         autoScheduleSwitch,
         refreshBtn,
         grokStatusEntry,
@@ -1631,16 +1632,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const table = el('table', { className: 'fq-table' }, [thead, tbody]);
     const tableWrap = el('div', { className: 'fq-table-wrap' }, [table]);
 
-    const selectionSummary = renderSelectionActions();
-
-    const paginationWrap = el('div', { className: 'fq-pagination-wrap' }, [
-      selectionSummary,
-      renderPaginationControls(totalCount)
-    ].filter(Boolean));
-
     return el('div', { className: 'fq-list-section' }, [
-      tableWrap,
-      paginationWrap
+      tableWrap
     ]);
   }
 
@@ -2265,7 +2258,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       ]),
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, '🤖 Grok 创作与发布'),
-        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(engine==='grok-local'?'xfollower:bind-grok-local':'xfollower:bind-grok-bot'))}),
+        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(isLocalAiProvider(engine)?'xfollower:bind-grok-local':'xfollower:bind-grok-bot',{detail:{provider:engine}}))}),
         createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾另起一段追加互关邀请，支持中文、英文、拉美西班牙语、巴西葡萄牙语和越南语；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:'文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。',onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, cloudflareImagesController.connected.value?'Cloudflare 已绑定 · 管理':'连接文章配图服务'),

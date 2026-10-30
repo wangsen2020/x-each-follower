@@ -1,3 +1,4 @@
+import {isLocalAiProvider} from '../grok/grok-local.js';
 import {defaults,timingConfig,randomDue,validateConfig,beijingDay,makeTagBatch,parseTags,commentPrompt,parseComment} from './model.js';
 import {composeQueueFollowBack} from '../grok/grok-comment.js';
 import {appendQuoteTags,normalizeQuoteTags} from '../grok/quote-tags.js';
@@ -42,7 +43,7 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
     try{
       if(!batch.raw){
         await guard(account,'scan');batch={...batch,status:'sending',lastAttemptAt:now()};await store.saveBatch(batch);
-        const result=await analyze(batch.prompt,{provider:batch.provider,botId:batch.provider==='grok-local'?batch.botId:undefined,relayJobId:batch.relayJobId,requestKey:'mutual-tags:'+id+':'+batch.id,onJobCreated:async job=>{batch={...batch,relayJobId:job.id,status:'waiting'};await store.saveBatch(batch);}});
+        const result=await analyze(batch.prompt,{provider:batch.provider,botId:isLocalAiProvider(batch.provider)?batch.botId:undefined,relayJobId:batch.relayJobId,requestKey:'mutual-tags:'+id+':'+batch.id,onJobCreated:async job=>{batch={...batch,relayJobId:job.id,status:'waiting'};await store.saveBatch(batch);}});
         if(!result?.ok){if(result?.pending&&batch.relayJobId){await store.saveBatch({...batch,status:'waiting',retryAt:now()+300000,error:result.reason});return {pending:true};}throw Error(result?.reason||'AI 未返回结果');}
         batch={...batch,raw:result.text,status:'raw_saved'};await store.saveBatch(batch);
       }
@@ -72,7 +73,7 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
       if(row.status!=='draft'){
         if(!row.prompt){let context=await knowledge({ownerId:id,purpose:'reply',requestId:'mutual-comment:'+id+':'+row.postId});let prompt=commentPrompt(row,context);if(prompt.length>7400){context={text:'',wisdomVersion:null,warning:'输入超过上限，本次未引用智慧'};prompt=commentPrompt(row,context);}row={...row,prompt,knowledge:context,provider:config.commentProvider,botId:config.commentBotId};}
         row={...row,decorationSettings:row.decorationSettings||{...normalizeQuoteTags(config),followBackSuffixEnabled:config.followBackSuffixEnabled===true},status:'generating',lastAttemptAt:now()};await store.updatePost(row);
-        const result=await analyze(row.prompt,{provider:row.provider,botId:row.provider==='grok-local'?row.botId:undefined,relayJobId:row.relayJobId,requestKey:'mutual-comment:'+id+':'+row.postId,onJobCreated:async job=>{row={...row,relayJobId:job.id};await store.updatePost(row);}});
+        const result=await analyze(row.prompt,{provider:row.provider,botId:isLocalAiProvider(row.provider)?row.botId:undefined,relayJobId:row.relayJobId,requestKey:'mutual-comment:'+id+':'+row.postId,onJobCreated:async job=>{row={...row,relayJobId:job.id};await store.updatePost(row);}});
         if(!result?.ok){if(result?.pending&&row.relayJobId){await store.updatePost({...row,retryAt:now()+300000,error:result.reason});return {pending:true};}throw Error(result?.reason||'评论生成失败');}
         row={...row,raw:result.text};await store.updatePost(row);const reply=parseComment(result.text,row.postId);if(!isPostSafeForComment(reply).safe)throw Error('评论未通过内容检查');const language=resolveCommentLanguage(reply),ending=composeQueueFollowBack(reply,language,row.decorationSettings.followBackSuffixEnabled);
         if(ending.issue){await store.updatePost({...row,baseReply:reply,reply,status:'draft',decorationIssue:ending.issue,error:ending.issue});return {blocked:true};}

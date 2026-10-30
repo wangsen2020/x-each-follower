@@ -93,3 +93,10 @@ test('wisdom versions and execution records return bounded pages',async t=>{
  const one=await f.service.handle({action:'wisdomVersions',page:1,pageSize:10}),two=await f.service.handle({action:'wisdomVersions',page:2,pageSize:10});assert.equal(one.total,23);assert.equal(one.items.length,10);assert.equal(one.items[0].version,23);assert.equal(two.items[0].version,13);assert.equal('content' in one.items[0],false);
  const logs=await f.repository.historyPage('123',{page:3,pageSize:10});assert.equal(logs.items.length,3);assert.equal(logs.total,23);assert.equal(logs.items[0].at,1002);
 });
+
+test('wisdom receipt is queried with its original task after switching the selected engine',async t=>{
+ const f=await fixture(t);await f.repository.saveSettings({...await f.repository.settings('123'),generationProvider:'antigravity'});f.setMode('pending');const generate=f.bot.generate;f.bot.generate=async(prompt,options)=>{assert.equal(options.provider,'antigravity');return generate(prompt,options);};
+ const result=await f.service.handle({action:'wisdomPreview',ids:['a'],baseVersion:0});assert.equal(result.draft.provider,'antigravity');
+ await f.repository.saveSettings({...await f.repository.settings('123'),generationProvider:'codex',bot:'another-session'});f.bot.status=async()=>{throw Error('new engine is offline');};
+ const resumed=await f.make().handle({action:'wisdomQuery',id:result.draft.id});assert.equal(resumed.draft.status,'ready');assert.equal(f.calls,1);assert.equal(f.queries,1);
+});

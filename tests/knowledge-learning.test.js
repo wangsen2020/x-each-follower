@@ -154,3 +154,10 @@ test('next weekly time uses Beijing day and hour',async()=>{
 test('weekly backlog continues in bounded batches until all experience is merged',async t=>{
  const f=await weeklyFixture(t),review=createKnowledgeReviewService({store:f.library});for(let i=0;i<12;i++)await review.createCandidate({ownerId:'123',id:'extra-'+i,statement:'额外经验 '+i});await f.runtime.tick();assert.equal((await f.repository.wisdom('123')).experiences.length,10);assert.equal((await f.repository.historyPage('123',{scope:'weekly'})).items[0].remainingCount,3);f.setTime(f.at+16*60000);await f.runtime.tick();assert.equal((await f.repository.wisdom('123')).experiences.length,13);assert.equal(f.counts().calls,2);
 });
+
+test('learning binds a chosen engine and resumes an existing receipt after engine settings change',async t=>{
+ const f=await fixture(t);const providers=[];f.bot.status=async provider=>{providers.push(provider);return {enabled:true,bot:'bot1'};};
+ await f.runtime.handle({action:'save',config:{...await f.repository.settings('123'),generationProvider:'codex'}});assert.ok(providers.includes('codex'));
+ f.setMode('pending');const generate=f.bot.generate;f.bot.generate=async(prompt,options)=>{assert.equal(options.provider,'codex');return generate(prompt,options);};await f.runtime.tick('run');const run=(await f.repository.runs('123'))[0];assert.equal(run.provider,'codex');
+ await f.repository.saveSettings({...await f.repository.settings('123'),generationProvider:'antigravity',bot:'different'});f.bot.status=async()=>({enabled:false});await f.make().tick();assert.equal(f.calls,1);assert.equal(f.queries,1);assert.equal((await f.repository.runs('123'))[0].status,'completed');
+});

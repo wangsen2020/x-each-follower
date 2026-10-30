@@ -16,6 +16,7 @@ const bubbleStyle = ref({ left: '8px', top: '8px' });
 let active = null;
 let previousDescription = null;
 let sequence = 0;
+let dismissedControl = null;
 
 function restoreDescription() {
   if (!active) return;
@@ -43,7 +44,7 @@ function place() {
 async function show(target) {
   const tip = target?.closest?.('.info-tip[data-tip], [data-panel-tip]');
   const message = tip?.getAttribute('data-panel-tip') || tip?.getAttribute('data-tip');
-  if (!tip || !message) return;
+  if (!tip || !message || tip === dismissedControl) return;
   if (active !== tip) {
     restoreDescription();
     active = tip;
@@ -62,17 +63,19 @@ async function show(target) {
 
 function onPointerOver(event) { show(event.target); }
 function onPointerOut(event) {
+  if (dismissedControl?.contains(event.target) && !dismissedControl.contains(event.relatedTarget) && !document.querySelector('dialog[open],[aria-modal="true"]:not([hidden]):not([aria-hidden="true"]):not([inert])')) dismissedControl=null;
   if (!active || !active.contains(event.target) || active.contains(event.relatedTarget)) return;
   if (!active.contains(document.activeElement)) hide();
 }
 function onFocusIn(event) { hide(); show(event.target); }
 function onFocusOut(event) {
+  if (dismissedControl?.contains(event.target) && !document.querySelector('dialog[open],[aria-modal="true"]:not([hidden]):not([aria-hidden="true"]):not([inert])')) dismissedControl=null;
   if (active?.contains(event.target) && !active.contains(event.relatedTarget)) hide();
 }
 function onKeyDown(event) { if (event.key === 'Escape') hide(); }
 // A click activates the control, including opening a native dialog. Dismiss its
 // hover hint before the action moves focus or paints a new top layer.
-function onDocumentClick() { hide(); }
+function onDocumentClick(event) { const tip=event.target?.closest?.('.info-tip[data-tip], [data-panel-tip]');if(tip)dismissedControl=tip;hide(); }
 function onVisibilityChange() { if (document.hidden) hide(); }
 function onViewportChange() { if (visible.value) place(); }
 

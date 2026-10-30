@@ -1,9 +1,10 @@
 import {computeTextHash,KNOWLEDGE_TYPES} from './knowledge-model.js';
 export const LEARNING_ALARM='xef-knowledge-learning';
 export const DAY=86400000;
-export const defaultLearningSettings=ownerId=>({ownerId,enabled:false,weeklyEnabled:false,weeklyDay:0,weeklyHour:22,hour:9,dailyBudget:2,bot:'',botName:'',writingKnowledgeEnabled:false,nextAt:0,nextMergeAt:0});
+export const defaultLearningSettings=ownerId=>({ownerId,enabled:false,weeklyEnabled:false,weeklyDay:0,weeklyHour:22,hour:9,dailyBudget:2,generationProvider:'grok-local',bot:'',botName:'',writingKnowledgeEnabled:false,nextAt:0,nextMergeAt:0});
 export function validateLearningSettings(value,ownerId){
   if(typeof value.enabled!=='boolean'||!Number.isInteger(value.hour)||value.hour<0||value.hour>23||!Number.isInteger(value.dailyBudget)||value.dailyBudget<1||value.dailyBudget>5||typeof value.bot!=='string'||value.bot.length>200)throw Error('知识库设置无效');
+  if(!['grok-local','codex','antigravity'].includes(value.generationProvider||'grok-local'))throw Error('请选择有效的 AI 引擎');
   const weeklyDay=value.weeklyDay??0,weeklyHour=value.weeklyHour??22;if(!Number.isInteger(weeklyDay)||weeklyDay<0||weeklyDay>6||!Number.isInteger(weeklyHour)||weeklyHour<0||weeklyHour>23)throw Error('每周合并时间无效');
   return {...defaultLearningSettings(ownerId),...value,ownerId,writingKnowledgeEnabled:value.writingKnowledgeEnabled===true,weeklyEnabled:value.weeklyEnabled===true,weeklyDay,weeklyHour};
 }

@@ -1,3 +1,4 @@
+import {isLocalAiProvider} from '../grok/grok-local.js';
 import {tweetWeight} from '../grok/grok-comment.js';
 import {QUOTE_TAG_DEFAULTS,normalizeQuoteTags,validateQuoteTags} from '../grok/quote-tags.js';
 export const MUTUAL_SCAN_ALARM='xef-mutual-scan';
@@ -7,8 +8,8 @@ export function validateConfig(input,ownerId){
   const result={...defaults(ownerId)};
   for(const phase of ['scan','comment']){
     if(typeof input[phase+'Enabled']!=='boolean')throw Error('调度开关无效');
-    if(input[phase+'Enabled']&&!['grok','grok-local','grok-bot'].includes(input[phase+'Provider']))throw Error('请选择 AI 引擎');
-    if(input[phase+'Enabled']&&input[phase+'Provider']==='grok-local'&&!input[phase+'BotId'])throw Error('请选择生成 Bot');
+    if(input[phase+'Enabled']&&!['grok','grok-local','grok-bot','codex','antigravity'].includes(input[phase+'Provider']))throw Error('请选择 AI 引擎');
+    if(input[phase+'Enabled']&&isLocalAiProvider(input[phase+'Provider'])&&!input[phase+'BotId'])throw Error('请选择生成 Bot');
   }
   for(const [key,min,max] of [['scanIntervalMinutes',1,1440],['scanIntervalMaxMinutes',1,1440],['commentIntervalMaxMinutes',1,1440],['commentIntervalMinutes',1,1440],['scrollRounds',0,30],['batchSize',1,100],['perRun',1,10],['dailyLimit',1,1000]])if(!Number.isInteger(input[key])||input[key]<min||input[key]>max)throw Error(({scanIntervalMinutes:'采集最短间隔',scanIntervalMaxMinutes:'采集最长间隔',commentIntervalMinutes:'评论最短间隔',commentIntervalMaxMinutes:'评论最长间隔',scrollRounds:'加载更多次数',batchSize:'每批打标帖子数',perRun:'每轮评论上限',dailyLimit:'每日评论上限'}[key]||key)+'须为 '+min+'～'+max+' 的整数');
   for(const phase of ['scan','comment'])if(input[phase+'IntervalMaxMinutes']<=input[phase+'IntervalMinutes'])throw Error('最长间隔必须大于最短间隔');
