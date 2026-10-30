@@ -36,8 +36,8 @@ export function createWisdomService({repository,library,bot,owner,now=Date.now,u
   async function state(){const ownerId=await current(),page=await repository.versionPage(ownerId),drafts=await repository.drafts(ownerId);return {head:await repository.wisdom(ownerId)||null,versions:page.items,versionPage:page,drafts:drafts.filter(d=>['prepared','submitted','result_saved','ready'].includes(d.status)).sort((a,b)=>b.at-a.at).slice(0,10),sources:await repository.sources(ownerId)};}
   async function generate(draft){
     if(!draft.raw){
-      const settings=await repository.settings(draft.ownerId),info=await bot.status();
-      if(!settings?.bot||!info.enabled||info.bot!==settings.bot||draft.bot!==info.bot)throw Error('固定 Bot 已变化，请重新绑定后继续');
+      const settings=await repository.settings(draft.ownerId),info=draft.relayJobId?null:await bot.status(draft.provider||'grok-local',draft.bot);
+      if(!draft.relayJobId&&(!settings?.bot||!info.enabled||info.bot!==settings.bot||draft.bot!==info.bot))throw Error('固定 Bot 已变化，请重新绑定后继续');
       let result;
       if(draft.relayJobId)result=await bot.resume(draft.relayJobId);
       else{
@@ -46,7 +46,7 @@ export function createWisdomService({repository,library,bot,owner,now=Date.now,u
         const spent=[...await repository.runs(draft.ownerId),...await repository.drafts(draft.ownerId)].filter(r=>r.dispatched&&r.day===day).length;
         if(spent>=settings.dailyBudget)throw Error('今日整理预算已用完，明日继续');
         draft=await repository.claimDispatch('wisdomDrafts',{...draft,day,dispatched:true,status:'submitted'},settings.dailyBudget);
-        result=await bot.generate(draft.prompt,{expectedBot:draft.bot,requestKey:'wisdom:'+draft.id,onJobCreated:async job=>{draft={...draft,relayJobId:job.id};await repository.saveDraft(draft);}});
+        result=await bot.generate(draft.prompt,{expectedBot:draft.bot,botId:draft.bot,provider:draft.provider||'grok-local',requestKey:'wisdom:'+draft.id,onJobCreated:async job=>{draft={...draft,relayJobId:job.id};await repository.saveDraft(draft);}});
       }
       await guard(draft.ownerId);
       if(!result?.ok){draft={...draft,status:'submitted',error:result?.reason||'等待原任务'};await repository.saveDraft(draft);return draft;}
@@ -68,9 +68,9 @@ export function createWisdomService({repository,library,bot,owner,now=Date.now,u
       if(head?.experiences.some(e=>e.id===id&&e.revision===row.revision))throw Error('所选经验已在当前智慧中');
       return {...row,sources:sources.filter(s=>s.knowledgeId===id)};
     });
-    const config=await repository.settings(ownerId),info=await bot.status();
+    const config=await repository.settings(ownerId),info=await bot.status(config?.generationProvider||'grok-local',config?.bot);
     if(!config?.bot||!info.enabled||info.bot!==config.bot)throw Error('请先在总结设置绑定已测试的本地 Bot');
-    let draft={id:uuid(),ownerId,baseVersion,before:head||null,selected,bot:config?.bot||'',status:'prepared',trigger:message.trigger||'manual',remainingCount:message.remainingCount||0,at:now()};
+    let draft={id:uuid(),ownerId,baseVersion,before:head||null,selected,bot:config?.bot||'',provider:config?.generationProvider||'grok-local',status:'prepared',trigger:message.trigger||'manual',remainingCount:message.remainingCount||0,at:now()};
     draft.prompt=wisdomPrompt(draft);if(draft.prompt.length>7800)throw Error('经验内容过多，请减少本次选择条数');
     await guard(ownerId);await repository.saveDraft(draft);return generate(draft);
   }

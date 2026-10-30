@@ -394,9 +394,9 @@ export async function verifyDist(target = DEFAULT_DIST_DIR, maybeOptions = {}) {
     if (ext === '.js' || ext === '.html' || ext === '.css' || ext === '.json') {
       const content = readFileSync(file, 'utf8');
       for (const { pattern, label } of devClientPatterns) {
-        // The authenticated Grok Bot service is the sole permitted HTTP loopback client.
+        // AgentRelay is an authenticated production loopback service, not a development server.
         const checked = label === 'localhost/127.0.0.1 bridge'
-          ? content.replaceAll('http://127.0.0.1/*', '').replace(/http:\/\/127\.0\.0\.1:\$\{[A-Za-z_$][\w$]*\.port\}\$\{[A-Za-z_$][\w$]*\}/g, '')
+          ? content.replaceAll('http://127.0.0.1/*', '').replaceAll('http://localhost/*', '').replaceAll('http://127.0.0.1:8787', '').replace(/http:\/\/127\.0\.0\.1:\$\{Number\([A-Za-z_$][\w$]*\.port\)\|\|8787\}/g, '').replace(/http:\/\/127\.0\.0\.1:\$\{[A-Za-z_$][\w$]*\.port\}\$\{[A-Za-z_$][\w$]*\}/g, '')
           : content;
         if (pattern.test(checked)) {
           errors.push(`Development client pattern "${label}" detected in dist file: ${relative(distDir, file)}`);
