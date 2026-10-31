@@ -13,6 +13,28 @@ function storeFor(name, clock = {t: 5_000}) {
   });
 }
 
+test('restart backoff survives new store instances and resync, then stops only the interrupted job',async()=>{
+  const name=`backoff-${crypto.randomUUID()}`,clock={t:5000};
+  let store=storeFor(name,clock);
+  const input={accountId:'owner',handle:'Interrupted',sources:[{module:'fans',enabled:true}]};
+  const job=await store.enqueue(input);
+  for(let round=1;round<=3;round++) {
+    const claimed=await store.claim({accountId:'owner',owner:`worker-${round}`,leaseMs:60000});
+    assert.equal(claimed.id,job.id);
+    store=storeFor(name,clock);
+    await store.recoverInterrupted({accountId:'owner',currentOwner:`next-${round}`});
+    await store.enqueue(input);
+    const row=await store.get(job.id);
+    assert.equal(row.interruptionCount,round);
+    assert.equal(row.state,round===3?'uncertain':'pending');
+    assert.equal(row.nextEligibleAt,clock.t+60000*2**(round-1));
+    assert.equal(await store.claim({accountId:'owner',owner:'too-early',leaseMs:60000}),null);
+    clock.t=row.nextEligibleAt;
+  }
+  const healthy=await store.enqueue({...input,handle:'Healthy'});
+  assert.equal((await store.claim({accountId:'owner',owner:'healthy',leaseMs:60000})).id,healthy.id);
+});
+
 test('restart archives old worker checkpoints, releases leases and preserves uncertain actions',async()=>{
   const name=`restart-${crypto.randomUUID()}`,store=storeFor(name);
   const ids=[];

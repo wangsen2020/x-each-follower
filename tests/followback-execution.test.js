@@ -6,6 +6,31 @@ import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-
 import {queueRelationshipDecision} from '../src/features/relationships/fan-followback-policy.js';
 globalThis.IDBKeyRange=IDBKeyRange;
 
+test('deadline closes an owned profile tab even while its network read is unresolved',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:100000});
+ const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{fans:true}}},removed=[];
+ let opened=false,finishRead;
+ const api={storage:{local:{get:async key=>typeof key==='string'?{[key]:values[key]}:{...values},set:async patch=>Object.assign(values,patch)}},
+  tabs:{query:async()=>[{id:1}],create:async()=>{opened=true;return {id:2,url:'https://x.com/candidate'};},get:async()=>({id:2,url:'https://x.com/candidate'}),remove:async id=>{removed.push(id);}},
+  alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},
+  scripting:{executeScript:async({func})=>[{result:func.name==='readQueueViewerOnPage'?'viewer':{pending:false,name:'Candidate',posts:[]}}]}};
+ const store=createFollowQueueStore({indexedDB,dbName:'abort-tab-'+crypto.randomUUID()});
+ await store.saveSettings('1',{enabled:true,timeBudgetMinutes:1,batchLimit:1,grokEnabled:false});
+ await store.enqueue({accountId:'1',handle:'candidate',sources:[{module:'fans',enabled:true}]});
+ let reading=false;
+ const runtime=createFollowQueueRuntime({api,store,fetchProfile:()=>{reading=true;return new Promise(resolve=>{finishRead=resolve;});},
+  records:{metadata:async()=>({}),sourcePage:async()=>({records:[]}),lookup:async()=>null,lookupAll:async()=>[],profiles:async()=>[],batch:async()=>{}}});
+ const running=runtime.run();
+ for(let i=0;i<1000&&!reading;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(opened,true);assert.equal(reading,true);
+ t.mock.timers.tick(60001);
+ await running;
+ assert.deepEqual(removed,[2]);
+ finishRead({status:500});
+ for(let i=0;i<10;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(removed,[2]);
+});
+
 for(const relation of [{following:false,followedBy:true},{following:false,followedBy:false},{following:false,followedBy:null},{following:null,followedBy:true}]) {
  test(`executor gates before follow using real parsed relationship ${JSON.stringify(relation)}`,async()=>{
   const values={followQueueBinding:{accountId:'1',handle:'viewer',activated:true,sources:{fans:true}}};
