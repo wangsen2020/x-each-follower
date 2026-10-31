@@ -17082,5 +17082,235 @@
         "content": "$2"
       }
     }
+  },
+  "ui_330b93b3": {
+    "message": "Segundo plano"
+  },
+  "ui_e5ad8b6e": {
+    "message": "Painel"
+  },
+  "ui_b900314d": {
+    "message": "Script de conteúdo"
+  },
+  "ui_e4b01b83": {
+    "message": "Erros do sistema"
+  },
+  "ui_28f33ca5": {
+    "message": "{{count}} ocorrências"
+  },
+  "ui_8f9b6e52": {
+    "message": "Registros filtrados copiados."
+  },
+  "ui_25d26ed4": {
+    "message": "Download iniciado. Confira os downloads do navegador."
+  },
+  "ui_5232a0ce": {
+    "message": "Registro de erros limpo."
+  },
+  "ui_29cd4a76": {
+    "message": "Mantém até 1.000 registros locais por 7 dias. Inclui erros da extensão e avisos do console, sem o corpo das requisições. Campos sensíveis são ocultados. Copiar e exportar usam os filtros atuais."
+  },
+  "ui_34321453": {
+    "message": "Exportar"
+  },
+  "ui_a53e5f22": {
+    "message": "Origem do erro"
+  },
+  "ui_223aa151": {
+    "message": "Gravidade"
+  },
+  "ui_8a68b38f": {
+    "message": "Todos os níveis"
+  },
+  "ui_70b2a161": {
+    "message": "Erro"
+  },
+  "ui_f1198e29": {
+    "message": "Aviso"
+  },
+  "ui_40eb4039": {
+    "message": "Pesquisar erros"
+  },
+  "ui_6f17310": {
+    "message": "Pesquisar erros, pilhas ou versões…"
+  },
+  "ui_7caf0237": {
+    "message": "Limpar todos os registros locais de erros?"
+  },
+  "ui_869f8d0c": {
+    "message": "Limpar tudo"
+  },
+  "ui_f071d08d": {
+    "message": "Carregando registros…"
+  },
+  "ui_79fb8a71": {
+    "message": "Nenhuma ocorrência corresponde aos filtros."
+  },
+  "ui_2184839c": {
+    "message": "Nenhuma ocorrência registrada."
+  },
+  "ui_cd7f88b5": {
+    "message": "Sem rastreamento de pilha"
+  },
+  "ui_a3c18902": {
+    "message": "A conexão continua indisponível"
+  },
+  "ui_48ec46d8": {
+    "message": "Tentando novamente…"
+  },
+  "ui_6e9e672a": {
+    "message": "Tentar conexão"
+  },
+  "ui_883b3206": {
+    "message": "Abrir tarefa"
+  },
+  "ui_e01c3c16": {
+    "message": "As notificações começam após 2 minutos de falha contínua, no máximo uma vez por conta a cada 30 minutos."
+  },
+  "ui_59ee74b": {
+    "message": "Exibido até a recuperação, com lembrete a cada 30 minutos."
+  },
+  "ui_1eb23749": {
+    "message": "Carregando configurações de $PHASE$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_897c60ce": {
+    "message": "Parando…"
+  },
+  "ui_5ede2d71": {
+    "message": "Conexão indisponível; aguardando recuperação"
+  },
+  "ui_498cbf09": {
+    "message": "Processando registros salvos primeiro"
+  },
+  "ui_c6bfa09a": {
+    "message": "Até $COUNT$ posts por lote",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_f511d8c3": {
+    "message": "$PERRUN$ por execução, $DAILY$ por dia",
+    "placeholders": {
+      "perRun": {
+        "content": "$1"
+      },
+      "daily": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_a9ccca0": {
+    "message": "Clique para desativar o agendamento."
+  },
+  "ui_6cf2963d": {
+    "message": "Clique para ativar o agendamento."
+  },
+  "ui_5fd03c39": {
+    "message": "Desativar agendamento de $PHASE$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_d0a5784a": {
+    "message": "Ativar agendamento de $PHASE$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4a9f93d1": {
+    "message": "$PHASE$: $STATUS$. $BUDGET$. $ACTION$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      },
+      "status": {
+        "content": "$2"
+      },
+      "budget": {
+        "content": "$3"
+      },
+      "action": {
+        "content": "$4"
+      }
+    }
+  },
+  "ui_8ebefccd": {
+    "message": "Pausar classificação"
+  },
+  "ui_62708e23": {
+    "message": "Classificar pendentes"
+  },
+  "ui_7380ed9a": {
+    "message": "Processa todos os registros pendentes, em classificação ou com falha desta conta, em todas as páginas e filtros. Cada lote tem até 30 registros; textos longos são divididos. Rótulos concluídos são mantidos; falhas têm até 3 novas tentativas."
+  },
+  "ui_221bcb1b": {
+    "message": "Processando registros salvos; nova coleta adiada"
+  },
+  "ui_4f1171b4": {
+    "message": "Classificação {{status}} · Concluídos {{done}}/{{total}} · Pendentes {{remaining}}"
+  },
+  "ui_ca3b6d49": {
+    "message": "· Incompletos {{count}}"
+  },
+  "ui_4b04db48": {
+    "message": "· Removidos {{count}}"
+  },
+  "ui_4e1803db": {
+    "message": "Falha ao carregar: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_df6a3b19": {
+    "message": "Falha ao copiar: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_ff3b4255": {
+    "message": "Falha ao limpar: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_99a4d78e": {
+    "message": "; inclusão automática desativada"
+  },
+  "ui_892355cc": {
+    "message": "; nenhuma conta elegível para retribuição na fila"
+  },
+  "ui_dfceb29d": {
+    "message": "; falha na inclusão automática; veja o registro de erros"
+  },
+  "ui_6fd17fdb": {
+    "message": "; inclusão não confirmada; confira a fila primeiro"
+  },
+  "ui_1d949b0f": {
+    "message": "; $COUNT$ contas de retribuição confirmadas na fila",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b5357758": {
+    "message": "; nenhuma conta adicionada à fila nesta execução"
   }
 }

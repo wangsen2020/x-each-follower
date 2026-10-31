@@ -1,12 +1,12 @@
 <template>
   <aside v-if="alerts.length" class="automation-alerts" :aria-label="t(&quot;需要处理的异常&quot;)">
     <div v-for="alert in alerts" :key="alert.id" class="automation-alert" role="alert">
-      <div class="alert-line"><strong>⚠ {{ alert.title }}</strong><span>{{ alert.reason }}</span><button v-if="alert.retryPhase" class="secondary" :disabled="!!retrying" :aria-busy="retrying===alert.id" @click="retryConnection(alert)">{{ retrying===alert.id?'重试中…':'重试连接' }}</button><button class="secondary" :aria-expanded="expanded===alert.id" @click="expanded=expanded===alert.id?'':alert.id">{{ expanded===alert.id?'收起详情':'查看详情' }}</button><button v-if="alert.tab" class="secondary" @click="openTask(alert)">前往处理</button><button v-else class="secondary" @click="openLogs">查看日志</button></div>
-      <p v-if="retryErrors[alert.id]" role="status">{{ retryErrors[alert.id] }}</p>
+      <div class="alert-line"><strong>⚠ {{ t(alert.title) }}</strong><span>{{ t(alert.reason) }}</span><button v-if="alert.retryPhase" class="secondary" :disabled="!!retrying" :aria-busy="retrying===alert.id" @click="retryConnection(alert)">{{ t(retrying===alert.id?'重试中…':'重试连接') }}</button><button class="secondary" :aria-expanded="expanded===alert.id" @click="expanded=expanded===alert.id?'':alert.id">{{ t(expanded===alert.id?'收起详情':'查看详情') }}</button><button v-if="alert.tab" class="secondary" @click="openTask(alert)">{{ t("前往处理") }}</button><button v-else class="secondary" @click="openLogs">{{ t("查看日志") }}</button></div>
+      <p v-if="retryErrors[alert.id]" role="status">{{ t(retryErrors[alert.id]) }}</p>
       <div v-if="expanded===alert.id" class="alert-detail">
-        <p>{{ alert.impact }} {{ alert.action }}</p><p>首次发现：{{ format(alert.since) }}<span v-if="alert.pending!=null"> · 待备份 {{ alert.pending }} 条</span> · {{ /^mutual-(tags|comments)-/.test(alert.id)?'异常持续 2 分钟后才弹出桌面通知，同一账号的 AI 异常 30 分钟内最多提醒一次。':'未恢复前会持续显示，每 30 分钟提醒一次。' }}</p>
-        <p v-if="notices[alert.id]?.error">{{ notices[alert.id].error }}</p>
-        <button v-if="alert.id==='logs'" class="secondary" :disabled="busy" @click="retry">{{ busy?'正在核对并重试…':'重试备份' }}</button>
+        <p>{{ t(alert.impact) }} {{ t(alert.action) }}</p><p>{{ t("首次发现：") }}{{ format(alert.since) }}<span v-if="alert.pending!=null"> {{ t("· 待备份") }} {{ alert.pending }} {{ t("条") }}</span> · {{ t(/^mutual-(tags|comments)-/.test(alert.id)?'异常持续 2 分钟后才弹出桌面通知，同一账号的 AI 异常 30 分钟内最多提醒一次。':'未恢复前会持续显示，每 30 分钟提醒一次。') }}</p>
+        <p v-if="notices[alert.id]?.error">{{ t(notices[alert.id].error) }}</p>
+        <button v-if="alert.id==='logs'" class="secondary" :disabled="busy" @click="retry">{{ t(busy?'正在核对并重试…':'重试备份') }}</button>
       </div>
     </div>
     <p v-if="feedback" role="status">{{ t(feedback) }}</p>

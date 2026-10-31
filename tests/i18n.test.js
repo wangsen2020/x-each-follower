@@ -15,7 +15,7 @@ test('four complete catalogs preserve every interpolation parameter',()=>{
 test('Chrome catalogs include UI messages and are loaded before classic content scripts',()=>{
  let keys;
  for(const code of ['en','zh_CN','pt_BR','es_419']){const path=`_locales/${code}/messages.json`;assert.equal(RUNTIME_RESOURCES[path],`src/${path}`);const catalog=read(`../src/${path}`);for(const key of ['extName','extDesc','extAction'])assert.ok(catalog[key]);assert.ok([...catalog.extDesc.message].length<=132);const current=Object.keys(catalog).sort();if(keys)assert.deepEqual(current,keys);keys=current;assert.ok(keys.length>3000);}
- const manifest=read('../src/manifest.json');assert.equal(manifest.default_locale,'en');assert.equal(manifest.content_scripts[0].js[0],'i18n-content.js');
+ const manifest=read('../src/manifest.json');assert.equal(manifest.default_locale,'en');const scripts=manifest.content_scripts[0].js;for(const ui of ['tweet-comment-button.js','profile-followback-badge.js'])assert.ok(scripts.indexOf('i18n-content.js')<scripts.indexOf(ui));
 });
 test('browser language wins over old local preferences, with English fallback',async()=>{
  let browser='pt-BR';globalThis.chrome={i18n:{getUILanguage:()=>browser}};
@@ -51,4 +51,13 @@ test('profile bios and named AI sessions are not translated as UI labels',()=>{
  for(const expression of ['t(cleanFollowerBio(', 't(displayBio)', 't(`「${commentText}」`)'])assert.ok(!panel.includes(expression));
  const sessions=fs.readFileSync(new URL('../src/entries/panel/components/GrokLocalSettings.vue',import.meta.url),'utf8');assert.ok(sessions.includes('item.name?.trim() ? sessionLabel(item.name,item.id)'));
  const badge=fs.readFileSync(new URL('../src/entries/content/profile-followback-badge.js',import.meta.url),'utf8');assert.ok(badge.includes('const title = t(describe('));assert.ok(badge.includes('if (badge.title !== title)'));assert.ok(badge.includes('api.destroy(); return;'));
+});
+
+test('integrated exception and progress controls interpolate in all four languages while diagnostic evidence stays raw',async()=>{
+ let language='en';globalThis.chrome={i18n:{getUILanguage:()=>language}};
+ const {t,refreshBrowserLanguage}=await import('../src/shared/i18n.js');
+ for(const code of codes){language=code;refreshBrowserLanguage();for(const key of ['exceptionCount','tagProgressSummary','tagProgressUnfinished','tagProgressRemoved']){const result=t(key,{count:7,status:'RUNNING',done:3,total:9,remaining:6});assert.notEqual(result,key);assert.ok(!result.includes('{{'));}if(code!=='zh-CN')assert.ok(!/[\u3400-\u9fff]/.test(t('搜索错误、堆栈或版本…')));}
+ const source=fs.readFileSync(new URL('../src/entries/panel/components/SystemExceptionLogs.vue',import.meta.url),'utf8');
+ assert.ok(source.includes('{{ entry.message }}'));assert.ok(source.includes('{{ entry.context }}'));assert.ok(source.includes("entry.stack || t('无堆栈信息')"));
+ delete globalThis.chrome;
 });

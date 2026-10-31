@@ -6,7 +6,11 @@ export function buildI18nCatalogs(rootDir=resolve(import.meta.dirname,'..')){
  let serial=0;
  const writeFile=(file,contents)=>{
   const target=resolve(rootDir,file),temporary=`${target}.${process.pid}.${serial++}.tmp`;
-  try{fs.writeFileSync(temporary,contents);fs.renameSync(temporary,target);}
+  // Parallel builds share source catalogs; avoid replacing identical files.
+  if(fs.existsSync(target)&&fs.readFileSync(target,'utf8')===contents)return;
+  try{fs.writeFileSync(temporary,contents);try{fs.renameSync(temporary,target);}catch(error){
+   if(!['EPERM','EACCES','EEXIST'].includes(error.code)||!fs.existsSync(target)||fs.readFileSync(target,'utf8')!==contents)throw error;
+  }}
   finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
  };
  const locales=['en','zh-CN','pt-BR','es-419'],dirs=['en','zh_CN','pt_BR','es_419'];

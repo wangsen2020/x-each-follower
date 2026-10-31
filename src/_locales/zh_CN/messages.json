@@ -17082,5 +17082,235 @@
         "content": "$2"
       }
     }
+  },
+  "ui_330b93b3": {
+    "message": "后台"
+  },
+  "ui_e5ad8b6e": {
+    "message": "面板"
+  },
+  "ui_b900314d": {
+    "message": "内容脚本"
+  },
+  "ui_e4b01b83": {
+    "message": "异常日志"
+  },
+  "ui_28f33ca5": {
+    "message": "{{count}} 条异常"
+  },
+  "ui_8f9b6e52": {
+    "message": "已复制当前筛选的异常日志。"
+  },
+  "ui_25d26ed4": {
+    "message": "已开始下载，请在浏览器下载记录中查看。"
+  },
+  "ui_5232a0ce": {
+    "message": "异常日志已清空。"
+  },
+  "ui_29cd4a76": {
+    "message": "本机保留近 7 天、最多 1,000 条异常。记录扩展运行异常与控制台警告，不含请求正文；敏感字段自动隐藏。复制和导出使用当前筛选。"
+  },
+  "ui_34321453": {
+    "message": "导出"
+  },
+  "ui_a53e5f22": {
+    "message": "异常来源"
+  },
+  "ui_223aa151": {
+    "message": "异常级别"
+  },
+  "ui_8a68b38f": {
+    "message": "全部级别"
+  },
+  "ui_70b2a161": {
+    "message": "错误"
+  },
+  "ui_f1198e29": {
+    "message": "警告"
+  },
+  "ui_40eb4039": {
+    "message": "搜索异常日志"
+  },
+  "ui_6f17310": {
+    "message": "搜索错误、堆栈或版本…"
+  },
+  "ui_7caf0237": {
+    "message": "清空本机全部异常日志？"
+  },
+  "ui_869f8d0c": {
+    "message": "确认清空"
+  },
+  "ui_f071d08d": {
+    "message": "正在读取异常日志…"
+  },
+  "ui_79fb8a71": {
+    "message": "没有符合筛选的异常。"
+  },
+  "ui_2184839c": {
+    "message": "暂无异常记录。"
+  },
+  "ui_cd7f88b5": {
+    "message": "无堆栈信息"
+  },
+  "ui_a3c18902": {
+    "message": "连接仍未恢复"
+  },
+  "ui_48ec46d8": {
+    "message": "重试中…"
+  },
+  "ui_6e9e672a": {
+    "message": "重试连接"
+  },
+  "ui_883b3206": {
+    "message": "前往处理"
+  },
+  "ui_e01c3c16": {
+    "message": "异常持续 2 分钟后才弹出桌面通知，同一账号的 AI 异常 30 分钟内最多提醒一次。"
+  },
+  "ui_59ee74b": {
+    "message": "未恢复前会持续显示，每 30 分钟提醒一次。"
+  },
+  "ui_1eb23749": {
+    "message": "正在读取$PHASE$配置",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_897c60ce": {
+    "message": "正在停止…"
+  },
+  "ui_5ede2d71": {
+    "message": "连接异常，等待恢复"
+  },
+  "ui_498cbf09": {
+    "message": "优先处理积压"
+  },
+  "ui_c6bfa09a": {
+    "message": "每批最多 $COUNT$ 帖",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_f511d8c3": {
+    "message": "每轮 $PERRUN$ 条，每日 $DAILY$ 条",
+    "placeholders": {
+      "perRun": {
+        "content": "$1"
+      },
+      "daily": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_a9ccca0": {
+    "message": "点击关闭定时调度"
+  },
+  "ui_6cf2963d": {
+    "message": "点击开启定时调度"
+  },
+  "ui_5fd03c39": {
+    "message": "关闭$PHASE$定时调度",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_d0a5784a": {
+    "message": "开启$PHASE$定时调度",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4a9f93d1": {
+    "message": "$PHASE$：$STATUS$。$BUDGET$。$ACTION$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      },
+      "status": {
+        "content": "$2"
+      },
+      "budget": {
+        "content": "$3"
+      },
+      "action": {
+        "content": "$4"
+      }
+    }
+  },
+  "ui_8ebefccd": {
+    "message": "暂停打标"
+  },
+  "ui_62708e23": {
+    "message": "批量打标"
+  },
+  "ui_7380ed9a": {
+    "message": "处理当前账号全部未打标、打标中或打标失败的记录，不受分页和筛选影响。每批最多 30 条，长文本按输入预算拆分；已完成标签保留。失败后最多自动重试 3 次。"
+  },
+  "ui_221bcb1b": {
+    "message": "优先处理已有记录，暂缓采集新帖"
+  },
+  "ui_4f1171b4": {
+    "message": "打标{{status}} · 完成 {{done}}/{{total}} · 待处理 {{remaining}}"
+  },
+  "ui_ca3b6d49": {
+    "message": "· 未完成 {{count}}"
+  },
+  "ui_4b04db48": {
+    "message": "· 已清理 {{count}}"
+  },
+  "ui_4e1803db": {
+    "message": "读取失败：$MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_df6a3b19": {
+    "message": "复制失败：$MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_ff3b4255": {
+    "message": "清空失败：$MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_99a4d78e": {
+    "message": "；自动入队已关闭"
+  },
+  "ui_892355cc": {
+    "message": "；暂无符合条件的待回关用户需入队"
+  },
+  "ui_dfceb29d": {
+    "message": "；自动入队失败，请查看异常日志"
+  },
+  "ui_6fd17fdb": {
+    "message": "；入队结果待确认，请先核对关注队列"
+  },
+  "ui_1d949b0f": {
+    "message": "；已确认 $COUNT$ 位待回关用户在关注队列中",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b5357758": {
+    "message": "；本轮未加入关注队列"
   }
 }

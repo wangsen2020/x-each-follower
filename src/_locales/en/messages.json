@@ -17082,5 +17082,235 @@
         "content": "$2"
       }
     }
+  },
+  "ui_330b93b3": {
+    "message": "Background"
+  },
+  "ui_e5ad8b6e": {
+    "message": "Panel"
+  },
+  "ui_b900314d": {
+    "message": "Content script"
+  },
+  "ui_e4b01b83": {
+    "message": "Error log"
+  },
+  "ui_28f33ca5": {
+    "message": "{{count}} issues"
+  },
+  "ui_8f9b6e52": {
+    "message": "Filtered error logs copied."
+  },
+  "ui_25d26ed4": {
+    "message": "Download started. Check your browser downloads."
+  },
+  "ui_5232a0ce": {
+    "message": "Error log cleared."
+  },
+  "ui_29cd4a76": {
+    "message": "Keeps up to 1,000 local entries for 7 days. Includes extension errors and console warnings, without request bodies. Sensitive fields are hidden. Copy and export use the current filters."
+  },
+  "ui_34321453": {
+    "message": "Export"
+  },
+  "ui_a53e5f22": {
+    "message": "Error source"
+  },
+  "ui_223aa151": {
+    "message": "Severity"
+  },
+  "ui_8a68b38f": {
+    "message": "All levels"
+  },
+  "ui_70b2a161": {
+    "message": "Error"
+  },
+  "ui_f1198e29": {
+    "message": "Warning"
+  },
+  "ui_40eb4039": {
+    "message": "Search error log"
+  },
+  "ui_6f17310": {
+    "message": "Search errors, stacks or versions…"
+  },
+  "ui_7caf0237": {
+    "message": "Clear all local error logs?"
+  },
+  "ui_869f8d0c": {
+    "message": "Clear all"
+  },
+  "ui_f071d08d": {
+    "message": "Loading error log…"
+  },
+  "ui_79fb8a71": {
+    "message": "No issues match the filters."
+  },
+  "ui_2184839c": {
+    "message": "No issues recorded."
+  },
+  "ui_cd7f88b5": {
+    "message": "No stack trace"
+  },
+  "ui_a3c18902": {
+    "message": "Connection is still unavailable"
+  },
+  "ui_48ec46d8": {
+    "message": "Retrying…"
+  },
+  "ui_6e9e672a": {
+    "message": "Retry connection"
+  },
+  "ui_883b3206": {
+    "message": "Open task"
+  },
+  "ui_e01c3c16": {
+    "message": "Desktop notifications start after 2 minutes of persistent errors, at most once per account every 30 minutes."
+  },
+  "ui_59ee74b": {
+    "message": "Shown until recovery, with a reminder every 30 minutes."
+  },
+  "ui_1eb23749": {
+    "message": "Loading $PHASE$ settings",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_897c60ce": {
+    "message": "Stopping…"
+  },
+  "ui_5ede2d71": {
+    "message": "Connection unavailable; waiting for recovery"
+  },
+  "ui_498cbf09": {
+    "message": "Processing saved records first"
+  },
+  "ui_c6bfa09a": {
+    "message": "Up to $COUNT$ posts per batch",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_f511d8c3": {
+    "message": "$PERRUN$ per run, $DAILY$ per day",
+    "placeholders": {
+      "perRun": {
+        "content": "$1"
+      },
+      "daily": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_a9ccca0": {
+    "message": "Click to disable scheduling."
+  },
+  "ui_6cf2963d": {
+    "message": "Click to enable scheduling."
+  },
+  "ui_5fd03c39": {
+    "message": "Disable $PHASE$ scheduling",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_d0a5784a": {
+    "message": "Enable $PHASE$ scheduling",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4a9f93d1": {
+    "message": "$PHASE$: $STATUS$. $BUDGET$. $ACTION$",
+    "placeholders": {
+      "phase": {
+        "content": "$1"
+      },
+      "status": {
+        "content": "$2"
+      },
+      "budget": {
+        "content": "$3"
+      },
+      "action": {
+        "content": "$4"
+      }
+    }
+  },
+  "ui_8ebefccd": {
+    "message": "Pause labeling"
+  },
+  "ui_62708e23": {
+    "message": "Label all pending"
+  },
+  "ui_7380ed9a": {
+    "message": "Processes all pending, in-progress or failed labels for this account, across pages and filters. Batches contain up to 30 records and split long input. Completed labels are kept; failures retry up to 3 times."
+  },
+  "ui_221bcb1b": {
+    "message": "Processing saved records; new collection deferred"
+  },
+  "ui_4f1171b4": {
+    "message": "Labeling {{status}} · Done {{done}}/{{total}} · Pending {{remaining}}"
+  },
+  "ui_ca3b6d49": {
+    "message": "· Unfinished {{count}}"
+  },
+  "ui_4b04db48": {
+    "message": "· Removed {{count}}"
+  },
+  "ui_4e1803db": {
+    "message": "Load failed: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_df6a3b19": {
+    "message": "Copy failed: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_ff3b4255": {
+    "message": "Clear failed: $MESSAGE$",
+    "placeholders": {
+      "message": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_99a4d78e": {
+    "message": "; automatic queueing is off"
+  },
+  "ui_892355cc": {
+    "message": "; no eligible follow-back accounts to queue"
+  },
+  "ui_dfceb29d": {
+    "message": "; automatic queueing failed; see the error log"
+  },
+  "ui_6fd17fdb": {
+    "message": "; queueing result is unconfirmed; check the follow queue first"
+  },
+  "ui_1d949b0f": {
+    "message": "; $COUNT$ follow-back accounts confirmed in the queue",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b5357758": {
+    "message": "; no accounts added to the queue this run"
   }
 }

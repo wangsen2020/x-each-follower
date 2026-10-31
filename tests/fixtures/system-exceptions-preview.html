@@ -5,10 +5,12 @@
 <script type="module">
 import {createApp} from 'vue';
 const data={};const local={get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(key=>[key,data[key]])),set:async patch=>Object.assign(data,patch),remove:async keys=>{for(const key of [keys].flat())delete data[key];}};
-globalThis.chrome={runtime:{id:'preview',getURL:p=>'/'+p,sendMessage:async()=>({ok:true,result:{snapshotCount:0,incrementalCount:0},settings:{enabled:false,retain:3,incrementalLimit:1000,maxAgeHours:24,checkMinutes:60}})},storage:{local,onChanged:{addListener(){},removeListener(){}}}};
+globalThis.chrome={i18n:{getUILanguage:()=>new URLSearchParams(location.search).get('lang')||'zh-CN'},runtime:{id:'preview',getURL:p=>'/'+p,sendMessage:async()=>({ok:true,result:{snapshotCount:0,incrementalCount:0},settings:{enabled:false,retain:3,incrementalLimit:1000,maxAgeHours:24,checkMinutes:60}})},storage:{local,onChanged:{addListener(){},removeListener(){}}}};
 const {default:Settings}=await import('/src/entries/panel/components/SystemSettingsDialog.vue');
 const {systemExceptionStore,installExceptionCapture}=await import('/src/shared/system-exceptions.js');
 installExceptionCapture({source:'panel'});
+const {default:InfoTipLayer}=await import('/src/entries/panel/components/InfoTipLayer.vue');
+createApp(InfoTipLayer).mount(document.body.appendChild(document.createElement('div')));
 const app=createApp(Settings);app.mount('#app');
 const store=systemExceptionStore(),list=store.list.bind(store);let delayResolve;
 document.querySelector('#seed').onclick=async()=>{await store.clear();for(let i=0;i<35;i++)await store.append({message:i===0?'自动入队结果待确认 · 长错误可读性检查 '+('很长的异常内容用于检查滚动与换行。'.repeat(25)):`验收记录 ${i}：${i%2?'Receiving end does not exist.':'message channel closed'}`,source:['background','panel','content'][i%3],level:i%2?'warning':'error',stack:'Error: communication failure\n    at fanAutoEnqueue (chrome-extension://test/assets/panel.js:4:53568)\n    at async scheduledScan (chrome-extension://test/assets/panel.js:6:42)',kind:'acceptance',at:Date.now()-i*1000});};
