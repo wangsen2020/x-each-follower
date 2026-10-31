@@ -2,6 +2,7 @@
 export const RUNTIME_RESOURCES = {
   "THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
   "manifest.json": "src/manifest.json",
+  "exception-capture.js": "src/entries/content/exception-capture.js",
   "bridge.js": "src/entries/content/bridge.js",
   "tweet-comment-button.js": "src/entries/content/tweet-comment-button.js",
   "tweet-comment-button.css": "src/entries/content/tweet-comment-button.css",

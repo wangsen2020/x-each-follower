@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HEALTH_KEY,HEALTH_NOTICE_KEY,HEALTH_ALARM,HEALTH_REMINDER_MS,reportBackupHealth,reportUnfollowHealth,createAutomationHealthRuntime,retireApiStatusPause} from '../src/shared/automation-health.js';
+import {HEALTH_KEY,HEALTH_NOTICE_KEY,HEALTH_ALARM,HEALTH_REMINDER_MS,AI_HEALTH_GRACE_MS,reportMutualCommentHealth,reportBackupHealth,reportUnfollowHealth,createAutomationHealthRuntime,retireApiStatusPause} from '../src/shared/automation-health.js';
 function fixture(){const data={},shown=[],cleared=[],alarms=new Map(),listeners=[];let clock=1000000;
  const local={get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,structuredClone(data[k])])),set:async value=>Object.assign(data,structuredClone(value))};
  const api={storage:{local,onChanged:{addListener:f=>listeners.push(f)}},runtime:{getURL:p=>'chrome-extension://ext/'+p},notifications:{getPermissionLevel:async()=>'granted',clear:async id=>cleared.push(id),create:async(id,options)=>shown.push({id,options})},alarms:{create:async(k,v)=>alarms.set(k,v),clear:async k=>alarms.delete(k),onAlarm:{addListener(){}}}};
@@ -38,4 +38,32 @@ test('real blocked unfollow states alert, normal window and daily-limit waits do
  await reportUnfollowHealth(cfg,ledger('平台限流'),f.api.storage.local,f.now());assert.ok(f.data[HEALTH_KEY].alerts.unfollow);
  await reportUnfollowHealth(cfg,{accounts:{1:{scheduler:{phase:'waiting'}}}},f.api.storage.local,f.now());assert.equal(f.data[HEALTH_KEY].alerts.unfollow,undefined);
  await reportUnfollowHealth(cfg,ledger('今日额度已用完'),f.api.storage.local,f.now());assert.equal(f.data[HEALTH_KEY].alerts.unfollow,undefined);
+});
+
+test('home tagging and comment blockers publish persistent actionable alerts with independent owner recovery',async()=>{
+ const {reportMutualCommentHealth}=await import('../src/shared/automation-health.js');const f=fixture();
+ await reportMutualCommentHealth({ownerId:'123',tagIssue:'接口不存在',exhausted:30,commentIssue:'无法连接AI服务'},f.api.storage.local,f.now());
+ await reportMutualCommentHealth({ownerId:'456',tagIssue:'连接 Token 无效'},f.api.storage.local,f.now());
+ const alerts=f.data[HEALTH_KEY].alerts;assert.equal(Object.keys(alerts).length,4);assert.equal(alerts['mutual-tags-123'].severity,'error');assert.equal(alerts['mutual-tags-123'].tab,'mutualComments');
+ assert.equal(alerts['mutual-tags-123'].retryPhase,'scan');assert.equal(alerts['mutual-comments-123'].retryPhase,'comment');assert.equal(alerts['mutual-tag-retries-123'].retryPhase,undefined);
+ await reportMutualCommentHealth({ownerId:'123',exhausted:0},f.api.storage.local,f.now());assert.deepEqual(Object.keys(f.data[HEALTH_KEY].alerts),['mutual-tags-456']);
+});
+
+test('transient AI failures remain visible in the panel but recover without desktop notification',async()=>{
+ const f=fixture(),runtime=createAutomationHealthRuntime({api:f.api,now:f.now});
+ await reportMutualCommentHealth({ownerId:'123',commentIssue:'AI服务返回无效数据'},f.api.storage.local,f.now());await runtime.sync();
+ assert.ok(f.data[HEALTH_KEY].alerts['mutual-comments-123']);assert.equal(f.shown.length,0);assert.equal(f.alarms.get(HEALTH_ALARM).periodInMinutes,1);
+ f.advance(AI_HEALTH_GRACE_MS-1);await runtime.sync();assert.equal(f.shown.length,0);
+ await reportMutualCommentHealth({ownerId:'123'},f.api.storage.local,f.now());await runtime.sync();f.advance(1);await runtime.sync();assert.equal(f.shown.length,0);
+});
+
+test('persistent AI outage notifies after grace and shares cooldown across reasons, phases, recovery and restart',async()=>{
+ const f=fixture();let runtime=createAutomationHealthRuntime({api:f.api,now:f.now});
+ const report=async s=>{await reportMutualCommentHealth({ownerId:'123',...s},f.api.storage.local,f.now());await runtime.sync();};
+ await report({tagIssue:'无法连接AI服务',commentIssue:'AI服务返回无效数据'});f.advance(AI_HEALTH_GRACE_MS);await runtime.sync();assert.equal(f.shown.length,1);
+ await report({commentIssue:'连接 Token 无效'});assert.equal(f.shown.length,1);
+ await report({});assert.ok(f.cleared.includes('xf-health-mutual-tags-123'));assert.equal(f.data[HEALTH_NOTICE_KEY]['mutual-tags-123'].resolved,true);
+ runtime=createAutomationHealthRuntime({api:f.api,now:f.now});await report({commentIssue:'AI服务返回无效数据'});f.advance(AI_HEALTH_GRACE_MS);await runtime.sync();assert.equal(f.shown.length,1);
+ f.advance(HEALTH_REMINDER_MS-AI_HEALTH_GRACE_MS);await runtime.sync();assert.equal(f.shown.length,2);
+ await report({});f.advance(HEALTH_REMINDER_MS);await runtime.sync();assert.equal(Object.keys(f.data[HEALTH_NOTICE_KEY]).length,0);
 });

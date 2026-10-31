@@ -1,3 +1,5 @@
+import '../../shared/capture-panel-errors.js';
+import {reportSystemException} from '../../shared/system-exceptions.js';
 import './styles/table-scroll.css';
 import './styles/select-control.css';
 import { createApp } from 'vue';
@@ -23,6 +25,7 @@ async function initPanelVueApp() {
   }
 
   const app = createApp(App);
+  app.config.errorHandler = (error, instance, info) => { void reportSystemException({source:'panel',kind:'vue',error,context:info}); };
   app.mount(container);
 
   // Expose controllers for legacy panel.js and external callers
@@ -66,9 +69,9 @@ async function initPanelVueApp() {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initPanelVueApp, { once: true });
+  document.addEventListener('DOMContentLoaded', () => { initPanelVueApp().catch(error => console.error('面板初始化失败:', error)); }, { once: true });
 } else {
-  initPanelVueApp();
+  initPanelVueApp().catch(error => console.error('面板初始化失败:', error));
 }
 
 export {

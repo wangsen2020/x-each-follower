@@ -1,3 +1,6 @@
+import '../../shared/capture-background-errors.js';
+import {reportSystemException} from '../../shared/system-exceptions.js';
+import {finishScheduledPanel} from '../../platform/panel-scan-messages.js';
 import {createLearningRuntime} from '../../features/knowledge/learning-runtime.js';
 import {createMutualCommentRuntime} from '../../features/mutual-comments/runtime.js';
 import {createMutualCommentStore} from '../../features/mutual-comments/store.js';
@@ -42,7 +45,7 @@ import { loadCommentTracking } from '../../platform/tracking-storage.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
 import {handleExecutionLogRequest} from '../../shared/execution-log-store.js';
 import {getDefaultExecutionLogStore} from '../../shared/execution-log-store.js';
-import {createAutomationHealthRuntime} from '../../shared/automation-health.js';
+import {createAutomationHealthRuntime,reportMutualCommentHealth} from '../../shared/automation-health.js';
 import {createBackgroundRecords, mergeCollectedReplies, selectCommentCandidates} from '../../features/records/background-record-data.js';
 import {mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import {sendVerificationSelfMessage} from '../../features/grok/verification-self-message.js';
@@ -133,12 +136,14 @@ const leaderboardRuntime = createLeaderboardRuntime({
 });
 const knowledgeLibrary=createKnowledgeStore();
 const mutualComments=createMutualCommentRuntime({store:createMutualCommentStore(),
+  reportHealth:status=>reportMutualCommentHealth(status),
   validateEngine:async config=>{if(config.generationProvider==='grok')return;const service=isLocalAiProvider(config.generationProvider)?getLocalAiService(config.generationProvider):grokBotRelay;const status=await service.status();if(!status.enabled||isLocalAiProvider(config.generationProvider)&&!(await service.list(await service.configuration())).some(bot=>bot.id===config.generationBotId))throw Error('所选 AI 引擎未连接，或 Bot 已变化，请重新选择');},
   owner:async()=>{const value=await followQueueRuntime.handle({cmd:'followQueueIdentity'});if(!value?.ok)throw Error('无法确认 X 账号');return value;},
   scan:createHomeScanner({api:chrome,openPage:async()=>{const win=await createTemporaryWindow({url:'https://x.com/home',type:'popup',focused:false,width:1000,height:800},'mutual-home');return {tabId:win.tabs[0].id,close:()=>closeTemporaryWindow(win.id)};}}),analyze:requestGrokText,publisher:createReplyPublisher({api:chrome}),knowledge:resolveWritingContext});
 chrome.alarms.clear('xef-mutual-comments').catch(console.warn);
 for(const name of [MUTUAL_SCAN_ALARM,MUTUAL_COMMENT_ALARM])chrome.alarms.get(name).then(alarm=>{if(alarm?.periodInMinutes!==1)return chrome.alarms.create(name,{periodInMinutes:1});}).catch(console.warn);
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===MUTUAL_SCAN_ALARM)mutualComments.tick('scan').catch(console.warn);if(alarm.name===MUTUAL_COMMENT_ALARM)mutualComments.tick('comment').catch(console.warn);});
+mutualComments.refreshHealth().catch(console.warn);
 const knowledgeLearning=createLearningRuntime({repository:learningStore,library:knowledgeLibrary,
   queue:createKnowledgeQueue({store:knowledgeLibrary}),bot:{status:async(provider,botId)=>{const service=getLocalAiService(provider||'grok-local'),status=await service.status();if(!botId||!status.enabled)return status;const selected=(await service.list(await service.configuration())).find(item=>item.id===botId);return {...status,enabled:Boolean(selected),bot:selected?.id||'',botName:selected?.name||''};},generate:(prompt,options)=>getLocalAiService(options.provider||'grok-local').generate(prompt,options),resume:id=>grokLocal.resume(id)},
   sources:createLearningSources({posts:createPostStore(),leaderboard:createLeaderboardStore(),config:async()=> (await chrome.storage.local.get('ownPostTracking')).ownPostTracking||{}}),
@@ -614,6 +619,14 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  const reply = sendResponse;
+  sendResponse = response => {
+    if (response?.error && cmd !== 'reportSystemException') {
+      void reportSystemException({source:'background',kind:'request',message:`${cmd || 'request'}：${response.error}`});
+    }
+    try { reply(response); }
+    catch (error) { void reportSystemException({source:'background',kind:'response-channel',error}); }
+  };
   if(cmd==='retryExecutionLogBackup'){
     if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可重试备份'});return false;}
     const store=getDefaultExecutionLogStore();
@@ -643,17 +656,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (cmd === 'scheduledFollowersDone') {
-    const tab = sender.tab;
-    const expectedUrl = chrome.runtime.getURL('panel.html');
-    if (sender.id !== chrome.runtime.id || !tab?.id || !tab.url?.startsWith(`${expectedUrl}?scheduledFollowers=`)) {
-      sendResponse({ok:false}); return false;
-    }
-    const token = new URL(tab.url).searchParams.get('scheduledFollowers');
-    if (token !== message.token) { sendResponse({ok:false}); return false; }
-    chrome.tabs.remove(tab.id).then(() => sendResponse({ok:true}), error => sendResponse({ok:false,error:String(error?.message || error)}));
+  if (cmd === 'reportSystemException') {
+    if (sender.id !== chrome.runtime.id) { sendResponse({ok:false}); return false; }
+    reportSystemException({...message.entry, source:sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')) ? 'content' : 'panel'})
+      .then(ok => sendResponse({ok}), () => sendResponse({ok:false}));
     return true;
   }
+  if (cmd === 'scheduledFollowersDone') return finishScheduledPanel(message, sender, sendResponse, chrome);
   if (cmd === 'runFollowersScanTick') return false;
 
   if (cmd === 'xLeaderboard') {
@@ -692,7 +701,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'getNetworkTemplates') {
-    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
+    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates), error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (handleExecutionLogRequest(message, sender, sendResponse)) {
@@ -826,7 +835,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'runCommentAutoFollowNow') {
-    runCommentAutoFollow('manual').then(sendResponse);
+    runCommentAutoFollow('manual').then(sendResponse, error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (cmd === 'trackTweetReplies') {

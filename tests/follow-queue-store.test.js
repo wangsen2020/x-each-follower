@@ -1717,6 +1717,9 @@ test('expired pre-action lease resumes the same job and fences the abandoned wor
   await store.enqueue({accountId:'acc-1',targetUserId:'42',handle:'target',sources:[{module:'fans',enabled:true}]});
   const first=await store.claim({accountId:'acc-1',owner:'abandoned',leaseMs:20});
   clock.t+=30;
+  assert.equal(await store.claim({accountId:'acc-1',owner:'new',leaseMs:20}),null);
+  assert.equal((await store.get(first.id)).nextEligibleAt,clock.t+60000);
+  clock.t+=60000;
   const resumed=await store.claim({accountId:'acc-1',owner:'new',leaseMs:20});
   assert.equal(resumed.id,first.id);assert.equal(resumed.state,'running');assert.ok(resumed.lease.version>first.lease.version);
   assert.equal((await store.settle({id:first.id,owner:'abandoned',version:first.lease.version,state:'followed',patch:{}})).ok,false);

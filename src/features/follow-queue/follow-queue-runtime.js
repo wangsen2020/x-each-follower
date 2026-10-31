@@ -1,3 +1,4 @@
+import {createQueueTabs,startQueueActivity} from './queue-lifecycle.js';
 import {observeProfile} from '../../platform/x/profile-access.js';
 import {queueRelationshipDecision} from '../relationships/fan-followback-policy.js';
 import {readQueueProfile,profileReadLimitError} from './profile-reader.js';
@@ -144,6 +145,7 @@ export async function confirmPublishedQueueQuote({api = chrome, tabId, handle, o
 }
 
 export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchIdentity = networkFetch, fetchProfile=networkGetUserProfile, performFollow=networkFollow, removeFollower=removeRatioFollower, generateComment=requestGrokComment, generatePost=generateOriginalPost, generateReply=generateDirectReply, generateArticle=generateXArticle, replyPublisher, articlePublisher, generateCover, postPublisher, wait = sleep, records = null} = {}) {
+  const queueTabs = createQueueTabs(api);
   const publishing=postPublisher || createPostPublisher({api});
   const replies=replyPublisher || createReplyPublisher({api});
   const articles=articlePublisher || createArticlePublisher({api});
@@ -476,7 +478,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
     const stage=name=>{audit.stage=name;audit.recentStages.push({stage:name,at:new Date().toISOString()});audit.recentStages=audit.recentStages.slice(-12);};
     stage('open-profile');
     executionAudits.set(job.id,audit);
-    let tab;
+    let tab, detachAbort = () => {};
     let followResult = job.followResult || {};
     let attemptedFollow = false;
     const evaluations = [...(job.evaluations || [])];
@@ -486,7 +488,11 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       if (tab) await waitForQueueViewer({read:()=>viewer(tab.id),expected:binding?.handle,wait,check:async()=>{if(!await control.canAct())throw new Error('任务已暂停、账号变化或时间预算耗尽');}});
     }
     try {
-      tab = await createProfileTab(api,{url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false},'follow-queue',{jobId:job.id,runId:control.runId});
+      tab = await queueTabs.acquire(job.id, () => createProfileTab(api,{url:`https://x.com/${encodeURIComponent(job.handle)}`, active:false},'follow-queue',{jobId:job.id,runId:control.runId}), `https://x.com/${encodeURIComponent(job.handle)}`);
+      const closeOnAbort = () => { queueTabs.release(job.id).catch(() => {}); };
+      control.signal?.addEventListener('abort', closeOnAbort, {once:true});
+      detachAbort = () => control.signal?.removeEventListener('abort', closeOnAbort);
+      if (control.signal?.aborted) throw new Error('任务已中断');
       const loaded = await readQueueProfile({handle:job.handle,
         readDom:()=>script(tab.id,readProfileBundle,[job.handle,20]),
         readNetwork:()=>fetchProfile(tab.id,job.handle,{preferPageResponse:true}),guard,
@@ -699,7 +705,7 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       const profileReadLimited = error.code === 'X_PROFILE_READ_LIMIT' && !attemptedFollow;
       return {state:followResult.succeeded ? 'followed' : attemptedFollow ? 'uncertain' : 'retry',followResult,evaluations,
         rateLimited:profileReadLimited,profileReadLimited,diagnostic:failure.diagnostic,reason:failure.message};
-    } finally { audit.finishedAt = new Date().toISOString(); audit.evaluations = structuredClone(evaluations); if (tab) await api.tabs.remove(tab.id).catch(() => {}); }
+    } finally { detachAbort(); audit.finishedAt = new Date().toISOString(); audit.evaluations = structuredClone(evaluations); if (tab) await queueTabs.release(job.id).catch(error => { audit.tabCleanupError = String(error?.message || error); }); }
   }
   let reflectJobs = null,runFailures=null,runPromise=null;
   const scheduler = createFollowQueueScheduler({store,execute,canRun,getBlockReason:()=>runBlockReason,onEvent:async event => {
@@ -1383,7 +1389,8 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
   }
   async function run(manual=false,retryBatchOnly=false){
     if(runPromise)return {ok:false,notify:false,summary:'队列正在执行，已跳过重复触发。'};
-    runPromise=runCycle(manual,retryBatchOnly);try{return await runPromise;}finally{runPromise=null;}
+    const stopActivity = startQueueActivity(api);
+    runPromise=runCycle(manual,retryBatchOnly);try{return await runPromise;}finally{stopActivity();runPromise=null;}
   }
   async function runCycle(manual = false, retryBatchOnly = false) {
     const binding = await readBinding();
@@ -1395,12 +1402,13 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await alarmPlan.record(binding.accountId,{lastStage:value,lastStageAt:Date.now(),lastTrigger:manual?'manual':'scheduled'});
     };
     try {
+      await queueTabs.recover();
       const previous = await alarmPlan.read(binding.accountId);
       const recovered = typeof store.recoverInterrupted === 'function'
         ? await store.recoverInterrupted({accountId:binding.accountId,currentOwner:scheduler.status().owner}) : [];
       for (const job of recovered) await appendExecutionLog({scope:'queue',type:'job-interrupted-recovered',
         result:job.state,accountId:binding.accountId,jobId:job.id,handle:job.handle,runId:previous.lastRunId || '',
-        source:manual?'manual':'scheduled',detail:job.state==='pending'?'上次执行中断已归档；尚未发送操作，恢复待处理。'
+        source:manual?'manual':'scheduled',detail:job.interruptionCount>=3?'连续执行中断，已暂停自动重试，请检查后台状态后重试。':job.state==='pending'?'上次执行中断已归档；尚未发送操作，退避后重试。'
           :job.state==='followed'?'上次执行中断已归档；保留已成功关注结果。'
           :'上次执行中断已归档；已尝试操作，转为待核实并释放执行占用。'},api.storage.local);
       if (previous.lastStage && previous.lastStage !== 'idle') {
@@ -1443,6 +1451,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await syncCandidates(); await schedule(); return {ok:true};
     }
     const binding = await readBinding();
+    // The fan page asks for progress on startup, before queue onboarding.
+    // No binding means no visible batch; it must not create an error or touch
+    // another account's stored batch. Mutating requests still require activation.
+    if (message.cmd === 'followQueueFanBatchStatus' && !binding?.activated) {
+      return {ok:true,batch:null,requiresActivation:true};
+    }
     if (!binding?.activated || (message.accountId && binding.accountId !== message.accountId)) throw new Error('请先确认队列账号');
     switch(message.cmd) {
       case 'followQueueList': {

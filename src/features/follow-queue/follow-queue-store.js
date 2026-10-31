@@ -424,6 +424,19 @@ function mergeStoredProfile(job, input) {
   job.profile = {...(job.profile && typeof job.profile === 'object' ? job.profile : {}), ...incoming};
 }
 
+// Persist restart backoff; three interruptions stop automatic execution.
+function deferInterrupted(job, seenAt) {
+  const count = (Number(job.interruptionCount) || 0) + 1;
+  job.interruptionCount = count;
+  job.lastInterruptedAt = seenAt;
+  job.nextEligibleAt = seenAt + Math.min(30 * 60000, 60000 * 2 ** Math.min(count - 1, 5));
+  if (count >= 3) {
+    job.state = 'uncertain';
+    job.stage = 'verify';
+    job.followResult = {...job.followResult, reason:'连续执行中断，已暂停自动重试，请检查后台状态后重试'};
+  }
+}
+
 function blankJob({id, accountId, targetUserId, targetKey, handle, canonical, sources, now, profile}) {
   return {
     id,
@@ -1323,14 +1336,14 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
               || (job.evaluations || []).some(ev=>ev.generationAttemptedAt || ev.publishedAttemptedAt || ev.publishedPostId || ev.publishedPostUrl);
             job.state=succeededFollowResult(result)?'followed':attempted?'uncertain':'pending';
             job.stage=job.state==='uncertain'?'verify':job.state==='followed'?'followed':'queued';
-            if(job.state==='pending')job.nextEligibleAt=seenAt;
+            if(job.state==='pending')deferInterrupted(job,seenAt);
           }
           job.updatedAt=seenAt;
           releaseLease(job);
           jobs.put(job);rememberOutcome(outcomes,job);
           const entry={id:job.id,handle:job.handle,previousOwner:before.lease?.owner,state:job.state,before,recoveredAt:seenAt};
           meta.put({key:`interrupted:${account}:${job.id}:${before.lease?.version || 0}`, ...entry});
-          recovered.push({id:entry.id,handle:entry.handle,state:entry.state});
+          recovered.push({id:entry.id,handle:entry.handle,state:entry.state,interruptionCount:job.interruptionCount || 0,nextEligibleAt:job.nextEligibleAt});
         });
         if(recovered.length)await bumpRevision(meta);
         return recovered;
@@ -1400,8 +1413,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
             job.state = safeBeforeAction ? 'retry' : 'uncertain';
             job.stage = safeBeforeAction ? 'queued' : 'verify';
             if (safeBeforeAction) {
-              job.nextEligibleAt = seenAt;
-              job.followResult = {...result, reason:'执行中断，尚未发送关注操作，自动恢复执行'};
+              job.followResult = {...result, reason:'执行中断，尚未发送关注操作，延迟重试'};
+              deferInterrupted(job,seenAt);
             }
           }
           job.updatedAt = seenAt;
@@ -1586,7 +1599,10 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         const job = await requestResult(jobs.get(id));
         if (!job || job.accountId !== account) return {ok: false, reason: 'missing'};
         if (leaseHeld(job) && job.lease.expiresAt > seenAt) return {ok: false, reason: 'leased'};
-        if (state != null) job.state = state;
+        if (state != null) {
+          job.state = state;
+          if (state === 'pending' || state === 'retry') job.interruptionCount = 0;
+        }
         if (typeof stage === 'string') job.stage = stage;
         if (followResult && typeof followResult === 'object') job.followResult = clone(followResult);
         if (Number.isFinite(nextEligibleAt)) job.nextEligibleAt = nextEligibleAt;
