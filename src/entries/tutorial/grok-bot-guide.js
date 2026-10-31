@@ -1,3 +1,4 @@
+const t=(source)=>globalThis.__xfollowerI18n?.t(source)??source;
 import './grok-bot-guide.css';
 import {buildGrokBotInstruction} from '../../features/grok/grok-bot-instruction.js';
 import workerSource from '../../../deploy/grok-bot-relay/worker.js?raw';
@@ -16,27 +17,27 @@ const imageNames={usage:'01-usage.png',webhook:'02-webhook.png',cloudflareCreate
 for(const figure of document.querySelectorAll('[data-image]')){
   const filename=imageNames[figure.dataset.image];const url=images['../../assets/grok-bot-tutorial/'+filename];
   if(!url){figure.hidden=true;continue;}
-  const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.title='打开原图';
-  const img=new Image();img.src=url;img.alt=figure.querySelector('figcaption').textContent;img.loading='lazy';a.append(img);figure.prepend(a);
+  const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.title=t('打开原图');
+  const img=new Image();img.src=url;img.alt=t(figure.querySelector('figcaption').textContent);img.loading='lazy';a.append(img);figure.prepend(a);
 }
 const files=[['Worker 源码 · worker.js','worker.js',workerSource],['可直接粘贴的 Worker · 已包含签名库','worker-bundle.js',bundledWorker],['数据库 SQL · schema.sql','schema.sql',schema],['Wrangler 配置 · wrangler.jsonc','wrangler.jsonc',config],['依赖与命令 · package.json','package.json',packageSource],['单元测试 · 使用公开假密钥','test/worker.test.js',workerTests],['Workers 运行时测试','test/runtime.test.js',runtimeTests],['测试用 D1 适配器','test/d1-mock.js',d1TestAdapter],['私密文件忽略规则','.gitignore',ignoreSource],['第三方许可说明','THIRD_PARTY_NOTICES.txt',notices]];
 const status=document.querySelector('#copyStatus');let statusTimer;
-function notify(message){status.textContent=message;clearTimeout(statusTimer);statusTimer=setTimeout(()=>{status.textContent=''},4000);}
+function notify(message){status.textContent=t(message);clearTimeout(statusTimer);statusTimer=setTimeout(()=>{status.textContent=t('')},4000);}
 async function copy(text){
   let timer;
   try{await Promise.race([navigator.clipboard.writeText(text),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Clipboard unavailable')),1500);})]);notify('已复制');}
   catch{
     let dialog=document.querySelector('#guideCopyFallback');
-    if(!dialog){dialog=document.createElement('dialog');dialog.id='guideCopyFallback';dialog.setAttribute('aria-label','复制实施内容');const title=document.createElement('p');title.textContent='浏览器未完成自动复制。内容已全部选中，按 Ctrl+C（Mac 按 ⌘C）复制。';const input=document.createElement('textarea');input.readOnly=true;input.setAttribute('aria-label','完整可复制内容');const close=document.createElement('button');close.type='button';close.textContent='关闭';close.addEventListener('click',()=>dialog.close());dialog.append(title,input,close);document.body.append(dialog);}
+    if(!dialog){dialog=document.createElement('dialog');dialog.id='guideCopyFallback';dialog.setAttribute('aria-label',t('复制实施内容'));const title=document.createElement('p');title.textContent=t('浏览器未完成自动复制。内容已全部选中，按 Ctrl+C（Mac 按 ⌘C）复制。');const input=document.createElement('textarea');input.readOnly=true;input.setAttribute('aria-label',t('完整可复制内容'));const close=document.createElement('button');close.type='button';close.textContent=t('关闭');close.addEventListener('click',()=>dialog.close());dialog.append(title,input,close);document.body.append(dialog);}
     const input=dialog.querySelector('textarea');input.value=text;if(!dialog.open)dialog.showModal();input.focus();input.select();notify('已准备完整内容，可按快捷键复制');
   }finally{clearTimeout(timer);}
 }
 files.forEach(([title,name,content])=>{
   const details=document.createElement('details');details.className='source-file';
-  const summary=document.createElement('summary');summary.textContent=title;details.append(summary);
+  const summary=document.createElement('summary');summary.textContent=t(title);details.append(summary);
   const actions=document.createElement('div');actions.className='code-actions';
-  const copyButton=document.createElement('button');copyButton.type='button';copyButton.textContent='复制代码';copyButton.addEventListener('click',()=>copy(content));
-  const download=document.createElement('button');download.type='button';download.textContent='下载文件';download.addEventListener('click',()=>{
+  const copyButton=document.createElement('button');copyButton.type='button';copyButton.textContent=t('复制代码');copyButton.addEventListener('click',()=>copy(content));
+  const download=document.createElement('button');download.type='button';download.textContent=t('下载文件');download.addEventListener('click',()=>{
     const url=URL.createObjectURL(new Blob([content],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name.replaceAll('/','-');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   });actions.append(copyButton,download);details.append(actions);const pre=document.createElement('pre');pre.textContent=content;details.append(pre);document.querySelector('#sourceFiles').append(details);
 });

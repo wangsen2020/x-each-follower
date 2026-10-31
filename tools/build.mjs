@@ -1,4 +1,5 @@
 import { build } from 'vite';
+import {buildI18nCatalogs} from './build-i18n-catalogs.mjs';
 import { assembleDist } from './assemble-dist.mjs';
 import { verifyDist } from './verify-dist.mjs';
 import { validateOutputDir, cleanOutputDir, WORKSPACE_ROOT, DEFAULT_DIST_DIR } from './path-safety.mjs';
@@ -18,6 +19,7 @@ export async function runBuild(options = {}) {
 
   // Validate output directory and clean stale output before build
   validateOutputDir(distDir, rootDir);
+  buildI18nCatalogs(rootDir);
   cleanOutputDir(distDir, rootDir);
 
   console.log(`[build] 1/3 Building Panel HTML and CSS via Vite into ${distDir}...`);

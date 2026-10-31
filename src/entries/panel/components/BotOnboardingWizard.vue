@@ -1,29 +1,31 @@
 <template>
   <section class="bot-onboarding" aria-labelledby="onboardingTitle">
-    <div class="onboarding-head"><h4 id="onboardingTitle">自动接入</h4><span v-if="state.stage==='completed'" class="onboarding-done">已连接</span></div>
+    <div class="onboarding-head"><h4 id="onboardingTitle">{{ t("自动接入") }}</h4><span v-if="state.stage==='completed'" class="onboarding-done">{{ t("已连接") }}</span></div>
     <template v-if="!state.stage || ['idle','cancelled','completed'].includes(state.stage)">
-      <p>自动创建 Cloudflare 中转、填写 Grok 任务，并把接口绑定到插件。登录、验证码和授权确认由你完成。</p>
-      <p class="onboarding-muted">将创建专用 Worker 和 D1 数据库，不覆盖已有服务。部署令牌只在当前浏览器会话中暂存；接入完成后清除。</p>
-      <button id="startBotOnboarding" type="button" :disabled="busy" @click="start">{{ state.stage==='completed'?'配置新连接':'开始接入' }}</button>
+      <p>{{ t("自动创建 Cloudflare 中转、填写 Grok 任务，并把接口绑定到插件。登录、验证码和授权确认由你完成。") }}</p>
+      <p class="onboarding-muted">{{ t("将创建专用 Worker 和 D1 数据库，不覆盖已有服务。部署令牌只在当前浏览器会话中暂存；接入完成后清除。") }}</p>
+      <button id="startBotOnboarding" type="button" :disabled="busy" @click="start">{{ state.stage==='completed'?t("配置新连接"):t("开始接入") }}</button>
     </template>
     <template v-else>
-      <ol class="onboarding-progress" aria-label="接入进度"><li v-for="item in stages" :key="item.key" :class="{current:group===item.key,done:completedGroup(item.key)}"><span>{{ item.label }}</span></li></ol>
-      <p v-if="!state.error" role="status" aria-live="polite">{{ state.message || '正在准备接入…' }}</p>
-      <p v-if="state.resourceName" class="onboarding-muted">专用资源：{{ state.resourceName }}</p>
-      <p v-if="state.error" class="onboarding-error" role="alert">{{ state.error }}</p>
+      <ol class="onboarding-progress" :aria-label="t(&quot;接入进度&quot;)"><li v-for="item in stages" :key="item.key" :class="{current:group===item.key,done:completedGroup(item.key)}"><span>{{ t(item.label) }}</span></li></ol>
+      <p v-if="!state.error" role="status" aria-live="polite">{{ (t(state.message) || t("正在准备接入…")) }}</p>
+      <p v-if="state.resourceName" class="onboarding-muted">{{ t("专用资源：\u007b\u007bv0\u007d\u007d",{v0:state.resourceName}) }}</p>
+      <p v-if="state.error" class="onboarding-error" role="alert">{{ t(state.error) }}</p>
       <div class="onboarding-actions">
-        <button v-if="state.needsWorkerPermission" id="allowOnboardingWorker" type="button" :disabled="busy" @click="allowWorker">允许访问中转</button>
-        <button v-if="state.error" type="button" :disabled="busy" @click="resume">继续接入</button>
-        <button v-if="pageTabId" type="button" class="secondary" @click="showPage">打开配置页面</button>
-        <button type="button" class="secondary" :disabled="busy" @click="cancel">停止接入</button>
+        <button v-if="state.needsWorkerPermission" id="allowOnboardingWorker" type="button" :disabled="busy" @click="allowWorker">{{ t("允许访问中转") }}</button>
+        <button v-if="state.error" type="button" :disabled="busy" @click="resume">{{ t("继续接入") }}</button>
+        <button v-if="pageTabId" type="button" class="secondary" @click="showPage">{{ t("打开配置页面") }}</button>
+        <button type="button" class="secondary" :disabled="busy" @click="cancel">{{ t("停止接入") }}</button>
       </div>
-      <p class="onboarding-muted">可以关闭面板，重开后继续。停止只结束本次配置，已创建的云端资源保留。</p>
+      <p class="onboarding-muted">{{ t("可以关闭面板，重开后继续。停止只结束本次配置，已创建的云端资源保留。") }}</p>
     </template>
-    <div v-if="state.stage==='completed'" class="onboarding-result"><p>{{ state.result }}</p><small>{{ state.origin }}</small><p class="onboarding-muted">临时部署凭据已清除。可在 Cloudflare 的 API 令牌页撤销本次部署授权。</p></div>
-    <p v-if="error" class="onboarding-error" role="alert">{{ error }}</p>
+    <div v-if="state.stage==='completed'" class="onboarding-result"><p>{{ t(state.result) }}</p><small>{{ t(state.origin) }}</small><p class="onboarding-muted">{{ t("临时部署凭据已清除。可在 Cloudflare 的 API 令牌页撤销本次部署授权。") }}</p></div>
+    <p v-if="error" class="onboarding-error" role="alert">{{ t(error) }}</p>
   </section>
 </template>
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {ref,computed,onMounted,onUnmounted} from 'vue';
 const emit=defineEmits(['completed']);
 const state=ref({stage:'idle'}),busy=ref(false),error=ref('');

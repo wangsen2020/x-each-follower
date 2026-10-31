@@ -1,9 +1,17 @@
 // Source locations mapped to stable Chrome runtime filenames.
 export const RUNTIME_RESOURCES = {
+  "_locales/en/messages.json": "src/_locales/en/messages.json",
+  "_locales/zh_CN/messages.json": "src/_locales/zh_CN/messages.json",
+  "_locales/pt_BR/messages.json": "src/_locales/pt_BR/messages.json",
+  "_locales/es_419/messages.json": "src/_locales/es_419/messages.json",
+  "_locales/es/messages.json": "src/_locales/es/messages.json",
+  "_locales/pt_PT/messages.json": "src/_locales/pt_PT/messages.json",
+  "_locales/zh_TW/messages.json": "src/_locales/zh_TW/messages.json",
   "THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
   "manifest.json": "src/manifest.json",
   "exception-capture.js": "src/entries/content/exception-capture.js",
   "bridge.js": "src/entries/content/bridge.js",
+  "i18n-content.js": "src/entries/content/i18n-content.js",
   "tweet-comment-button.js": "src/entries/content/tweet-comment-button.js",
   "tweet-comment-button.css": "src/entries/content/tweet-comment-button.css",
   "profile-followback-badge.js": "src/entries/content/profile-followback-badge.js",

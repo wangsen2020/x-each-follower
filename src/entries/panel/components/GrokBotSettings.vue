@@ -1,41 +1,43 @@
 <template>
   <section class="bot-settings" aria-labelledby="botSettingsTitle">
-    <div class="bot-heading"><h3 id="botSettingsTitle">云端事件</h3><a :href="tutorialUrl" target="_blank" rel="noopener">图解教程</a></div>
-    <p class="bot-muted">通过 Grok 自动化 Webhook 生成文本，不代表独立 Bot 额度。</p>
+    <div class="bot-heading"><h3 id="botSettingsTitle">{{ t("云端事件") }}</h3><a :href="tutorialUrl" target="_blank" rel="noopener">{{ t("图解教程") }}</a></div>
+    <p class="bot-muted">{{ t("通过 Grok 自动化 Webhook 生成文本，不代表独立 Bot 额度。") }}</p>
     <BotOnboardingWizard @completed="refresh" />
-    <details class="bot-manual"><summary>已有接口 / 手动配置</summary>
-    <nav class="bot-steps" aria-label="接入步骤"><button v-for="(label,index) in steps" :key="label" type="button" :class="{selected:step===index+1}" :aria-current="step===index+1?'step':undefined" @click="step=index+1">{{ index+1 }} {{ label }}</button></nav>
+    <details class="bot-manual"><summary>{{ t("已有接口 / 手动配置") }}</summary>
+    <nav class="bot-steps" :aria-label="t(&quot;接入步骤&quot;)"><button v-for="(label,index) in steps" :key="label" type="button" :class="{selected:step===index+1}" :aria-current="step===index+1?'step':undefined" @click="step=index+1">{{ t(index+1) }} {{ t(label) }}</button></nav>
     <div v-if="step===1">
-      <h4>准备 Webhook 任务</h4><p>在 Grok 网页端新建自动化，添加 Webhook 触发器。按教程粘贴 XFollower 指令，保存端点与签名密钥。</p>
-      <div class="bot-actions"><a class="bot-link" href="https://grok.com/automations" target="_blank" rel="noopener">打开自动化任务</a><a :href="tutorialUrl+'#bot'" target="_blank" rel="noopener">查看配置步骤</a></div>
-      <p class="bot-muted">在网页端完成配置。若没有 Webhook 选项，先查看账号可用功能与教程排错。</p>
+      <h4>{{ t("准备 Webhook 任务") }}</h4><p>{{ t("在 Grok 网页端新建自动化，添加 Webhook 触发器。按教程粘贴 XFollower 指令，保存端点与签名密钥。") }}</p>
+      <div class="bot-actions"><a class="bot-link" href="https://grok.com/automations" target="_blank" rel="noopener">{{ t("打开自动化任务") }}</a><a :href="tutorialUrl+'#bot'" target="_blank" rel="noopener">{{ t("查看配置步骤") }}</a></div>
+      <p class="bot-muted">{{ t("在网页端完成配置。若没有 Webhook 选项，先查看账号可用功能与教程排错。") }}</p>
     </div>
     <div v-if="step===2">
-      <h4>部署中转</h4><p>打开 Cloudflare，跟随教程创建 Worker 与 D1，粘贴固定代码，配置自动化任务的 Webhook 和签名密钥，再生成专用连接 Token。</p>
-      <div class="bot-actions"><a class="bot-link" href="https://dash.cloudflare.com/?to=/:account/workers-and-pages" target="_blank" rel="noopener">打开 Cloudflare</a><a :href="tutorialUrl+'#cloudflare'" target="_blank" rel="noopener">复制代码与配置指令</a></div>
-      <p class="bot-muted">签名密钥保存在 Worker 中。下一步只需部署地址与连接 Token，无需 Cloudflare 账号 API Token。</p>
+      <h4>{{ t("部署中转") }}</h4><p>{{ t("打开 Cloudflare，跟随教程创建 Worker 与 D1，粘贴固定代码，配置自动化任务的 Webhook 和签名密钥，再生成专用连接 Token。") }}</p>
+      <div class="bot-actions"><a class="bot-link" href="https://dash.cloudflare.com/?to=/:account/workers-and-pages" target="_blank" rel="noopener">{{ t("打开 Cloudflare") }}</a><a :href="tutorialUrl+'#cloudflare'" target="_blank" rel="noopener">{{ t("复制代码与配置指令") }}</a></div>
+      <p class="bot-muted">{{ t("签名密钥保存在 Worker 中。下一步只需部署地址与连接 Token，无需 Cloudflare 账号 API Token。") }}</p>
     </div>
     <div v-if="step===3">
-      <h4>{{ state.connected ? '管理连接' : '绑定接口' }}</h4>
-      <label for="grokBotOrigin">接口地址</label><input id="grokBotOrigin" v-model="origin" type="url" placeholder="https://你的中转.workers.dev" autocomplete="off" :disabled="busy" />
-      <label for="grokBotToken">连接 Token <span class="info-tip" tabindex="0" role="note" data-tip="填写 Worker 中的 CLIENT_TOKEN，不是 Grok 签名密钥，也不是 Cloudflare API Token。仅保存在本机扩展数据库，不进入业务备份。" aria-label="填写 Worker 中的 CLIENT_TOKEN，不是 Grok 签名密钥，也不是 Cloudflare API Token。仅保存在本机扩展数据库，不进入业务备份。">?</span></label><input id="grokBotToken" v-model="token" type="password" placeholder="粘贴 CLIENT_TOKEN" autocomplete="new-password" :disabled="busy" />
-      <div class="bot-actions"><button type="button" :disabled="busy" @click="bind">检查并绑定</button><button v-if="state.connected" type="button" class="secondary" :disabled="busy" @click="disconnect">解绑</button></div>
-      <p v-if="state.connected" class="bot-muted">当前连接：{{ state.origin }} · {{ state.botName }}<br>{{ state.testedAt ? '生成回传已验证' : '接口已连接，尚待生成测试' }}</p>
+      <h4>{{ state.connected?t("管理连接"):t("绑定接口") }}</h4>
+      <label for="grokBotOrigin">{{ t("接口地址") }}</label><input id="grokBotOrigin" v-model="origin" type="url" :placeholder="t(&quot;https://你的中转.workers.dev&quot;)" autocomplete="off" :disabled="busy" />
+      <label for="grokBotToken">{{ t("连接 Token") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;填写 Worker 中的 CLIENT_TOKEN，不是 Grok 签名密钥，也不是 Cloudflare API Token。仅保存在本机扩展数据库，不进入业务备份。&quot;)" :aria-label="t(&quot;填写 Worker 中的 CLIENT_TOKEN，不是 Grok 签名密钥，也不是 Cloudflare API Token。仅保存在本机扩展数据库，不进入业务备份。&quot;)">?</span></label><input id="grokBotToken" v-model="token" type="password" :placeholder="t(&quot;粘贴 CLIENT_TOKEN&quot;)" autocomplete="new-password" :disabled="busy" />
+      <div class="bot-actions"><button type="button" :disabled="busy" @click="bind">{{ t("检查并绑定") }}</button><button v-if="state.connected" type="button" class="secondary" :disabled="busy" @click="disconnect">{{ t("解绑") }}</button></div>
+      <p v-if="state.connected" class="bot-muted">{{ t("当前连接：\u007b\u007bv0\u007d\u007d · \u007b\u007bv1\u007d\u007d",{v0:state.origin,v1:state.botName}) }}<br>{{ state.testedAt?t("生成回传已验证"):t("接口已连接，尚待生成测试") }}</p>
     </div>
     <div v-if="step===4">
-      <h4>验证生成与回传</h4><p>发送一句测试文本，检查自动化任务是否运行并将结果送回。测试会消耗一次生成用量。</p>
-      <p v-if="state.pendingOrigin" class="bot-muted">待验证：{{ state.pendingOrigin }}。测试通过后替换当前连接，期间继续保留原连接。</p>
-      <button type="button" :disabled="busy || !state.connected || testPending" @click="test">{{ testPending ? '正在等待回传…' : '开始生成测试' }}</button>
-      <label class="bot-toggle"><input type="checkbox" :checked="state.enabled" :disabled="busy || !state.testedAt" @change="toggle($event.target.checked)" />启用连接 <span class="info-tip" tabindex="0" role="note" data-tip="启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。" aria-label="启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。">?</span></label>
-      <p class="bot-muted">每30秒查询一次。关闭面板不取消云端任务，重新打开可继续查询。结果保留在下方。</p>
+      <h4>{{ t("验证生成与回传") }}</h4><p>{{ t("发送一句测试文本，检查自动化任务是否运行并将结果送回。测试会消耗一次生成用量。") }}</p>
+      <p v-if="state.pendingOrigin" class="bot-muted">{{ t("待验证：\u007b\u007bv0\u007d\u007d。测试通过后替换当前连接，期间继续保留原连接。",{v0:state.pendingOrigin}) }}</p>
+      <button type="button" :disabled="busy || !state.connected || testPending" @click="test">{{ testPending?t("正在等待回传…"):t("开始生成测试") }}</button>
+      <label class="bot-toggle"><input type="checkbox" :checked="state.enabled" :disabled="busy || !state.testedAt" @change="toggle($event.target.checked)" />{{ t("启用连接") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。&quot;)" :aria-label="t(&quot;启用并通过生成测试后，可在 Grok 创作设置中选择 云端事件。未知结果仅查询原任务。&quot;)">?</span></label>
+      <p class="bot-muted">{{ t("每30秒查询一次。关闭面板不取消云端任务，重新打开可继续查询。结果保留在下方。") }}</p>
     </div>
-    <p v-if="message" role="status" class="bot-status">{{ message }}</p><p v-if="error" role="alert" class="bot-error">{{ error }}</p>
-    <div class="bot-actions bot-navigation"><button v-if="step>1" type="button" class="secondary" @click="step--">上一步</button><button v-if="step<4" type="button" class="secondary" @click="step++">下一步</button></div>
+    <p v-if="message" role="status" class="bot-status">{{ t(message) }}</p><p v-if="error" role="alert" class="bot-error">{{ t(error) }}</p>
+    <div class="bot-actions bot-navigation"><button v-if="step>1" type="button" class="secondary" @click="step--">{{ t("上一步") }}</button><button v-if="step<4" type="button" class="secondary" @click="step++">{{ t("下一步") }}</button></div>
     </details>
-    <details v-if="jobs.length" class="bot-jobs" open><summary>备用任务 · {{ jobs.length }} <button type="button" class="secondary" :disabled="busy" @click.prevent="refreshJobs">刷新</button></summary><article v-for="job in jobs" :key="job.id"><div class="bot-job-heading"><strong>{{ labels[job.status] || job.status }}{{ job.test ? ' · 连接测试' : '' }}</strong><time>{{ new Date(job.createdAt).toLocaleString('zh-CN',{hour12:false}) }}</time></div><small>{{ job.id }}</small><p v-if="job.reason" class="bot-muted">{{ reasonText(job.reason) }}</p><button v-if="!['completed','failed'].includes(job.status)" type="button" class="secondary" :disabled="busy" @click="resume(job.id)">继续查询</button><pre v-if="job.result">{{ job.result }}</pre><button v-if="job.result" type="button" class="secondary" @click="copy(job.result)">复制结果</button></article></details>
+    <details v-if="jobs.length" class="bot-jobs" open><summary>{{ t("备用任务 · \u007b\u007bv0\u007d\u007d",{v0:jobs.length}) }}<button type="button" class="secondary" :disabled="busy" @click.prevent="refreshJobs">{{ t("刷新") }}</button></summary><article v-for="job in jobs" :key="job.id"><div class="bot-job-heading"><strong>{{ (t(labels[job.status]) || t(job.status)) }}{{ job.test?t(" · 连接测试"):'' }}</strong><time>{{ t(new Date(job.createdAt).toLocaleString(locale,{hour12:false})) }}</time></div><small>{{ t(job.id) }}</small><p v-if="job.reason" class="bot-muted">{{ t(reasonText(job.reason)) }}</p><button v-if="!['completed','failed'].includes(job.status)" type="button" class="secondary" :disabled="busy" @click="resume(job.id)">{{ t("继续查询") }}</button><pre v-if="job.result">{{ job.result }}</pre><button v-if="job.result" type="button" class="secondary" @click="copy(job.result)">{{ t("复制结果") }}</button></article></details>
   </section>
 </template>
 <script setup>
+import {t,locale} from '../../../shared/i18n.js';
+
 import {ref,onMounted,onUnmounted} from 'vue';
 import BotOnboardingWizard from './BotOnboardingWizard.vue';
 import {grokBotRelay as service,relayOrigin,BOT_POLL_MS} from '../../../features/grok/grok-bot-relay.js';

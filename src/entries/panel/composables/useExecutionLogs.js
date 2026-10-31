@@ -1,3 +1,4 @@
+import {t} from '../../../shared/i18n.js';
 import {queryUnfollowLogs} from '../../../shared/execution-log-select.js';
 import {readSystemSettings} from '../../../shared/system-settings.js';
 import { ref, computed, getCurrentScope, onScopeDispose } from 'vue';
@@ -260,7 +261,7 @@ export function useExecutionLogs() {
     const scope = currentScope.value;
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       if (typeof window !== 'undefined' && window.alert) {
-        window.alert('队列回关记录由关注队列统一管理，如需清空请前往“关注队列”面板。');
+        window.alert(t('队列回关记录由关注队列统一管理，如需清空请前往“关注队列”面板。'));
       }
       return;
     }
@@ -271,7 +272,7 @@ export function useExecutionLogs() {
         ? '超时监测、私信提醒和取消关注的全部日志'
         : '当前范围的执行日志';
 
-    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`)) {
+    if (typeof window !== 'undefined' && window.confirm && !window.confirm(t(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`))) {
       return;
     }
 

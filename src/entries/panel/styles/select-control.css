@@ -27,4 +27,17 @@ body :is(.monitor-pagination,.panel-pager,.post-page-size,.lb-page-size) select 
  body select:is(#ai-session,#fq_generationBot,.ai-session-select) option { padding:6px 8px; white-space:normal; overflow-wrap:anywhere; color:#24483b; background:#fff; }
  body select:is(#ai-session,#fq_generationBot,.ai-session-select) option:checked { background:#e4f0e8; }
  body select:is(#ai-session,#fq_generationBot,.ai-session-select) option:hover { background:#edf5ef; }
+ /* Opt-in only: constrain the selected text inside the content box, before
+    the existing 32px arrow reserve. The picker options keep their full text. */
+ body select[data-truncate-selection] > button.panel-select-trigger {
+   display:block !important; flex:1 1 0; min-width:0; max-width:100%; width:100%;
+   min-height:0 !important; height:auto !important; margin:0 !important; padding:0 !important;
+   border:0 !important; border-radius:0 !important; background:transparent !important;
+   box-shadow:none !important; color:inherit !important; font:inherit !important;
+   text-align:start; overflow:hidden; white-space:nowrap;
+ }
+ body select[data-truncate-selection] selectedcontent {
+   display:block; min-width:0; width:100%; overflow:hidden;
+   white-space:nowrap; text-overflow:ellipsis;
+ }
 }

@@ -1,5 +1,5 @@
 <template>
-  <aside v-if="alerts.length" class="automation-alerts" aria-label="需要处理的异常">
+  <aside v-if="alerts.length" class="automation-alerts" :aria-label="t(&quot;需要处理的异常&quot;)">
     <div v-for="alert in alerts" :key="alert.id" class="automation-alert" role="alert">
       <div class="alert-line"><strong>⚠ {{ alert.title }}</strong><span>{{ alert.reason }}</span><button v-if="alert.retryPhase" class="secondary" :disabled="!!retrying" :aria-busy="retrying===alert.id" @click="retryConnection(alert)">{{ retrying===alert.id?'重试中…':'重试连接' }}</button><button class="secondary" :aria-expanded="expanded===alert.id" @click="expanded=expanded===alert.id?'':alert.id">{{ expanded===alert.id?'收起详情':'查看详情' }}</button><button v-if="alert.tab" class="secondary" @click="openTask(alert)">前往处理</button><button v-else class="secondary" @click="openLogs">查看日志</button></div>
       <p v-if="retryErrors[alert.id]" role="status">{{ retryErrors[alert.id] }}</p>
@@ -9,15 +9,17 @@
         <button v-if="alert.id==='logs'" class="secondary" :disabled="busy" @click="retry">{{ busy?'正在核对并重试…':'重试备份' }}</button>
       </div>
     </div>
-    <p v-if="feedback" role="status">{{ feedback }}</p>
+    <p v-if="feedback" role="status">{{ t(feedback) }}</p>
   </aside>
 </template>
 <script setup>
+import {t,locale} from '../../../shared/i18n.js';
+
 import {ref,onMounted,onUnmounted} from 'vue';
 import {HEALTH_KEY,HEALTH_NOTICE_KEY} from '../../../shared/automation-health.js';
 import {panelNavigationController} from '../composables/usePanelNavigation.js';
 const alerts=ref([]),notices=ref({}),expanded=ref(''),busy=ref(false),feedback=ref(''),retrying=ref(''),retryErrors=ref({});let timer,sequence=0;
-const format=value=>new Date(value).toLocaleString('zh-CN',{hour12:false});
+const format=value=>new Date(value).toLocaleString(locale.value,{hour12:false});
 async function refresh(){const token=++sequence;try{const d=await chrome.storage.local.get([HEALTH_KEY,HEALTH_NOTICE_KEY]);if(token!==sequence)return;alerts.value=Object.values(d[HEALTH_KEY]?.alerts||{});notices.value=d[HEALTH_NOTICE_KEY]||{};}catch(error){feedback.value=`异常状态读取失败：${error.message}`;}}
 const changed=(changes,area)=>{if(area==='local'&&(changes[HEALTH_KEY]||changes[HEALTH_NOTICE_KEY]))void refresh();};
 onMounted(()=>{void refresh();chrome.storage.onChanged.addListener(changed);timer=setInterval(refresh,30000);});

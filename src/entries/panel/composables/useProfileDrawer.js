@@ -1,3 +1,4 @@
+import {t} from '../../../shared/i18n.js';
 import { ref, computed } from 'vue';
 import { evaluateMutualProfile, repairMojibake } from '../../../features/relationships/scoring.js';
 
@@ -115,7 +116,7 @@ export function useProfileDrawer() {
       lines.push(ev.postCount > 0 ? `已检查简介与前 ${ev.postCount} 条帖子：未命中互粉关键词` : '尚未读取首页帖子，点击“采集资料”可扫描前 5-10 条帖子关键词');
     }
     if (typeof user.value?.grokMutualIntent === 'boolean') {
-      lines.push(`Grok 互粉倾向：${user.value.grokMutualIntent ? '有互粉倾向' : '无互粉倾向'}${user.value.grokReason ? `（${user.value.grokReason}）` : ''}`);
+      lines.push(t("Grok 互粉倾向：\u007b\u007bv0\u007d\u007d\u007b\u007bv1\u007d\u007d",{v0:(user.value.grokMutualIntent?t("有互粉倾向"):t("无互粉倾向")),v1:(user.value.grokReason?`（${user.value.grokReason}）`:'')}));
     }
     return lines.filter(Boolean);
   });

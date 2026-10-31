@@ -1,3 +1,4 @@
+import {t} from '../../shared/i18n.js';
 /** Per-module dashboard load chrome. Presentation only; it does not read or migrate storage. */
 
 export const DASHBOARD_MODULES = {
@@ -109,16 +110,14 @@ export function applyModuleView(doc, moduleId, state, rowCount) {
     load.setAttribute('aria-busy', visible ? 'true' : 'false');
     const text = load.querySelector('.dash-load-text');
     if (text) {
-      text.textContent = state.phase === 'recover'
-        ? copy.recover
-        : (view.showRefresh ? copy.refresh : copy.initial);
+      text.textContent = state.phase === 'recover'?t(copy.recover):view.showRefresh?t(copy.refresh):t(copy.initial);
     }
   }
   const error = doc.getElementById?.(`${moduleId}LoadError`);
   if (error) {
     error.hidden = !view.showError;
     const text = error.querySelector('.dash-load-text');
-    if (text) text.textContent = view.errorText;
+    if (text) text.textContent = t(view.errorText);
   }
   return view;
 }
@@ -185,27 +184,27 @@ export function replayDiagnosticText(replay) {
 }
 
 export function paintMigrationProgress(container, input) {
-  const view = migrationProgressView(input);
+  const view = migrationProgressView({...input, stage: t(input.stage)});
   const row = container.ownerDocument.createElement('div');
   row.className = 'dash-load dash-migration';
   row.setAttribute('role', 'status');
   row.setAttribute('aria-live', 'polite');
   const text = container.ownerDocument.createElement('span');
   text.className = 'dash-load-text';
-  text.textContent = view.label;
+  text.textContent = t(view.label);
   row.append(text);
   if (view.total !== null && view.total > 0) {
     const bar = container.ownerDocument.createElement('progress');
     bar.max = String(view.total);
     bar.value = String(Math.min(view.completed, view.total));
-    bar.setAttribute('aria-label', view.label);
+    bar.setAttribute('aria-label', t(view.label));
     row.append(bar);
   }
   container.replaceChildren(row);
   if (input.replay) {
     const diagnostic = container.ownerDocument.createElement('pre');
     diagnostic.className = 'dash-migration-diagnostic';
-    diagnostic.textContent = replayDiagnosticText(input.replay);
+    diagnostic.textContent = t(replayDiagnosticText(input.replay));
     container.append(diagnostic);
   }
   return view;

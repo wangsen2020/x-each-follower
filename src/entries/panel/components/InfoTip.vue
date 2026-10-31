@@ -1,8 +1,10 @@
 <template>
-  <span class="info-tip" tabindex="0" role="note" :data-tip="text" :aria-label="label || text">?</span>
+  <span class="info-tip" tabindex="0" role="note" :data-tip="t(text)" :aria-label="(t(label) || t(text))">?</span>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 defineProps({ text: { type: String, required: true }, label: { type: String, default: '' } });
 </script>
 

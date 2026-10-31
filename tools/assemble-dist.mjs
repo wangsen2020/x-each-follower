@@ -1,6 +1,6 @@
 import {RUNTIME_RESOURCES} from './runtime-resources.mjs';
 import { readdirSync, copyFileSync, existsSync, mkdirSync, lstatSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateOutputDir, assertNoReparsePoint, WORKSPACE_ROOT, DEFAULT_DIST_DIR } from './path-safety.mjs';
 
@@ -76,6 +76,8 @@ export async function assembleDist(options = {}) {
     assertNoReparsePoint(srcPath);
 
     const destPath = join(validatedDist, name);
+    assertNoReparsePoint(dirname(destPath));
+    mkdirSync(dirname(destPath), {recursive:true});
     if (existsSync(destPath)) {
       assertNoReparsePoint(destPath);
     }

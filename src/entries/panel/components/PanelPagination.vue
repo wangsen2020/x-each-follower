@@ -1,20 +1,22 @@
 <template>
   <div :id="id" class="monitor-pagination" :hidden="initiallyHidden">
     <label class="page-size-label">
-      <span>每页</span>
-      <PanelSelect :id="selectId" :value="defaultSize" aria-label="每页条数">
-        <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ size }}</option>
+      <span>{{ t("每页") }}</span>
+      <PanelSelect :id="selectId" :value="defaultSize" :aria-label="t(&quot;每页条数&quot;)">
+        <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ t(size) }}</option>
       </PanelSelect>
     </label>
-    <span :id="summaryId" class="page-summary">{{ initialSummary }}</span>
+    <span :id="summaryId" class="page-summary">{{ t(initialSummary) }}</span>
     <div class="page-actions">
-      <button :id="prevId" type="button" :class="['secondary', { 'icon-button': iconButtons }]" title="上一页" aria-label="上一页">‹</button>
-      <button :id="nextId" type="button" :class="['secondary', { 'icon-button': iconButtons }]" title="下一页" aria-label="下一页">›</button>
+      <button :id="prevId" type="button" :class="['secondary', { 'icon-button': iconButtons }]" :title="t(&quot;上一页&quot;)" :aria-label="t(&quot;上一页&quot;)">‹</button>
+      <button :id="nextId" type="button" :class="['secondary', { 'icon-button': iconButtons }]" :title="t(&quot;下一页&quot;)" :aria-label="t(&quot;下一页&quot;)">›</button>
     </div>
   </div>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import PanelSelect from "./PanelSelect.vue";
 defineProps({
   id: { type: String, required: true },

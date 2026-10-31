@@ -44,8 +44,8 @@
               <svg
                 v-if="profileDrawerController.verified.value"
                 viewBox="0 0 22 22"
-                aria-label="蓝V认证"
-                title="已认证的 Twitter/X 蓝V账号"
+                :aria-label="t(&quot;蓝V认证&quot;)"
+                :title="t(&quot;已认证的 Twitter/X 蓝V账号&quot;)"
                 class="x-verified-badge"
                 style="width:16px;height:16px;min-width:16px;margin:0 3px;vertical-align:-2px;display:inline-block;fill:#1d9bf0;flex-shrink:0;"
               >
@@ -59,66 +59,66 @@
         <!-- Facts -->
         <div class="drawer-facts">
           <div class="drawer-field">
-            <span>粉丝</span>
-            <strong>{{ profileDrawerController.user.value?.followersText || '未读取' }}</strong>
+            <span>{{ t("粉丝") }}</span>
+            <strong>{{ (t(profileDrawerController.user.value?.followersText) || t("未读取")) }}</strong>
           </div>
           <div class="drawer-field">
-            <span>关注</span>
-            <strong>{{ profileDrawerController.user.value?.followingText || '未读取' }}</strong>
+            <span>{{ t("关注") }}</span>
+            <strong>{{ (t(profileDrawerController.user.value?.followingText) || t("未读取")) }}</strong>
           </div>
           <div class="drawer-field">
-            <span>互粉标签</span>
-            <strong>{{ profileDrawerController.evalResult.value.tag }}{{ profileDrawerController.tagSourceSuffix.value }}</strong>
+            <span>{{ t("互粉标签") }}</span>
+            <strong>{{ t(profileDrawerController.evalResult.value.tag) }}{{ t(profileDrawerController.tagSourceSuffix.value) }}</strong>
           </div>
           <div class="drawer-field">
-            <span>推荐评估</span>
-            <strong>{{ profileDrawerController.evalResult.value.recommendLabel }}</strong>
+            <span>{{ t("推荐评估") }}</span>
+            <strong>{{ t(profileDrawerController.evalResult.value.recommendLabel) }}</strong>
           </div>
         </div>
 
         <!-- Multi-tag badges -->
         <section v-if="profileDrawerController.multiTags.value.length" class="drawer-section">
-          <h3>多维画像标签</h3>
+          <h3>{{ t("多维画像标签") }}</h3>
           <div class="col-tag-cell" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
             <span
               v-for="tag in profileDrawerController.multiTags.value"
               :key="tag.id"
               :class="['tag-badge', tag.colorClass]"
-              :title="tag.desc"
-              :data-tip="tag.desc"
-            >{{ tag.label }}</span>
+              :title="t(tag.desc)"
+              :data-tip="t(tag.desc)"
+            >{{ t(tag.label) }}</span>
           </div>
         </section>
 
         <!-- Bio -->
         <section class="drawer-section">
-          <h3>简介</h3>
-          <p>{{ profileDrawerController.bio.value }}</p>
+          <h3>{{ t("简介") }}</h3>
+          <p>{{ profileDrawerController.user.value?.bio ? profileDrawerController.bio.value : t("暂无简介") }}</p>
         </section>
 
         <!-- Mutual Intent & Recommendation -->
         <section :class="['drawer-section', 'drawer-risk', { 'is-danger': profileDrawerController.evalResult.value.isNotRecommended }]">
-          <h3>互粉意向与推荐评估</h3>
-          <p style="white-space: pre-line;">{{ profileDrawerController.mutualReasonLines.value.join('\n') }}</p>
+          <h3>{{ t("互粉意向与推荐评估") }}</h3>
+          <p style="white-space: pre-line;">{{ t(profileDrawerController.mutualReasonLines.value.join('\n')) }}</p>
         </section>
 
         <!-- Content Risk -->
         <section :class="['drawer-section', 'drawer-risk', { 'is-danger': profileDrawerController.risk.value.level === 'danger' }]">
-          <h3>{{ profileDrawerController.risk.value.level === 'danger' ? '风险标记' : '内容风险检查' }}</h3>
-          <p>{{ profileDrawerController.risk.value.level === 'danger' ? profileDrawerController.risk.value.hits.join('；') : '未命中本地内容危险信号' }}</p>
+          <h3>{{ profileDrawerController.risk.value.level === 'danger'?t("风险标记"):t("内容风险检查") }}</h3>
+          <p>{{ profileDrawerController.risk.value.level === 'danger'?t(profileDrawerController.risk.value.hits.join('；')):t("未命中本地内容危险信号") }}</p>
         </section>
 
         <!-- Recent Posts -->
         <section class="drawer-section">
-          <h3>{{ profileDrawerController.recentPostsTitle.value }}</h3>
+          <h3>{{ t(profileDrawerController.recentPostsTitle.value) }}</h3>
           <p v-if="!profileDrawerController.recentPosts.value.length">
-            {{ profileDrawerController.loading.value ? '正在读取公开资料…' : '尚未采集，点击“采集资料”读取最近帖子。' }}
+            {{ profileDrawerController.loading.value?t("正在读取公开资料…"):t("尚未采集，点击“采集资料”读取最近帖子。") }}
           </p>
           <ol v-else>
             <li v-for="(post, index) in profileDrawerController.recentPosts.value" :key="index">
-              <span>{{ post.text || '无文字内容' }}</span>
+              <span>{{ (post.text || t("无文字内容")) }}</span>
               <template v-if="post.url">
-                · <a :href="post.url" target="_blank" rel="noopener noreferrer">打开帖子</a>
+                · <a :href="post.url" target="_blank" rel="noopener noreferrer">{{ t("打开帖子") }}</a>
               </template>
             </li>
           </ol>
@@ -126,29 +126,29 @@
 
         <!-- Grok Comment Draft -->
         <section v-if="profileDrawerController.grokComment.value" class="drawer-section">
-          <h3>🤖 Grok 引用评价（草稿）</h3>
+          <h3>{{ t("🤖 Grok 引用评价（草稿）") }}</h3>
           <div class="log-grok-box" style="margin: 6px 0 0;">
             <div class="log-grok-header">
-              <span class="log-grok-tag">引用评价</span>
+              <span class="log-grok-tag">{{ t("引用评价") }}</span>
               <a
                 v-if="profileDrawerController.grokCommentPostUrl.value"
                 class="log-grok-post-link"
                 :href="profileDrawerController.grokCommentPostUrl.value"
                 target="_blank"
                 rel="noopener noreferrer"
-              >原推 ↗</a>
+              >{{ t("原推 ↗") }}</a>
               <button
                 type="button"
                 class="log-copy-btn"
                 @click="profileDrawerController.copyGrokComment()"
               >
-                {{ profileDrawerController.copyStatus.value === 'copied' ? '已复制！' : profileDrawerController.copyStatus.value === 'failed' ? '复制失败' : '复制评价' }}
+                {{ profileDrawerController.copyStatus.value === 'copied'?t("已复制！"):profileDrawerController.copyStatus.value === 'failed'?t("复制失败"):t("复制评价") }}
               </button>
             </div>
             <div
               v-if="profileDrawerController.grokCommentPost.value"
               style="font-size:11px;color:var(--text-subtle);margin-bottom:4px;padding-left:6px;border-left:2px solid var(--border-soft);max-height:38px;overflow:hidden;text-overflow:ellipsis;"
-            >针对推文：{{ profileDrawerController.grokCommentPost.value }}</div>
+            >{{ t("针对推文：\u007b\u007bv0\u007d\u007d",{v0:profileDrawerController.grokCommentPost.value}) }}</div>
             <div class="log-grok-body">{{ profileDrawerController.grokComment.value }}</div>
           </div>
         </section>
@@ -163,19 +163,21 @@
           :disabled="profileDrawerController.loading.value"
           @click="profileDrawerController.triggerRefresh()"
         >
-          {{ profileDrawerController.loading.value ? '采集中…' : '采集资料' }}
+          {{ profileDrawerController.loading.value?t("采集中…"):t("采集资料") }}
         </button>
         <button
           id="drawerOpenX"
           type="button"
           @click="profileDrawerController.openOnX()"
-        >在 X 打开</button>
+        >{{ t("在 X 打开") }}</button>
       </div>
     </aside>
   </div>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {useDrawerFocus} from '../composables/useDrawerFocus.js';
 import { onMounted, onUnmounted } from 'vue';
 import PanelCloseButton from './PanelCloseButton.vue';
