@@ -42,7 +42,7 @@ import { loadCommentTracking } from '../../platform/tracking-storage.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
 import {handleExecutionLogRequest} from '../../shared/execution-log-store.js';
 import {getDefaultExecutionLogStore} from '../../shared/execution-log-store.js';
-import {createAutomationHealthRuntime} from '../../shared/automation-health.js';
+import {createAutomationHealthRuntime,reportMutualCommentHealth} from '../../shared/automation-health.js';
 import {createBackgroundRecords, mergeCollectedReplies, selectCommentCandidates} from '../../features/records/background-record-data.js';
 import {mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import {sendVerificationSelfMessage} from '../../features/grok/verification-self-message.js';
@@ -133,12 +133,14 @@ const leaderboardRuntime = createLeaderboardRuntime({
 });
 const knowledgeLibrary=createKnowledgeStore();
 const mutualComments=createMutualCommentRuntime({store:createMutualCommentStore(),
+  reportHealth:status=>reportMutualCommentHealth(status),
   validateEngine:async config=>{if(config.generationProvider==='grok')return;const service=isLocalAiProvider(config.generationProvider)?getLocalAiService(config.generationProvider):grokBotRelay;const status=await service.status();if(!status.enabled||isLocalAiProvider(config.generationProvider)&&!(await service.list(await service.configuration())).some(bot=>bot.id===config.generationBotId))throw Error('所选 AI 引擎未连接，或 Bot 已变化，请重新选择');},
   owner:async()=>{const value=await followQueueRuntime.handle({cmd:'followQueueIdentity'});if(!value?.ok)throw Error('无法确认 X 账号');return value;},
   scan:createHomeScanner({api:chrome,openPage:async()=>{const win=await createTemporaryWindow({url:'https://x.com/home',type:'popup',focused:false,width:1000,height:800},'mutual-home');return {tabId:win.tabs[0].id,close:()=>closeTemporaryWindow(win.id)};}}),analyze:requestGrokText,publisher:createReplyPublisher({api:chrome}),knowledge:resolveWritingContext});
 chrome.alarms.clear('xef-mutual-comments').catch(console.warn);
 for(const name of [MUTUAL_SCAN_ALARM,MUTUAL_COMMENT_ALARM])chrome.alarms.get(name).then(alarm=>{if(alarm?.periodInMinutes!==1)return chrome.alarms.create(name,{periodInMinutes:1});}).catch(console.warn);
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===MUTUAL_SCAN_ALARM)mutualComments.tick('scan').catch(console.warn);if(alarm.name===MUTUAL_COMMENT_ALARM)mutualComments.tick('comment').catch(console.warn);});
+mutualComments.refreshHealth().catch(console.warn);
 const knowledgeLearning=createLearningRuntime({repository:learningStore,library:knowledgeLibrary,
   queue:createKnowledgeQueue({store:knowledgeLibrary}),bot:{status:async(provider,botId)=>{const service=getLocalAiService(provider||'grok-local'),status=await service.status();if(!botId||!status.enabled)return status;const selected=(await service.list(await service.configuration())).find(item=>item.id===botId);return {...status,enabled:Boolean(selected),bot:selected?.id||'',botName:selected?.name||''};},generate:(prompt,options)=>getLocalAiService(options.provider||'grok-local').generate(prompt,options),resume:id=>grokLocal.resume(id)},
   sources:createLearningSources({posts:createPostStore(),leaderboard:createLeaderboardStore(),config:async()=> (await chrome.storage.local.get('ownPostTracking')).ownPostTracking||{}}),

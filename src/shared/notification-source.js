@@ -1,5 +1,6 @@
 // Stable IDs also resolve notifications created before a service-worker restart.
 const SOURCES = [
+  ['xf-health-mutual-', 'mutualComments', '首页跟评异常'],
   ['xf-health-x-rate-limit', 'followQueue', '自动调度暂停'],
   ['xf-health-logs', 'followQueue', '系统异常'],
   ['xf-health-unfollow', 'unreciprocated', '自动取关异常'],
@@ -9,7 +10,7 @@ const SOURCES = [
   ['x-mutual-auto-', 'candidates', '互关追踪'],
   ['x-unreciprocated-', 'unreciprocated', '回关监控']
 ];
-const PANEL_TABS = new Set(['monitor', 'candidates', 'comments', 'postTracking', 'leaderboard', 'followQueue', 'unreciprocated', 'knowledge']);
+const PANEL_TABS = new Set(['monitor', 'candidates', 'comments', 'mutualComments', 'postTracking', 'leaderboard', 'followQueue', 'unreciprocated', 'knowledge']);
 
 export function notificationSource(id) {
   const source = SOURCES.find(([prefix]) => String(id).startsWith(prefix));

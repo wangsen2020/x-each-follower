@@ -1,0 +1,28 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>首页打标恢复 · 隔离验收</title>
+<link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/admin.css"><link rel="stylesheet" href="/src/entries/panel/styles/follow-queue-panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="/src/entries/panel/styles/select-control.css">
+<style>body{display:block;margin:0;padding:10px;background:#f4f7f5}main{display:block;max-width:1250px;margin:auto;height:auto}.mutual-comments{height:auto!important}.preview-tools{display:flex;flex-wrap:wrap;gap:10px;padding:8px}.preview-tools button{flex:none;padding:6px 10px;min-height:30px;width:auto}#app{display:block}button{cursor:pointer}</style>
+<main><div class="preview-tools"><button id="offline">模拟断网</button><button id="online">恢复网络</button><button id="tick">执行下一批</button><button id="preview-empty">空状态</button></div><div id="app"></div></main>
+<script type="module">
+import {createApp,h,nextTick} from 'vue';
+const listeners=new Set(),data={automationHealth:{alerts:{}},automationHealthNotices:{}};let online=false;
+const local={get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,structuredClone(data[k])])),set:async patch=>{Object.assign(data,structuredClone(patch));for(const f of listeners)f(Object.fromEntries(Object.entries(patch).map(([k,v])=>[k,{newValue:v}])),'local');}};
+globalThis.chrome={runtime:{id:'preview',getManifest:()=>({version:'4.11.0'}),sendMessage:async message=>{try{return await runtime.handle(message);}catch(e){return {ok:false,error:e.message};}}},storage:{local,onChanged:{addListener:f=>listeners.add(f),removeListener:f=>listeners.delete(f)}}};
+const {createMutualCommentStore}=await import('/src/features/mutual-comments/store.js');
+const {createMutualCommentRuntime}=await import('/src/features/mutual-comments/runtime.js');
+const {defaults}=await import('/src/features/mutual-comments/model.js');
+const {reportMutualCommentHealth}=await import('/src/shared/automation-health.js');
+const {grokLocal}=await import('/src/features/grok/grok-local.js');
+grokLocal.status=async()=>({enabled:online,bot:'preview'});grokLocal.configuration=async()=>({testedAt:1,bot:'preview'});grokLocal.list=async()=>[{id:'preview',name:'首页互关识别 · 产品讨论与独立开发者交流专用会话 · 长标题可读性验收',title:'首页互关识别 · 产品讨论与独立开发者交流专用会话 · 长标题可读性验收'}];
+const store=createMutualCommentStore({name:'xef-tag-recovery-preview'});
+if(!await store.config('123')){
+ await store.saveConfig({...defaults('123'),scanEnabled:true,scanProvider:'grok-local',scanBotId:'preview',batchSize:30,nextScanAt:Date.now()+86400000,tagServiceIssue:{reason:'会话、任务或接口不存在，请确认引擎和服务版本',since:Date.now(),nextProbeAt:0}});
+ await store.addPosts(Array.from({length:65},(_,i)=>({ownerId:'123',postId:String(1000+i),handle:'developer_'+i,text:'分享今天的独立开发进展，也欢迎同样关注产品体验的朋友互关交流。'+(i===0?'长文本测试。'.repeat(80):''),url:'https://example.com/post/'+i,tag:i===0?'failed':'pending',tagAttempts:i===0?4:0,status:'idle',createdAt:Date.now()-i*1000})));
+}
+let calls=0;
+const runtime=createMutualCommentRuntime({store,owner:async()=>({accountId:'123',handle:'preview'}),scan:async()=>({posts:[],pages:1}),validateEngine:async()=>{if(!online)throw Error('无法连接AI服务，请检查地址和端口');},knowledge:async()=>({}),publisher:{publish:async()=>{throw Error('隔离验收禁止发布');}},reportHealth:s=>reportMutualCommentHealth(s,local),analyze:async(prompt)=>{calls++;await new Promise(r=>setTimeout(r,500));if(!online)return {ok:false,blocking:true,reason:'无法连接AI服务'};const items=JSON.parse(prompt.split('帖子数据：')[1]);const batchId=JSON.parse(prompt.split('包围的JSON：')[1].split('\n')[0]).batchId;return {ok:true,text:'【标签开始】'+JSON.stringify({batchId,items:items.map(r=>({postId:r.postId,tag:'mutual',reason:'作者明确邀请互关交流'}))})+'【标签结束】'};}});
+const {default:Alerts}=await import('/src/entries/panel/components/AutomationAlerts.vue');const {default:Section}=await import('/src/entries/panel/pages/MutualCommentsSection.vue');const {panelNavigationController:nav}=await import('/src/entries/panel/composables/usePanelNavigation.js');nav.setTab('mutualComments');
+const {default:Tips}=await import('/src/entries/panel/components/InfoTipLayer.vue');
+createApp({render:()=>[h(Alerts),h(Section),h(Tips)]}).mount('#app');await runtime.refreshHealth();
+document.querySelector('#online').onclick=()=>{online=true;};document.querySelector('#offline').onclick=async()=>{online=false;await store.updateConfig('123',{tagServiceIssue:{reason:'无法连接AI服务，请检查地址和端口',since:Date.now(),nextProbeAt:0}});await runtime.refreshHealth();};document.querySelector('#tick').onclick=()=>runtime.tick('scan');document.querySelector('#preview-empty').onclick=async()=>{await store.db.posts.clear();await runtime.refreshHealth();};
+window.tagAcceptance={runtime,store,get calls(){return calls;},setOnline:v=>online=v,state:()=>runtime.state(),nextTick};
+</script></html>
