@@ -1,3 +1,4 @@
+import {t} from '../../../shared/i18n.js';
 import {ref, computed} from 'vue';
 import {autoUnfollowView, autoUnfollowRowView} from '../../../features/relationships/auto-unfollow-view.js';
 import {normalizeUnreciprocatedConfig} from './useUnreciprocatedSettings.js';
@@ -12,9 +13,9 @@ export function paintAutoUnfollowRow(node,user) {
   node.dataset.unfollowHandle=user.handle||'';
   node.dataset.unfollowId=String(user.id||'');
   const status=autoUnfollowRowView(user,view.value);
-  node.textContent=status.label;
-  node.title=status.tip;
-  node.setAttribute('data-tip',status.tip);
+  node.textContent=t(status.label);
+  node.title=t(status.tip);
+  node.setAttribute('data-tip',t(status.tip));
   node.hidden=!status.label;
 }
 async function refresh() {

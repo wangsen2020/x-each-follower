@@ -5,6 +5,8 @@
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { positionInfoTip } from '../tooltip-position.js';
 

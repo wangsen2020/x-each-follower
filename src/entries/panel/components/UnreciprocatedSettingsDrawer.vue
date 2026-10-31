@@ -19,7 +19,7 @@
       aria-labelledby="vueUnreciprocatedSettingsDrawerTitle"
     >
       <div class="profile-drawer-head">
-        <strong id="vueUnreciprocatedSettingsDrawerTitle">回关监控设置</strong>
+        <strong id="vueUnreciprocatedSettingsDrawerTitle">{{ t("回关监控设置") }}</strong>
         <div class="drawer-head-actions">
           <PanelCloseButton
             id="closeUnreciprocatedSettingsDrawer"
@@ -31,18 +31,18 @@
       <div class="profile-drawer-content settings-drawer-content">
         <!-- Error & Success alerts -->
         <div v-if="unreciprocatedSettingsController.errorMessage.value" class="drawer-alert is-error" style="color:#d93025; background:#fce8e6; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:12px;">
-          {{ unreciprocatedSettingsController.errorMessage.value }}
+          {{ t(unreciprocatedSettingsController.errorMessage.value) }}
         </div>
         <div v-if="unreciprocatedSettingsController.successMessage.value" class="drawer-alert is-success" style="color:#188038; background:#e6f4ea; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:12px;">
-          {{ unreciprocatedSettingsController.successMessage.value }}
+          {{ t(unreciprocatedSettingsController.successMessage.value) }}
         </div>
 
         <!-- 1. 等待期限 -->
-        <div class="drawer-section-heading">等待期限</div>
+        <div class="drawer-section-heading">{{ t("等待期限") }}</div>
 
         <div class="drawer-setting-group">
           <label for="unreciprocatedOverdueDays" class="drawer-setting-label">
-            <span>最长等待回关（天）</span>
+            <span>{{ t("最长等待回关（天）") }}</span>
           </label>
           <input
             id="unreciprocatedOverdueDays"
@@ -51,12 +51,12 @@
             min="1"
             max="90"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="主动关注对方后，超过多少天仍未回关判定为超时账号，默认 14 天（2周）。" aria-label="最长等待回关时间说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;主动关注对方后，超过多少天仍未回关判定为超时账号，默认 14 天（2周）。&quot;)" :aria-label="t(&quot;最长等待回关时间说明&quot;)">?</span>
         </div>
 
         <div class="drawer-setting-group">
           <label for="unreciprocatedAutoEvery" class="drawer-setting-label">
-            <span>本地比对间隔（分）</span>
+            <span>{{ t("本地比对间隔（分）") }}</span>
           </label>
           <input
             id="unreciprocatedAutoEvery"
@@ -65,12 +65,12 @@
             min="5"
             max="1440"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="定时执行本地回关数据比对的基础周期，默认 60 分钟。比对仅在本地刷新关系状态，不联网、不调用外部接口。" aria-label="本地比对间隔说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;定时执行本地回关数据比对的基础周期，默认 60 分钟。比对仅在本地刷新关系状态，不联网、不调用外部接口。&quot;)" :aria-label="t(&quot;本地比对间隔说明&quot;)">?</span>
         </div>
 
         <div class="drawer-setting-group">
           <label for="unreciprocatedAutoJitter" class="drawer-setting-label">
-            <span>比对浮动（±分）</span>
+            <span>{{ t("比对浮动（±分）") }}</span>
           </label>
           <input
             id="unreciprocatedAutoJitter"
@@ -79,49 +79,49 @@
             min="0"
             max="60"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="在比对周期上增加随机浮动，避免多个定时任务同时开始。" aria-label="比对随机浮动说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;在比对周期上增加随机浮动，避免多个定时任务同时开始。&quot;)" :aria-label="t(&quot;比对随机浮动说明&quot;)">?</span>
         </div>
 
         <!-- 2. 首次私信提醒 -->
-        <div class="drawer-section-heading">私信提醒</div>
+        <div class="drawer-section-heading">{{ t("私信提醒") }}</div>
         <div class="drawer-setting-group drawer-setting-switch">
-          <label class="drawer-switch-label"><input id="unreciprocatedAutoGreeting" type="checkbox" v-model="unreciprocatedSettingsController.autoGreeting.value" /><span>启用自动私信</span>
-          <InfoTip text="保存后绑定当前 X 账号，每轮结束后随机间隔 4–6 分钟再检查，每轮最多处理 5 人。关注满等待天数仍未回关便发送一次，超过当天仍会补发。明确未发送的留待下一轮重新核验，没有额外冷却期；已发或结果待确认不重复发。需要保留已登录 X 页面。" label="自动私信提醒说明" /></label>
+          <label class="drawer-switch-label"><input id="unreciprocatedAutoGreeting" type="checkbox" v-model="unreciprocatedSettingsController.autoGreeting.value" /><span>{{ t("启用自动私信") }}</span>
+          <InfoTip :text="t(&quot;保存后绑定当前 X 账号，每轮结束后随机间隔 4–6 分钟再检查，每轮最多处理 5 人。关注满等待天数仍未回关便发送一次，超过当天仍会补发。明确未发送的留待下一轮重新核验，没有额外冷却期；已发或结果待确认不重复发。需要保留已登录 X 页面。&quot;)" :label="t(&quot;自动私信提醒说明&quot;)" /></label>
         </div>
         <div class="drawer-setting-group">
           <label for="unreciprocatedGreetingAfterDays" class="drawer-setting-label">
-            <span>关注后等待（天）</span>
+            <span>{{ t("关注后等待（天）") }}</span>
           </label>
           <input id="unreciprocatedGreetingAfterDays" v-model.number="unreciprocatedSettingsController.greetingAfterDays.value" type="number" min="1" max="30" />
-            <span class="info-tip" tabindex="0" role="note" data-tip="默认关注满 24 小时后提醒。达到天数即可，超过第二天或取关期限仍可提醒；已回关、封禁、不存在的跳过。" aria-label="快捷私信等待时间说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;默认关注满 24 小时后提醒。达到天数即可，超过第二天或取关期限仍可提醒；已回关、封禁、不存在的跳过。&quot;)" :aria-label="t(&quot;快捷私信等待时间说明&quot;)">?</span>
         </div>
         <div class="drawer-setting-group">
           <label for="unreciprocatedGreetingText" class="drawer-setting-label">
-            <span>默认中文私信</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="发给中文用户时的默认正文；打开预览时可逐条修改。" aria-label="中文私信正文说明">?</span>
+            <span>{{ t("默认中文私信") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;发给中文用户时的默认正文；打开预览时可逐条修改。&quot;)" :aria-label="t(&quot;中文私信正文说明&quot;)">?</span>
           </label>
           <textarea id="unreciprocatedGreetingText" v-model="unreciprocatedSettingsController.greetingText.value" rows="2" maxlength="1000" />
         </div>
         <div class="drawer-setting-group">
           <label for="unreciprocatedGreetingTextEn" class="drawer-setting-label">
-            <span>默认英文私信</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="发给英文或非中文用户时的默认正文；打开预览时可逐条修改。" aria-label="英文私信正文说明">?</span>
+            <span>{{ t("默认英文私信") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;发给英文或非中文用户时的默认正文；打开预览时可逐条修改。&quot;)" :aria-label="t(&quot;英文私信正文说明&quot;)">?</span>
           </label>
           <textarea id="unreciprocatedGreetingTextEn" v-model="unreciprocatedSettingsController.greetingTextEn.value" rows="2" maxlength="1000" />
         </div>
         <div class="drawer-setting-group greeting-test-group">
           <label for="unreciprocatedGreetingTestHandle" class="drawer-setting-label">
-            <span>测试收件人</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="仅用于你已确认同意测试的账号；发送前请核对收件人。" aria-label="测试收件人说明">?</span>
+            <span>{{ t("测试收件人") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;仅用于你已确认同意测试的账号；发送前请核对收件人。&quot;)" :aria-label="t(&quot;测试收件人说明&quot;)">?</span>
           </label>
           <div class="greeting-test-controls">
-            <input id="unreciprocatedGreetingTestHandle" type="text" placeholder="@账号" autocomplete="off" />
-            <button id="unreciprocatedGreetingTestBtn" type="button" class="secondary">预览测试</button>
+            <input id="unreciprocatedGreetingTestHandle" type="text" :placeholder="t(&quot;@账号&quot;)" autocomplete="off" />
+            <button id="unreciprocatedGreetingTestBtn" type="button" class="secondary">{{ t("预览测试") }}</button>
           </div>
         </div>
 
         <!-- 3. 自动取关 -->
-        <div class="drawer-section-heading">自动取关</div>
+        <div class="drawer-section-heading">{{ t("自动取关") }}</div>
 
         <div class="drawer-setting-group drawer-setting-switch">
           <label class="drawer-switch-label">
@@ -130,13 +130,13 @@
               v-model="unreciprocatedSettingsController.autoUnfollow.value"
               type="checkbox"
             />
-            <span>启用自动取关</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="保存后按周期处理超时未回关账号；仅使用当前绑定账号，跳过白名单和豁免账号，每次取关前重新核验关系。需保留该账号的已登录 X 页面。" aria-label="启用自动取关说明">?</span>
+            <span>{{ t("启用自动取关") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;保存后按周期处理超时未回关账号；仅使用当前绑定账号，跳过白名单和豁免账号，每次取关前重新核验关系。需保留该账号的已登录 X 页面。&quot;)" :aria-label="t(&quot;启用自动取关说明&quot;)">?</span>
           </label>
         </div>
 
         <div class="drawer-setting-group">
-          <label for="unreciprocatedAutoUnfollowEvery" class="drawer-setting-label"><span>取关执行周期（分）</span></label>
+          <label for="unreciprocatedAutoUnfollowEvery" class="drawer-setting-label"><span>{{ t("取关执行周期（分）") }}</span></label>
           <input
             id="unreciprocatedAutoUnfollowEvery"
             :aria-invalid="Boolean(unreciprocatedSettingsController.intervalError.value)"
@@ -146,14 +146,14 @@
             min="1"
             max="1440"
           />
-          <span class="info-tip" tabindex="0" role="note" data-tip="支持 1–1440 分钟，默认 10 分钟，每轮最多处理 1 人。实际间隔按周期与浮动计算，最短 1 分钟；设为 1 分钟且浮动为 0，即按每 1 分钟安排一轮。此值不是 X 官方安全频率。" aria-label="取关执行周期说明">?</span>
+          <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;支持 1–1440 分钟，默认 10 分钟，每轮最多处理 1 人。实际间隔按周期与浮动计算，最短 1 分钟；设为 1 分钟且浮动为 0，即按每 1 分钟安排一轮。此值不是 X 官方安全频率。&quot;)" :aria-label="t(&quot;取关执行周期说明&quot;)">?</span>
         </div>
 
-        <p id="unfollowIntervalHelp">1–1440 分钟，默认 10 分钟；每轮最多 1 人。固定间隔请将周期浮动设为 0。</p>
-        <p v-if="unreciprocatedSettingsController.intervalError.value" id="unfollowIntervalError" role="alert" style="color: #b42318">{{ unreciprocatedSettingsController.intervalError.value }}</p>
+        <p id="unfollowIntervalHelp">{{ t("1–1440 分钟，默认 10 分钟；每轮最多 1 人。固定间隔请将周期浮动设为 0。") }}</p>
+        <p v-if="unreciprocatedSettingsController.intervalError.value" id="unfollowIntervalError" role="alert" style="color: #b42318">{{ t(unreciprocatedSettingsController.intervalError.value) }}</p>
         <div class="drawer-setting-group">
           <label for="unreciprocatedAutoUnfollowJitter" class="drawer-setting-label">
-            <span>周期浮动（±分）</span>
+            <span>{{ t("周期浮动（±分）") }}</span>
           </label>
           <input
             id="unreciprocatedAutoUnfollowJitter"
@@ -162,12 +162,12 @@
             min="0"
             max="15"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="取关检查周期随机浮动，默认 0，即按固定周期安排；已有自定义浮动保持不变。" aria-label="取关周期浮动说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;取关检查周期随机浮动，默认 0，即按固定周期安排；已有自定义浮动保持不变。&quot;)" :aria-label="t(&quot;取关周期浮动说明&quot;)">?</span>
         </div>
 
         <div class="drawer-setting-group">
           <label for="unreciprocatedDailyLimit" class="drawer-setting-label">
-            <span>单日取关上限（人）</span>
+            <span>{{ t("单日取关上限（人）") }}</span>
           </label>
           <input
             id="unreciprocatedDailyLimit"
@@ -176,13 +176,13 @@
             min="1"
             max="400"
           />
-            <span class="info-tip" tabindex="0" role="note" data-tip="默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 1 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。" aria-label="单日取关上限说明">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;默认 100 人，可调低或调高；实际处理量还受每轮 1 人、至少间隔 1 分钟和执行时段限制。按本机日期累计，结果不确定的请求也占额度。这是每日额度上限，不代表每天会执行满 100 人。&quot;)" :aria-label="t(&quot;单日取关上限说明&quot;)">?</span>
         </div>
 
         <div class="drawer-setting-group drawer-setting-time">
           <label class="drawer-setting-label">
-            <span>执行时段</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="自动取关执行的时间窗口，默认 09:00 至 21:00。时段外暂停执行，进入窗口后继续。" aria-label="执行时段说明">?</span>
+            <span>{{ t("执行时段") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;自动取关执行的时间窗口，默认 09:00 至 21:00。时段外暂停执行，进入窗口后继续。&quot;)" :aria-label="t(&quot;执行时段说明&quot;)">?</span>
           </label>
           <div class="time-window-inputs">
             <input
@@ -190,7 +190,7 @@
               v-model="unreciprocatedSettingsController.activeTimeStart.value"
               type="time"
             />
-            <span class="time-sep">至</span>
+            <span class="time-sep">{{ t("至") }}</span>
             <input
               id="unreciprocatedActiveTimeEnd"
               v-model="unreciprocatedSettingsController.activeTimeEnd.value"
@@ -200,27 +200,27 @@
         </div>
 
         <!-- 3. 保护与监控 -->
-        <div class="drawer-section-heading">保护与监控</div>
+        <div class="drawer-section-heading">{{ t("保护与监控") }}</div>
 
         <div class="drawer-setting-group">
           <label for="unreciprocatedWhitelist" class="drawer-setting-label">
-            <span>免取关名单</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="保留关注名单，列入的账号即使超时也受到强保护，绝不被自动取关。支持用逗号或换行分隔账号 handle。" aria-label="免取关名单说明">?</span>
+            <span>{{ t("免取关名单") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;保留关注名单，列入的账号即使超时也受到强保护，绝不被自动取关。支持用逗号或换行分隔账号 handle。&quot;)" :aria-label="t(&quot;免取关名单说明&quot;)">?</span>
           </label>
           <textarea
             id="unreciprocatedWhitelist"
             v-model="unreciprocatedSettingsController.whitelist.value"
             rows="3"
-            placeholder="账号 handle，逗号或换行分隔"
+            :placeholder="t(&quot;账号 handle，逗号或换行分隔&quot;)"
             style="width:100%;box-sizing:border-box;font-size:12px;padding:6px;border:1px solid #cbdacf;border-radius:6px;resize:vertical;"
           ></textarea>
         </div>
 
         <div class="drawer-setting-group">
-          <label class="drawer-setting-label"><span>执行状态与记录</span></label>
+          <label class="drawer-setting-label"><span>{{ t("执行状态与记录") }}</span></label>
           <div class="drawer-checkpoint-display">
-            <span id="unreciprocatedAutoSummary" class="checkpoint-handle">{{ unreciprocatedSettingsController.lastSummary.value }}</span>
-            <span id="unreciprocatedAutoLastTime" class="checkpoint-time">{{ unreciprocatedSettingsController.lastRunText.value }}</span>
+            <span id="unreciprocatedAutoSummary" class="checkpoint-handle">{{ t(unreciprocatedSettingsController.lastSummary.value) }}</span>
+            <span id="unreciprocatedAutoLastTime" class="checkpoint-time">{{ t(unreciprocatedSettingsController.lastRunText.value) }}</span>
           </div>
         </div>
 
@@ -231,8 +231,8 @@
               v-model="unreciprocatedSettingsController.enabled.value"
               type="checkbox"
             />
-            <span>面板开启时定时比对</span>
-            <span class="info-tip" tabindex="0" role="note" data-tip="开启后按设定周期提醒并在管理面板开启时执行本地比对；面板关闭时只提醒，不会自动取关。" aria-label="定时比对说明">?</span>
+            <span>{{ t("面板开启时定时比对") }}</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;开启后按设定周期提醒并在管理面板开启时执行本地比对；面板关闭时只提醒，不会自动取关。&quot;)" :aria-label="t(&quot;定时比对说明&quot;)">?</span>
           </label>
         </div>
       </div>
@@ -245,7 +245,7 @@
           :disabled="unreciprocatedSettingsController.saving.value"
           @click="unreciprocatedSettingsController.save()"
         >
-          {{ unreciprocatedSettingsController.saving.value ? '保存中…' : '保存配置' }}
+          {{ unreciprocatedSettingsController.saving.value?t("保存中…"):t("保存配置") }}
         </button>
         <button
           id="runUnreciprocatedNow"
@@ -254,7 +254,7 @@
           :disabled="unreciprocatedSettingsController.running.value"
           @click="unreciprocatedSettingsController.triggerRunNow()"
         >
-          {{ unreciprocatedSettingsController.running.value ? '比对中…' : '立即比对' }}
+          {{ unreciprocatedSettingsController.running.value?t("比对中…"):t("立即比对") }}
         </button>
       </div>
     </aside>
@@ -262,6 +262,8 @@
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {useDrawerFocus} from '../composables/useDrawerFocus.js';
 import { onMounted, onUnmounted } from 'vue';
 import InfoTip from './InfoTip.vue';

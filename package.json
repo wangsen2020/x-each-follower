@@ -1,6 +1,6 @@
 {
   "name": "x-each-follower",
-  "version": "4.8.2",
+  "version": "4.10.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,11 +17,13 @@
     "@vitejs/plugin-vue": "6.0.10",
     "es-module-lexer": "3.0.4",
     "fake-indexeddb": "6.2.5",
+    "puppeteer-core": "^25.16.0",
     "vite": "8.3.4",
     "vue": "3.5.44"
   },
   "dependencies": {
     "dexie": "4.4.7",
+    "i18next": "^26.5.12",
     "jsonrepair": "3.13.3",
     "lucide": "1.61.0",
     "twitter-text": "^3.1.0"

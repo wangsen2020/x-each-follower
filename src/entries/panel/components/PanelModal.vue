@@ -1,11 +1,13 @@
 <template>
   <dialog ref="dialog" class="panel-modal" :aria-labelledby="titleId" @close="$emit('close')" @click="backdrop">
-    <header><strong :id="titleId">{{ title }}</strong><div v-if="$slots.actions" class="modal-actions"><slot name="actions" /></div><PanelCloseButton class="modal-close" label="关闭弹窗" @click="close" /></header>
+    <header><strong :id="titleId">{{ t(title) }}</strong><div v-if="$slots.actions" class="modal-actions"><slot name="actions" /></div><PanelCloseButton class="modal-close" :label="t(&quot;关闭弹窗&quot;)" @click="close" /></header>
     <div class="modal-body"><slot /></div>
     <footer v-if="$slots.footer"><slot name="footer" /></footer>
   </dialog>
 </template>
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {ref,useId} from 'vue';
 import PanelCloseButton from './PanelCloseButton.vue';
 defineProps({title:{type:String,required:true}});defineEmits(['close']);

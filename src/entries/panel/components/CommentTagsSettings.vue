@@ -1,11 +1,13 @@
 <template>
   <div class="comment-tags-settings">
-    <label class="tag-switch"><input type="checkbox" :checked="settings.quoteTagsEnabled" @change="update({quoteTagsEnabled:$event.target.checked})">追加随机标签<InfoTip text="与关注队列一致：最多选择10个候选，每条按评论语言随机追加最多2个。空间不足时减少标签，不截断正文；同一条评论恢复时保留原标签。" /></label>
-    <template v-if="settings.quoteTagsEnabled"><div class="tag-options"><label v-for="tag in available" :key="tag" class="tag-option"><input type="checkbox" :checked="settings.quoteSelectedTags?.includes(tag)" @change="choose(tag,$event)"><span>#{{ tag }}</span><button v-if="settings.quoteCustomTags?.includes(tag)" type="button" :aria-label="'删除标签 '+tag" @click.prevent="remove(tag)">×</button></label></div>
-    <div class="tag-add"><input v-model="custom" aria-label="自定义评论标签" placeholder="例如 #互关 或 #LetsConnect" @keydown.enter.prevent="add"><button type="button" @click="add">添加标签</button></div><p v-if="error" role="alert" class="tag-error">{{ error }}</p><p class="tag-preview">候选 {{ settings.quoteSelectedTags?.length||0 }}/10 · 随机示例：{{ preview||'无可用标签' }}</p></template>
+    <label class="tag-switch"><input type="checkbox" :checked="settings.quoteTagsEnabled" @change="update({quoteTagsEnabled:$event.target.checked})">{{ t("追加随机标签") }}<InfoTip :text="t(&quot;与关注队列一致：最多选择10个候选，每条按评论语言随机追加最多2个。空间不足时减少标签，不截断正文；同一条评论恢复时保留原标签。&quot;)" /></label>
+    <template v-if="settings.quoteTagsEnabled"><div class="tag-options"><label v-for="tag in available" :key="tag" class="tag-option"><input type="checkbox" :checked="settings.quoteSelectedTags?.includes(tag)" @change="choose(tag,$event)"><span>#{{ t(tag) }}</span><button v-if="settings.quoteCustomTags?.includes(tag)" type="button" :aria-label="t('deleteTag',{tag})" @click.prevent="remove(tag)">×</button></label></div>
+    <div class="tag-add"><input v-model="custom" :aria-label="t(&quot;自定义评论标签&quot;)" :placeholder="t(&quot;例如 #互关 或 #LetsConnect&quot;)" @keydown.enter.prevent="add"><button type="button" @click="add">{{ t("添加标签") }}</button></div><p v-if="error" role="alert" class="tag-error">{{ t(error) }}</p><p class="tag-preview">{{ t('tagPreview',{count:settings.quoteSelectedTags?.length||0}) }}{{ (t(preview) || t("无可用标签")) }}</p></template>
   </div>
 </template>
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {ref,computed} from 'vue';
 import InfoTip from './InfoTip.vue';
 import {RECOMMENDED_QUOTE_TAGS,cleanQuoteTag,quoteTagSuffix} from '../../../features/grok/quote-tags.js';

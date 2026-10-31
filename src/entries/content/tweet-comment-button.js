@@ -1,4 +1,6 @@
 (() => {
+  const t=(source)=>globalThis.__xfollowerI18n?.t(source)??source;
+
   if (window.__xefCommentButtonObserver) return;
   window.__xefCommentButtonObserver = true;
   const ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-5.2A7.5 7.5 0 1 1 20 11.5Z"/><path d="M12 7v7m-3-3 3 3 3-3"/></svg>';
@@ -56,7 +58,7 @@
       node.setAttribute('role', 'status');
       document.body.append(node);
     }
-    node.textContent = message;
+    node.textContent = t(message);
     node.dataset.state = failed ? 'error' : 'info';
     clearTimeout(node.__xefTimer);
     node.__xefTimer = setTimeout(() => node.remove(), 4200);
@@ -125,8 +127,8 @@
     button.type = 'button';
     button.dataset.xefCommentTracker = 'true';
     button.dataset.tweetId = post.tweetId;
-    button.setAttribute('aria-label', '提取这条帖子的评论用户');
-    button.title = '提取评论用户';
+    button.setAttribute('aria-label', t('提取这条帖子的评论用户'));
+    button.title = t('提取评论用户');
     button.innerHTML = ICON;
     button.addEventListener('click', event => {
       event.preventDefault();
@@ -157,7 +159,7 @@
       if (cached && typeof cached.then === 'function') {
         cached.then(isMember => {
           if (button.isConnected !== false && typeof isMember === 'boolean') applyLeaderboardButtonState(button, isMember, handle);
-          else if(button.isConnected !== false){button.disabled=true;button.dataset.state='unverified';button.title='榜单状态暂不可用，请稍后刷新页面';}
+          else if(button.isConnected !== false){button.disabled=true;button.dataset.state='unverified';button.title=t('榜单状态暂不可用，请稍后刷新页面');}
         }).catch(() => {});
         return;
       }
@@ -183,7 +185,7 @@
         membershipCache.delete(handle);
         button.dataset.state='unverified';
         button.disabled=true;
-        button.title=`榜单状态暂不可用：${String(error?.message || error)}`;
+        button.title=t(`榜单状态暂不可用：${String(error?.message || error)}`);
         return null;
       });
 
@@ -198,8 +200,8 @@
     btn.dataset.member = isMember ? 'true' : 'false';
     btn.setAttribute('aria-pressed', isMember ? 'true' : 'false');
     const label = isMember ? `移出 X 榜单 (@${handle})` : `加入 X 榜单 (@${handle})`;
-    btn.setAttribute('aria-label', label);
-    btn.title = label;
+    btn.setAttribute('aria-label', t(label));
+    btn.title = t(label);
   }
 
   function syncLeaderboardButtons(handle, isMember) {
@@ -219,8 +221,8 @@
     button.dataset.authorHandle = post.authorHandle;
     button.dataset.member = 'false';
     button.setAttribute('aria-pressed', 'false');
-    button.setAttribute('aria-label', `加入 X 榜单 (@${post.authorHandle})`);
-    button.title = `加入 X 榜单 (@${post.authorHandle})`;
+    button.setAttribute('aria-label', t(`加入 X 榜单 (@${post.authorHandle})`));
+    button.title = t(`加入 X 榜单 (@${post.authorHandle})`);
     button.innerHTML = X_LEADERBOARD_ICON;
 
     queryLeaderboardMembership(post, button);
@@ -295,6 +297,7 @@
     checkPendingTrack();
     scan();
     const observer = new MutationObserver(records => {
+      if (globalThis.__xfollowerI18n && !globalThis.chrome?.runtime?.id) { observer.disconnect(); return; }
       for (const record of records) for (const node of record.addedNodes) if (node instanceof Element){
         scan(node);
         const tweet=node.closest('[data-testid="tweet"]');

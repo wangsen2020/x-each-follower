@@ -1,7 +1,9 @@
 <template>
-  <nav class="panel-pager" :aria-label="label"><span>{{ page }} / {{ pages }} · {{ total }} 条</span><label class="panel-pager-size"><span>每页</span><PanelSelect :value="pageSize" :aria-label="label+'每页条数'" @change="$emit('size',Number($event.target.value))"><option v-for="n in [10,20,50]" :key="n" :value="n">{{ n }}</option></PanelSelect></label><button type="button" class="secondary" :aria-label="label+'上一页'" :disabled="busy || page<=1" @click="$emit('page',page-1)">‹</button><button type="button" class="secondary" :aria-label="label+'下一页'" :disabled="busy || page>=pages" @click="$emit('page',page+1)">›</button></nav>
+  <nav class="panel-pager" :aria-label="t(label)"><span>{{ t("\u007b\u007bv0\u007d\u007d / \u007b\u007bv1\u007d\u007d · \u007b\u007bv2\u007d\u007d 条",{v0:page,v1:pages,v2:total}) }}</span><label class="panel-pager-size"><span>{{ t("每页") }}</span><PanelSelect :value="pageSize" :aria-label="t(&quot;\u007b\u007bv0\u007d\u007d每页条数&quot;,{v0:t(label)})" @change="$emit('size',Number($event.target.value))"><option v-for="n in [10,20,50]" :key="n" :value="n">{{ t(n) }}</option></PanelSelect></label><button type="button" class="secondary" :aria-label="t(&quot;\u007b\u007bv0\u007d\u007d上一页&quot;,{v0:t(label)})" :disabled="busy || page<=1" @click="$emit('page',page-1)">‹</button><button type="button" class="secondary" :aria-label="t(&quot;\u007b\u007bv0\u007d\u007d下一页&quot;,{v0:t(label)})" :disabled="busy || page>=pages" @click="$emit('page',page+1)">›</button></nav>
 </template>
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import PanelSelect from "./PanelSelect.vue";
 import {computed} from 'vue';
 const props=defineProps({page:{type:Number,default:1},pageSize:{type:Number,default:10},total:{type:Number,default:0},busy:Boolean,label:{type:String,default:'记录分页'}});defineEmits(['page','size']);

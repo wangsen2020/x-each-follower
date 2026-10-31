@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "XFollower · 粉丝跟进",
-  "version": "4.8.2",
-  "description": "本地管理 X 粉丝画像与创作任务，支持 Grok、Grok Hook、Grok Bot、Codex、Antigravity、任务恢复及配图。",
+  "name": "__MSG_extName__",
+  "version": "4.10.0",
+  "description": "__MSG_extDesc__",
   "permissions": [
     "scripting",
     "storage",
@@ -34,6 +34,7 @@
         "https://twitter.com/*"
       ],
       "js": [
+        "i18n-content.js",
         "bridge.js",
         "tweet-comment-button.js",
         "profile-followback-badge.js"
@@ -61,6 +62,7 @@
     "128": "icon128.png"
   },
   "action": {
-    "default_title": "打开 XFollower 粉丝跟进"
-  }
+    "default_title": "__MSG_extAction__"
+  },
+  "default_locale": "en"
 }

@@ -1,12 +1,12 @@
 <template>
-  <aside class="sidebar vue-panel-sidebar" aria-label="主导航">
+  <aside class="sidebar vue-panel-sidebar" :aria-label="t(&quot;主导航&quot;)">
     <div class="brand-mark">
       <div class="brand-logo">
         <img :src="iconUrl" alt="XFollower logo">
       </div>
       <div class="brand-row">
         <div class="brand-name">XFollower</div>
-        <span class="brand-version">v{{ version }}</span>
+        <span class="brand-version">v{{ t(version) }}</span>
       </div>
     </div>
 
@@ -25,30 +25,31 @@
       @keydown.esc="hideHelp"
       @click="handleTabClick(item.key)"
     >
-      {{ item.label }}
+      {{ t(item.label) }}
       <span
         v-if="item.hasBadge"
         :id="item.badgeId"
         class="nav-count"
         :class="{ 'nav-count-loading': badges[item.key]?.loading }"
         role="status"
-        :aria-label="badges[item.key]?.loading ? '加载中' : `${badges[item.key]?.count || 0} 条`"
+        :aria-label="badges[item.key]?.loading?t(&quot;加载中&quot;):t('recordCount',{count:badges[item.key]?.count||0})"
         :aria-busy="badges[item.key]?.loading"
       >
         <span v-if="badges[item.key]?.loading" class="dash-spinner" aria-hidden="true"></span>
-        <template v-else>{{ badges[item.key]?.count ?? 0 }}</template>
+        <template v-else>{{ t(badges[item.key]?.count ?? 0) }}</template>
       </span>
     </button>
+
 
     <div class="sidebar-foot sidebar-account-footer">
       <a v-if="account" class="sidebar-account" :href="`https://x.com/${account.handle}`" target="_blank" rel="noopener noreferrer" :title="`${account.name} @${account.handle}`">
         <img v-if="account.avatarUrl && !avatarFailed" :src="account.avatarUrl" alt="" class="sidebar-account-avatar" @error="avatarFailed=true">
-        <span v-else class="sidebar-account-avatar sidebar-avatar-fallback" aria-hidden="true">{{ account.name?.slice(0,1) || '?' }}</span>
-        <span class="sidebar-account-name">{{ account.name || account.handle }}</span>
-        <svg v-if="account.blueVerified" class="sidebar-account-blue" viewBox="0 0 24 24" width="14" height="14" role="img" aria-label="蓝 V 已认证"><title>蓝 V 已认证</title><path fill="#1d9bf0" d="m12 1 3 2 3 .5 1.5 3L22 9l-.5 3 1 3-2.5 2-1 3-3 .5-3 2-3-2-3-.5-1.5-3L2 15l.5-3-1-3L4 7l1-3 3-.5z"/><path fill="none" stroke="#fff" stroke-width="2" d="m7 12 3 3 7-7"/></svg>
+        <span v-else class="sidebar-account-avatar sidebar-avatar-fallback" aria-hidden="true">{{ (account.name?.slice(0,1) || '?') }}</span>
+        <span class="sidebar-account-name">{{ (account.name || account.handle) }}</span>
+        <svg v-if="account.blueVerified" class="sidebar-account-blue" viewBox="0 0 24 24" width="14" height="14" role="img" :aria-label="t(&quot;蓝 V 已认证&quot;)"><title>{{ t("蓝 V 已认证") }}</title><path fill="#1d9bf0" d="m12 1 3 2 3 .5 1.5 3L22 9l-.5 3 1 3-2.5 2-1 3-3 .5-3 2-3-2-3-.5-1.5-3L2 15l.5-3-1-3L4 7l1-3 3-.5z"/><path fill="none" stroke="#fff" stroke-width="2" d="m7 12 3 3 7-7"/></svg>
       </a>
-      <button v-else class="sidebar-account sidebar-account-empty" type="button" :title="accountError || '从已登录的 X 页面读取账号，点击重试'" @click="loadAccount">{{ accountLoading ? '正在识别账号…' : '未识别 X 账号' }}</button>
-      <button class="sidebar-account-refresh" type="button" :disabled="accountLoading" :aria-busy="accountLoading" :title="accountError || '刷新账号'" aria-label="刷新账号" @click="loadAccount">
+      <button v-else class="sidebar-account sidebar-account-empty" type="button" :title="(t(accountError) || t(&quot;从已登录的 X 页面读取账号，点击重试&quot;))" @click="loadAccount">{{ t(accountLoading ? t("正在识别账号…") : t("未识别 X 账号")) }}</button>
+      <button class="sidebar-account-refresh" type="button" :disabled="accountLoading" :aria-busy="accountLoading" :title="(t(accountError) || t(&quot;刷新账号&quot;))" :aria-label="t(&quot;刷新账号&quot;)" @click="loadAccount">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
       </button>
       <SystemSettingsDialog />
@@ -56,12 +57,15 @@
   </aside>
   <Teleport to="body">
     <div v-if="helpKey" id="sidebar-column-help" ref="helpBubble" class="sidebar-column-help" role="tooltip" :style="helpPosition" @mouseenter="cancelHide" @mouseleave="hideHelp">
-      {{ columnHelp[helpKey] }}
+      {{ t(columnHelp[helpKey]) }}
     </div>
   </Teleport>
 </template>
 
 <script setup>
+
+import {t} from '../../../shared/i18n.js';
+
 import { computed, ref, nextTick, onMounted, onUnmounted } from 'vue';
 import { panelNavigationController } from '../composables/usePanelNavigation.js';
 import SystemSettingsDialog from './SystemSettingsDialog.vue';
@@ -121,9 +125,12 @@ function handleTabClick(tab) {
 </script>
 
 <style scoped>
+.vue-panel-sidebar .nav-tab{white-space:normal;line-height:1.4;height:auto;min-height:38px;overflow-wrap:anywhere}.vue-panel-sidebar .nav-count{flex-shrink:0}.vue-panel-sidebar .sidebar-language{padding:10px 12px}
+.sidebar-language{padding:10px 12px;color:#e3eee9}.nav-tab{white-space:normal;height:auto;min-height:38px;text-align:left;overflow-wrap:anywhere}
+
 .sidebar-account-refresh{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:26px;height:30px;padding:0!important;margin-right:4px;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important}.sidebar-account-refresh:hover{background:#ffffff12!important}.sidebar-account-refresh:disabled{opacity:.45;cursor:wait}.sidebar-account-refresh:focus-visible{outline:2px solid #9bc6b1;outline-offset:1px}
 .sidebar-account-footer{display:flex;align-items:center;justify-content:space-between}.sidebar-account{display:flex;align-items:center;min-width:0;flex:1;margin-right:10px;color:#e3eee9;text-decoration:none;font-size:12px;overflow:hidden}.sidebar-account-avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-right:8px}.sidebar-avatar-fallback{display:grid;place-items:center;background:#426759;color:#fff}.sidebar-account-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.sidebar-account-blue{flex-shrink:0;margin-left:4px}.sidebar-account-empty{background:transparent;border:0;padding:0;height:30px;text-align:left;font-weight:400;box-shadow:none}
 .sidebar-column-help { position: fixed; z-index: 10000; box-sizing: border-box; padding: 10px; border-radius: 6px; background: #18302e; color: #fff; box-shadow: 0 4px 14px #18302e33; font-size: 12px; font-weight: 400; line-height: 1.6; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-@media(min-width:601px) and (max-width:900px){.sidebar-account-footer{flex-wrap:wrap;padding:8px 0}.sidebar-account{flex-basis:100%;margin-right:0;margin-bottom:4px}.sidebar-account-refresh{width:24px;margin-right:0}}
+@media(min-width:601px) and (max-width:900px){:global(main:has(.vue-panel-sidebar)){grid-template-columns:180px minmax(0,1fr)}.sidebar-account-footer{flex-wrap:wrap;padding:8px 0}.sidebar-account{flex-basis:100%;margin-right:0;margin-bottom:4px}.sidebar-account-refresh{width:24px;margin-right:0}}
 @media(max-width:600px){.sidebar-account-footer{display:none}}
 </style>
