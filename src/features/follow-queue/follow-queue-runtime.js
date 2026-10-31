@@ -1451,6 +1451,12 @@ export function createFollowQueueRuntime({api = chrome, store, fetchUser, fetchI
       await syncCandidates(); await schedule(); return {ok:true};
     }
     const binding = await readBinding();
+    // The fan page asks for progress on startup, before queue onboarding.
+    // No binding means no visible batch; it must not create an error or touch
+    // another account's stored batch. Mutating requests still require activation.
+    if (message.cmd === 'followQueueFanBatchStatus' && !binding?.activated) {
+      return {ok:true,batch:null,requiresActivation:true};
+    }
     if (!binding?.activated || (message.accountId && binding.accountId !== message.accountId)) throw new Error('请先确认队列账号');
     switch(message.cmd) {
       case 'followQueueList': {

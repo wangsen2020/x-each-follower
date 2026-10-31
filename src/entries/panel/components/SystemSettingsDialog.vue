@@ -14,6 +14,7 @@
       <div class="system-settings-main">
       <div class="profile-drawer-head"><strong id="systemSettingsTitle">{{ settingTabs.find(tab=>tab.key===activeSection)?.label }}</strong><PanelCloseButton @click="close" /></div>
       <div class="profile-drawer-content system-settings-content">
+        <SystemExceptionLogs v-if="activeSection==='exceptions'" />
         <GrokBotSettings v-if="activeSection==='grok-bot'" />
         <GrokLocalSettings v-if="activeSection==='grok-local'" :initial-provider="localProvider" />
         <section v-show="activeSection==='data'" aria-labelledby="localDataTitle">
@@ -70,12 +71,13 @@
 <p class="system-state" role="status">{{ message }}</p>
         <p v-if="error" class="system-error" role="alert">{{ error }}</p>
       </div>
-      <div v-show="!['data','versions','upgrades','grok-bot','grok-local'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
+      <div v-show="!['data','versions','upgrades','grok-bot','grok-local','exceptions'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
       </div>
     </dialog>
   </Teleport>
 </template>
 <script setup>
+import SystemExceptionLogs from './SystemExceptionLogs.vue';
 import PanelSelect from "./PanelSelect.vue";
 import {ref, reactive, computed, nextTick, onUnmounted} from 'vue';
 import {SYSTEM_DEFAULTS, readSystemSettings, saveSystemSettings} from '../../../shared/system-settings.js';
@@ -100,6 +102,7 @@ const preferenceGroups=[
 {key:'checkMinutes',label:'检查间隔（分）',min:1,max:30,tip:'默认每 1 分钟检查。只回收扩展拥有的闲置窗口；前台、忙碌、人工验证及常驻窗口保留。'}]}
 ];
 settingTabs.push(...preferenceGroups.map(group=>({key:group.key,label:{pagination:'列表分页',logs:'执行日志',windows:'临时窗口'}[group.key],icon:{pagination:'M4 5h16 M4 12h16 M4 19h16',logs:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',windows:'M3 4h18v16H3z M3 8h18 M15 12l4 4 M19 12l-4 4'}[group.key]})));
+settingTabs.push({key:'exceptions',label:'异常日志',icon:'M12 3L2 21h20L12 3z M12 9v5 M12 17v1'});
 settingTabs.push({key:'versions',label:'版本历史',icon:'M4 5h16 M4 12h10 M4 19h16 M17 10l3 3-3 3'}, {key:'upgrades',label:'升级日志',icon:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5'});
 settingTabs.splice(2,0,{key:'grok-bot',label:'云端事件',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
 settingTabs.splice(3,0,{key:'grok-local',label:'AI 引擎',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});

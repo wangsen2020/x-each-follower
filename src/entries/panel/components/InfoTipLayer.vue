@@ -6,7 +6,7 @@
 
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { positionInfoTip } from '../tooltip-position.js';
+import { positionInfoTip, positionDialogInfoTip } from '../tooltip-position.js';
 
 const container=ref('body');
 const visible = ref(false);
@@ -37,8 +37,16 @@ function place() {
   const anchor = active.getBoundingClientRect();
   if (!anchor.width || !anchor.height) { hide(); return; }
   const bubbleRect = bubble.value.getBoundingClientRect();
-  const result = positionInfoTip(anchor, bubbleRect, { width: window.innerWidth, height: window.innerHeight });
-  bubbleStyle.value = { left: `${result.left}px`, top: `${result.top}px`, width: `${result.width}px` };
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  const dialog = active.closest('dialog[open]');
+  if (dialog) {
+    const rect = dialog.getBoundingClientRect();
+    const result = positionDialogInfoTip(anchor, bubbleRect, {left:rect.left,top:rect.top,clientLeft:dialog.clientLeft,clientTop:dialog.clientTop,clientWidth:dialog.clientWidth,clientHeight:dialog.clientHeight,scrollLeft:dialog.scrollLeft,scrollTop:dialog.scrollTop}, viewport);
+    bubbleStyle.value = {position:'absolute',left:`${result.left}px`,top:`${result.top}px`,width:`${result.width}px`,maxHeight:`${result.maxHeight}px`};
+  } else {
+    const result = positionInfoTip(anchor, bubbleRect, viewport);
+    bubbleStyle.value = {position:'fixed',left:`${result.left}px`,top:`${result.top}px`,width:`${result.width}px`};
+  }
 }
 
 async function show(target) {

@@ -1,3 +1,6 @@
+import {enqueuePendingFans, fanEnqueueSummary} from '../../features/relationships/fan-auto-enqueue.js';
+import {createPanelScanListener} from '../../platform/panel-scan-messages.js';
+import {requestBackground} from '../../platform/background-request.js';
 import {inspectOrActOnProfile} from '../../platform/x/guarded-relationship.js';
 import {paintAutoUnfollowRow} from './composables/useAutoUnfollowStatus.js';
 import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
@@ -285,6 +288,7 @@ async function refreshFanBatchStatus() {
     const result=await chrome.runtime.sendMessage({cmd:'followQueueFanBatchStatus'});
     if(epoch!==fanViewEpoch)return;
     if(!result?.ok)throw new Error(result?.error||'批量核验状态读取失败');
+    if(result.requiresActivation)fanBatchError='';
     const before=fanBatchState;fanBatchState=result.batch;
     if(fanBatchState && ['completed','cancelled'].includes(fanBatchState.stage) && (before?.id!==fanBatchState.id || before.stage!==fanBatchState.stage))clearFollowerSelection();
     renderFanBatch();
@@ -3086,6 +3090,7 @@ window.addEventListener('beforeunload', () => {
   saveCommentAutoFollowSettings().catch(() => {});
 });
 
+chrome.runtime.onMessage.addListener(createPanelScanListener({api:chrome, scan:startFollowerScan, report:error => console.warn('定时粉丝检测异常:', error)}));
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd === 'grokStreamAnswer') {
     deliverGrokStream(message.text || '');
@@ -3100,14 +3105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     runUnreciprocatedCheckCycle('alarm').catch(() => {});
     return true;
   }
-  if (message?.cmd === 'runFollowersScanTick') {
-    chrome.tabs.getCurrent().then(tab => {
-      if (message.targetPanelTabId && tab?.id !== message.targetPanelTabId) return;
-      sendResponse({ok: true, handledByPanel: true});
-      startFollowerScan('alarm').catch(err => console.warn('定时粉丝检测异常:', err));
-    }).catch(() => {});
-    return true;
-  }
+
 });
 
 $('batchRefreshMutual')?.addEventListener('click', batchRefreshMutualNetwork);
@@ -3789,36 +3787,15 @@ async function scanFollowerList(scanSource = 'manual') {
       const directory = fanDirectoryFromMonitor({...monitor,users,queue});
       const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
       const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
-      let enqueuedCount = 0;
-      const enqueuedHandles = [];
-      const autoEnqueue = monitor.autoEnqueue !== false;
-      if (autoEnqueue && pendingEligible.length > 0) {
-        try {
-          const res = await chrome.runtime.sendMessage({
-            cmd: 'followQueueEnqueue',
-            candidates: pendingEligible.map(user => ({
-              handle: user.handle,
-              targetUserId: user.id || user.rest_id || '',
-              module: 'fans',
-              enabled: true
-            }))
-          });
-          if (res?.ok) {
-            enqueuedCount = res.count ?? pendingEligible.length;
-            enqueuedHandles.push(...pendingEligible.map(u => u.handle));
-          }
-        } catch (err) {
-          console.warn('自动拉取待回关用户到关注队列提示：', err);
-        }
-      }
-
+      const enqueueResult = await enqueuePendingFans(pendingEligible, {enabled:monitor.autoEnqueue !== false});
+      const {count:enqueuedCount, handles:enqueuedHandles} = enqueueResult;
       const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || null;
       const sourceName = sourceOperation === 'BlueVerifiedFollowers' ? '蓝标粉丝接口' : '粉丝接口';
       const newCount = networkUsers.filter(user => !knownHandles.has(user.handle.toLowerCase())).length;
       const cpText = complete ? '本圈已到末页，下轮从最新粉丝重新开始' : `本轮读取 ${readCount} 人，下轮从保存的游标接续`;
       const notMutualCount = getNotMutualUsers().length;
       const pendingCount = pendingHandles.size;
-      const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+      const summary = `增量检测完成（${sourceName}）：读取 ${networkUsers.length} 人，新增粉丝 ${newCount} 人（${cpText}）；当前粉丝 ${users.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${fanEnqueueSummary(enqueueResult)}。`;
 
       monitor = {
         ...monitor,
@@ -3893,29 +3870,8 @@ async function scanFollowerList(scanSource = 'manual') {
     const directory = fanDirectoryFromMonitor({...monitor,users:allUsers,queue});
     const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
     const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
-    let enqueuedCount = 0;
-    const enqueuedHandles = [];
-    const autoEnqueue = monitor.autoEnqueue !== false;
-    if (autoEnqueue && pendingEligible.length > 0) {
-      try {
-        const res = await chrome.runtime.sendMessage({
-          cmd: 'followQueueEnqueue',
-          candidates: pendingEligible.map(user => ({
-            handle: user.handle,
-            targetUserId: user.id || user.rest_id || '',
-            module: 'fans',
-            enabled: true
-          }))
-        });
-        if (res?.ok) {
-          enqueuedCount = res.count ?? pendingEligible.length;
-          enqueuedHandles.push(...pendingEligible.map(u => u.handle));
-        }
-      } catch (err) {
-        console.warn('自动拉取待回关用户到关注队列提示：', err);
-      }
-    }
-
+    const enqueueResult = await enqueuePendingFans(pendingEligible, {enabled:monitor.autoEnqueue !== false});
+    const {count:enqueuedCount, handles:enqueuedHandles} = enqueueResult;
     // DOM scrolling can stop on a temporarily empty virtualized viewport. Do
     // not advance the durable checkpoint unless it reached the old one.
     const newCheckpointHandle = reachedCheckpointDom ? topFollowerDom?.handle || monitor.checkpointHandle || null : monitor.checkpointHandle || null;
@@ -3924,7 +3880,7 @@ async function scanFollowerList(scanSource = 'manual') {
     const pendingCount = pendingHandles.size;
     const capText = users.length >= followerBatch ? `本次达到 ${followerBatch} 个上限；` : '';
     const coverageText = reachedCheckpointDom ? `已到达旧位点，新位点 @${newCheckpointHandle}` : '尚未到达旧位点，本次仅为部分结果；下轮继续补齐';
-    const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${enqueuedCount > 0 ? `；已自动拉取 ${enqueuedCount} 位待回关用户至关注队列` : (pendingCount > 0 ? '；待回关用户已在关注队列中' : '；暂无待回关用户需入队')}。`;
+    const summary = `从页面读取：读取 ${users.length} 个账号，新增 ${newCount} 个；${capText}${coverageText}；当前粉丝档案 ${allUsers.length} 人，关注 ${(monitor.followingUsers || []).length} 人，待回关 ${pendingCount} 人，未互关 ${notMutualCount} 人${fanEnqueueSummary(enqueueResult)}。`;
 
     monitor = {
       ...monitor,
@@ -4559,7 +4515,7 @@ document.querySelectorAll('[data-load-retry]').forEach(button => {
 async function bootRecordDashboard() {
   await applySystemPagination(false);
   recordPages = createPanelPages({
-    request: message => chrome.runtime.sendMessage({cmd: 'recordData', ...message}),
+    request: message => requestBackground({cmd: 'recordData', ...message}),
     onProgress(status) {
       const host = $('recordMigration');
       if (!host || !status) return;
@@ -4611,10 +4567,11 @@ async function bootRecordDashboard() {
   const scheduledToken = new URLSearchParams(location.search).get('scheduledFollowers');
   if (scheduledToken) setTimeout(async () => {
     try { if (monitor.enabled) await startFollowerScan('alarm'); }
-    finally { chrome.runtime.sendMessage({cmd:'scheduledFollowersDone',token:scheduledToken}).catch(() => {}); }
+    catch (error) { console.error('定时粉丝检测异常:', error); }
+    finally { await requestBackground({cmd:'scheduledFollowersDone',token:scheduledToken}).catch(() => {}); }
   }, 1000);
   else if (!panelSourceTab(location.search) && followerScanDue(monitor)) setTimeout(() => {
-    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan('alarm');
+    if (followerScanDue(monitor) && !followerScanRunning) startFollowerScan('alarm').catch(error => console.error('定时粉丝检测异常:', error));
   }, 1000);
 }
 

@@ -1,3 +1,6 @@
+import '../../shared/capture-background-errors.js';
+import {reportSystemException} from '../../shared/system-exceptions.js';
+import {finishScheduledPanel} from '../../platform/panel-scan-messages.js';
 import {createLearningRuntime} from '../../features/knowledge/learning-runtime.js';
 import {createMutualCommentRuntime} from '../../features/mutual-comments/runtime.js';
 import {createMutualCommentStore} from '../../features/mutual-comments/store.js';
@@ -616,6 +619,14 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  const reply = sendResponse;
+  sendResponse = response => {
+    if (response?.error && cmd !== 'reportSystemException') {
+      void reportSystemException({source:'background',kind:'request',message:`${cmd || 'request'}：${response.error}`});
+    }
+    try { reply(response); }
+    catch (error) { void reportSystemException({source:'background',kind:'response-channel',error}); }
+  };
   if(cmd==='retryExecutionLogBackup'){
     if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可重试备份'});return false;}
     const store=getDefaultExecutionLogStore();
@@ -645,17 +656,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (cmd === 'scheduledFollowersDone') {
-    const tab = sender.tab;
-    const expectedUrl = chrome.runtime.getURL('panel.html');
-    if (sender.id !== chrome.runtime.id || !tab?.id || !tab.url?.startsWith(`${expectedUrl}?scheduledFollowers=`)) {
-      sendResponse({ok:false}); return false;
-    }
-    const token = new URL(tab.url).searchParams.get('scheduledFollowers');
-    if (token !== message.token) { sendResponse({ok:false}); return false; }
-    chrome.tabs.remove(tab.id).then(() => sendResponse({ok:true}), error => sendResponse({ok:false,error:String(error?.message || error)}));
+  if (cmd === 'reportSystemException') {
+    if (sender.id !== chrome.runtime.id) { sendResponse({ok:false}); return false; }
+    reportSystemException({...message.entry, source:sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')) ? 'content' : 'panel'})
+      .then(ok => sendResponse({ok}), () => sendResponse({ok:false}));
     return true;
   }
+  if (cmd === 'scheduledFollowersDone') return finishScheduledPanel(message, sender, sendResponse, chrome);
   if (cmd === 'runFollowersScanTick') return false;
 
   if (cmd === 'xLeaderboard') {
@@ -694,7 +701,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'getNetworkTemplates') {
-    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
+    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates), error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (handleExecutionLogRequest(message, sender, sendResponse)) {
@@ -828,7 +835,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'runCommentAutoFollowNow') {
-    runCommentAutoFollow('manual').then(sendResponse);
+    runCommentAutoFollow('manual').then(sendResponse, error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (cmd === 'trackTweetReplies') {
