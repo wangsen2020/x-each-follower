@@ -17312,5 +17312,14 @@
   },
   "ui_b5357758": {
     "message": "; no accounts added to the queue this run"
+  },
+  "ui_b43186c9": {
+    "message": "One reply per author"
+  },
+  "ui_28703376": {
+    "message": "Off by default. After this account successfully replies to an author’s mutual-follow post once, skip reply generation and publishing on that author’s later mutual-follow posts. Uses locally confirmed author records; failed or unverified replies do not count. Turn off to resume unpublished posts."
+  },
+  "ui_efb43c4c": {
+    "message": "Already replied to this author’s mutual-follow post; skipped"
   }
 }

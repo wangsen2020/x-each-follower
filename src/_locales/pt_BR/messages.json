@@ -17312,5 +17312,14 @@
   },
   "ui_b5357758": {
     "message": "; nenhuma conta adicionada à fila nesta execução"
+  },
+  "ui_b43186c9": {
+    "message": "Uma resposta por autor"
+  },
+  "ui_28703376": {
+    "message": "Desativado por padrão. Após esta conta responder com sucesso a uma publicação de troca de seguidores de um autor, as próximas não geram nem publicam respostas. Usa registros locais confirmados; falhas e resultados não verificados não contam. Desative para retomar publicações sem resposta."
+  },
+  "ui_efb43c4c": {
+    "message": "Já respondemos à publicação de troca de seguidores deste autor; ignorada"
   }
 }

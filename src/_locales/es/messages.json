@@ -17312,5 +17312,14 @@
   },
   "ui_b5357758": {
     "message": "; no se agregaron cuentas a la cola en esta ejecución"
+  },
+  "ui_b43186c9": {
+    "message": "Una respuesta por autor"
+  },
+  "ui_28703376": {
+    "message": "Desactivado por defecto. Cuando esta cuenta responda correctamente una publicación de seguimiento mutuo de un autor, las siguientes no generarán ni publicarán respuestas. Usa registros locales confirmados; los intentos fallidos o sin verificar no cuentan. Desactívalo para retomar publicaciones sin responder."
+  },
+  "ui_efb43c4c": {
+    "message": "Ya se respondió una publicación de seguimiento mutuo de este autor; omitida"
   }
 }

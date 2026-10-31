@@ -15,6 +15,13 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
       delete row.relayJobId;delete row.prompt;
     });
   });
+  const receipt=row=>row.tag==='mutual'&&row.status==='posted'&&/^\d+$/.test(String(row.authorId||''))&&/^\d+$/.test(String(row.publishedPostId||''))
+    ? {ownerId:row.ownerId,authorId:String(row.authorId),postId:row.postId,publishedPostId:row.publishedPostId,at:row.finishedAt||row.createdAt}:null;
+  db.version(3).stores({commentedAuthors:'[ownerId+authorId],ownerId'}).upgrade(async tx=>{
+    const history=(await tx.table('posts').toArray()).map(receipt).filter(Boolean);
+    for(const proof of history)if(!await tx.table('commentedAuthors').get([proof.ownerId,proof.authorId]))await tx.table('commentedAuthors').put(proof);
+  });
+  async function remember(row){const proof=receipt(row);if(proof&&!await db.commentedAuthors.get([proof.ownerId,proof.authorId]))await db.commentedAuthors.put(proof);}
   const newer=(a,b)=>a.length-b.length||a.localeCompare(b);
   const trim=async ownerId=>{
     const rows=await db.posts.where('ownerId').equals(ownerId).toArray();
@@ -43,15 +50,18 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
       const observations={};
       for(const field of ['following','replyCount','repostCount','likeCount','bookmarkCount'])if(Object.hasOwn(row,field))observations[field]=row[field];
       if(Object.keys(observations).length)await db.posts.update(key,observations);
-    }else if(!config?.retiredPostId||newer(row.postId,config.retiredPostId)>0)await db.posts.add(row);
+    }else if(!config?.retiredPostId||newer(row.postId,config.retiredPostId)>0){await db.posts.add(row);await remember(row);}
   }};
   return {db,
     enabled:async phase=>(await db.settings.toArray()).some(row=>row[phase+'Enabled']||(phase==='scan'&&row.manualTagRun?.status==='running')),
     config:id=>db.settings.get(id),saveConfig:row=>db.settings.put(row),updateConfig:(id,value)=>db.settings.update(id,value),
-    prune,list:async id=>{await prune(id);return db.posts.where('ownerId').equals(id).toArray();},get:(ownerId,postId)=>db.posts.get([ownerId,postId]),put:row=>db.posts.put(row),
-    updatePost:row=>db.posts.update([row.ownerId,row.postId],row),
-    addPosts:rows=>db.transaction('rw',db.posts,db.settings,db.batches,db.scans,async()=>{await add(rows);for(const id of new Set(rows.map(r=>r.ownerId)))await trim(id);}),
-    checkpoint:(ownerId,rows,anchor,run)=>db.transaction('rw',db.posts,db.settings,db.scans,db.batches,async()=>{await add(rows);await db.settings.update(ownerId,{anchor});await db.scans.put(run);await trim(ownerId);}),
+    prune,list:async id=>{await prune(id);return db.posts.where('ownerId').equals(id).toArray();},get:(ownerId,postId)=>db.posts.get([ownerId,postId]),
+    put:row=>db.transaction('rw',db.posts,db.commentedAuthors,async()=>{const key=await db.posts.put(row);await remember(row);return key;}),
+    updatePost:row=>db.transaction('rw',db.posts,db.commentedAuthors,async()=>{const key=[row.ownerId,row.postId],changed=await db.posts.update(key,row);if(changed)await remember(await db.posts.get(key));return changed;}),
+    commentedAuthorIds:async ownerId=>(await db.commentedAuthors.where('ownerId').equals(ownerId).toArray()).map(row=>row.authorId),
+    hasCommentedAuthor:async(ownerId,authorId)=>/^\d+$/.test(String(authorId||''))&&Boolean(await db.commentedAuthors.get([ownerId,String(authorId)])),
+    addPosts:rows=>db.transaction('rw',db.posts,db.settings,db.batches,db.scans,db.commentedAuthors,async()=>{await add(rows);for(const id of new Set(rows.map(r=>r.ownerId)))await trim(id);}),
+    checkpoint:(ownerId,rows,anchor,run)=>db.transaction('rw',db.posts,db.settings,db.scans,db.batches,db.commentedAuthors,async()=>{await add(rows);await db.settings.update(ownerId,{anchor});await db.scans.put(run);await trim(ownerId);}),
     saveScan:row=>db.scans.put(row),scans:async id=>(await db.scans.where('ownerId').equals(id).toArray()).sort((a,b)=>b.at-a.at).slice(0,10),
     getBatch:id=>db.batches.get(id),
     batches:id=>db.batches.where('ownerId').equals(id).toArray(),saveBatch:row=>db.batches.put(row),

@@ -177,5 +177,8 @@
   "；自动入队失败，请查看异常日志": "; falló la inclusión automática; consulta el registro de errores",
   "；入队结果待确认，请先核对关注队列": "; inclusión sin confirmar; revisa primero la cola",
   "；已确认 {{count}} 位待回关用户在关注队列中": "; {{count}} cuentas para seguir de vuelta confirmadas en la cola",
-  "；本轮未加入关注队列": "; no se agregaron cuentas a la cola en esta ejecución"
+  "；本轮未加入关注队列": "; no se agregaron cuentas a la cola en esta ejecución",
+  "互关勿评": "Una respuesta por autor",
+  "默认关闭。开启后，当前账号对同一作者的互关帖成功评论一次后，后续互关帖跳过评论生成与发布。按本机已确认的作者记录判断；失败和待核实结果不算成功。关闭后可继续处理尚未发布的帖子。": "Desactivado por defecto. Cuando esta cuenta responda correctamente una publicación de seguimiento mutuo de un autor, las siguientes no generarán ni publicarán respuestas. Usa registros locales confirmados; los intentos fallidos o sin verificar no cuentan. Desactívalo para retomar publicaciones sin responder.",
+  "该作者的互关帖已评论，已跳过": "Ya se respondió una publicación de seguimiento mutuo de este autor; omitida"
 }

@@ -13,14 +13,18 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
   let preparingTags=false;
   async function current(){const account=await owner();if(!/^\d+$/.test(account?.accountId||'')||!account.handle)throw Error('无法核实当前 X 账号');return account;}
   async function guard(account,phase){const live=await current();if(live.accountId!==account.accountId||live.handle.toLowerCase()!==account.handle.toLowerCase())throw Error('账号已变化，本轮停止');const config=await store.config(account.accountId);if(!config?.[phase+'Enabled']&&!(phase==='scan'&&config?.manualTagRun?.status==='running'))throw Error('调度已暂停');}
+  const commentedAuthors=async(id,config)=>new Set(config?.mutualCommentOnce===true?await store.commentedAuthorIds(id):[]);
+  const authorWasCommented=(row,authors)=>authors.has(String(row.authorId||''));
+  async function suppressComment(row){return (await store.config(row.ownerId))?.mutualCommentOnce===true&&await store.hasCommentedAuthor(row.ownerId,row.authorId);}
   async function state(page=1,filter={}){
-    const account=await current(),all=(await store.list(account.accountId)).sort((a,b)=>compareCommentList(a,b,filter.sortOrder)).map(row=>({...row,priority:commentPriority(row)}));
+    const account=await current(),config=await store.config(account.accountId),authors=await commentedAuthors(account.accountId,config);
+    // Suppression is a view of the current switch, never a destructive rewrite of drafts or labels.
+    const all=(await store.list(account.accountId)).map(row=>isPendingComment(row)&&authorWasCommented(row,authors)?{...row,status:'skipped',commentSuppressed:true,error:'该作者的互关帖已评论，已跳过'}:row).sort((a,b)=>compareCommentList(a,b,filter.sortOrder)).map(row=>({...row,priority:commentPriority(row)}));
     const pageSize=[10,20,50,100].includes(Number(filter.pageSize))?Number(filter.pageSize):20,counts={},tags={};
     for(const row of all){counts[row.status]=(counts[row.status]||0)+1;tags[row.tag]=(tags[row.tag]||0)+1;}
     const query=String(filter.q||'').trim().toLowerCase();
     const rows=all.filter(row=>(!filter.status||filter.status==='all'||row.status===filter.status)&&(!filter.tag||filter.tag==='all'||row.tag===filter.tag)&&(!query||[row.handle,row.text,row.reply,row.tagReason].some(value=>String(value||'').toLowerCase().includes(query))));
     page=Math.min(Math.max(1,Math.floor(Number(page)||1)),Math.max(1,Math.ceil(rows.length/pageSize)));
-    const config=await store.config(account.accountId);
     return {ok:true,account,tagProgress:tagProgress(all,config?.manualTagRun),untagged:all.filter(unfinishedTag).length,tagExhausted:all.filter(r=>unfinishedTag(r)&&r.tag!=='tagging'&&(r.tagAttempts||0)>=TAG_MAX_ATTEMPTS).length,config:timingConfig({ownerId:account.accountId,...await store.config(account.accountId)}),items:rows.slice((page-1)*pageSize,page*pageSize),total:rows.length,allTotal:all.length,counts,tags,page,pageSize,scans:await store.scans(account.accountId),batches:(await store.batches(account.accountId)).sort((a,b)=>b.at-a.at).slice(0,10).map(({prompt,raw,...summary})=>summary),running:{...running}};
   }
   async function reuseTags(account){
@@ -71,13 +75,16 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
     if(attempts.filter(r=>beijingDay(r.publishAttemptedAt)===beijingDay(now())).length>=config.dailyLimit){await store.updateConfig(id,{commentRun:null});return {limited:true};}
     if((config.nextItemAt||0)>now()||attempts.some(r=>now()-r.publishAttemptedAt<60000))return {waiting:true};
     // This consumer never fetches or classifies posts. Only committed AI labels qualify.
-    let row=rows.filter(r=>isPendingComment(r)&&(!r.retryAt||r.retryAt<=now())).sort(compareCommentPriority)[0];
+    const authors=await commentedAuthors(id,config);
+    let row=rows.filter(r=>isPendingComment(r)&&!authorWasCommented(r,authors)&&(!r.retryAt||r.retryAt<=now())).sort(compareCommentPriority)[0];
     if(!row){await store.updateConfig(id,{commentRun:null});return {idle:true};}
     try{
       await guard(account,'comment');
+      if(await suppressComment(row))return {skipped:true};
       if(!isPostSafeForComment(row).safe)throw Error('原帖未通过内容检查');
       if(row.status!=='draft'){
         if(!row.prompt){let context=await knowledge({ownerId:id,purpose:'reply',requestId:'mutual-comment:'+id+':'+row.postId});let prompt=commentPrompt(row,context);if(prompt.length>7400){context={text:'',wisdomVersion:null,warning:'输入超过上限，本次未引用智慧'};prompt=commentPrompt(row,context);}row={...row,prompt,knowledge:context,provider:config.commentProvider,botId:config.commentBotId};}
+        if(await suppressComment(row))return {skipped:true};
         row={...row,decorationSettings:row.decorationSettings||{...normalizeQuoteTags(config),followBackSuffixEnabled:config.followBackSuffixEnabled===true},status:'generating',error:'',lastAttemptAt:now()};await store.updatePost(row);
         const cached=!row.relayJobId&&!row.raw?findReplyCache(row,rows,row.knowledge||{}, {commentProvider:row.provider,commentBotId:row.botId},now()):null;
         if(cached)row={...row,replyCache:{sourcePostId:cached.postId,matchedAt:now()}};
@@ -97,9 +104,10 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
         const decorated=appendQuoteTags(ending.text,row.decorationSettings,language,{random});row={...row,baseReply:reply,language,reply:decorated,status:'draft',error:''};await store.updatePost(row);
       }
       await guard(account,'comment');if(!await store.get(id,row.postId))return {expired:true};
+      if(await suppressComment(row))return {skipped:true};
       row={...row,status:'publishing',publishAttemptedAt:now(),commentRunId:run.id};await store.updatePost(row);
       await store.updateConfig(id,{commentRun:{...run,remaining:run.remaining-1},nextItemAt:randomDue(now(),1,3,random)});
-      const result=await publisher.publish({owner:account.handle,sourcePostUrl:row.url,text:row.reply,canPublish:async()=>{await guard(account,'comment');return Boolean(await store.get(id,row.postId));}});
+      const result=await publisher.publish({owner:account.handle,sourcePostUrl:row.url,text:row.reply,canPublish:async()=>{await guard(account,'comment');return Boolean(await store.get(id,row.postId))&&!await suppressComment(row);}});
       const posted=result?.ok&&result.status==='posted'&&/^\d+$/.test(result.publishedPostId||'');
       await store.updatePost({...row,status:posted?'posted':result?.attempted===false?'failed':'uncertain',error:posted?'':result?.reason||'发布结果待核实',publishedPostId:posted?result.publishedPostId:null,publishedPostUrl:posted?result.publishedPostUrl:null,finishedAt:now()});return {ok:posted};
     }catch(error){await store.updatePost({...row,status:row.status==='publishing'?'uncertain':row.status==='draft'?'draft':'failed',error:error.message});return {ok:false,error:error.message};}

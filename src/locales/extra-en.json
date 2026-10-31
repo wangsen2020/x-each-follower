@@ -177,5 +177,8 @@
   "；自动入队失败，请查看异常日志": "; automatic queueing failed; see the error log",
   "；入队结果待确认，请先核对关注队列": "; queueing result is unconfirmed; check the follow queue first",
   "；已确认 {{count}} 位待回关用户在关注队列中": "; {{count}} follow-back accounts confirmed in the queue",
-  "；本轮未加入关注队列": "; no accounts added to the queue this run"
+  "；本轮未加入关注队列": "; no accounts added to the queue this run",
+  "互关勿评": "One reply per author",
+  "默认关闭。开启后，当前账号对同一作者的互关帖成功评论一次后，后续互关帖跳过评论生成与发布。按本机已确认的作者记录判断；失败和待核实结果不算成功。关闭后可继续处理尚未发布的帖子。": "Off by default. After this account successfully replies to an author’s mutual-follow post once, skip reply generation and publishing on that author’s later mutual-follow posts. Uses locally confirmed author records; failed or unverified replies do not count. Turn off to resume unpublished posts.",
+  "该作者的互关帖已评论，已跳过": "Already replied to this author’s mutual-follow post; skipped"
 }
