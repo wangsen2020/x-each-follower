@@ -2,7 +2,25 @@ export const HEALTH_KEY='automationHealth';
 export const HEALTH_NOTICE_KEY='automationHealthNotices';
 export const HEALTH_ALARM='x-automation-health-check';
 export const HEALTH_REMINDER_MS=30*60000;
+export const AI_HEALTH_GRACE_MS=2*60000;
+const aiNoticeGroup=id=>id.match(/^mutual-(?:tags|comments)-(.+)$/)?.[1]||'';
 let writes=Promise.resolve();
+
+export function reportMutualCommentHealth(status,storage=globalThis.chrome?.storage?.local,now=Date.now()){
+  if(!storage)return Promise.resolve();
+  return mutateAutomationHealth(storage,state=>{
+    state.alerts ||= {};
+    const issues=[['tags',status.tagIssue||status.scanError,'首页打标受阻','恢复连接后会继续打标，自动重试最多 3 次。'],
+      ['tag-retries',status.exhausted?`${status.exhausted} 条记录已用完自动重试次数`:'','首页打标需要处理','检查 AI 连接后，使用“批量打标”重新处理所有未打标记录。'],
+      ['comments',status.commentIssue,'首页评论受阻','检查 AI 连接与原任务回执，已发送或待核实的评论不会自动重发。']];
+    for(const [key,reason,title,action] of issues){
+      const id=`mutual-${key}-${status.ownerId}`,previous=state.alerts[id];
+      if(reason)state.alerts[id]={id,title,reason,action,impact:'相关首页跟评任务未能继续。',tab:'mutualComments',ownerId:status.ownerId,retryPhase:key==='tags'&&status.tagIssue?'scan':key==='comments'?'comment':undefined,severity:'error',since:previous?.since||now,updatedAt:now};
+      else if(previous)delete state.alerts[id];
+    }
+    return state;
+  });
+}
 
 export function mutateAutomationHealth(storage,work){
   const task=async()=>{const state=(await storage.get(HEALTH_KEY))[HEALTH_KEY]||{alerts:{}};const next=work(structuredClone(state));if(JSON.stringify(next)!==JSON.stringify(state))await storage.set({[HEALTH_KEY]:next});return next;};
@@ -67,7 +85,11 @@ export function createAutomationHealthRuntime({api,now=Date.now}){
       let changed=false;
       for(const alert of alerts){
         const previous=notices[alert.id],signature=`${alert.since}:${alert.reason}`;
-        if(previous?.signature===signature && now()-previous.at<HEALTH_REMINDER_MS)continue;
+        const group=aiNoticeGroup(alert.id);
+        // Keep the panel actionable immediately; only persistent AI failures notify the desktop.
+        if(group&&now()-alert.since<AI_HEALTH_GRACE_MS)continue;
+        const lastGroupNotice=group?Math.max(0,...Object.entries(notices).filter(([id])=>aiNoticeGroup(id)===group).map(([,notice])=>notice.at||0)):0;
+        if(group?lastGroupNotice>0&&now()-lastGroupNotice<HEALTH_REMINDER_MS:previous?.signature===signature&&now()-previous.at<HEALTH_REMINDER_MS)continue;
         try{
           if(allowed==='denied')throw Error('桌面通知权限已关闭；面板异常提示仍会保留');
           const id=`xf-health-${alert.id}`;
@@ -78,9 +100,13 @@ export function createAutomationHealthRuntime({api,now=Date.now}){
         }catch(error){notices[alert.id]={signature,at:now(),error:error.message};}
         changed=true;
       }
-      for(const id of Object.keys(notices))if(!alerts.some(alert=>alert.id===id)){await api.notifications.clear(`xf-health-${id}`);delete notices[id];changed=true;}
+      for(const id of Object.keys(notices))if(!alerts.some(alert=>alert.id===id)){
+        if(!notices[id].resolved){await api.notifications.clear(`xf-health-${id}`);notices[id]={...notices[id],resolved:true};changed=true;}
+        // Retain AI cooldown across recovery, reason changes and worker restarts.
+        if(!aiNoticeGroup(id)||now()-notices[id].at>=HEALTH_REMINDER_MS){delete notices[id];changed=true;}
+      }
       if(changed)await api.storage.local.set({[HEALTH_NOTICE_KEY]:notices});
-      if(alerts.length)await api.alarms.create(HEALTH_ALARM,{periodInMinutes:5});
+      if(alerts.length)await api.alarms.create(HEALTH_ALARM,{periodInMinutes:alerts.some(alert=>aiNoticeGroup(alert.id))?1:5});
       else await api.alarms.clear(HEALTH_ALARM);
     });queue=run.catch(()=>{});return run;
   };

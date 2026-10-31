@@ -60,3 +60,53 @@ test('an unavailable engine provides an actionable message and preserves the con
  const rows=await client.list({baseUrl:'http://127.0.0.1:8787',token:'test',engine:'codex'});
  assert.equal(rows[0].id,'stable');assert.equal(rows[0].name.length,48);assert.ok(!rows[0].name.includes('\n'));
  });
+
+test('404 recovery reports a missing job while offline and authentication errors preserve the original receipt',async()=>{
+ const f=fixture();await f.repository.saveJob({id:'local:old',status:'unknown',connection:f.config});
+ for(const status of [404,401,403,503]){
+  const client=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async()=>({ok:false,status,json:async()=>({})})});
+  const result=await client.resume('local:old');assert.equal(result.blocking,true);assert.equal(result.pending,status!==404);assert.equal(result.errorCode,status===404?'JOB_NOT_FOUND':'HTTP_'+status);assert.equal(f.jobs.get('local:old').status,'unknown');
+ }
+ const offline=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async()=>{throw Error('offline');}});assert.equal((await offline.resume('local:old')).errorCode,'NETWORK');
+});
+
+test('unknown generation is distinct from healthy polling and preserves the original job',async()=>{
+ const f=fixture('grokbot');f.setState('unknown');const initial=await f.client.generate('test');assert.equal(initial.generationUnknown,true);assert.equal(initial.errorCode,'JOB_UNKNOWN');const resumed=await f.client.resume(initial.jobId);assert.equal(resumed.generationUnknown,true);assert.equal(f.requests.filter(r=>r.options.method==='POST').length,1);
+});
+
+test('read-only API self-check retries malformed and transient responses then returns the real result',async()=>{
+ const f=fixture('grokbot');let calls=0;
+ const client=createAgentRelayClient({engine:'grokbot',repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{
+  calls++;if(calls===1)return {ok:true,json:async()=>{throw SyntaxError('truncated');}};
+  if(calls===2)return {ok:false,status:503,json:async()=>{throw SyntaxError('HTML');}};
+  return {ok:true,json:async()=>({sessions:[{id:'session-a',name:'Bot'}]})};
+ }});
+ assert.equal((await client.list(f.config))[0].id,'session-a');assert.equal(calls,3);
+});
+
+test('read self-check has a finite three-retry budget and never retries authentication or missing jobs',async()=>{
+ const f=fixture();await f.repository.saveJob({id:'local:old',connection:f.config});
+ for(const status of [401,403,404,503]){
+  let calls=0;const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{calls++;return {ok:false,status,json:async()=>{throw SyntaxError('HTML');}};}});
+  const result=await client.resume('local:old');assert.equal(calls,status===503?4:1);assert.equal(result.errorCode,status===404?'JOB_NOT_FOUND':'HTTP_'+status);
+ }
+ let calls=0;const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{calls++;return {ok:true,json:async()=>null};}});
+ assert.equal((await client.resume('local:old')).errorCode,'INVALID_RESPONSE');assert.equal(calls,4);
+});
+
+test('malformed submission response keeps the receipt and queries it later without repeating POST',async()=>{
+ const f=fixture();let posts=0,gets=0;
+ const client=createAgentRelayClient({engine:'codex',repository:f.repository,readRetryDelayMs:0,fetchImpl:async(url,o)=>{
+  if(o.method==='POST'){posts++;return {ok:true,json:async()=>{throw SyntaxError('truncated');}};}
+  gets++;return {ok:true,json:async()=>({jobId:url.split('/').at(-1),status:'completed',result:'recovered'})};
+ }});
+ const first=await client.generate('test',{requestKey:'same'});assert.equal(first.pending,true);assert.equal(first.errorCode,'INVALID_RESPONSE');assert.equal(posts,1);
+ const second=await client.generate('test',{requestKey:'same'});assert.equal(second.text,'recovered');assert.equal(posts,1);assert.equal(gets,1);
+});
+
+test('body timeout is classified as timeout rather than malformed JSON and stays below the MV3 limit',async t=>{
+ const durations=[];t.mock.method(AbortSignal,'timeout',ms=>{durations.push(ms);return AbortSignal.abort();});
+ const f=fixture();await f.repository.saveJob({id:'local:old',connection:f.config});
+ const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>({ok:true,json:async()=>{throw Error('aborted');}})});
+ const result=await client.resume('local:old');assert.equal(result.errorCode,'TIMEOUT');assert.match(result.reason,/超时/);assert.deepEqual(durations,[25000,25000,25000,25000]);
+});

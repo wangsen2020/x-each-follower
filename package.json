@@ -1,6 +1,6 @@
 {
   "name": "x-each-follower",
-  "version": "4.8.2",
+  "version": "4.11.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -24,6 +24,7 @@
     "dexie": "4.4.7",
     "jsonrepair": "3.13.3",
     "lucide": "1.61.0",
+    "p-retry": "8.0.1",
     "twitter-text": "^3.1.0"
   }
 }
