@@ -20,9 +20,11 @@ test('source pages omit redundant manual queue controls and handlers',()=>{
  const html=readFileSync(new URL('../src/panel.html',import.meta.url),'utf8');
  const panel=readFileSync(new URL('../src/entries/panel/panel.js',import.meta.url),'utf8');
  const settings=readFileSync(new URL('../src/entries/panel/components/SettingsDrawer.vue',import.meta.url),'utf8');
- for(const token of ['commentBatchAddToQueue','processFollowBack','加入关注队列']) {
+ for(const token of ['commentBatchAddToQueue','processFollowBack']) {
   assert.equal(html.includes(token),false);assert.equal(panel.includes(token),false);
  }
+ assert.equal(html.includes('加入关注队列'),false);
+ assert.ok(panel.includes("cmd:'followQueueEnqueue'"),'source follow actions must enter the unified queue');
  assert.ok(settings.includes('id="monitorAutoEnqueue"'));
  assert.ok(settings.includes('id="runMonitorScanNow"'));
  assert.equal(html.includes('id="monitorAutoEnqueue"'),false);

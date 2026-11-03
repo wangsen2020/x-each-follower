@@ -3034,7 +3034,7 @@
   "停滞增长比例": "taxa de crescimento estagnada",
   "与停滞曝光增量共同判断；曝光下降或数据缺失不会判为停滞。": "É avaliado juntamente com incrementos de exposição estagnados; a exposição diminui ou os dados faltantes não serão considerados estagnados.",
   "低表现帖配置无效": "A pós-configuração de baixo desempenho é inválida",
-  "{{v0}}需为{{v1}}–{{v2}}的整数": "{{v0}} precisa ser um número inteiro de {{v1}}–{{v2}}",
+  "{{v0}}需为 {{v1}}–{{v2}} 的整数": "{{v0}} precisa ser um número inteiro de {{v1}}–{{v2}}",
   "帖子任务正在执行，请稍后重试": "A pós-tarefa está sendo executada. Tente novamente mais tarde",
   "X 页面未加载完成，请稍后重试": "A página X não foi carregada. Tente novamente mais tarde.",
   "未取得当前 X 请求，请检查登录、权限或网络后重试": "A solicitação X atual não foi obtida, verifique seu login, permissões ou rede e tente novamente",
@@ -3063,7 +3063,7 @@
   "没有删除任务": "Nenhuma tarefa excluída",
   "复查周期需为12、24或48小时": "O ciclo de revisão precisa ser de 12, 24 ou 48 horas",
   "未知帖子操作": "Postagem desconhecida",
-  "最小时间窗口仍达到{{v0}}条，停止推进以避免漏帖；请稍后检查接口。": "A janela de tempo mínimo ainda atingiu {{v0}}, pare de avançar para evitar perder postagens; por favor verifique a interface mais tarde.",
+  "最小时间窗口仍达到 {{v0}} 条，停止推进以避免漏帖；请稍后检查接口。": "A janela de tempo mínimo ainda atingiu {{v0}}, pare de avançar para evitar perder postagens; por favor verifique a interface mais tarde.",
   "帖子记录库升级被占用，请关闭旧面板后重试。": "A atualização da biblioteca de pós-registro está ocupada. Feche o painel antigo e tente novamente.",
   "帖子记录写入中断": "Escrita pós-registro interrompida",
   "缺少任务草稿标识": "ID do rascunho da tarefa ausente",
@@ -3936,5 +3936,7 @@
   "主动关注样本数": "Número de amostra de acompanhamento ativo",
   "粉丝样本数": "Amostra de seguidores",
   "本次变更记录": "Registros alterados nesta execução",
-  "最长等待天数": "Prazo máximo de espera em dias"
+  "最长等待天数": "Prazo máximo de espera em dias",
+  "跳过粉丝": "Ignorar filtros de fãs",
+  "跳过粉丝说明": "Ajuda dos filtros de fãs"
 }

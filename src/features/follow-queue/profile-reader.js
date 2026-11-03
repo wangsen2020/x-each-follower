@@ -1,6 +1,19 @@
 import {parseNetworkUsers} from '../relationships/network-api.js';
 import {isPageFailure} from '../../platform/page-failure.js';
 import {unavailableFromProfileResponse} from '../../platform/x/profile-access.js';
+import {isAccessDeferred} from '../../platform/x/access-budget.js';
+
+// Use only the target's ID-bound profile button, never a recommendation's button.
+export function queueExecutionRelationship(target, profile = {}) {
+  profile ||= {};
+  const relationship = {...target.relationship};
+  if (profile.pendingRequestUserId === target.id) relationship.followRequestSent = true;
+  if (profile.id === target.id && typeof profile.relationship?.following === 'boolean') {
+    if (profile.relationship.following || typeof relationship.following !== 'boolean') relationship.following = profile.relationship.following;
+    if (typeof relationship.followRequestSent !== 'boolean') relationship.followRequestSent = false;
+  }
+  return relationship;
+}
 
 export async function readQueueProfile({handle,readDom,readNetwork,guard,deadline,signal,
   now=Date.now,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),domTimeoutMs=15000}) {
@@ -11,7 +24,7 @@ export async function readQueueProfile({handle,readDom,readNetwork,guard,deadlin
   let profile,lastError;
   while(now()<end){
     assertTime();
-    try {profile=await readDom();} catch(error){if(isPageFailure(error))throw error;lastError=error;}
+    try {profile=await readDom();} catch(error){if(isPageFailure(error)||isAccessDeferred(error))throw error;lastError=error;}
     assertTime();
     if(profile&&!profile.pending)return {profile,lookup:null};
     await wait(Math.min(500,Math.max(1,end-now())));

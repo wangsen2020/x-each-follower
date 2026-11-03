@@ -35,16 +35,16 @@ test('local follow-back evidence maps follower bands to bounded queue weights',(
   assert.equal(followQueuePriority({profile:{followersText:'80,000'},sources:[{module:'fans',enabled:true}]}),100);
 });
 
-test('only a freshly confirmed follower bypasses all queue screening, never normal candidates',()=>{
+test('legacy allowance and relationship evidence alone cannot bypass admission rules',()=>{
   const profile={handle:'houthi_updates',bio:'',followersText:'1',followingText:'0'};
   const settings={minFollowers:100,ratioThreshold:1,onlyRecommended:true,skipRiskContent:true};
   assert.notEqual(assessQueueProfile(profile,settings,true),'');
-  assert.equal(assessQueueProfile(profile,{...settings,followBackAllowAll:true},true),'');
+  assert.notEqual(assessQueueProfile(profile,{...settings,followBackAllowAll:true},true),'');
   assert.notEqual(assessQueueProfile(profile,{...settings,followBackAllowAll:true},false),'');
   assert.equal(followQueuePriority({sources:[{module:'fans',enabled:true}]}),100);
 });
 
-for (const useRecords of [false,true]) for (const allowAll of [false,true]) test(`source sync restores only strategy-skipped pending fans: records=${useRecords}, allowAll=${allowAll}`,async()=>{
+for (const useRecords of [false,true]) for (const allowAll of [false,true]) test(`source sync preserves held fan history regardless of legacy allowance: records=${useRecords}, allowAll=${allowAll}`,async()=>{
   const accountId='123';
   const store=createFollowQueueStore({indexedDB,dbName:'fan-policy-'+crypto.randomUUID()});
   await store.saveSettings(accountId,{followBackAllowAll:allowAll});
@@ -68,7 +68,7 @@ for (const useRecords of [false,true]) for (const allowAll of [false,true]) test
   await runtime.syncCandidates();
   await runtime.syncCandidates(); // Legacy skipped data must not re-exclude the restored task.
   const rows=await store.list({accountId});
-  assert.equal(rows.find(r=>r.handle==='skippedfan').state,allowAll?'pending':'skipped');
+  assert.equal(rows.find(r=>r.handle==='skippedfan').state,'skipped');
   assert.equal(rows.find(r=>r.handle==='excludedfan').state,'excluded');
   assert.equal(rows.find(r=>r.handle==='uncertainfan').state,'uncertain');
   assert.equal(rows.find(r=>r.handle==='donefan').state,'followed');

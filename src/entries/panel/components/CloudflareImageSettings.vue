@@ -40,7 +40,7 @@
             <p>{{ t("已通过出图测试。优先使用 X.com Grok，无法出图时由此连接兜底。") }}</p>
             <p class="cf-hint">{{ t("配图模型：FLUX.1 schnell · 自动适配 5:2 封面") }}</p>
             <p class="cf-account">Account ID：{{ t(c.boundAccountId.value) }}</p>
-            <figure v-if="c.preview.value"><img :src="c.preview.value" alt="Cloudflare 生成的5:2测试封面" /><figcaption>{{ t("测试封面 · 5:2") }}</figcaption></figure>
+            <figure v-if="c.preview.value"><img :src="c.preview.value" :alt="t('Cloudflare 生成的5:2测试封面')" /><figcaption>{{ t("测试封面 · 5:2") }}</figcaption></figure>
           </template>
           <p v-if="c.connected.value&&c.step.value<4" class="cf-hint">{{ t("重新绑定成功后替换原连接；取消或测试失败时，原连接仍保留。") }}</p>
           <p v-if="c.message.value&&!c.error.value" role="status">{{ t(c.message.value) }}</p>

@@ -58,6 +58,12 @@
 
         <!-- Facts -->
         <div class="drawer-facts">
+          <div v-if="profileDrawerController.user.value?.profileEvidence" class="drawer-field" data-profile-evidence="observed">
+            <span>{{ t('资料采集') }}</span><strong>{{ observedAt }}</strong>
+          </div>
+          <div v-if="profileDrawerController.user.value?.profileEvidence" class="drawer-field" data-profile-evidence="timeline">
+            <span>{{ t('帖子缓存') }}</span><strong :data-panel-tip="t('已采集的资料供人工 AI 复审复用；帖子补采受缓存和限流控制，不影响关系核验。')" tabindex="0">{{ timelineStatus }}</strong>
+          </div>
           <div class="drawer-field">
             <span>{{ t("粉丝") }}</span>
             <strong>{{ (t(profileDrawerController.user.value?.followersText) || t("未读取")) }}</strong>
@@ -84,8 +90,8 @@
               v-for="tag in profileDrawerController.multiTags.value"
               :key="tag.id"
               :class="['tag-badge', tag.colorClass]"
-              :title="t(tag.desc)"
-              :data-tip="t(tag.desc)"
+              :data-panel-tip="t(tag.desc)"
+              tabindex="0"
             >{{ t(tag.label) }}</span>
           </div>
         </section>
@@ -137,13 +143,11 @@
                 target="_blank"
                 rel="noopener noreferrer"
               >{{ t("原推 ↗") }}</a>
-              <button
-                type="button"
-                class="log-copy-btn"
+              <PanelIconButton
+                :icon="Copy"
+                :label="profileDrawerController.copyStatus.value==='copied'?'已复制！':profileDrawerController.copyStatus.value==='failed'?'复制失败':'复制评价'"
                 @click="profileDrawerController.copyGrokComment()"
-              >
-                {{ profileDrawerController.copyStatus.value === 'copied'?t("已复制！"):profileDrawerController.copyStatus.value === 'failed'?t("复制失败"):t("复制评价") }}
-              </button>
+              />
             </div>
             <div
               v-if="profileDrawerController.grokCommentPost.value"
@@ -155,33 +159,46 @@
       </div>
 
       <!-- Actions -->
-      <div class="profile-drawer-actions">
-        <button
+      <div class="profile-drawer-actions panel-action-bar" style="justify-content:flex-end">
+        <PanelIconButton
           id="drawerRefreshProfile"
-          type="button"
-          class="secondary"
+          :icon="RefreshCw"
+          :label="profileDrawerController.loading.value?'采集中…':'采集资料'"
           :disabled="profileDrawerController.loading.value"
           @click="profileDrawerController.triggerRefresh()"
-        >
-          {{ profileDrawerController.loading.value?t("采集中…"):t("采集资料") }}
-        </button>
-        <button
+        />
+        <PanelIconButton
           id="drawerOpenX"
-          type="button"
+          :icon="ExternalLink"
+          label="在 X 打开"
           @click="profileDrawerController.openOnX()"
-        >{{ t("在 X 打开") }}</button>
+        />
       </div>
     </aside>
   </div>
 </template>
 
 <script setup>
-import {t} from '../../../shared/i18n.js';
+import {t,locale} from '../../../shared/i18n.js';
+import {FAN_TIMELINE_TTL} from '../../../features/relationships/fan-profile-evidence.js';
 
 import {useDrawerFocus} from '../composables/useDrawerFocus.js';
-import { onMounted, onUnmounted } from 'vue';
+import {computed,onMounted,onUnmounted} from 'vue';
 import PanelCloseButton from './PanelCloseButton.vue';
+import PanelIconButton from './PanelIconButton.vue';
+import {RefreshCw,ExternalLink,Copy} from 'lucide';
 import { profileDrawerController } from '../composables/useProfileDrawer.js';
+const observedAt=computed(()=>{
+  const value=profileDrawerController.user.value?.profileObservedAt;
+  return Number.isFinite(value)?new Intl.DateTimeFormat(locale.value,{dateStyle:'short',timeStyle:'short'}).format(value):t('未采集');
+});
+const timelineStatus=computed(()=>{
+  const value=profileDrawerController.user.value?.fanInspectionTimeline;
+  if(!value)return t('未采集');
+  if(value.fetchedAt&&Date.now()-value.fetchedAt>=FAN_TIMELINE_TTL)return t('缓存已过期');
+  const labels={pending:'待补采',ready:'已缓存',partial:'已缓存部分',empty:'暂无可用原创帖',unavailable:'无法读取',failed:'补采失败', 'rate-limited':'限流等待'};
+  return t(labels[value.status]||'未采集')+(value.posts?.length?' · '+new Intl.NumberFormat(locale.value).format(value.posts.length):'');
+});
 
 function onKeyDown(event) {
   if (event.key === 'Escape' && profileDrawerController.isOpen.value) {
@@ -198,3 +215,15 @@ onUnmounted(() => {
 });
 useDrawerFocus(profileDrawerController.isOpen, 'profileDrawer', '');
 </script>
+
+<style scoped>
+.drawer-section,
+.drawer-section ol,
+.drawer-section li {
+  min-width: 0;
+}
+.drawer-section p,
+.drawer-section li {
+  overflow-wrap: anywhere;
+}
+</style>

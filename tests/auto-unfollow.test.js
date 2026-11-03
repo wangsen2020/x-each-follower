@@ -273,14 +273,16 @@ test('pending identity is protected by both ID and handle across renames',async(
  f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
  await f.runner.run();assert.deepEqual(f.sent,['test1']);
 });
-test('automatic pending rechecks continue beyond three; ordinary manual review never submits',async()=>{
+test('automatic pending rechecks stop at three and ordinary manual review never submits',async()=>{
  let checks=0,confirmed=false;
  const f=setup({deps:{candidates:async()=>[],profile:async u=>{checks++;return {...u,relationship:{following:!confirmed,followedBy:false}};}}});
  f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:user(0)}}}};
  for(let i=0;i<5;i++){await createAutoUnfollow(f.deps).run();f.advance(10*60000);}
- assert.equal(checks,5);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems[0].checks,5);
+ assert.equal(checks,3);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems[0].checks,3);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].reviewItems[0].status,'review');
  confirmed=true;await createAutoUnfollow(f.deps).run({reviewHandle:'test0'});
- assert.equal(checks,6);assert.deepEqual(f.sent,[]);assert.equal(f.reconciled.length,1);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems.length,0);
+ assert.equal(checks,4);assert.deepEqual(f.sent,[]);assert.equal(f.reconciled.length,1);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].pendingItems.length,0);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts['1'].reviewItems.length,0);
 });
 test('manual review with an unknown target cannot execute ordinary queued actions',async()=>{
  const f=setup();await f.runner.run({reviewHandle:'missing'});assert.deepEqual(f.sent,[]);
@@ -295,7 +297,7 @@ test('global failures during pending verification preserve the record and pause 
 });
 test('unidentifiable historical pending record fails closed instead of losing protection',async()=>{
  const f=setup();f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pending:{user:{}}}}};
- assert.match((await f.runner.run()).error,/缺少目标身份/);assert.deepEqual(f.sent,[]);
+ assert.match((await f.runner.run()).error,/缺少目标账号/);assert.deepEqual(f.sent,[]);
 });
 test('multiple unresolved accounts survive new ambiguous operations and restart',async()=>{
  const attempts=[];const f=setup({deps:{unfollow:async u=>{attempts.push(u.handle);return {status:0,attempted:true};}}});
@@ -344,7 +346,7 @@ test('a proven pre-submit interruption can recover without permission to retry a
 for(const phase of [undefined,'reserved','submitting','responded'])test(`automatic dual verification restores ${phase||'legacy'} pending and completes one unfollow`,async()=>{
  const f=setup();const original=f.deps.profile;
  f.deps.profile=async u=>{const live=await original(u);return {...live,evidence:{page:{ready:true,following:live.relationship.following},api:{following:live.relationship.following}}};};
- f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:5,pending:{user:user(0),phase,at:time-3600000,checks:8},queue:[]}}};
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:5,pending:{user:user(0),phase,at:time-3600000,checks:1},queue:[]}}};
  const result=await createAutoUnfollow(f.deps).run();assert.equal(result.completed,1);assert.deepEqual(f.sent,['test0']);
  const state=f.data[AUTO_UNFOLLOW_STATE].accounts[1];assert.equal(state.pendingItems.length,0);assert.equal(state.used,6);
 });
@@ -357,6 +359,93 @@ for(const scenario of ['young','noProof','disagreement','protected'])test(`autom
 });
 test('pending checks select oldest due target so repeated failures do not starve later targets',async()=>{
  const seen=[];const f=setup({deps:{candidates:async()=>[],profile:async u=>{seen.push(u.handle);return u;}}});
- f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pendingItems:[{user:user(0),checks:8,nextCheckAt:time-100},{user:user(1),checks:9,nextCheckAt:time-200}]}}};
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:1,pendingItems:[{user:user(0),checks:1,nextCheckAt:time-100},{user:user(1),checks:2,nextCheckAt:time-200}]}}};
  await f.runner.run();await f.runner.run();assert.deepEqual(seen,['test1','test0']);
+});
+
+test('preflight failure budget survives 20 rounds and worker restarts, then manual retry grants one new budget',async()=>{
+ let calls=0;
+ const f=setup({deps:{candidates:async()=>[user(0)],profile:async()=>{calls++;throw Object.assign(Error('主页入口待核实'),{code:'X_PROFILE_ACTION_UNAVAILABLE'});}}});
+ for(let i=0;i<20;i++){await createAutoUnfollow(f.deps).run();f.advance(600000);}
+ assert.equal(calls,3);let s=f.data[AUTO_UNFOLLOW_STATE].accounts[1];
+ assert.equal(s.reviewItems[0].status,'review');assert.equal(s.reviewItems[0].attempts,3);assert.deepEqual(s.queue,[]);assert.equal(s.used,0);
+ const entry=s.reviewItems[0];
+ await createAutoUnfollow(f.deps).review({action:'retry',accountId:'1',handle:entry.user.handle,targetId:entry.user.id,updatedAt:entry.updatedAt});
+ assert.equal(calls,3); // A button never performs an X write or even a profile request.
+ await createAutoUnfollow(f.deps).run();assert.equal(calls,4);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0].attempts,1);
+});
+
+test('blocked targets enter review immediately while a later valid target completes in the same round',async()=>{
+ const f=setup(),original=f.deps.profile;
+ f.deps.profile=async u=>{if(u.handle==='test0')throw Object.assign(Error('当前账号已屏蔽该用户'),{code:'X_PROFILE_BLOCKED'});return original(u);};
+ const r=await createAutoUnfollow(f.deps).run();assert.equal(r.completed,1);assert.deepEqual(f.sent,['test1']);
+ const s=f.data[AUTO_UNFOLLOW_STATE].accounts[1];assert.equal(s.reviewItems[0].attempts,1);assert.equal(s.reviewItems[0].status,'review');
+ assert.equal(s.queue.includes('test0'),false);assert.match(s.reviewItems[0].reason,/屏蔽/);
+});
+
+test('skip persists through fresh scans, renamed handles and restarts, and remains isolated by owner and stable target ID',async()=>{
+ const f=setup({deps:{candidates:async()=>[user(0)]}});let calls=0;
+ f.deps.profile=async()=>{calls++;throw Object.assign(Error('屏蔽'),{code:'X_PROFILE_BLOCKED'});};
+ await createAutoUnfollow(f.deps).run();const entry=f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0];
+ await createAutoUnfollow(f.deps).review({action:'skip',accountId:'1',handle:entry.user.handle,targetId:entry.user.id,updatedAt:entry.updatedAt});
+ f.deps.candidates=async()=>[{...user(0),handle:'renamed'}];
+ for(let i=0;i<5;i++)await createAutoUnfollow(f.deps).run();assert.equal(calls,1);
+ f.data.unreciprocatedSettings.autoUnfollowAccount={id:'2',handle:'other'};await createAutoUnfollow(f.deps).run();assert.equal(calls,2);
+ f.data.unreciprocatedSettings.autoUnfollowAccount={id:'1',handle:'owner'};
+ f.deps.candidates=async()=>[{...user(0),id:'999'}];await createAutoUnfollow(f.deps).run();assert.equal(calls,3);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems.find(x=>x.user.id===user(0).id).status,'skipped');
+});
+
+test('local deletion must complete before clearing review; failure preserves it and success permits later re-entry',async()=>{
+ let fail=true,deleted=0,calls=0;
+ const f=setup({deps:{candidates:async()=>[user(0)],profile:async()=>{calls++;throw Object.assign(Error('屏蔽'),{code:'X_PROFILE_BLOCKED'});},removeLocal:async()=>{if(fail)throw Error('disk error');deleted++;}}});
+ await f.runner.run();const entry=f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0];
+ const request={action:'delete',accountId:'1',handle:entry.user.handle,targetId:entry.user.id,updatedAt:entry.updatedAt};
+ await assert.rejects(createAutoUnfollow(f.deps).review(request),/disk error/);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems.length,1);
+ fail=false;await createAutoUnfollow(f.deps).review(request);assert.equal(deleted,1);assert.deepEqual(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems,[]);
+ await createAutoUnfollow(f.deps).run();assert.equal(calls,2);assert.deepEqual(f.sent,[]);
+});
+
+test('stale or wrong-owner review commands cannot affect another record',async()=>{
+ const f=setup({deps:{profile:async()=>{throw Object.assign(Error('屏蔽'),{code:'X_PROFILE_BLOCKED'});}}});await f.runner.run();
+ const entry=f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0];
+ const request={action:'skip',accountId:'1',handle:entry.user.handle,targetId:entry.user.id,updatedAt:entry.updatedAt};
+ for(const patch of [{accountId:'other'},{targetId:'999'},{updatedAt:entry.updatedAt-1},{action:'bogus'}])await assert.rejects(createAutoUnfollow(f.deps).review({...request,...patch}));
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0].status,'review');
+});
+
+test('legacy pending checks beyond the cap go directly to review; retry only resets read-only verification',async()=>{
+ let calls=0;const f=setup({deps:{candidates:async()=>[],profile:async u=>{calls++;return u;}}});
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',day:'2026-10-23',used:5,pending:{user:user(0),checks:385,phase:'submitting'}}}};
+ await createAutoUnfollow(f.deps).run();assert.equal(calls,0);
+ let state=f.data[AUTO_UNFOLLOW_STATE].accounts[1],entry=state.reviewItems[0];assert.equal(entry.pending,true);assert.equal(state.used,5);
+ await createAutoUnfollow(f.deps).review({action:'retry',accountId:'1',handle:entry.user.handle,targetId:entry.user.id,updatedAt:entry.updatedAt});
+ state=f.data[AUTO_UNFOLLOW_STATE].accounts[1];assert.equal(state.pendingItems[0].phase,'submitting');assert.equal(state.pendingItems[0].checks,0);assert.equal(state.used,5);
+ await createAutoUnfollow(f.deps).run();assert.equal(calls,1);assert.deepEqual(f.sent,[]);
+});
+
+test('worker interruption after reserving the last check cannot reopen a fourth page',async()=>{
+ let calls=0;const f=setup({deps:{candidates:async()=>[user(0)],profile:async()=>{calls++;throw Error('should not open');}}});
+ f.data[AUTO_UNFOLLOW_STATE]={accounts:{1:{account:'1',queue:['test0'],reviewItems:[{user:user(0),status:'retry',attempts:3,updatedAt:time}]}}};
+ await f.runner.run();assert.equal(calls,0);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0].status,'review');
+});
+
+test('configured cap applies to unknown live relationships and can be saved without altering the default',async()=>{
+ let calls=0;const f=setup({config:{autoUnfollowMaxAttempts:2},deps:{candidates:async()=>[user(0)],profile:async u=>{calls++;return {...u,relationship:{following:true,followedBy:null}};}}});
+ for(let i=0;i<6;i++)await createAutoUnfollow(f.deps).run();assert.equal(calls,2);
+ assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0].status,'review');assert.deepEqual(f.sent,[]);
+});
+
+test('a definite no-action failure cannot reset its budget merely because the preliminary profile lookup succeeded',async()=>{
+ let calls=0;const f=setup({deps:{candidates:async()=>[user(0)],unfollow:async()=>{calls++;return {status:409,attempted:false,error:'入口无法确认'};}}});
+ for(let i=0;i<7;i++){await createAutoUnfollow(f.deps).run();f.advance(600000);}
+ assert.equal(calls,3);assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].reviewItems[0].status,'review');assert.equal(f.data[AUTO_UNFOLLOW_STATE].accounts[1].used,0);
+});
+
+test('global collection cooling keeps the candidate queued without consuming its profile retries',async()=>{
+ const f=setup({deps:{profile:async()=>{throw Object.assign(Error('cooldown'),{code:'X_ACCESS_DEFERRED',retryAt:Date.now()+900000})}}});
+ const result=await f.runner.run();assert.equal(result.deferred,true);assert.equal(f.sent.length,0);
+ const state=f.data[AUTO_UNFOLLOW_STATE].accounts['1'];assert.equal(state.scheduler.phase,'waiting');
+ assert.ok(state.queue.includes('test0'));assert.equal(state.reviewItems.find(r=>r.user?.handle==='test0')?.attempts||0,0);
 });

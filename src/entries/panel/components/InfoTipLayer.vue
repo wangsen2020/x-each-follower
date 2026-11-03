@@ -66,6 +66,9 @@ async function show(target) {
   container.value=tip.closest('dialog[open]') || 'body';
   content.value = message;
   visible.value = true;
+  // Measure each message at its natural width, rather than inheriting the
+  // previous tooltip's fixed position width.
+  bubbleStyle.value = {left:'8px',top:'8px',width:'max-content'};
   const current = ++sequence;
   await nextTick();
   if (current === sequence) place();
@@ -123,8 +126,8 @@ body.info-tip-layer-active .info-tip::after { content: none; }
   position: fixed;
   z-index: 10000;
   box-sizing: border-box;
-  width: 280px;
-  max-width: calc(100vw - 16px);
+  width: max-content;
+  max-width: min(280px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow-wrap: anywhere;
   overflow-y: auto;

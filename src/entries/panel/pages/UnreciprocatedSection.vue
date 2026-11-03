@@ -52,7 +52,7 @@
             <th class="th-check"><input id="unreciprocatedSelectAll" type="checkbox" :title="t(&quot;全选 / 取消全选当前页&quot;)" :aria-label="t(&quot;全选当前页&quot;)"></th>
             <th class="th-account">
               <span>{{ t("账号与简介") }}</span>
-              <span class="selected-count-badge">{{ t("已选") }}<b id="unreciprocatedSelectedCount">0</b> / <span id="unreciprocatedTotalVisibleCount">0</span></span>
+              <span class="selected-count-badge">{{ t("已选") }}&nbsp;<b id="unreciprocatedSelectedCount">0</b> / <span id="unreciprocatedTotalVisibleCount">0</span></span>
             </th>
             <th class="th-record" style="width:180px;">{{ t("关注时间") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;显示我们主动关注对方的时间及距今已等待的天数。&quot;)" :aria-label="t(&quot;等待时长说明&quot;)">?</span></th>
             <th class="th-relation" style="width:110px;">{{ t("回关状态") }}</th>

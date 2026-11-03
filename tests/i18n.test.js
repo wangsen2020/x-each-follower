@@ -61,3 +61,18 @@ test('integrated exception and progress controls interpolate in all four languag
  assert.ok(source.includes('{{ entry.message }}'));assert.ok(source.includes('{{ entry.context }}'));assert.ok(source.includes("entry.stack || t('无堆栈信息')"));
  delete globalThis.chrome;
 });
+
+test('numeric UI labels keep spacing without rewriting user values',async()=>{
+ const {t,locale}=await import('../src/shared/i18n.js');
+ const previous=locale.value;
+ try{
+  locale.value='zh-CN';
+  assert.equal(t('7天'),'7 天');
+  assert.equal(t('最近30条监控'),'最近 30 条监控');
+  assert.equal(t('第{{v0}}页',{v0:12}),'第 12 页');
+  assert.equal(t('{{v0}}分钟前',{v0:15}),'15 分钟前');
+  assert.equal(t('每批上限需为10–1000的整数'),'每批上限需为 10–1000 的整数');
+  assert.equal(t('客户123简介456'),'客户123简介456');
+  for(const code of codes){locale.value=code;assert.match(t('verifiedSession',{session:'客户123'}),/客户123/);assert.ok(!t('第{{v0}}页',{v0:12}).includes('{{'));}
+ }finally{locale.value=previous;}
+});

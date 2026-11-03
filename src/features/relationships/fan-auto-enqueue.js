@@ -5,10 +5,27 @@ export async function enqueuePendingFans(candidates, {enabled = true, request = 
   if (!enabled) return {status: 'disabled', count: 0, handles: []};
   if (!candidates.length) return {status: 'empty', count: 0, handles: []};
   try {
-    const result = await request({cmd: 'followQueueEnqueue', candidates: candidates.map(user => ({handle: user.handle, targetUserId: user.id || user.rest_id || '', module: 'fans', enabled: true}))});
+    const result = await request({
+      cmd: 'followQueueEnqueue',
+      candidates: candidates.map(user => ({
+        handle: user.handle,
+        targetUserId: user.id || user.rest_id || '',
+        module: 'fans',
+        enabled: true,
+        profile: {
+          name: user.name || '',
+          bio: user.bio || user.description || '',
+          avatarUrl: user.avatarUrl || '',
+          followersText: user.followersText ?? '',
+          followingText: user.followingText ?? ''
+        },
+        ...(user.fanReview ? {fanReview: user.fanReview} : {}),
+        ...(user.fanGrant ? {fanGrant: user.fanGrant} : {})
+      }))
+    });
     if (!result?.ok) {
       const reason = result?.error || '后台未确认入队';
-      await report({source:'panel',kind:'fan-auto-enqueue',message:reason}).catch(() => {});
+      await report({source: 'panel', kind: 'fan-auto-enqueue', message: reason}).catch(() => {});
       return {status: result ? 'failed' : 'uncertain', count: 0, handles: [], reason};
     }
     const handles = Array.isArray(result.jobs) ? result.jobs.map(job => job.handle).filter(Boolean) : [];

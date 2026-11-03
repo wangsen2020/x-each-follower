@@ -42,7 +42,7 @@ export function finishBatch(plan,count,now){
   state.last={lane,from:window.from,to:window.to,received:count,limit,at:now,split:count>=limit};
   state.batches++;
   if(count>=limit){
-    if(window.to-window.from<1000)throw new Error(`最小时间窗口仍达到${limit}条，停止推进以避免漏帖；请稍后检查接口。`);
+    if(window.to-window.from<1000)throw new Error(`最小时间窗口仍达到 ${limit} 条，停止推进以避免漏帖；请稍后检查接口。`);
     const middle=Math.floor((window.from+window.to)/2);
     scan.pending.splice(0,1,{from:middle+1,to:window.to},{from:window.from,to:middle});
   }else{

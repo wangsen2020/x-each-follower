@@ -1,6 +1,6 @@
 {
   "name": "x-each-follower",
-  "version": "4.17.0",
+  "version": "4.33.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -27,6 +27,7 @@
     "jsonrepair": "3.13.3",
     "lucide": "1.61.0",
     "p-retry": "8.0.1",
-    "twitter-text": "^3.1.0"
+    "twitter-text": "^3.1.0",
+    "vue-sonner": "2.0.9"
   }
 }

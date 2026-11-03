@@ -15,7 +15,7 @@ export async function generateArticleCover(options,{grok=generateGrokCover,cloud
 
 // Serialized page functions operate only on a new, task-owned Grok tab.
 export function readGrokCoverStateOnPage(previousSources = []) {
-  const viewer=document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','');
+  const viewer=globalThis.__xfAccountSnapshot?.account?.handle;
   const images=[...document.images];
   const text=document.body?.innerText||'';
   const quotaExhausted=/you have reached a grok usage limit|you(?:'ve| have) reached.{0,50}(?:limit|quota)|已达到.{0,20}(?:使用|次数|额度).{0,10}(?:限制|上限)|额度.{0,10}(?:耗尽|用尽)/i.test(text);

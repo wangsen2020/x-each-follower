@@ -45,11 +45,11 @@ export function createBackgroundRecords({service, extensionUrl = ''} = {}) {
       const {record} = await call({op: 'lookup', module, handle, accountId});
       return record || null;
     },
-    async lookupAll({sourceKey, bucket, handle, tweetId} = {}) {
+    async lookupAll({sourceKey, bucket, handle, tweetId, accountId} = {}) {
       await ready();
       if (!sourceKey) throw new Error('lookupAll requires sourceKey');
       if (!handle && (tweetId == null || tweetId === '')) throw new Error('lookupAll requires a handle or tweetId');
-      const result = await call({op: 'lookupAll', sourceKey, bucket, handle, tweetId});
+      const result = await call({op: 'lookupAll', sourceKey, bucket, handle, tweetId, ...(accountId ? {accountId} : {})});
       if (!Array.isArray(result.records)) throw new Error('lookupAll did not return records');
       return result.records;
     },
@@ -78,12 +78,26 @@ export function createBackgroundRecords({service, extensionUrl = ''} = {}) {
       }
       return rows;
     },
-    async fanDirectory(handles) {
+    async fanReviewOwner() {
+      await ready();
+      const result=await call({op:'fanReviewOwner'});
+      return result.ownerAccountId || '';
+    },
+    async fanDirectory(handles, {accountId, includeUnassigned = false} = {}) {
       await ready();
       const records=[];
+      const legacyOwner=accountId && includeUnassigned ? (await call({op:'fanReviewOwner'})).ownerAccountId : '';
       for (const group of chunks([...new Set(handles)], PAGE_LIMIT)) {
-        const result=await call({op:'fanDirectory',handles:group});
+        const result=await call({op:'fanDirectory',handles:group,...(accountId ? {accountId} : {})});
         records.push(...(result.records || []));
+        if(accountId && accountId!=='unassigned' && includeUnassigned) {
+          const legacy=await call({op:'fanDirectory',handles:group,accountId:'unassigned'});
+          records.push(...(legacy.records || []).filter(row=>{
+            const payload=row.payload || row;
+            const owners=[payload.ownerAccountId,payload.fanReview?.ownerAccountId,payload.fanGrant?.ownerAccountId].filter(Boolean);
+            return owners.every(owner=>owner===accountId) && (owners.length>0 || legacyOwner===accountId);
+          }));
+        }
       }
       return records;
     },

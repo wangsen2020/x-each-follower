@@ -1,14 +1,19 @@
+import {isAccessDeferred} from '../../platform/x/access-budget.js';
+import {Trash2,CircleX,CircleSlash,CircleCheck,Mail,ShieldCheck,UserPlus,UserMinus,RefreshCw,UserRound,Network,FileText,ListPlus} from 'lucide';
+import {panelIconButton,setPanelIconButtonLabel} from './panel-icon-button.js';
 import {enqueuePendingFans, fanEnqueueSummary} from '../../features/relationships/fan-auto-enqueue.js';
+import {createFanReviewPanel} from './fan-review-panel.js';
+import {fanInspectionContextChange} from '../../features/relationships/fan-inspection-batch.js';
+import {createTaskProgressReporter,createResultReporter,PANEL_RESULT_ACTION_EVENT} from './result-notices.js';
+import {verificationRowState} from '../../features/relationships/verification-workflow.js';
 import {createPanelScanListener} from '../../platform/panel-scan-messages.js';
 import {requestBackground} from '../../platform/background-request.js';
 import {t,locale} from '../../shared/i18n.js';
 import {inspectOrActOnProfile} from '../../platform/x/guarded-relationship.js';
 import {paintAutoUnfollowRow} from './composables/useAutoUnfollowStatus.js';
-import {readSidebarViewerOnPage} from '../../platform/x/sidebar-identity.js';
 import {followerEmptyView} from './follower-empty-view.js';
 import {refreshCompletedUnfollow} from './followback-live-refresh.js';
-import {fanDirectoryFromMonitor, FAN_LABELS} from '../../features/relationships/fan-directory.js';
-import {shouldEnqueueFan} from '../../features/relationships/fan-followback-policy.js';
+import {fanDirectoryFromMonitor, FAN_LABELS, matchesFanReviewResult} from '../../features/relationships/fan-directory.js';
 import {saveFollowbackSettings, withFollowbackProgress} from '../../features/relationships/followback-settings.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
 import {acquireProfileTab,createProfileTab,updateProfileTab,readProfileOnTab,observeProfile,assertProfileAvailable,profileUnavailableError,PROFILE_ACCESS_PREFIX} from '../../platform/x/profile-access.js';
@@ -59,7 +64,8 @@ let analysisRows = [];
 let profileCache = {};
 let followerScanRunning = false;
 const temporaryBackgroundXTabs = new Set();
-let activeFollowerTab = 'fanFollowing';
+let activeFollowerTab = 'fanPending';
+let followerReviewResult = '';
 let selectedFollowerHandles = new Set();
 let followerPage = 1;
 let followerPageSize = 20;
@@ -241,19 +247,34 @@ let mutualNetworkRunning = false;
 const followBackBusy = new Set();
 const fanInspectBusy = new Set();
 let fanBatchState=null,fanBatchTimer=null,fanBatchError='';
+const reportInspection=createTaskProgressReporter(),reportInspectionError=createResultReporter();
+function inspectionResult(explicit=false){
+  const batch=fanBatchState;if(!batch)return;
+  reportInspection(batch,{id:`inspection:${batch.id}`,kind:'fan-inspection',batchId:batch.id,title:t('粉丝核验')+' · '+t({running:'进行中',completed:'已完成',cancelled:'已取消',paused:'已暂停'}[batch.stage]||'未完成'),
+    progress:{stage:batch.stage,done:batch.nextIndex,total:batch.handles.length,success:batch.results.filter(i=>i.status==='verified').length,failed:batch.results.filter(i=>i.status!=='verified').length},
+    actions:batch.stage==='running'?[{action:'stop',label:'停止后续',disabled:!!batch.stopping}]:batch.stage==='paused'&&batch.nextIndex<batch.handles.length?[{action:'resume',label:'继续核验'}]:[],
+    note:batch.stopping?t('当前项完成后停止'):batch.currentHandle?'@'+batch.currentHandle:batch.stage==='cancelled'?t('{{v0}}；剩余 {{v1}} 个账号未核验，请重新选择。',{v0:t(batch.cancellation?.reason||'范围已切换'),v1:batch.handles.length-batch.nextIndex}):t(batch.reason||''),items:batch.results.map(item=>{
+    const rel=item.relationship;
+    const label=item.status==='identity-mismatch'?'账号记录不一致，保留待核实':item.status==='failed'?item.error:rel?.following&&rel?.followedBy?'已互关':rel?.following?'已关注，对方未关注你':rel?.followedBy?item.reviewTransition?.removalPending?'资料为空，待移除':item.reviewTransition?.ready?'已退回待审核':item.reviewTransition?.state==='verify'?'仍待核实':'关系已核实，尚未回关':'双方未关注';
+    const collection=item.profileCollection;
+    const info=item.reviewTransition?.reason?t(item.reviewTransition.reason):collection?.profile==='saved'?t(collection.posts==='cached'?'资料已缓存':'资料已缓存，帖子待补采'):collection?.profile==='failed'?t('资料缓存未完成'):'';
+    return `@${item.handle} · ${t(label)}${info?' · '+info:''}`;
+  })},{explicit});
+}
+let fanReviewPanel=null;
 let fanViewEpoch=0,fanContextChanging=false,fanStartToken=null;
+let fanBatchCommandEpoch=0,fanBatchStatusEpoch=0;
 function clearFollowerSelection() {
   selectedFollowerHandles.clear();selectedRowCopies.clear('fans');
+  fanReviewPanel?.clearSelection();
 }
-function fanSelectionLocked() {return fanContextChanging || Boolean(fanStartToken) || fanBatchState?.stage==='running';}
-async function changeFollowerContext(change,action) {
+function fanSelectionLocked() {return fanContextChanging || Boolean(fanStartToken) || fanBatchState?.stage==='running'||!!fanReviewPanel?.activeSelection?.().running;}
+async function changeFollowerContext(change,action,contextChange) {
+  if(!contextChange)return;
   const epoch=++fanViewEpoch;
-  clearTimeout(fanBatchTimer);fanStartToken=null;fanContextChanging=true;clearFollowerSelection();renderFanBatch();
+  fanContextChanging=true;clearFollowerSelection();renderFanBatch();
   try {
-    const result=await chrome.runtime.sendMessage({cmd:'followQueueFanBatchCancel'});
-    if(epoch!==fanViewEpoch)return;
-    if(!result?.ok)throw new Error(result?.error || '取消旧批次失败，请稍后重试');
-    fanBatchState=result.batch;fanBatchError='';change();await action();
+    change();await action();
   }catch(error){if(epoch===fanViewEpoch)fanBatchError=error.message;}
   finally{if(epoch===fanViewEpoch){fanContextChanging=false;renderMonitorList();}}
 }
@@ -261,10 +282,18 @@ function renderFanBatch() {
   const host=$('fanInspectionProgress');
   if(!host)return;
   const batch=fanBatchState,running=batch?.stage==='running';
-  host.hidden=(!batch || ['completed','cancelled'].includes(batch.stage)) && !fanBatchError;
+  const selectionState=running?{running:true,keys:batch.handles}:fanReviewPanel?.activeSelection?.()||{running:false,keys:[]};
+  inspectionResult();
+  if(fanBatchError)reportInspectionError({id:`inspection-error:${fanViewEpoch}`,title:t('操作未完成'),note:t(fanBatchError)});
+  host.hidden=true;
   $('batchInspectFans').disabled=fanSelectionLocked() || !selectedFollowerHandles.size;
-  $('batchInspectFans').textContent=running?t("核验中"):selectedFollowerHandles.size?t("核验所选 \u007b\u007bv0\u007d\u007d",{v0:selectedFollowerHandles.size}):t("批量核验");
-  for(const check of document.querySelectorAll('#monitorList input[type="checkbox"],#listSelectAll'))check.disabled=fanSelectionLocked();
+  setPanelIconButtonLabel($('batchInspectFans'),running?t("核验中"):selectedFollowerHandles.size?t("核验所选 \u007b\u007bv0\u007d\u007d",{v0:selectedFollowerHandles.size}):t("批量核验"),t('开始后按本批所选账号继续核验，切换页面、分类、搜索或分页不会终止。点击停止图标，完成当前项后暂停；可继续剩余账号。只更新本地关系，不关注或取关。'));
+  for(const check of document.querySelectorAll('#monitorList input[type="checkbox"],#listSelectAll')){
+    const row=verificationRowState(selectionState,check.dataset?.fanHandle,selectedFollowerHandles.has(check.dataset?.fanHandle));
+    check.disabled=activeFollowerTab==='fanRemoved'||fanSelectionLocked()||Boolean(fanReviewPanel?.isAllMatching());if(selectionState.running&&check.dataset?.fanHandle)check.checked=row.checked;
+  }
+  if(selectionState.running){const boxes=[...document.querySelectorAll('#monitorList input[type="checkbox"]')];$('selectedCount').textContent=String(boxes.filter(i=>i.checked).length);$('listSelectAll').checked=boxes.length>0&&boxes.every(i=>i.checked);$('listSelectAll').indeterminate=boxes.some(i=>i.checked)&&!$('listSelectAll').checked;}
+  for(const button of document.querySelectorAll('#monitorList [data-fan-inspect-handle]'))button.disabled=fanSelectionLocked()||fanInspectBusy.has(button.dataset.fanInspectHandle);
   $('followerPageSize').disabled=fanContextChanging;
   if(fanContextChanging)for(const id of ['followerPageSize','followerPrevPage','followerNextPage'])$(id).disabled=true;
   $('stopFanInspection').hidden=!running;
@@ -275,31 +304,25 @@ function renderFanBatch() {
   const verified=batch.results.filter(item=>item.status==='verified').length;
   $('fanInspectionStatus').textContent=t(`${batch.scope}核验${running?'中':batch.stage==='completed'?'结束':batch.stage==='cancelled'?'已取消':'已暂停'}：已处理 ${batch.nextIndex}/${batch.handles.length} · 已核实 ${verified} · 未核实 ${batch.results.length-verified}`
     +(batch.currentHandle?` · @${batch.currentHandle}`:'')+(batch.reason?` · ${batch.reason}`:'')+(batch.stopping?' · 当前项结束后停止':'')+(fanBatchError?` · ${fanBatchError}`:''));
-  $('fanInspectionSummary').textContent=t($('fanInspectionStatus').textContent);
-  const list=$('fanInspectionResults');list.replaceChildren();
-  for(const item of batch.results){const li=document.createElement('li');const rel=item.relationship;
-    const label=item.status==='identity-mismatch'?'身份不一致，保留待核实':item.status==='failed'?item.error
-      :rel?.following&&rel?.followedBy?'已互关':rel?.following?'已关注，对方未关注你':rel?.followedBy?'待回关':'双方未关注';
-    li.textContent=t(`@${item.handle} · ${label}`);list.append(li);}
 }
 async function refreshFanBatchStatus() {
   clearTimeout(fanBatchTimer);
-  const epoch=fanViewEpoch;
+  const epoch=++fanBatchStatusEpoch;
   try {
     const result=await chrome.runtime.sendMessage({cmd:'followQueueFanBatchStatus'});
-    if(epoch!==fanViewEpoch)return;
+    if(epoch!==fanBatchStatusEpoch)return;
     if(!result?.ok)throw new Error(result?.error||'批量核验状态读取失败');
     if(result.requiresActivation)fanBatchError='';
     const before=fanBatchState;fanBatchState=result.batch;
     if(fanBatchState && ['completed','cancelled'].includes(fanBatchState.stage) && (before?.id!==fanBatchState.id || before.stage!==fanBatchState.stage))clearFollowerSelection();
     renderFanBatch();
-    if(before?.stage==='running' && fanBatchState?.stage==='completed' && !$('fanInspectionDialog').open) $('fanInspectionDialog').showModal();
     if(before?.stage==='running'&&fanBatchState?.stage!=='running'&&recordPages){await recordPages.invalidate();await recordPages.open('fans',currentRecordFilter('fans'));renderMonitorList();}
     if(fanBatchState?.stage==='running')fanBatchTimer=setTimeout(refreshFanBatchStatus,800);
-  }catch(error){if(epoch===fanViewEpoch&&fanBatchState){fanBatchError=error.message;renderFanBatch();fanBatchTimer=setTimeout(refreshFanBatchStatus,2000);}}
+  }catch(error){if(epoch===fanBatchStatusEpoch&&fanBatchState){fanBatchError=error.message;renderFanBatch();fanBatchTimer=setTimeout(refreshFanBatchStatus,2000);}}
 }
 async function fanBatchAction(action) {
-  const epoch=fanViewEpoch,token={epoch};
+  const epoch=++fanBatchCommandEpoch,token={epoch};
+  ++fanBatchStatusEpoch;clearTimeout(fanBatchTimer);
   fanBatchError='';
   try {
     if(action==='followQueueFanBatchStart') {
@@ -307,22 +330,23 @@ async function fanBatchAction(action) {
       if(!selectedFollowerHandles.size)throw new Error('请先勾选当前页需要核验的账号');
       fanStartToken=token;renderFanBatch();
     }
-    const labels={fanFollowing:'已关注',fanPending:'待回关',fanMutual:'已互关',fanUnknown:'待核实'};
+    const labels={fanFollowing:'已关注',fanPending:'待回关',fanReview:'待审核',fanRemoved:'已移除',fanMutual:'已互关',fanUnknown:'待核实'};
     const message={cmd:action,filter:currentRecordFilter('fans'),scope:selectedFollowerHandles.size?'所选账号':followerSearch.trim()?'搜索结果':labels[activeFollowerTab]||'当前分类'};
     if(selectedFollowerHandles.size)message.handles=[...selectedFollowerHandles];
     const result=await chrome.runtime.sendMessage(message);
-    if(epoch!==fanViewEpoch)return;
+    if(epoch!==fanBatchCommandEpoch)return;
     if(!result?.ok)throw new Error(result?.error||'批量核验未能开始');
     fanBatchState=result.batch;
+    inspectionResult(true);
     if(action==='followQueueFanBatchStart')clearFollowerSelection();
     renderMonitorList();void refreshFanBatchStatus();
-  }catch(error){if(epoch===fanViewEpoch){fanBatchError=error.message;renderFanBatch();}}
+  }catch(error){if(epoch===fanBatchCommandEpoch){fanBatchError=error.message;renderFanBatch();void refreshFanBatchStatus();}}
   finally{if(fanStartToken===token){fanStartToken=null;renderFanBatch();}}
 }
 
 async function inspectFanRelationship(user) {
   const key = String(user?.handle || '').toLowerCase();
-  if (!key || fanInspectBusy.has(key)) return;
+  if (!key || fanInspectBusy.has(key) || fanSelectionLocked()) return;
   fanInspectBusy.add(key);
   renderMonitorList();
   try {
@@ -346,36 +370,14 @@ const status = text => { const root = $('status') || $('networkStatus'); if (roo
 const monitorStatus = text => { $('monitorStatus').textContent = t(text); };
 const analysisStatus = text => monitorStatus(text);
 
-const monitorActionIcons = {
-  delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>',
-  unavailable: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 8 8 8m0-8-8 8"/></svg>',
-  suspended: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg>',
-  available: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m7 12 3 3 7-7"/></svg>',
-  greeting: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg>',
-  shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7z"/><path d="m8 12 3 3 5-6"/></svg>',
-  follow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>',
-  unfollow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="11" x2="23" y2="11"/></svg>',
-  refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 1.4 4.5M20 4v7h-7"/></svg>',
-  profile: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.25"/><path d="M5.5 20c.55-3.4 3.05-5.25 6.5-5.25S17.95 16.6 18.5 20"/></svg>',
-  expand: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6"/><path d="m8.5 7.5 7 3.5"/><path d="m8.5 16.5 7-3.5"/></svg>',
-  posts: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>'
-};
-
-function monitorIconButton(icon, label) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'secondary monitor-icon-button';
-  button.setAttribute('aria-label', t(label));
-  button.setAttribute('title', t(label));
-  button.innerHTML = monitorActionIcons[icon] || '';
-  return button;
-}
+const monitorActionIcons = {delete:Trash2,unavailable:CircleX,suspended:CircleSlash,available:CircleCheck,greeting:Mail,shield:ShieldCheck,follow:UserPlus,unfollow:UserMinus,refresh:RefreshCw,profile:UserRound,expand:Network,posts:FileText,approve:ListPlus};
+function monitorIconButton(icon,label,tip=label){return panelIconButton(monitorActionIcons[icon],{label,tip,className:'monitor-icon-button'});}
 
 function setMonitorIconButtonState(button, busy, label) {
   button.disabled = busy;
   button.setAttribute('aria-busy', String(busy));
   button.setAttribute('aria-label', t(label));
-  button.setAttribute('title', t(label));
+  button.setAttribute('data-panel-tip', t(label));
   button.classList.toggle('is-busy', busy);
 }
 
@@ -453,7 +455,7 @@ function paintSummaryCount(id, count) {
 function refreshSidebarBadges() {
   const summaries = recordPaging && recordPages ? recordPages.summaries() : null;
   if (summaries && (summaries.fans || summaries.mutual || summaries.comments || summaries.unreciprocated)) {
-    paintSummaryCount('queueCount', summaries.fans?.tabs?.fanPending || 0);
+    paintSummaryCount('queueCount', summaries.fans?.tabs?.fanOutstanding ?? summaries.fans?.tabs?.fanPending ?? 0);
     paintSummaryCount('mutualNetworkCount', summaries.mutual?.tabs?.all || 0);
     paintSummaryCount('commentTrackingCount', summaries.comments?.tabs?.all || 0);
     paintSummaryCount('unreciprocatedCount', (summaries.unreciprocated?.tabs?.overdue || 0) + (summaries.unreciprocated?.tabs?.pending || 0));
@@ -605,7 +607,8 @@ function bridgePersist(key, value) {
 }
 
 function currentRecordFilter(moduleName) {
-  if (moduleName === 'fans') return {tab: followerSearch.trim() ? 'fanAll' : activeFollowerTab, search: followerSearch, pageSize: capPageSize(followerPageSize)};
+  if (moduleName === 'fans') return {tab: followerSearch.trim() && activeFollowerTab!=='fanRemoved' ? 'fanAll' : activeFollowerTab, search: followerSearch, pageSize: capPageSize(followerPageSize),
+    ...(activeFollowerTab==='fanReview'&&followerReviewResult?{reviewResult:followerReviewResult}:{})};
   if (moduleName === 'mutual') return {tab: activeMutualTab, search: mutualSearch, tags: [...(activeMutualTags || [])], pageSize: capPageSize(mutualPageSize)};
   if (moduleName === 'comments') return {tab: activeCommentFilter, search: commentSearch, pageSize: capPageSize(commentPageSize)};
   const tab = activeUnreciprocatedTab === 'unreciprocated' && unreciprocatedOverdueFilter !== 'all'
@@ -725,33 +728,24 @@ async function runCommentAutoFollowNow() {
   $('commentTrackingStatus').textContent = result?.ok?(t(result.summary) || t("评论用户自动关注任务已完成。")):t("任务未启动：\u007b\u007bv0\u007d\u007d",{v0:(result?.error || t("后台不可用"))});
 }
 
-async function followCommentUser(user, button) {
-  const key = String(user?.handle || '').toLowerCase();
-  if (!key || user.followedAt || followBackBusy.has(key)) return;
-  followBackBusy.add(key);
-  setMonitorIconButtonState(button, true, '关注中…');
-  let tabId;
+async function enqueuePanelCandidate(user, module, button, report) {
+  const handle=String(user?.handle || '').trim();
+  if(!handle)return;
+  if(button)button.disabled=true;
   try {
-    tabId = await backgroundXActionTab();
-    const result = await followViaNetwork(tabId, user);
-    if (result.ok || result.reason === 'already_following') {
-      const item = (commentTracking.users || []).find(u => String(u.handle).toLowerCase() === key) || user;
-      item.followedAt = new Date().toISOString();
-        item.followedAtSource = 'confirmed';
-      item.followSource = 'comment';
-      item.relationship = {...(item.relationship || {}), following: true};
-      delete item.followFailureReason;
-      item.autoFollowState = 'followed'; delete item.autoFollowReason;
-      await saveCommentTracking();
-    } else {
-      const item = (commentTracking.users || []).find(u => String(u.handle).toLowerCase() === key) || user;
-      item.followFailedAt = new Date().toISOString();
-      item.followFailureReason = result.error || result.reason || '关注请求未完成';
-      await saveCommentTracking();
-      $('commentTrackingStatus').textContent = t("@\u007b\u007bv0\u007d\u007d 关注失败：\u007b\u007bv1\u007d\u007d",{v0:item.handle,v1:item.followFailureReason});
-    }
-  } catch (error) { $('commentTrackingStatus').textContent = t("关注失败：\u007b\u007bv0\u007d\u007d",{v0:t(error.message)}); }
-  finally { await closeBackgroundXActionTab(tabId); followBackBusy.delete(key); renderCommentTracking(); }
+    const response=await requestBackground({cmd:'followQueueEnqueue',candidate:{handle,targetUserId:typeof user.id==='string'?user.id:'',module,enabled:true,
+      profile:{name:user.name || '',bio:user.bio || '',followersText:user.followersText || '',followingText:user.followingText || '',blueVerified:user.is_blue_verified ?? user.blueVerified}}});
+    if(!response?.ok)throw Error(response?.error || '加入关注队列失败');
+    const job=response.jobs?.[0];
+    const state=({pending:'待关注',retry:'等待重试',skipped:'策略跳过',excluded:'已排除',followed:'已关注',uncertain:'待核实'}[job?.state]) || job?.reason || '请查看队列状态';
+    report(t('@{{v0}} · 关注队列：{{v1}}',{v0:handle,v1:t(state)}));
+    setTab('followQueue');
+  }catch(error){report(t(error.message));}
+  finally{if(button?.isConnected)button.disabled=false;}
+}
+
+async function followCommentUser(user, button) {
+  return enqueuePanelCandidate(user,'comments',button,message=>{if($('commentTrackingStatus'))$('commentTrackingStatus').textContent=message;});
 }
 
 // 回关核验：已关注且对方出现在自己的粉丝列表时记录回关时间
@@ -1079,11 +1073,14 @@ function removeUnfollowedUser(key) {
 function currentFollowerUsers() {
   const served = recordPaging && recordPages ? recordPages.window('fans') : null;
   if (served) return served.records.map(record => structuredClone(record.payload || {}));
-  const category = {fanFollowing:'following',fanPending:'pending',fanMutual:'mutual',fanUnknown:'unknown'}[activeFollowerTab];
-  return fanDirectoryFromMonitor(monitor).filter(row => followerSearch.trim() || row.payload.fanCategory === category).map(row => row.payload);
+  const category = {fanFollowing:'following',fanPending:'pending',fanReview:'review',fanRemoved:'removed',fanMutual:'mutual',fanUnknown:'unknown'}[activeFollowerTab];
+  return fanDirectoryFromMonitor(monitor).filter(row => (followerSearch.trim() || row.payload.fanCategory === category)
+    && matchesFanReviewResult(row.payload,activeFollowerTab==='fanReview'?followerReviewResult:'')).map(row => row.payload);
 }
 
 function renderMonitorList() {
+  if($('fanReviewResultFilter'))$('fanReviewResultFilter').hidden=activeFollowerTab!=='fanReview';
+  if($('fanReviewResult'))$('fanReviewResult').value=followerReviewResult;
   installPageCopies('fans');
   const servedFans = recordPaging && recordPages ? recordPages.window('fans') : null;
   const monitorRows = servedFans ? (servedFans.summary?.total || servedFans.records.length || 1) : (monitor.users || []).length + (monitor.queue || []).length + (monitor.followingUsers || []).length;
@@ -1105,11 +1102,13 @@ function renderMonitorList() {
   const empty = $('monitorEmpty'); const list = $('monitorList'); const selection = $('selectionBar'); const pagination = $('monitorPagination');
   const listHeader = $('monitorListHeader');
   const following = (monitor.users || []).filter(user => user.state === 'following' || monitorUserStatus(user, index) === 'followed').length;
-  const fanTabs = fanWindow.summary?.tabs;
+  const fanTabs = fanWindow.summary?.tabs || (recordPaging ? recordPages?.summaries()?.fans?.tabs : null);
   paintFollowerCount('followingCount', fanTabs ? (fanTabs.fanFollowing || 0) : following);
   paintFollowerCount('followBackCount', fanTabs ? (fanTabs.fanPending || 0) : pending.length);
   paintFollowerCount('fanMutualCount', fanTabs?.fanMutual || 0);
   paintFollowerCount('fanUnknownCount', fanTabs?.fanUnknown || 0);
+  paintFollowerCount('fanReviewCount', fanTabs?.fanReview ?? fanDirectoryFromMonitor(monitor).filter(row=>row.payload.fanCategory==='review').length);
+  paintFollowerCount('fanRemovedCount', fanTabs?.fanRemoved ?? fanDirectoryFromMonitor(monitor).filter(row=>row.payload.fanCategory==='removed').length);
   document.querySelectorAll('[data-follower-tab]').forEach(button => {
     const isActive = !followerSearch.trim() && button.dataset.followerTab === activeFollowerTab;
     button.classList.toggle('active', isActive);
@@ -1121,14 +1120,16 @@ function renderMonitorList() {
   if (listHeader) listHeader.hidden = !hasUsers;
   list.replaceChildren();
   $('scanFollowers').setAttribute('data-panel-tip', allUsers.length?t("扫描新粉丝，只读取最新页面直到遇到历史账号。"):t("获取初始粉丝列表。"));
-  const categoryLabel = {fanFollowing:'已关注',fanPending:'待回关',fanMutual:'已互关',fanUnknown:'待核实'}[activeFollowerTab];
+  const categoryLabel = {fanFollowing:'已关注',fanPending:'待回关',fanReview:'待审核',fanRemoved:'已移除',fanMutual:'已互关',fanUnknown:'待核实'}[activeFollowerTab];
   $('monitorEmptyTitle').textContent = t("没有\u007b\u007bv0\u007d\u007d账号",{v0:(t(categoryLabel) || t("匹配的"))});
   $('initialFollowers').hidden = true;
-  const archiveCount = fanTabs?.fanAll ?? allUsers.length;
-  $('monitorStatus').textContent = keyword?t("全部分类搜索 · \u007b\u007bv0\u007d\u007d\u007b\u007bv1\u007d\u007d",{v0:visibleTotal == null?t("本页 \u007b\u007bv0\u007d\u007d 人",{v0:users.length}):t("找到 \u007b\u007bv0\u007d\u007d 人",{v0:visibleTotal}),v1:servedFans?.nextCursor?t(" · 可继续翻页"):''}):t("本地账号 \u007b\u007bv0\u007d\u007d 个 · 每人仅计一次\u007b\u007bv1\u007d\u007d",{v0:Number(archiveCount).toLocaleString(),v1:fanTabs?.fanNone?t(" · 无关系 \u007b\u007bv0\u007d\u007d 个，可通过全局搜索查找",{v0:fanTabs.fanNone}):''});
+  const outstandingCount = fanTabs?.fanOutstanding ?? fanDirectoryFromMonitor(monitor).filter(row=>row.tabs.includes('outstanding')).length;
+  $('monitorStatus').textContent = keyword?t("全部分类搜索 · \u007b\u007bv0\u007d\u007d\u007b\u007bv1\u007d\u007d",{v0:visibleTotal == null?t("本页 \u007b\u007bv0\u007d\u007d 人",{v0:users.length}):t("找到 \u007b\u007bv0\u007d\u007d 人",{v0:visibleTotal}),v1:servedFans?.nextCursor?t(" · 可继续翻页"):''}):t("未回关粉丝 {{count}} 人",{count:Number(outstandingCount).toLocaleString()});
   selectedRowCopies.reconcilePage('fans',selectedFollowerHandles,users);
-  $('selectedCount').textContent = t(String(selectedFollowerHandles.size));
+  $('selectedCount').textContent = t(String(fanReviewPanel?.isAllMatching()?users.filter(user=>fanReviewPanel.isSelected(user.handle)).length:selectedFollowerHandles.size));
   if ($('totalVisibleCount')) $('totalVisibleCount').textContent = t(String(users.length));
+  fanReviewPanel?.update({filter:currentRecordFilter('fans'),count:visibleTotal});
+  for (const id of ['approveSelectedFans','removeSelectedFans']) if ($(id)) $(id).hidden=activeFollowerTab!=='fanReview' && !keyword;
   if ($('analyzeSelected')) {
     $('analyzeSelected').hidden = !keyword && activeFollowerTab === 'fanFollowing';
     $('analyzeSelected').disabled = selectedFollowerHandles.size === 0 || selectedFollowerHandles.size > 20;
@@ -1141,8 +1142,8 @@ function renderMonitorList() {
     $('batchUnfollow').hidden = Boolean(keyword) || activeFollowerTab !== 'fanFollowing';
     $('batchUnfollow').disabled = selectedFollowerHandles.size === 0 || unfollowRunning;
   }
-  $('listSelectAll').checked = users.length > 0 && users.every(user => selectedFollowerHandles.has(user.handle.toLowerCase()));
-  $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())) && !$('listSelectAll').checked;
+  $('listSelectAll').checked = users.length > 0 && users.every(user => selectedFollowerHandles.has(user.handle.toLowerCase())||fanReviewPanel?.isAllMatching()&&fanReviewPanel.isSelected(user.handle));
+  $('listSelectAll').indeterminate = users.some(user => selectedFollowerHandles.has(user.handle.toLowerCase())||fanReviewPanel?.isAllMatching()&&fanReviewPanel.isSelected(user.handle)) && !$('listSelectAll').checked;
   $('followerSearch').value = followerSearch;
   $('followerPageSize').value = String(followerPageSize);
   $('followerPageSummary').textContent = fanWindow.served && fanWindow.total == null?t(countText(null, servedFans?.scanned)):t(formatPageSummary(fanWindow.page, totalPages, visibleTotal));
@@ -1159,9 +1160,12 @@ function renderMonitorList() {
     item.className = `monitor-item ${user.status === 'danger' ? 'is-danger' : ''}`;
     const select = document.createElement('input');
     select.type = 'checkbox';
-    select.checked = selectedFollowerHandles.has(key);
-    select.title = activeFollowerTab === 'fanFollowing'?t("选择后可批量取关"):t("选择后可提交给 Grok 分析");
+    select.dataset.fanHandle=key;
+    select.checked = selectedFollowerHandles.has(key)||Boolean(fanReviewPanel?.isAllMatching()&&fanReviewPanel.isSelected(key));
+    select.title = activeFollowerTab === 'fanFollowing'?t("选择后可批量取关"):t("选择后可批量 AI 审核");
     select.addEventListener('change', () => {
+      if(fanSelectionLocked()){renderFanBatch();return;}
+      fanReviewPanel?.rememberSelection(user,select.checked);
       if (select.checked) { selectedFollowerHandles.add(key); selectedRowCopies.retain('fans', key, user); }
       else { selectedFollowerHandles.delete(key); selectedRowCopies.forget('fans', key); }
       renderMonitorList();
@@ -1194,7 +1198,7 @@ function renderMonitorList() {
     link.append(handleSpan);
 
     const detail = document.createElement('small');
-    detail.textContent = cleanFollowerBio(user).slice(0, 160);
+    detail.textContent = user.historyOnly ? `${t('移除时间')} ${new Date(user.followerRemovedAt).toLocaleString()} · ${user.fanReview?.reason||''}` : cleanFollowerBio(user).slice(0, 160);
     info.append(link, detail);
 
     const counts = document.createElement('div');
@@ -1218,6 +1222,20 @@ function renderMonitorList() {
     }
 
     const tagCell = createMutualTagCell(user, 'div');
+    if (user.fanReview) {
+      const review=user.fanReview;
+      const details=document.createElement('details');details.className='fan-review-evidence';
+      const summary=document.createElement('summary');
+      summary.textContent=t(review.state==='initial'?'待初审':review.state==='failed'||review.source==='manual-ai-error'?'审核异常':review.state==='removed'?'已移除':review.decision==='remove'||review.removalReceipt?.attempted&&!review.removalReceipt.removed?'不通过 · 等待移除':review.reasonCode==='missing_biography'?'资料不足':({pass:'通过',review:'历史待确认',uncertain:'资料不足'}[review.decision] || {review:'待审核',approved:'已放行'}[review.state]) || '审核记录');
+      const reason=document.createElement('p');reason.textContent=review.reason || t('暂无审核依据');
+      details.append(summary,reason);
+      for(const value of [...(review.tags || []),...(review.evidence || [])]){const line=document.createElement('p');line.textContent=typeof value==='string'?value:String(value.text || value.reason || '');details.append(line);}
+      if(review.previousAiReview){
+        const previous=review.previousAiReview,history=document.createElement('details'),heading=document.createElement('summary');heading.textContent=t('原 AI 建议');history.append(heading);
+        for(const value of [previous.reason,...(previous.tags||[]),...(previous.evidence||[])])if(value){const line=document.createElement('p');line.textContent=typeof value==='string'?value:String(value.text||value.reason||'');history.append(line);}details.append(history);
+      }
+      tagCell.append(details);
+    }
 
     const badge = document.createElement('span');
     badge.className = 'monitor-badge badge-' + (user.fanCategory === 'unknown' ? 'saved' : 'followed');
@@ -1226,46 +1244,56 @@ function renderMonitorList() {
 
     const actions = document.createElement('div');
     actions.className = 'monitor-actions';
-    const inspect = monitorIconButton('available', fanInspectBusy.has(key) ? '核验中…' : '核验关系');
-    inspect.disabled = fanInspectBusy.has(key);
+    const inspect = monitorIconButton('shield', fanInspectBusy.has(key) ? '核验中…' : '核验关系');
+    inspect.dataset.fanInspectHandle=key;
+    inspect.disabled = fanInspectBusy.has(key)||fanSelectionLocked();
     inspect.addEventListener('click', () => inspectFanRelationship(user));
     actions.append(inspect);
     if (user.fanCategory === 'pending') {
-      const follow = monitorIconButton('follow', followBackBusy.has(key) ? '回关中…' : '回关');
-      follow.disabled = followBackBusy.has(key);
-      follow.classList.toggle('is-busy', followBackBusy.has(key));
-      follow.title = t("通过当前 X 会话的接口执行回关，不打开个人主页窗口");
-      follow.addEventListener('click', () => followBackOne(user, follow));
+      const follow = monitorIconButton('follow', '查看关注队列');
+      follow.dataset.panelTip = t('在关注队列中完成过滤、关注和评论');
+      follow.addEventListener('click', () => setTab('followQueue'));
       actions.append(follow);
+    }
+    if (user.fanCategory === 'review') {
+      const approve=monitorIconButton('approve','通过并入队');
+      approve.dataset.fanReviewAction='approve';
+      approve.addEventListener('click',()=>fanReviewPanel?.start('approve',[key],user));actions.append(approve);
     }
     if (user.fanCategory === 'following') {
       const unfollow = monitorIconButton('unfollow', unfollowBusy.has(key) ? '取关中…' : '取消关注');
       unfollow.disabled = unfollowBusy.has(key);
       unfollow.classList.toggle('is-busy', unfollowBusy.has(key));
-      unfollow.title = t("取消关注该账号（对方未回关）");
+      unfollow.dataset.panelTip = t("取消关注该账号（对方未回关）");
       unfollow.addEventListener('click', () => unfollowOne(user, unfollow));
       actions.append(unfollow);
     }
     const refresh = monitorIconButton('refresh', profileRefreshBusy.has(key) ? '刷新中…' : '刷新资料');
-    refresh.disabled = profileRefreshBusy.has(key);
+    refresh.disabled = user.historyOnly || profileRefreshBusy.has(key);
     refresh.classList.toggle('is-busy', profileRefreshBusy.has(key));
-    refresh.title = t("静默读取该账号公开资料并存入本地画像缓存");
+    refresh.dataset.panelTip = t("静默读取该账号公开资料并存入本地画像缓存");
     refresh.addEventListener('click', () => refreshFollowerProfile(user));
     actions.append(refresh);
 
     const action = monitorIconButton('profile', '资料');
-    action.title = t("在右侧抽屉查看已保存的画像详情");
+    action.dataset.panelTip = t("在右侧抽屉查看已保存的画像详情");
     action.addEventListener('click', () => openProfileDrawer(user));
     actions.append(action);
 
     const deleteButton = monitorIconButton('delete', '删除本地记录');
-    deleteButton.disabled = fanDeleteRunning || fanSelectionLocked();
+    deleteButton.disabled = user.historyOnly || fanDeleteRunning || fanSelectionLocked();
     deleteButton.addEventListener('click', () => deleteFanRecords([key]));
     actions.append(deleteButton);
+    if(user.historyOnly){select.disabled=true;counts.replaceChildren();actions.replaceChildren(action);}
     item.append(select, info, counts, tagCell, badge, actions);
     fragment.append(item);
   }
   list.append(fragment);
+  // Use the viewport-positioned shared tooltip; hidden absolute pseudo tips
+  // otherwise widen the scroll container on narrow screens.
+  for(const badge of list.querySelectorAll('.tag-badge[data-tip], .monitor-badge[data-tip]')) {
+    badge.dataset.panelTip=badge.dataset.tip;badge.tabIndex=0;
+  }
   renderFanBatch();
 }
 function renderQueue() { renderMonitorList(); }
@@ -2191,7 +2219,7 @@ function renderMutualNetwork() {
     const followBtn = monitorIconButton('follow', followLabel);
     followBtn.disabled = isFollowing || isFollowBusy;
     followBtn.classList.toggle('is-busy', isFollowBusy);
-    followBtn.title = isFollowing?t("已关注该账号"):t("通过当前 X 会话接口直接关注该账号");
+    followBtn.dataset.panelTip = isFollowing?t("已关注该账号"):t("加入关注队列，完成统一过滤后执行关注和评论");
     followBtn.setAttribute('aria-label', t(followLabel));
     if (!isFollowing) {
       followBtn.addEventListener('click', () => followMutualUser(user, followBtn));
@@ -2200,13 +2228,13 @@ function renderMutualNetwork() {
     const profile = monitorIconButton('profile', '查看资料');
     profile.addEventListener('click', () => openProfileDrawer(user));
     const expand = monitorIconButton('expand', '以此扩展');
-    expand.title = t("以该账号为新锚点，合并去重后的互关追踪列表");
+    expand.dataset.panelTip = t("以该账号为新锚点，合并去重后的互关追踪列表");
     expand.setAttribute('aria-label', t("以此扩展"));
     expand.addEventListener('click', () => collectMutualNetwork(user.handle, false));
     const refreshBtn = monitorIconButton('refresh', profileRefreshBusy.has(key) ? '更新中…' : '更新信息');
     refreshBtn.disabled = profileRefreshBusy.has(key);
     refreshBtn.classList.toggle('is-busy', profileRefreshBusy.has(key));
-    refreshBtn.title = t("更新公开资料及你与对方的关注关系");
+    refreshBtn.dataset.panelTip = t("更新公开资料及你与对方的关注关系");
     refreshBtn.setAttribute('aria-label', t("更新信息"));
     refreshBtn.addEventListener('click', () => refreshMutualUser(user));
     actions.append(followBtn, profile, expand, refreshBtn);
@@ -2241,53 +2269,7 @@ function renderMutualNetwork() {
 }
 
 async function followMutualUser(user, button) {
-  const key = String(user?.handle || '').toLowerCase();
-  if (!key || user.relationship?.following === true || followBackBusy.has(key)) return;
-  followBackBusy.add(key);
-  setMonitorIconButtonState(button, true, '关注中…');
-  let tabId;
-  try {
-    networkStatus(`正在通过 X 接口关注 @${user.handle}…`);
-    tabId = await backgroundXActionTab();
-    const result = await followViaNetwork(tabId, user);
-    if (result.ok || result.reason === 'already_following') {
-      const followedBy = result.target?.relationshipKnown ? result.target.relationship.followedBy : user.relationship?.followedBy;
-      const updatedRel = {
-        ...(user.relationship || {}),
-        following: true,
-        ...(typeof followedBy === 'boolean' ? {followedBy} : {})
-      };
-      user.relationship = updatedRel;
-      user.state = 'following';
-      if (typeof followedBy === 'boolean') user.relationshipKnown = true;
-      const item = (mutualNetwork.users || []).find(u => u.handle.toLowerCase() === key);
-      if (item) {
-        item.relationship = {...(item.relationship || {}), ...updatedRel};
-        item.state = 'following';
-        if (typeof followedBy === 'boolean') item.relationshipKnown = true;
-      }
-      if (!(monitor.followingUsers || []).some(u => u.handle?.toLowerCase() === key)) {
-        monitor.followingUsers = [...(monitor.followingUsers || []), {...user, relationship: updatedRel, state: 'following'}];
-      }
-      await markQueueFollowed(user);
-      await saveMutualNetwork();
-      renderMutualNetwork();
-      networkStatus(result.ok ? (result.unblocked ? `已通过 X 接口解除屏蔽并关注 @${user.handle}。` : `已通过 X 接口关注 @${user.handle}。`) : `@${user.handle} 已是关注状态。`);
-      return;
-    }
-    if (result.reason === 'rate_limited') {
-      networkStatus(`@${user.handle} 触发关注限制，本次未成功；请核实关系后再试。`);
-      return;
-    }
-    networkStatus(`@${user.handle} 未执行关注：${result.error || result.reason}`);
-  } catch (error) {
-    networkStatus(`@${user.handle} 接口关注失败：${error.message}`);
-  } finally {
-    await closeBackgroundXActionTab(tabId);
-    followBackBusy.delete(key);
-    if (button.isConnected) setMonitorIconButtonState(button, false, '关注');
-    renderMutualNetwork();
-  }
+  return enqueuePanelCandidate(user,'mutual',button,networkStatus);
 }
 
 async function readPostsFromProfileTab(tabId, handle, recentLimit = 10, maxWaitMs = 5000) {
@@ -3329,7 +3311,7 @@ async function unfollowViaNetwork(tabId, user) {
     userId = target.id;
     user.id = target.id;
   }
-  const owner=(await chrome.scripting.executeScript({target:{tabId},func:readSidebarViewerOnPage}))[0]?.result?.handle;
+  const owner=(await chrome.runtime.sendMessage({cmd:'accountState'}))?.account?.handle;
   if(!owner)return {ok:false,error:'当前登录账号无法核实'};
   const result = await inspectOrActOnProfile(chrome,{...user,id:userId},owner,'unfollow');
   if (result.status >= 200 && result.status < 300) return {ok:true};
@@ -3531,19 +3513,7 @@ async function batchUnfollowSelected() {
 
 
 async function followCandidate(row, button) {
-  button.disabled = true;
-  button.textContent = t("正在关注…");
-  let tabId;
-  try {
-    tabId = await backgroundXActionTab();
-    const result = await followViaNetwork(tabId, row);
-    if (result.ok || result.reason === 'already_following') { await markQueueFollowed(row); button.textContent = result.unblocked?t("已解封并关注"):t("已关注"); button.className = 'queue-status'; return; }
-    button.textContent = result.reason === 'blocked'?t("已屏蔽"):t("未执行");
-    status(`@${row.handle} 未执行关注：${result.error || result.reason}`);
-  } catch (error) {
-    button.textContent = t("失败");
-    status(`打开 @${row.handle} 失败：${error.message}`);
-  } finally { await closeBackgroundXActionTab(tabId); button.disabled = false; }
+  return enqueuePanelCandidate(row,'mutual',button,status);
 }
 
 async function invoke(func, args) {
@@ -3564,6 +3534,20 @@ async function navigate(url) {
   throw new Error('页面未能加载。请检查网络、登录或 X 的访问限制。');
 }
 
+let monitorSaveRevision=0;
+async function saveMonitorConfiguration(next) {
+  const revision=++monitorSaveRevision;
+  assertRecordWritesOpen(recordWritesBlocked());
+  if(recordPaging && recordPages) {
+    const result=await requestBackground({cmd:'recordData',op:'mergeRoot',key:'monitor',fields:next});
+    if(!result?.ok)throw Error(result?.error || '保存失败');
+  }else await requestStorageWrite('localSet',{monitor:{...monitor,...next}});
+  if(revision!==monitorSaveRevision)return;
+  monitor={...monitor,...next};
+  recordScalarBaseline.monitor={...next};
+  await chrome.alarms.clear('x-followers-scan');
+  if(monitor.enabled)await chrome.alarms.create('x-followers-scan',{delayInMinutes:randomizedInteger(monitor.every,monitor.jitter,10,1440)});
+}
 async function saveMonitorSettings() {
   const next = {
     enabled: $('monitorEnabled') ? $('monitorEnabled').checked : !!monitor.enabled,
@@ -3577,15 +3561,7 @@ async function saveMonitorSettings() {
   if (!Number.isFinite(next.every) || next.every < 10) throw new Error('基准检索间隔至少 10 分钟。');
   if (!Number.isFinite(next.jitter) || next.jitter < 0 || next.jitter >= next.every) throw new Error('随机浮动须在 0 到周期以下。');
   if (![next.followerBatch, next.followingBatch].every(value => Number.isInteger(value) && value >= 100 && value <= 1000 && value % 20 === 0)) throw new Error('每轮人数须分别在 100–1000 人之间，并为 20 的倍数。');
-  recordScalarBaseline.monitor = {enabled: monitor.enabled, every: monitor.every, jitter: monitor.jitter, followerBatch: monitor.followerBatch, followingBatch: monitor.followingBatch, autoEnqueue: monitor.autoEnqueue, filterDanger: monitor.filterDanger};
-  monitor = {...monitor, ...next};
-  await writeLocal({monitor});
-  persist('monitor', monitor);
-  await chrome.alarms.clear('x-followers-scan');
-  if (monitor.enabled) {
-    const delay = randomizedInteger(monitor.every, monitor.jitter, 10, 1440);
-    await chrome.alarms.create('x-followers-scan', {delayInMinutes: delay});
-  }
+  await saveMonitorConfiguration(next);
   renderSettingsDrawer();
 }
 
@@ -3625,8 +3601,7 @@ async function followerTab() {
 }
 
 async function readOwnHandle(tabId) {
-  const result = await chrome.scripting.executeScript({target:{tabId}, world:'MAIN', func:() => document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replace(/^\//,'').split('/')[0] || ''});
-  return result?.[0]?.result || '';
+  return (await chrome.runtime.sendMessage({cmd:'accountState'}))?.account?.handle || '';
 }
 
 async function scanFollowingFromNetwork(tabId, target, limit) {
@@ -3779,7 +3754,7 @@ async function scanFollowerList(scanSource = 'manual') {
 
       const directory = fanDirectoryFromMonitor({...monitor,users,queue});
       const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
-      const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
+      const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()));
       const enqueueResult = await enqueuePendingFans(pendingEligible, {enabled:monitor.autoEnqueue !== false});
       const {count:enqueuedCount, handles:enqueuedHandles} = enqueueResult;
       const newCheckpointHandle = topFollower?.handle || monitor.checkpointHandle || null;
@@ -3862,7 +3837,7 @@ async function scanFollowerList(scanSource = 'manual') {
 
     const directory = fanDirectoryFromMonitor({...monitor,users:allUsers,queue});
     const pendingHandles = new Set(directory.filter(row => row.payload.fanCategory === 'pending').map(row => row.handle));
-    const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()) && shouldEnqueueFan(user, monitor));
+    const pendingEligible = queue.filter(user => pendingHandles.has(user.handle.toLowerCase()));
     const enqueueResult = await enqueuePendingFans(pendingEligible, {enabled:monitor.autoEnqueue !== false});
     const {count:enqueuedCount, handles:enqueuedHandles} = enqueueResult;
     // DOM scrolling can stop on a temporarily empty virtualized viewport. Do
@@ -3946,8 +3921,10 @@ async function startFollowerScan(source = 'manual') {
 }
 $('scanFollowers')?.addEventListener('click', startFollowerScan);
 $('initialFollowers')?.addEventListener('click', startFollowerScan);
-$('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
-for (const id of ['monitorEvery','monitorJitter','monitorFollowerBatch','monitorFollowingBatch','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+if(!window.__settingsDrawerController) {
+  $('monitorEnabled')?.addEventListener('change', () => saveMonitorSettings().then(() => monitorStatus(monitor.enabled ? `已启用不定频检索，基准每 ${monitor.every}±${monitor.jitter || 0} 分钟。` : '已关闭定时检索。')).catch(error => monitorStatus(error.message)));
+  for (const id of ['monitorEvery','monitorJitter','monitorFollowerBatch','monitorFollowingBatch','monitorAutoEnqueue','monitorFilterDanger']) $(id)?.addEventListener('change', () => saveMonitorSettings().catch(error => monitorStatus(error.message)));
+}
 $('runMonitorScanNow')?.addEventListener('click', async () => {
   const btn = $('runMonitorScanNow');
   const oldText = btn?.textContent;
@@ -4020,18 +3997,25 @@ function reloadRecordModule(moduleName, render) {
   if (!(recordPaging && recordPages)) { render(); return; }
   return runRecordPageAction(moduleName, () => recordPages.open(moduleName, currentRecordFilter(moduleName)), render);
 }
+fanReviewPanel=createFanReviewPanel({getSelection:()=>[...selectedFollowerHandles],getFilter:()=>currentRecordFilter('fans'),selectionLocked:fanSelectionLocked,onSelectionLockChanged:renderFanBatch,afterChange:async()=>{
+  if(recordPages){await recordPages.invalidate();await recordPages.open('fans',currentRecordFilter('fans'));}
+  renderMonitorList();refreshSidebarBadges();
+}});
+document.addEventListener('xfollower:follow-review-settings-updated',()=>{void fanReviewPanel.refresh();});
 document.querySelectorAll('[data-follower-tab]').forEach(button => button.addEventListener('click', () => {
   const tab=button.dataset.followerTab;
-  void changeFollowerContext(()=>{activeFollowerTab=tab;followerSearch='';$('followerSearch').value='';followerPage=1;},
-    ()=>reloadRecordModule('fans',renderMonitorList));
+  void changeFollowerContext(()=>{activeFollowerTab=tab;followerReviewResult='';followerSearch='';$('followerSearch').value='';followerPage=1;},
+    ()=>reloadRecordModule('fans',renderMonitorList),fanInspectionContextChange('tab',{tab:activeFollowerTab,search:followerSearch,reviewResult:followerReviewResult},{tab,search:'',reviewResult:''}));
 }));
 $('listSelectAll')?.addEventListener('change', event => {
+  if(activeFollowerTab==='fanRemoved'||fanSelectionLocked()){renderFanBatch();return;}
   const allUsers = currentFollowerUsers();
   const keyword = followerSearch.trim().toLowerCase();
   const matchedUsers = keyword && !(recordPaging && recordPages) ? allUsers.filter(user => [user.handle, user.name, user.bio].some(value => String(value || '').toLowerCase().includes(keyword))) : allUsers;
   const users = recordPaging && recordPages ? allUsers : matchedUsers.slice((followerPage - 1) * followerPageSize, followerPage * followerPageSize);
   for (const user of users) {
     const key=user.handle.toLowerCase();
+    fanReviewPanel?.rememberSelection(user,event.target.checked);
     if(event.target.checked){selectedFollowerHandles.add(key);selectedRowCopies.retain('fans',key,user);}
     else {selectedFollowerHandles.delete(key);selectedRowCopies.forget('fans',key);}
   }
@@ -4069,22 +4053,26 @@ async function deleteFanRecords(handles) {
 $('batchDeleteFans')?.addEventListener('click', () => deleteFanRecords([...selectedFollowerHandles]));
 $('batchUnfollow')?.addEventListener('click', batchUnfollowSelected);
 $('batchInspectFans')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchStart'));
-$('closeFanInspectionDialog')?.addEventListener('click', () => $('fanInspectionDialog').close());
-$('showFanInspectionResults')?.addEventListener('click', () => { if (!$('fanInspectionDialog').open) $('fanInspectionDialog').showModal(); });
+$('showFanInspectionResults')?.addEventListener('click', () => inspectionResult(true));
+document.addEventListener(PANEL_RESULT_ACTION_EVENT,event=>{const d=event.detail;if(d?.kind!=='fan-inspection'||d.batchId!==fanBatchState?.id)return;if(d.action==='stop')void fanBatchAction('followQueueFanBatchStop');if(d.action==='resume')void fanBatchAction('followQueueFanBatchResume');});
 $('stopFanInspection')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchStop'));
 $('resumeFanInspection')?.addEventListener('click',()=>fanBatchAction('followQueueFanBatchResume'));
 $('addSelectedToMutual')?.addEventListener('click', addSelectedFollowersToMutualNetwork);
 function searchFollowers(value) {
   const search=String(value||'').trim();
   void changeFollowerContext(()=>{followerSearch=search;followerPage=1;},
-    ()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.search('fans',currentRecordFilter('fans')),renderMonitorList):Promise.resolve());
+    ()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.search('fans',currentRecordFilter('fans')),renderMonitorList):Promise.resolve(),fanInspectionContextChange('search',followerSearch,search));
 }
 $('followerSearch')?.addEventListener('input',event=>searchFollowers(event.target.value));
+$('fanReviewResult')?.addEventListener('change',event=>{
+  const result=event.target.value;
+  void changeFollowerContext(()=>{followerReviewResult=result;followerPage=1;},()=>reloadRecordModule('fans',renderMonitorList),fanInspectionContextChange('reviewResult',followerReviewResult,result));
+});
 $('followerSearchBtn')?.addEventListener('click',()=>searchFollowers($('followerSearch').value));
 $('followerSearch')?.addEventListener('keydown',event=>{if(event.key==='Enter')searchFollowers(event.target.value);});
-$('followerPageSize')?.addEventListener('change', event => {const size=capPageSize(event.target.value);void changeFollowerContext(()=>{followerPageSize=size;followerPage=1;},()=>reloadRecordModule('fans',renderMonitorList));});
-$('followerPrevPage')?.addEventListener('click', () => {void changeFollowerContext(()=>{if(!recordPaging)followerPage--;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.previous('fans'),renderMonitorList):Promise.resolve());});
-$('followerNextPage')?.addEventListener('click', () => {void changeFollowerContext(()=>{if(!recordPaging)followerPage++;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.next('fans'),renderMonitorList):Promise.resolve());});
+$('followerPageSize')?.addEventListener('change', event => {const size=capPageSize(event.target.value);void changeFollowerContext(()=>{followerPageSize=size;followerPage=1;},()=>reloadRecordModule('fans',renderMonitorList),fanInspectionContextChange('pageSize',followerPageSize,size));});
+$('followerPrevPage')?.addEventListener('click', () => {if($('followerPrevPage').disabled)return;void changeFollowerContext(()=>{if(!recordPaging)followerPage--;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.previous('fans'),renderMonitorList):Promise.resolve(),fanInspectionContextChange('page','current','previous'));});
+$('followerNextPage')?.addEventListener('click', () => {if($('followerNextPage').disabled)return;void changeFollowerContext(()=>{if(!recordPaging)followerPage++;},()=>recordPaging&&recordPages?runRecordPageAction('fans',()=>recordPages.next('fans'),renderMonitorList):Promise.resolve(),fanInspectionContextChange('page','current','next'));});
 $('collectNetwork')?.addEventListener('click', () => collectMutualNetwork($('networkAnchor')?.value, true));
 $('networkAnchor')?.addEventListener('keydown', event => { if (event.key === 'Enter') collectMutualNetwork(event.target.value, true); });
 $('closeProfileDrawer')?.addEventListener('click', closeProfileDrawer);
@@ -4552,6 +4540,7 @@ async function bootRecordDashboard() {
   if (booted?.config?.unreciprocatedSettings) unreciprocatedTracker = {...unreciprocatedTracker, config: normalizeUnreciprocatedConfig(withFollowbackProgress(booted.config.unreciprocatedSettings, metadata.unreciprocatedTracker?.config))};
   hideMigrationProgress(document);
   void refreshFanBatchStatus();
+  void fanReviewPanel?.refresh();
   const activeModule = booted?.module || panelModuleForTab(activeDashboardTab) || 'fans';
   const panelId = activeModule === 'fans' ? 'monitor' : activeModule === 'mutual' ? 'mutual' : activeModule;
   loadRegistry.succeed(panelId);
@@ -4751,7 +4740,7 @@ function bindSaveButton(id, saveFn, onError) {
   });
 }
 // 失焦/切换自动保存之外，保留显式「保存配置」按钮，让用户安心
-bindSaveButton('saveSettingsDrawer', () => saveMonitorSettings(), error => monitorStatus(error.message));
+if(!window.__settingsDrawerController)bindSaveButton('saveSettingsDrawer', () => saveMonitorSettings(), error => monitorStatus(error.message));
 bindSaveButton('saveMutualSettings', () => saveMutualAutoFollowSettings(), error => networkStatus(error.message));
 bindSaveButton('saveCommentAutoSettings', () => saveCommentAutoFollowSettings(), error => { $('commentTrackingStatus').textContent = t(error.message); });
 
@@ -5494,11 +5483,15 @@ $('openMutualLogs')?.addEventListener('click', () => openLogsModal('mutual'));
 $('openCommentLogs')?.addEventListener('click', () => openLogsModal('comment'));
 $('viewMutualLogsLink')?.addEventListener('click', () => openLogsModal('mutual'));
 $('viewCommentLogsLink')?.addEventListener('click', () => openLogsModal('comment'));
-$('closeLogsModal')?.addEventListener('click', closeLogsModal);
-$('logsModalMask')?.addEventListener('click', closeLogsModal);
-$('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
-$('logsPrevBtn')?.addEventListener('click', async () => { if (!logPager.back()) return; await loadExecutionLogPage(); });
-$('logsNextBtn')?.addEventListener('click', async () => { if (!logPager.forward()) return; await loadExecutionLogPage(); });
+// Vue owns these controls when its controller is mounted. Legacy bindings would
+// otherwise confirm and clear twice, and race with its pagination cursor.
+if (!window.__executionLogsModalController) {
+  $('closeLogsModal')?.addEventListener('click', closeLogsModal);
+  $('logsModalMask')?.addEventListener('click', closeLogsModal);
+  $('clearLogsBtn')?.addEventListener('click', clearAutoFollowLogs);
+  $('logsPrevBtn')?.addEventListener('click', async () => { if (!logPager.back()) return; await loadExecutionLogPage(); });
+  $('logsNextBtn')?.addEventListener('click', async () => { if (!logPager.forward()) return; await loadExecutionLogPage(); });
+}
 
 // ==============================================================================
 // 回关监控模块核心实现 (Unreciprocated Followback Tracker Module)
@@ -6205,7 +6198,7 @@ function renderUnreciprocatedUI() {
     const availabilityIcon = monitorIconButton({not_found:'unavailable', suspended:'suspended', identity_unresolved:'refresh', ok:'available', unknown:'refresh'}[availabilityStatus], availabilityLabel);
     availabilityIcon.classList.add('account-availability-icon', 'availability-' + availabilityStatus);
     availabilityIcon.dataset.tip = availabilityLabel + (availabilityStatus === 'identity_unresolved' ? '：无法确认用户 ID，已暂停自动请求；点击重新检查' : '') + (availabilityStatus === 'not_found' ? '，可能已改名或注销；点击重新检查' : '；点击重新检查');
-    availabilityIcon.title = t(availabilityIcon.dataset.tip);
+    availabilityIcon.dataset.panelTip = t(availabilityIcon.dataset.tip);
     availabilityIcon.addEventListener('click', () => checkFollowbackAccount(user));
     accMeta.append(nameLink, handleSpan, availabilityIcon, bioP);
     accBox.append(accMeta);
@@ -6561,24 +6554,19 @@ if (window.__profileDrawerController) {
 // Settings drawers Vue controller bridges
 function registerSettingsBridges() {
   if (window.__settingsDrawerController) {
-    window.__settingsDrawerController.setSaveHandler(async (cfg) => {
-      recordScalarBaseline.monitor = {
-        enabled: monitor.enabled,
-        every: monitor.every,
-        jitter: monitor.jitter,
-        followerBatch: monitor.followerBatch,
-        followingBatch: monitor.followingBatch,
-        autoEnqueue: monitor.autoEnqueue,
-        filterDanger: monitor.filterDanger
-      };
-      monitor = { ...monitor, ...cfg };
-      await writeLocal({ monitor });
-      persist('monitor', monitor);
-      await chrome.alarms.clear('x-followers-scan');
-      if (monitor.enabled) {
-        const delay = randomizedInteger(monitor.every, monitor.jitter, 10, 1440);
-        await chrome.alarms.create('x-followers-scan', { delayInMinutes: delay });
+    window.__settingsDrawerController.setReloadHandler(async()=>{
+      if(recordPaging && recordPages){
+        const result=await requestBackground({cmd:'recordData',op:'metadata',key:'monitor'});
+        if(!result?.ok)throw Error(result?.error||'读取设置失败');
+        monitor={...monitor,...result.metadata};
+      }else{
+        const saved=(await chrome.storage.local.get('monitor')).monitor;
+        if(saved)monitor={...monitor,...saved};
       }
+      return monitor;
+    });
+    window.__settingsDrawerController.setSaveHandler(async (cfg) => {
+      await saveMonitorConfiguration(cfg);
     });
     window.__settingsDrawerController.setRunHandler(async () => {
       await startFollowerScan('manual-drawer');
@@ -6611,7 +6599,7 @@ async function checkFollowbackAccount(user) {
   try {
     status.textContent = t("正在检查 @\u007b\u007bv0\u007d\u007d 的账号状态…",{v0:user.handle});
     // Explicit recheck bypasses the cached terminal status, so recovered accounts can return.
-    tab = await chrome.tabs.create({url: 'https://x.com/' + encodeURIComponent(user.handle), active: false});
+    tab = await createProfileTab(chrome,{url: 'https://x.com/' + encodeURIComponent(user.handle), active: false},'followback-monitor',{refreshAvailability:true});
     const deadline = Date.now() + 20000;
     let result = {pending:true};
     while (Date.now() < deadline && result.pending) {
@@ -6646,7 +6634,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // Per-list controls remain temporary overrides of these persisted defaults.
 async function applySystemPagination(reload=true) {
   const settings=await readSystemSettings('pagination');
-  if(reload&&settings.fans!==followerPageSize)await changeFollowerContext(()=>{followerPageSize=settings.fans;},()=>Promise.resolve());
+  if(reload&&settings.fans!==followerPageSize)await changeFollowerContext(()=>{followerPageSize=settings.fans;},()=>Promise.resolve(),fanInspectionContextChange('pagination',followerPageSize,settings.fans));
   followerPageSize=settings.fans;mutualPageSize=settings.mutual;commentPageSize=settings.comments;unreciprocatedPageSize=settings.unreciprocated;
   followerPage=mutualPage=commentPage=unreciprocatedPage=1;
   for(const [key,id] of Object.entries({fans:'followerPageSize',mutual:'mutualPageSize',comments:'commentPageSize',unreciprocated:'unreciprocatedPageSize'})) {

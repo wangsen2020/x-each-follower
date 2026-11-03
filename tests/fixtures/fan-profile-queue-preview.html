@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>帖子补采队列验收</title>
+<style>body{margin:0;min-width:0;background:#eef3ef}#fixture-tools{padding:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}</style>
+<div id="app"></div>
+<script type="module">
+import {createApp,h} from 'vue';
+import {FAN_PROFILE_STATE} from '/src/features/relationships/fan-profile-collector.js';
+import {readFanProfileQueue,createFanProfileCacheReader} from '/src/features/relationships/fan-profile-queue-view.js';
+let mode='normal',requests=0;const listeners=new Set();
+let values=JSON.parse(sessionStorage.getItem('queue-fixture')||'null')||{};
+const storage={get:async k=>({[k]:structuredClone(values[k])}),set:async patch=>{Object.assign(values,patch);sessionStorage.setItem('queue-fixture',JSON.stringify(values));}};
+const deps={storage,alarms:{get:async()=>({scheduledTime:Date.now()+15000})},binding:async()=>({accountId:'1',activated:mode!=='unbound',handle:'fixture_owner'})};
+deps.readCachedResults=createFanProfileCacheReader({storage});
+globalThis.chrome={i18n:{getUILanguage:()=> 'zh-CN'},runtime:{id:'queue-fixture'},storage:{onChanged:{addListener:f=>listeners.add(f),removeListener:f=>listeners.delete(f)}}};
+const {default:Queue}=await import('/src/entries/panel/components/FanProfileQueue.vue');
+const {default:Tips}=await import('/src/entries/panel/components/InfoTipLayer.vue');
+const {locale}=await import('/src/shared/i18n.js');
+await import('/src/entries/panel/styles/panel.css');await import('/src/entries/panel/styles/brand-layout.css');
+async function request(message){requests++;if(mode==='error')throw Error('测试读取失败，请重试');if(mode==='timeout')return new Promise(()=>{});await new Promise(r=>setTimeout(r,60));return {ok:true,...await readFanProfileQueue(deps,message)};}
+function seed(count=65){values={[FAN_PROFILE_STATE]:{pending:Object.fromEntries(Array.from({length:count},(_,i)=>[i,{accountId:'1',handle:'sample_'+i,targetUserId:String(i+100),token:String(i),attempts:i===2?1:0,retryAt:Date.now()+i*15000,...(i===2?{status:'rate-limited',reason:'受控限流样本：'.repeat(40)}:{})}])),active:{accountId:'1',handle:'sample_0',token:'0'},activeUntil:Date.now()+90000,history:[{accountId:'1',handle:'finished_sample',targetUserId:'42',status:'partial',count:6,attempts:1,finishedAt:Date.now()},{accountId:'1',handle:'failed_sample',targetUserId:'43',status:'failed',reason:'受控网络失败样本',attempts:3,finishedAt:Date.now()}]}};sessionStorage.setItem('queue-fixture',JSON.stringify(values));}
+if(!values[FAN_PROFILE_STATE])seed();
+createApp({render:()=>[h('main',{id:'fixture-tools'},[h('span','粉丝管理'),h(Queue,{request,timeoutMs:500})]),h(Tips)]}).mount('#app');
+window.queueFixture={seed,locale:value=>locale.value=value,setMode:value=>mode=value,empty:()=>{values={[FAN_PROFILE_STATE]:{pending:{}}};},legacy:()=>{values={[FAN_PROFILE_STATE]:{pending:{}},profileCache:{legacy:{id:'611986351',handle:'kimdotcom',fanInspectionTimeline:{ownerAccountId:'1',targetUserId:'611986351',status:'partial',count:10,fetchedAt:Date.now()-3600000,checkedAt:Date.now()-3600000,posts:[]}}}};},get requests(){return requests;},finish:()=>{values[FAN_PROFILE_STATE].pending={};values[FAN_PROFILE_STATE].active=null;values[FAN_PROFILE_STATE].activeUntil=0;sessionStorage.setItem('queue-fixture',JSON.stringify(values));}};
+</script></html>

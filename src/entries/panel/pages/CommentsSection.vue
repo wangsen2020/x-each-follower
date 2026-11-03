@@ -5,7 +5,7 @@
         <div class="comments-title">
 
           <span id="commentsUserCount" class="page-summary" hidden>{{ t("0 位用户") }}</span>
-          <span class="selected-count-badge" id="commentSelectedBadge" hidden>{{ t("已选") }}<b id="commentSelectedCount">0</b> / <span id="commentTotalVisibleCount">0</span></span>
+          <span class="selected-count-badge" id="commentSelectedBadge" hidden>{{ t("已选") }}&nbsp;<b id="commentSelectedCount">0</b> / <span id="commentTotalVisibleCount">0</span></span>
         </div>
         <div class="follower-tabs comment-tabs" role="tablist" :aria-label="t(&quot;评论用户筛选&quot;)">
           <button class="follower-tab active" data-comment-filter="notMutual" role="tab" aria-selected="true">{{ t("未互关") }}<span id="commentNotMutualCount">0</span></button>

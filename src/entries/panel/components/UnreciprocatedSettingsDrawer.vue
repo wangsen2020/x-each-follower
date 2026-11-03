@@ -166,6 +166,12 @@
         </div>
 
         <div class="drawer-setting-group">
+          <label for="unreciprocatedMaxAttempts" class="drawer-setting-label"><span>{{ t('自动核验上限（次）') }}</span></label>
+          <input id="unreciprocatedMaxAttempts" v-model.number="unreciprocatedSettingsController.autoUnfollowMaxAttempts.value" type="number" min="1" max="10" step="1" :aria-invalid="Boolean(unreciprocatedSettingsController.attemptsError.value)" aria-describedby="unfollowAttemptsError">
+          <span class="info-tip" tabindex="0" role="note" :data-tip="t('默认连续失败 3 次转人工审核，包含首次核验；次数跨轮次和重启保存。明确屏蔽直接转审核，待确认操作只核验已有结果。')" :aria-label="t('自动核验上限说明')">?</span>
+        </div>
+        <p v-if="unreciprocatedSettingsController.attemptsError.value" id="unfollowAttemptsError" role="alert">{{ t(unreciprocatedSettingsController.attemptsError.value) }}</p>
+        <div class="drawer-setting-group">
           <label for="unreciprocatedDailyLimit" class="drawer-setting-label">
             <span>{{ t("单日取关上限（人）") }}</span>
           </label>

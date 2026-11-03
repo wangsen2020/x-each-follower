@@ -66,7 +66,7 @@ export function createCommentWorker({store, storage, readBinding, execute, rando
         }
       }
       const cooldown = await readXGrokUsageCooldown(storage, now());
-      if (cooldown && !ev.relayJobId && !await botAvailable()) return {quotaExhausted:true,retryAt:cooldown.retryAt};
+      if (cooldown && !ev.relayJobId && !await botAvailable(job,ev)) return {quotaExhausted:true,retryAt:cooldown.retryAt};
       const claimed = await save(accountId, job, {...ev,status:'processing',commentAttemptedAt:now()});
       if (!claimed.ok) return {skipped:true};
       const controller = new AbortController();

@@ -50,7 +50,7 @@
         >
       </div>
       <div class="lb-summary-stats">
-        <span>{{ t("已监控") }}<b>{{ t(members.length) }}</b>{{ t("位作者") }}</span>
+        <span>{{ t("已监控") }}&nbsp;<b>{{ t(members.length) }}</b>&nbsp;{{ t("位作者") }}</span>
         <span v-if="filteredMembers.length !== members.length">{{ t("（筛选出 \u007b\u007bv0\u007d\u007d 位）",{v0:filteredMembers.length}) }}</span>
       </div>
     </div>
@@ -931,11 +931,11 @@ function formatTimeAgo(isoOrTs) {
     if (isNaN(diffMs)) return '—';
     const mins = Math.floor(diffMs / 60000);
     if (mins < 1) return '刚刚';
-    if (mins < 60) return `${mins}分钟前`;
+    if (mins < 60) return t('{{v0}}分钟前', { v0: mins });
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}小时前`;
+    if (hours < 24) return t('{{v0}}小时前', { v0: hours });
     const days = Math.floor(hours / 24);
-    return `${days}天前`;
+    return t('{{v0}}天前', { v0: days });
   } catch {
     return '—';
   }

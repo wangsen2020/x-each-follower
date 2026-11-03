@@ -12,12 +12,13 @@
       <ul>
         <li v-for="item in view.pending" :key="String(item.user?.id || item.user?.handle)">
           <a :href="'https://x.com/' + encodeURIComponent(item.user?.handle || '')" target="_blank" rel="noopener">@{{ (item.user?.handle || t("未知账号")) }}</a>
-          <span>{{ t("\u007b\u007bv0\u007d\u007d · 自动核验，符合条件后恢复排队",{v0:(item.reason || t("上次操作结果待确认"))}) }}</span>
-          <button class="secondary" :disabled="Boolean(checking)" @click="review(item.user?.handle)" :title="t(&quot;仅核验已有结果，不发送取关或回关请求&quot;)">{{ checking === item.user?.handle?t("核验中…"):t("核验") }}</button>
-          <button class="secondary" :disabled="Boolean(checking)" @click="review(item.user?.handle,true)" :title="t(&quot;距原操作至少 10 分钟，接口与主页均确认仍关注且符合条件时恢复排队；下一轮重新核验后取关&quot;)">{{ t("核验并恢复") }}</button>
+          <span>{{ t(item.reason || '上次操作结果待确认') }} · {{ t('核验 \u007b\u007bv0\u007d\u007d / \u007b\u007bv1\u007d\u007d 次',{v0:item.checks||0,v1:view.attemptLimit}) }}</span>
+          <PanelIconButton :icon="SearchCheck" :label="t('核验')" :tip="t('仅核验已有结果，不发送取关或回关请求')" :disabled="Boolean(checking)" @click="review(item.user?.handle)" />
+          <PanelIconButton :icon="RotateCcw" :label="t('核验并恢复')" :tip="t('距原操作至少 10 分钟，接口与主页均确认仍关注且符合条件时恢复排队；下一轮重新核验后取关')" :disabled="Boolean(checking)" @click="review(item.user?.handle,true)" />
         </li>
       </ul>
     </details>
+    <AutoUnfollowReview :view="view" :refresh="refresh" />
     <p v-if="feedback" role="status">{{ t(feedback) }}</p>
   </div>
 </template>
@@ -25,6 +26,9 @@
 import {t} from '../../../shared/i18n.js';
 
 import {onMounted,onUnmounted,ref,watch} from 'vue';
+import {SearchCheck,RotateCcw} from 'lucide';
+import PanelIconButton from './PanelIconButton.vue';
+import AutoUnfollowReview from './AutoUnfollowReview.vue';
 import {autoUnfollowStatusController} from '../composables/useAutoUnfollowStatus.js';
 const {view,error,refresh,start}=autoUnfollowStatusController;
 const checking=ref(''),feedback=ref('');

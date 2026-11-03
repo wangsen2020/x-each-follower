@@ -1,4 +1,6 @@
-import test from 'node:test';
+import test, {beforeEach,afterEach} from 'node:test';
+beforeEach(()=>{globalThis.__xfAccountSnapshot={account:{id:'1',handle:'owner'},status:'ready'};});
+afterEach(()=>{delete globalThis.__xfAccountSnapshot;});
 import assert from 'node:assert/strict';
 import {standaloneComposerOnPage,readStandalonePublicationOnPage} from '../src/features/publishing/post-page.js';
 
@@ -30,7 +32,7 @@ test('new-post composer ignores the background home editor, pastes once and guar
     assert.equal((await standaloneComposerOnPage('owner','different','submit')).attempted,false);assert.equal(clicks,1);
     extraDialog=true;assert.equal((await standaloneComposerOnPage('owner',value,'submit')).ok,false);assert.equal(clicks,1);extraDialog=false;
     hasQuote=true;assert.equal((await standaloneComposerOnPage('owner',value,'submit')).ok,false);
-    hasQuote=false;actor='other';assert.equal((await standaloneComposerOnPage('owner',value,'submit')).ok,false);
+    hasQuote=false;actor='other';globalThis.__xfAccountSnapshot.account.handle='other';assert.equal((await standaloneComposerOnPage('owner',value,'submit')).ok,false);
     actor='owner';root.isConnected=false;
     assert.equal((await standaloneComposerOnPage('owner',value,'submit',result.scopeToken)).ok,false);assert.equal(clicks,1);
   }finally{for(const k of names){if(saved[k]===undefined)delete globalThis[k];else globalThis[k]=saved[k];}}

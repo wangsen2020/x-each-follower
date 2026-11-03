@@ -3052,7 +3052,7 @@
   "停滞增长比例": "Proporción de crecimiento",
   "与停滞曝光增量共同判断；曝光下降或数据缺失不会判为停滞。": "Se evalúa junto con el incremento. Una caída de impresiones o datos faltantes no se considera estancamiento.",
   "低表现帖配置无效": "Configuración de bajo rendimiento no válida",
-  "{{v0}}需为{{v1}}–{{v2}}的整数": "{{v0}} debe ser un entero de {{v1}} a {{v2}}",
+  "{{v0}}需为 {{v1}}–{{v2}} 的整数": "{{v0}} debe ser un entero de {{v1}} a {{v2}}",
   "帖子任务正在执行，请稍后重试": "Hay una tarea de posts en ejecución. Intenta más tarde.",
   "X 页面未加载完成，请稍后重试": "X no terminó de cargar. Intenta más tarde.",
   "未取得当前 X 请求，请检查登录、权限或网络后重试": "No se obtuvo la solicitud actual de X. Revisa sesión, permisos o red.",
@@ -3081,7 +3081,7 @@
   "没有删除任务": "No hay tarea de eliminación",
   "复查周期需为12、24或48小时": "El ciclo de revisión debe ser de 12, 24 o 48 horas",
   "未知帖子操作": "Acción de post desconocida",
-  "最小时间窗口仍达到{{v0}}条，停止推进以避免漏帖；请稍后检查接口。": "La ventana mínima aún alcanza {{v0}} posts. Se detuvo el avance para evitar omisiones; revisa la API más tarde.",
+  "最小时间窗口仍达到 {{v0}} 条，停止推进以避免漏帖；请稍后检查接口。": "La ventana mínima aún alcanza {{v0}} posts. Se detuvo el avance para evitar omisiones; revisa la API más tarde.",
   "帖子记录库升级被占用，请关闭旧面板后重试。": "La actualización de la base de posts está bloqueada. Cierra los paneles anteriores y reintenta.",
   "帖子记录写入中断": "Escritura de posts interrumpida",
   "缺少任务草稿标识": "Falta el identificador del borrador de la tarea",
@@ -3936,5 +3936,7 @@
   "未知设置分类": "Categoría de configuración desconocida",
   "请填写允许范围内的设置值": "Ingresa valores dentro del rango permitido",
   "设置存储不可用": "Almacenamiento de configuración no disponible",
-  "版本记录存储不可用": "Almacenamiento de versiones no disponible"
+  "版本记录存储不可用": "Almacenamiento de versiones no disponible",
+  "跳过粉丝": "Omitir filtros de fans",
+  "跳过粉丝说明": "Ayuda de filtros de fans"
 }

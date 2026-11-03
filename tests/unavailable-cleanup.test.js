@@ -1,31 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createUnavailableCleanup} from '../src/features/relationships/unavailable-cleanup.js';
-import {followerEmptyView} from '../src/entries/panel/follower-empty-view.js';
-function fixture(status='not_found'){
- const values={followQueueBinding:{accountId:'1'},'xefProfileAccess:target':{status,checkedAt:10}},calls=[];
- const jobs=[{id:'j',handle:'target',accountId:'1',state:'excluded'}];
- const records={handle:async req=>{calls.push(['records',req.handle]);return {ok:true,result:{deleted:2}}}};
- const c=createUnavailableCleanup({storage:{get:async k=>k?{[k]:values[k]}:{...values},set:async p=>Object.assign(values,p)},queue:{markDeletedHandle:async()=>({ok:true}),list:async()=>jobs,deleteJob:async req=>{calls.push(['job',req.id]);jobs.splice(0);return {ok:true,deleted:1}}},records,now:()=>100});
- return {values,calls,jobs,records,c};
+import {createUnavailableCleanup,FAN_CLEANUP_STATUS} from '../src/features/relationships/unavailable-cleanup.js';
+function fixture(status='not_found',scope='account'){
+ const values={followQueueBinding:{accountId:'1'},'xefProfileAccess:target':{status,checkedAt:10},xefUnavailableCleanup:{'1:target':'v2:10'}},calls=[];
+ const jobs=[{id:'j',handle:'target',targetUserId:'42',accountId:'1',state:'excluded',sources:[{module:'fans'}]}];let exists=true,fail=false;
+ const records={handle:async req=>{
+  if(req.op==='fanCleanupCandidates')return {ok:true,candidates:scope==='fans'?[{handle:'target',scope,targetIds:['42']}]:[]};
+  if(fail)throw Error('backup busy');calls.push(['records',req.handle]);
+  if(!['not_found','suspended'].includes(values['xefProfileAccess:target'].status)&&scope==='account')return {ok:true,result:{skipped:true}};
+  const deleted=exists?2:0;exists=false;return {ok:true,result:{deleted,scope,targetIds:['42']}};
+ }};
+ const storage={get:async k=>k===null?structuredClone(values):Object.fromEntries((Array.isArray(k)?k:[k]).filter(x=>x in values).map(x=>[x,structuredClone(values[x])])),set:async p=>Object.assign(values,structuredClone(p)),remove:async k=>delete values[k]};
+ const c=createUnavailableCleanup({storage,queue:{list:async()=>structuredClone(jobs),markDeletedHandle:async()=>{throw Error('must not block a different ID')},deleteJob:async req=>{calls.push(['job',req.id,req.fanOnly]);jobs.splice(0);return {ok:true,deleted:1}},stripFanSource:async req=>{calls.push(['strip',req.id]);jobs[0].sources=[{module:'comments'}];return {ok:true}}},records,now:()=>100});
+ return {values,calls,jobs,records,c,fail(value){fail=value}};
 }
-test('confirmed evidence removes records and queue once with restart-safe progress',async()=>{
- const f=fixture();await f.c.run();await f.c.run();assert.deepEqual(f.calls,[['records','target'],['job','j']]);assert.equal(f.values.xefUnavailableCleanup['1:target'],'v2:10');
+test('old done flags do not hide residual records, repeated scans report actual changes',async()=>{
+ const f=fixture();const first=await f.c.run();const second=await f.c.run();
+ assert.equal(first.summary.accounts,1);assert.equal(first.summary.records,2);assert.equal(second.summary.accounts,0);
+ assert.equal(f.values.xefUnavailableCleanup,undefined);assert.equal(f.calls.filter(c=>c[0]==='job').length,1);
 });
-test('unknown, identity hold and newer normal states are never cleaned',async()=>{
+test('unknown and newer normal availability are rechecked before deletion',async()=>{
  for(const status of ['identity_unresolved','unknown','ok']){const f=fixture(status);await f.c.run();assert.equal(f.calls.length,0);}
- const f=fixture();f.records.handle=async()=>({ok:true,result:{skipped:true}});await f.c.run();assert.equal(f.jobs.length,1);assert.equal(f.values.xefUnavailableCleanup,undefined);
+ const f=fixture();const original=f.records.handle;f.records.handle=async req=>{if(req.op==='cleanupFanRecord')f.values['xefProfileAccess:target']={status:'ok',checkedAt:20};return original(req)};
+ await f.c.run();assert.equal(f.jobs.length,1);
 });
-test('active jobs defer cleanup and failed persistence is retried',async()=>{
- const f=fixture();f.jobs[0].state='running';await f.c.run();assert.equal(f.calls.length,0);
- f.jobs[0].state='excluded';const original=f.records.handle;f.records.handle=async()=>{throw Error('backup busy')};await f.c.run();assert.equal(f.jobs.length,1);assert.equal(f.values.xefUnavailableCleanup,undefined);
- f.records.handle=original;await f.c.run();assert.equal(f.jobs.length,0);
+test('active work defers; failed backup retries instead of being marked complete',async()=>{
+ const f=fixture();f.jobs[0].state='running';await f.c.run();assert.equal(f.calls.length,0);assert.equal(f.values[FAN_CLEANUP_STATUS].deferred,1);
+ f.jobs[0].state='excluded';f.fail(true);await f.c.run();assert.equal(f.jobs.length,1);assert.equal(f.values[FAN_CLEANUP_STATUS].failed,1);
+ f.fail(false);await f.c.run();assert.equal(f.jobs.length,0);
 });
-test('source changes during validation prevent queue deletion',async()=>{
- const f=fixture();f.records.handle=async()=>{f.values['xefProfileAccess:target']={status:'identity_unresolved',checkedAt:20};return {ok:true,result:{deleted:0}}};await f.c.run();assert.equal(f.jobs.length,1);
+test('no-relationship cleanup detaches mixed jobs and deletes only fan-only jobs',async()=>{
+ const mixed=fixture('ok','fans');mixed.jobs[0].sources.push({module:'comments'});await mixed.c.run();assert.deepEqual(mixed.jobs[0].sources,[{module:'comments'}]);assert.equal(mixed.values[FAN_CLEANUP_STATUS].detached,1);
+ const fan=fixture('ok','fans');await fan.c.run();assert.ok(fan.calls.some(c=>c[0]==='job'&&c[2]===true));
 });
-test('search with zero matches keeps result surface and distinguishes unfinished scan',()=>{
- assert.deepEqual(followerEmptyView({keyword:'situ',count:0,hasMore:true}),{showEmpty:false,showList:true,message:'当前扫描范围暂无匹配，可点击下一页继续查找。'});
- assert.equal(followerEmptyView({keyword:'situ',count:0,hasMore:false}).message,'没有匹配的账号。');
- assert.equal(followerEmptyView({keyword:'',count:0}).showEmpty,true);
+test('account binding changes defer safely',async()=>{
+ const f=fixture();const original=f.records.handle;f.records.handle=async req=>{const r=await original(req);if(req.op==='fanCleanupCandidates')f.values.followQueueBinding.accountId='2';return r};await f.c.run();assert.equal(f.jobs.length,1);assert.equal(f.values[FAN_CLEANUP_STATUS].stage,'paused');
+});
+
+
+test('unrelated non-fan queue tasks are not touched or counted as detached',async()=>{
+ const f=fixture('ok','fans');f.jobs[0].sources=[{module:'comments'}];await f.c.run();assert.equal(f.jobs.length,1);assert.equal(f.values[FAN_CLEANUP_STATUS].detached,0);assert.ok(!f.calls.some(c=>c[0]==='job'||c[0]==='strip'));
 });

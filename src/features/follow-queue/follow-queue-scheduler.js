@@ -809,6 +809,9 @@ export function createFollowQueueScheduler({
     if (followSucceeded) {
       finalState = 'followed';
       finalStage = 'followed';
+    } else if(outcome?.paused&&!hasExternalEffect){
+      finalState='pending';finalStage='queued';nextEligibleAt=now();
+      latestFollowResult={...(latestFollowResult||{}),reason};
     } else if (!outcome || outcome.__timedOut || outcome.__threw || !VALID_SETTLE_STATES.has(finalState) || finalState === 'running' || finalState === 'pending') {
       // Pre-action interruption without attemptedAt or publishing settles as retry (not uncertain);
       // after external effect it settles as uncertain (or followed above).
@@ -828,7 +831,11 @@ export function createFollowQueueScheduler({
     }
 
     // Handle pre-action transient retry max 3 with exponential backoff using persisted retry counts
-    if (finalState === 'retry' && outcome?.budgetExhausted && !hasExternalEffect) {
+    if (finalState === 'retry' && outcome?.accessDeferred && !hasExternalEffect) {
+      nextEligibleAt=Math.max(now()+1000,Number(outcome.retryAt)||now()+60000);
+      finalStage='retry';
+      latestFollowResult={...(latestFollowResult||{}),reason,accessDeferredUntil:nextEligibleAt};
+    } else if (finalState === 'retry' && outcome?.budgetExhausted && !hasExternalEffect) {
       nextEligibleAt=now()+60000;
       finalStage='retry';
     } else if (finalState === 'retry') {
@@ -944,7 +951,7 @@ export function createFollowQueueScheduler({
       counters.skipped += 1;
     } else if (finalState === 'retry') {
       counters.retried += 1;
-      counters.failed += outcome?.budgetExhausted ? 0 : 1;
+      counters.failed += outcome?.budgetExhausted || outcome?.accessDeferred ? 0 : 1;
     } else if (finalState === 'uncertain') {
       counters.uncertain += 1;
       counters.failed += 1;

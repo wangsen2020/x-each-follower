@@ -1,8 +1,10 @@
 <template>
-  <button id="openSystemSettings" type="button" class="local-data-entry" :title="t(&quot;系统设置&quot;)" :aria-label="t(&quot;系统设置&quot;)" :data-tip="t(&quot;系统设置&quot;)" @click="open">
+  <span class="system-settings-entry"><AiConnectionNotice ref="connectionNotice" @configure="provider=>openLocal({detail:{provider}})" />
+  <button id="openSystemSettings" type="button" class="local-data-entry" :title="t(&quot;系统设置&quot;)" :aria-label="t(&quot;系统设置&quot;)" :data-tip="t(&quot;系统设置&quot;)" @mouseenter="connectionNotice?.show()" @focus="connectionNotice?.show()" @click="open">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
 
   </button>
+  </span>
   <Teleport to="body">
     <dialog v-if="isOpen" id="systemSettingsDrawer" ref="drawer" class="system-settings" role="dialog" aria-modal="true" aria-labelledby="systemSettingsTitle" @cancel.prevent="close" @keydown.esc.stop.prevent="close" @click="backdrop" @keydown.tab="trapFocus">
       <nav class="system-settings-nav" :aria-label="t(&quot;设置分类&quot;)">
@@ -41,7 +43,7 @@
         </section>
         <section v-show="activeSection==='versions'" aria-labelledby="versionHistoryTitle">
           <div class="system-section-heading"><h3 id="versionHistoryTitle">{{ t("版本历史") }}</h3><button type="button" class="secondary system-icon" :title="t(&quot;刷新版本历史&quot;)" :aria-label="t(&quot;刷新版本历史&quot;)" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
-          <p class="system-version-current">{{ t("当前版本") }}<strong>v{{ t(APP_VERSION) }}</strong></p>
+          <p class="system-version-current">{{ t("当前版本") }}&nbsp;<strong>v{{ t(APP_VERSION) }}</strong></p>
           <p class="system-state">{{ t("仅显示本机开始记录后的安装与升级，不推断更早的版本经历。") }}</p>
           <p v-if="historyLoading" class="system-state" role="status">{{ t("正在读取版本历史…") }}</p>
           <p v-if="historyError" class="system-error" role="alert">{{ t(historyError) }}</p>
@@ -53,12 +55,12 @@
         <section v-show="activeSection==='upgrades'" aria-labelledby="upgradeLogTitle">
           <div class="system-section-heading"><h3 id="upgradeLogTitle">{{ t("升级详细日志") }}</h3><button type="button" class="secondary system-icon" :title="t(&quot;刷新升级日志&quot;)" :aria-label="t(&quot;刷新升级日志&quot;)" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
           <p class="system-state">{{ t("记录版本变更及本地数据迁移的启动、完成或失败；最近保留 200 条。") }}</p>
-          <p v-if="migrationStatus" class="system-version-current">{{ t("当前数据状态：") }}{{ t(migrationStatus.stage==='ready' ? t("已就绪") : migrationStatus.stage) }}<span v-if="migrationStatus.total"> · {{ t(migrationStatus.completed) }}/{{ t(migrationStatus.total) }}{{ t("条") }}</span></p>
+          <p v-if="migrationStatus" class="system-version-current">{{ t("当前数据状态：") }}{{ t(migrationStatus.stage==='ready' ? t("已就绪") : migrationStatus.stage) }}<span v-if="migrationStatus.total"> · {{ t(migrationStatus.completed) }}/{{ t(migrationStatus.total) }} {{ t("条") }}</span></p>
           <p v-if="migrationStatus?.error" class="system-error" role="alert">{{ t(migrationStatus.error) }}</p>
           <p v-if="historyLoading" class="system-state" role="status">{{ t("正在读取升级日志…") }}</p>
           <p v-if="historyError" class="system-error" role="alert">{{ t(historyError) }}</p>
           <ol v-if="versionData.logs.length" class="system-history-list">
-            <li v-for="entry in versionData.logs" :key="entry.id"><strong>{{ t(entry.kind==='version' ? (entry.stage==='update' ? t("扩展升级") : t("扩展安装")) : (entry.stage==='started' ? t("数据迁移开始") : entry.stage==='failed' ? t("数据迁移失败") : entry.stage==='importing' ? t("数据迁移进度") : t("数据迁移完成"))) }}</strong><span>v{{ t(entry.version) }}<template v-if="entry.previousVersion">{{ t("· 从 v") }}{{ t(entry.previousVersion) }}</template><template v-if="entry.total!==null && entry.total!==undefined"> · {{ t(entry.completed) }}/{{ t(entry.total) }}{{ t("条") }}</template></span><time :datetime="entry.at">{{ t(formatTime(entry.at)) }}</time><small v-if="entry.migrationId">{{ t("任务：") }}{{ t(entry.migrationId) }}</small><small v-if="entry.error" class="system-error">{{ t(entry.error) }}</small></li>
+            <li v-for="entry in versionData.logs" :key="entry.id"><strong>{{ t(entry.kind==='version' ? (entry.stage==='update' ? t("扩展升级") : t("扩展安装")) : (entry.stage==='started' ? t("数据迁移开始") : entry.stage==='failed' ? t("数据迁移失败") : entry.stage==='importing' ? t("数据迁移进度") : t("数据迁移完成"))) }}</strong><span>v{{ t(entry.version) }}<template v-if="entry.previousVersion">{{ t("· 从 v") }}{{ t(entry.previousVersion) }}</template><template v-if="entry.total!==null && entry.total!==undefined"> · {{ t(entry.completed) }}/{{ t(entry.total) }} {{ t("条") }}</template></span><time :datetime="entry.at">{{ t(formatTime(entry.at)) }}</time><small v-if="entry.migrationId">{{ t("任务：") }}{{ t(entry.migrationId) }}</small><small v-if="entry.error" class="system-error">{{ t(entry.error) }}</small></li>
           </ol>
           <p v-else-if="!historyLoading && !historyError" class="system-state">{{ t("尚无升级日志；既往未记录的过程无法补造。") }}</p>
         </section>
@@ -77,6 +79,7 @@
   </Teleport>
 </template>
 <script setup>
+import AiConnectionNotice from './AiConnectionNotice.vue';
 import SystemExceptionLogs from './SystemExceptionLogs.vue';
 import {t,locale} from '../../../shared/i18n.js';
 
@@ -89,6 +92,7 @@ import GrokBotSettings from './GrokBotSettings.vue';
 import GrokLocalSettings from './GrokLocalSettings.vue';
 import {grokProviderController} from '../composables/useGrokProvider.js';
 import {BACKUP_DEFAULTS, validateBackupSettings} from '../../../features/records/record-snapshots.js';
+const connectionNotice=ref(null);
 const isOpen=ref(false), drawer=ref(null), status=ref(null), loading=ref(false), loadError=ref(''), busy=ref(false), saving=ref(false), settingsLoaded=ref(false), error=ref(''), message=ref('');
 const activeSection=ref('data'),localProvider=ref('grok-local');
 const settingTabs=[{key:'data',label:'本地数据',icon:'M4 4h16v16H4z M4 9h16 M8 13h8 M8 16h5'},{key:'backup',label:'备份设置',icon:'M5 7h14v14H5z M8 7V3h8v4 M8 14h8 M12 10v8'}];
@@ -142,6 +146,7 @@ document.addEventListener('xfollower:bind-grok-local',openLocal);
 onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot);document.removeEventListener('xfollower:bind-grok-local',openLocal);generation++;historyGeneration++;clearTimeout(timer);});
 </script>
 <style scoped>
+.system-settings-entry{position:relative;display:inline-flex;align-items:center}
 .local-data-entry{display:inline-flex;align-items:center;justify-content:center;flex:0 0 30px;width:30px;min-width:30px;height:30px;padding:0!important;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important;position:relative}
 .local-data-entry>svg{flex:0 0 20px;width:20px;height:20px}
 .local-data-entry:hover{background:#ffffff12!important}.local-data-entry::after{content:attr(data-tip);position:absolute;left:40px;bottom:0;white-space:nowrap;background:#18302e;color:white;padding:6px 9px;border-radius:5px;opacity:0;pointer-events:none;font-size:12px}.local-data-entry:hover::after,.local-data-entry:focus-visible::after{opacity:1}

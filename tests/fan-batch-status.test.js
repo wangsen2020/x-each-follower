@@ -42,7 +42,7 @@ test('unconfigured status clears stale batch error, hides the old progress and s
   const start=source.indexOf('async function refreshFanBatchStatus()');
   const end=source.indexOf('\nasync function fanBatchAction(',start);
   const timers=[],renders=[];
-  const context=vm.createContext({fanBatchTimer:1,fanViewEpoch:2,fanBatchError:'请先确认队列账号',fanBatchState:{id:'old',stage:'running'},recordPages:null,
+  const context=vm.createContext({fanBatchTimer:1,fanViewEpoch:2,fanBatchStatusEpoch:0,fanBatchError:'请先确认队列账号',fanBatchState:{id:'old',stage:'running'},recordPages:null,
     clearTimeout(){},setTimeout:(...args)=>timers.push(args),renderFanBatch:()=>renders.push('batch'),clearFollowerSelection:()=>assert.fail('no completed batch'),
     chrome:{runtime:{sendMessage:async()=>({ok:true,batch:null,requiresActivation:true})}}
   });

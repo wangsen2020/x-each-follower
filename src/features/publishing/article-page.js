@@ -3,13 +3,7 @@ export async function articleComposerOnPage(owner, payload={}, action='inspect',
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
   const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();return r.width>0&&r.height>0;};
-  const viewer=()=>{
-    const profileHref=document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').trim().toLowerCase()||'';
-    if(profileHref)return profileHref;
-    const switcher=document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"],button[aria-label*="账号菜单"],button[aria-label*="Account menu" i]');
-    const m=String(switcher?.innerText||switcher?.textContent||'').match(/@([A-Za-z0-9_]{1,15})\b/);
-    return m?m[1].toLowerCase():'';
-  };
+  const viewer=()=>globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase()||'';
   const cleanOwner=String(owner||'').replace(/^@/,'').toLowerCase();
   const key='__xfArticleComposerScope';
 
@@ -485,7 +479,7 @@ export async function articleComposerOnPage(owner, payload={}, action='inspect',
 export function readArticlePublicationOnPage(owner, article={}, after=0) {
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
   const key=String(owner||'').replace(/^@/,'').toLowerCase();
-  const viewer=document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').toLowerCase()||'';
+  const viewer=globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase()||'';
   if(!key||(viewer&&viewer!==key))return null;
 
   const wantedTitle=normalize(article?.title||'');

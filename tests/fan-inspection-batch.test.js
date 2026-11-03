@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createFanInspectionBatch} from '../src/features/relationships/fan-inspection-batch.js';
+import {createFanInspectionBatch,fanInspectionContextChange} from '../src/features/relationships/fan-inspection-batch.js';
 
 function setup(inspect,wait=async()=>{}) {
   const data={};const storage={get:async key=>({[key]:structuredClone(data[key])}),set:async values=>Object.assign(data,structuredClone(values))};
@@ -72,4 +72,46 @@ test('changing context during target preparation prevents the old batch from lau
   const cancelled=batch.cancel('owner');release(['old-page']);
   await assert.rejects(start,/范围已切换/);await cancelled;
   assert.equal(reads,0);assert.equal(await batch.status('owner'),null);
+});
+
+test('identical category, search and pagination contexts do not cancel the active read',async()=>{
+  for(const kind of ['tab','search','reviewResult','pageSize','page','pagination'])assert.equal(fanInspectionContextChange(kind,'same','same'),null);
+  let release,entered;const began=new Promise(r=>entered=r);
+  const {batch}=setup(async()=>{entered();return new Promise(r=>release=()=>r({ok:true}))});
+  await batch.start('owner',{});await began;
+  const unchanged=await batch.cancel('owner',{kind:'search',from:'',to:''});assert.equal(unchanged.stage,'running');
+  await batch.stop('owner');release();await batch.settled();assert.equal((await batch.status('owner')).nextIndex,1);
+});
+
+test('a suspended account is an item error and never cancels the remaining accounts',async()=>{
+  const seen=[];const {batch}=setup(async h=>{seen.push(h);if(h==='b')throw Error('账号已停用');return {ok:true}});
+  await batch.start('owner',{});await batch.settled();const result=await batch.status('owner');
+  assert.deepEqual(seen,['a','b','c']);assert.equal(result.stage,'completed');assert.equal(result.results[1].error,'账号已停用');
+});
+
+test('view changes sent by older panels leave the frozen batch running until explicit stop',async()=>{
+  let entered,release;const began=new Promise(r=>entered=r);
+  const {batch}=setup(async()=>({ok:true}),async()=>{entered();await new Promise(r=>release=r)});
+  await batch.start('owner',{});await began;
+  for(const kind of ['tab','page','pageSize','search','reviewResult','pagination']){
+    const result=await batch.cancel('owner',fanInspectionContextChange(kind,'before','after'));
+    assert.equal(result.stage,'running');assert.equal(result.nextIndex,1);assert.equal(result.cancellation,undefined);assert.deepEqual(result.handles,['a','b','c']);
+  }
+  await batch.stop('owner');release();await batch.settled();
+  assert.equal((await batch.status('owner')).stage,'paused');assert.equal((await batch.status('owner')).nextIndex,1);
+});
+
+test('a view change during target preparation cannot cancel or replace its original selection',async()=>{
+  let release,entered;const began=new Promise(r=>entered=r),seen=[];
+  const {options}=setup(async h=>{seen.push(h);return {ok:true}});
+  const batch=createFanInspectionBatch({...options,targets:async()=>{entered();return new Promise(r=>release=r)}});
+  const starting=batch.start('owner',{});await began;
+  await batch.cancel('owner',fanInspectionContextChange('search','old','new'));
+  release(['old-selection']);await starting;await batch.settled();
+  assert.deepEqual(seen,['old-selection']);assert.equal((await batch.status('owner')).stage,'completed');
+});
+
+test('verification history persists the actual review transition separately from relationship success',async()=>{
+ const transition={state:'review',ready:true,reason:'资料已就绪'};const {batch}=setup(async()=>({ok:true,relationship:{following:false,followedBy:true},profileCollection:{profile:'saved',posts:'cached'},reviewTransition:transition}));
+ await batch.start('owner',{});await batch.settled();assert.deepEqual((await batch.status('owner')).results[0].reviewTransition,transition);
 });

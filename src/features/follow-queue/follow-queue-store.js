@@ -1,5 +1,6 @@
 import {QUOTE_TAG_DEFAULTS, normalizeQuoteTags, validateQuoteTags} from '../grok/quote-tags.js';
 import {compareFollowQueuePriority, followQueuePriority} from './follow-queue-priority.js';
+import {fanJobBusy} from '../relationships/fan-retention.js';
 // Extension-origin follow queue. Open this database from the extension, never from an x.com tab.
 // Durable outcomes live in their own store so UI log truncation cannot drop dedupe evidence.
 
@@ -260,6 +261,8 @@ function mergeEvaluations(existing, incoming, followJobId) {
       article: isMeaningfulObject(item.article) ? clone(item.article) : (prev.article ? clone(prev.article) : null),
       coverAttemptedAt: item.coverAttemptedAt ?? prev.coverAttemptedAt ?? 0,
       ...(Array.isArray(item.knowledgeUsed) && item.knowledgeUsed.length ? {knowledgeUsed:clone(item.knowledgeUsed).slice(0,5)} : Array.isArray(prev.knowledgeUsed) ? {knowledgeUsed:clone(prev.knowledgeUsed)} : {}),
+      ...(isMeaningfulObject(item.knowledgeSnapshot) ? {knowledgeSnapshot:clone(item.knowledgeSnapshot)} : isMeaningfulObject(prev.knowledgeSnapshot) ? {knowledgeSnapshot:clone(prev.knowledgeSnapshot)} : {}),
+      ...(isMeaningfulObject(item.commentEngine) ? {commentEngine:clone(item.commentEngine)} : isMeaningfulObject(prev.commentEngine) ? {commentEngine:clone(prev.commentEngine)} : {}),
       relayJobId: nonEmptyString(item.relayJobId, prev.relayJobId).slice(0,128),
       articleDraftUrl: item.articleDraftUrl || prev.articleDraftUrl || '',
       language: nonEmptyString(item.language, prev.language),
@@ -709,6 +712,7 @@ function absorbProvenance(target, extra, shown, canonical, seenAt, normalizedSou
     target.quoteDecision = clone(extra.quoteDecision);
   }
   if (!target.followResult && extra?.followResult) target.followResult = clone(extra.followResult);
+  if (isMeaningfulObject(extra?.fanGrant) && !isMeaningfulObject(target.fanGrant)) target.fanGrant = clone(extra.fanGrant);
   if (shown) target.handle = shown;
   if (canonical && !target.handleCanonical) target.handleCanonical = canonical;
   target.updatedAt = seenAt;
@@ -939,7 +943,7 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
   }
 
   return {
-    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult, profile, followBackCandidate} = {}) {
+    async enqueue({accountId, targetUserId, handle, sources, initialState, followResult, profile, followBackCandidate, fanGrant} = {}) {
       const account = requireAccountId(accountId);
       const userId = userIdString(targetUserId);
       const canonical = canonicalHandle(handle);
@@ -1052,6 +1056,8 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
 
         if (typeof followBackCandidate === 'boolean') primary.followBackCandidate = followBackCandidate;
+        if (isMeaningfulObject(fanGrant)) primary.fanGrant = clone(fanGrant);
+        else if (fanGrant === null) delete primary.fanGrant;
         const durableHit = await durableForJob(outcomes, account, primary, canonical);
         if (durableHit && (primary.state === 'pending' || primary.state === 'retry')) {
           applyDurableState(primary, durableHit);
@@ -1548,10 +1554,28 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
           job.lease = {owner: '', version: lease.version, expiresAt: 0};
         }
         if (changes.profile && typeof changes.profile === 'object') job.profile = clone(changes.profile);
+        if (changes.fanGrant !== undefined) {
+          if (isMeaningfulObject(changes.fanGrant)) job.fanGrant = clone(changes.fanGrant);
+          else delete job.fanGrant;
+        }
         jobs.put(job);
         rememberOutcome(outcomes, job);
         await bumpRevision(meta);
         return {ok: true, job: cloneJob(job)};
+      });
+    },
+
+    async stripFanSource({accountId,id}={}) {
+      const account=requireAccountId(accountId);
+      return withTransaction('readwrite',async({jobs,outcomes,meta})=>{
+        const job=await requestResult(jobs.get(id));
+        if(!job||job.accountId!==account)return {ok:false,reason:'missing'};
+        if(fanJobBusy(job,now()))return {ok:false,reason:'busy'};
+        job.sources=(job.sources||[]).filter(source=>source.module!=='fans');delete job.fanGrant;delete job.followBackCandidate;
+        if(job.followResult){delete job.followResult.fanGrant;delete job.followResult.fanReview;}
+        delete job.fanReview;
+        for(const ev of job.evaluations||[])if(['processing','publishing'].includes(ev.status)){ev.status='uncertain';ev.reason='旧任务已中断，保留回执待核实';}
+        job.updatedAt=now();jobs.put(job);await rememberOutcome(outcomes,job);await bumpRevision(meta);return {ok:true};
       });
     },
 
@@ -1563,24 +1587,28 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         await bumpRevision(meta);return {ok:true};
       });
     },
-    async deleteJob({accountId, id} = {}) {
+    async deleteJob({accountId, id, fanOnly=false,preserveOutcome=false} = {}) {
       const account = requireAccountId(accountId);
       if (typeof id !== 'string' || !id) throw new Error('job id is required');
       return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
         const job = await requestResult(jobs.get(id));
         if (!job || job.accountId !== account) return {ok:false, reason:'未找到该账号的队列任务'};
         const matches = (await jobsForIdentity(jobs, account, job.targetUserId, job.handleCanonical))
-          .filter(other => other.id === job.id || (job.targetUserId && other.targetUserId === job.targetUserId) || (!other.targetUserId && other.handleCanonical === job.handleCanonical));
-        if (matches.some(other => other.state === 'running' || (leaseHeld(other) && other.lease.expiresAt > now()))) {
+          .filter(other => (!fanOnly||!other.sources?.some(source=>source.module!=='fans'))&&(other.id === job.id || (job.targetUserId && other.targetUserId === job.targetUserId) || (!other.targetUserId && other.handleCanonical === job.handleCanonical)));
+        if (matches.some(other => fanJobBusy(other,now()))) {
           return {ok:false, reason:'任务正在执行，请结束后再删除'};
         }
         for (const row of matches) {
           const stamp = {accountId:account, targetUserId:row.targetUserId || job.targetUserId || '', deletedAt:now()};
-          if (row.targetUserId) meta.put({...stamp, key:`deleted:${account}:id:${row.targetUserId}`});
-          for (const handle of new Set([row.handleCanonical, ...(row.aliases || []).map(alias=>canonicalHandle(alias.handle))].filter(Boolean))) {
+          if (!fanOnly&&row.targetUserId) meta.put({...stamp, key:`deleted:${account}:id:${row.targetUserId}`});
+          for (const handle of fanOnly?[]:new Set([row.handleCanonical, ...(row.aliases || []).map(alias=>canonicalHandle(alias.handle))].filter(Boolean))) {
             meta.put({...stamp, key:`deleted:${account}:handle:${handle}`});
           }
-          outcomes.delete(outcomeKey(account, row.targetKey));
+          const meaningful=(fanOnly||preserveOutcome)&&(row.followResult?.attemptedAt||(row.evaluations||[]).some(ev=>ev.text||ev.generationAttemptedAt||ev.publishedAttemptedAt||ev.publishedPostId||ev.publishedPostUrl||['processing','publishing','posted','published','uncertain'].includes(ev.status)));
+          if(meaningful){
+            for(const ev of row.evaluations||[])if(['processing','publishing'].includes(ev.status)){ev.status='uncertain';ev.reason='旧任务已中断，保留回执待核实';}
+            await rememberOutcome(outcomes,{...row,state:DURABLE_STATES.includes(row.state)?row.state:'uncertain'});
+          }else outcomes.delete(outcomeKey(account, row.targetKey));
           jobs.delete(row.id);
         }
         await bumpRevision(meta);
@@ -1588,7 +1616,32 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       });
     },
 
-    async resolveJob({accountId, id, state, stage, followResult, nextEligibleAt, evaluations, quoteDecision} = {}) {
+    async patchQueueScreening({accountId,id,targetUserId,handle,screening,expectedScreeningBatchId=null,expectedFanGrant} = {}) {
+      const account=requireAccountId(accountId);
+      if(typeof id!=='string' || !id || typeof targetUserId!=='string' || !/^\d+$/.test(targetUserId) || !handle || !screening?.batchId
+        || screening.targetUserId!==targetUserId)throw new Error('queue screening requires a stable target and batch identity');
+      return withTransaction('readwrite',async({jobs,meta})=>{
+        const job=await requestResult(jobs.get(id));
+        if(!job || job.accountId!==account)return {ok:false,reason:'missing'};
+        if(job.targetUserId!==targetUserId || canonicalHandle(job.handle)!==canonicalHandle(handle))return {ok:false,reason:'identity-changed'};
+        if(!['pending','retry'].includes(job.state) || importedHoldActive(job) || leaseHeld(job))return {ok:false,reason:'held'};
+        const result=job.followResult || {};
+        if(result.attemptedAt || result.followerRemoval?.attemptedAt || succeededFollowResult(result)
+          || ['review','initial','failed','removed'].includes(job.fanReview?.state || result.fanReview?.state))return {ok:false,reason:'action-or-review-hold'};
+        if(expectedFanGrant!==undefined && JSON.stringify(job.fanGrant || null)!==JSON.stringify(expectedFanGrant))return {ok:false,reason:'grant-changed'};
+        const previous=result.queueScreening;
+        if(previous?.batchId!==screening.batchId) {
+          if((previous?.batchId || null)!==expectedScreeningBatchId)return {ok:false,reason:'screening-changed'};
+          if(previous && ['submitted','pending','unknown'].includes(previous.phase))return {ok:false,reason:'submitted-screening-held'};
+        }
+        job.followResult={...result,queueScreening:clone(screening)};
+        job.updatedAt=now();jobs.put(job);await bumpRevision(meta);
+        return {ok:true,job:cloneJob(job)};
+      });
+    },
+
+    async resolveJob({accountId, id, state, stage, followResult, nextEligibleAt, evaluations, quoteDecision, fanGrant,
+      expectedState, expectedTargetUserId, expectedFollowResult} = {}) {
       const account = requireAccountId(accountId);
       if (typeof id !== 'string' || id === '') throw new Error('job id is required');
       if (state != null && (!Object.prototype.hasOwnProperty.call(STATE_RANK, state) || state === 'running')) {
@@ -1598,6 +1651,9 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
       return withTransaction('readwrite', async ({jobs, outcomes, meta}) => {
         const job = await requestResult(jobs.get(id));
         if (!job || job.accountId !== account) return {ok: false, reason: 'missing'};
+        if(expectedState!==undefined&&job.state!==expectedState
+          ||expectedTargetUserId!==undefined&&job.targetUserId!==expectedTargetUserId
+          ||expectedFollowResult!==undefined&&JSON.stringify(job.followResult||null)!==JSON.stringify(expectedFollowResult))return {ok:false,reason:'changed'};
         if (leaseHeld(job) && job.lease.expiresAt > seenAt) return {ok: false, reason: 'leased'};
         if (state != null) {
           job.state = state;
@@ -1611,6 +1667,10 @@ export function createFollowQueueStore({indexedDB: indexedDBImpl, dbName = DEFAU
         }
         if (!hasQuoteDecision(job.quoteDecision) && hasQuoteDecision(quoteDecision)) {
           job.quoteDecision = clone(quoteDecision);
+        }
+        if (fanGrant !== undefined) {
+          if (isMeaningfulObject(fanGrant)) job.fanGrant = clone(fanGrant);
+          else delete job.fanGrant;
         }
         delete job.importedHold;
         releaseLease(job);

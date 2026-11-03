@@ -54,7 +54,7 @@
             </th>
             <th class="th-account">
               <span>{{ t("账号与简介") }}</span>
-              <span class="selected-count-badge">{{ t("已选") }}<b id="mutualSelectedCount">0</b> / <span id="mutualTotalVisibleCount">0</span></span>
+              <span class="selected-count-badge">{{ t("已选") }}&nbsp;<b id="mutualSelectedCount">0</b> / <span id="mutualTotalVisibleCount">0</span></span>
             </th>
             <th class="th-tag">{{ t("标签") }}<span class="info-tip" :data-tip="t(&quot;互粉标签：有互粉意向且推荐互关标为“互粉”，否则为“无”；关注量不少于粉丝数 4/5（差额 1/5 以内）标为“推荐”，否则标为“不推荐”。悬停标签可查看推荐原因或不推荐原因。&quot;)" :aria-label="t(&quot;标签说明&quot;)">?</span></th>
             <th class="th-relation">{{ t("与你的关系") }}<span class="info-tip" :data-tip="t(&quot;按当前登录 X 账号与候选账号之间的关注关系显示；锚点仅用于扩展候选网络。&quot;)" :aria-label="t(&quot;你的关系说明&quot;)">?</span></th>

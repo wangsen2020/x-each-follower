@@ -35,6 +35,7 @@ async function importClosure(entry) {
       // Audited dependencies are bundled by Vite; keep exceptions scoped to their owners.
       if (name === 'src/features/grok/quote-text.js' && spec === 'twitter-text/dist/parseTweet.js') continue;
       if (name === 'src/features/records/record-repository.js' && spec === 'dexie') continue;
+      if (name === 'src/platform/x/access-budget.js' && spec === 'dexie') continue;
       assert.ok(spec.startsWith('.'), `unexpected non-relative runtime import: ${name} -> ${spec}`);
       const next = new URL(spec, new URL(name, root));
       assert.ok(next.href.startsWith(root.href), `import escapes repository: ${spec}`);

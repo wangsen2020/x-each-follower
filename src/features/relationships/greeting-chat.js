@@ -11,7 +11,7 @@ export function greetingDue(user, afterDays = 1, now = Date.now()) {
 // Serialized into X's MAIN world. X Chat owns encryption and delivery.
 export async function operateGreetingChatOnPage({ownerHandle, ownerId, targetHandle, targetId, text, action, priorRows = []}) {
   if (location.origin !== 'https://x.com') return {blocked: true, reason: '不是 X 页面'};
-  const viewer = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.split('/')[1];
+  const viewer = globalThis.__xfAccountSnapshot?.account?.handle;
   if (!viewer) return {ready: false, stage: 'viewer'};
   if (viewer.toLowerCase() !== ownerHandle.toLowerCase()) return {blocked: true, reason: 'X 登录账号已变化，停止发送'};
   if (action === 'open') {

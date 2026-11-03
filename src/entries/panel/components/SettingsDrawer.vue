@@ -45,14 +45,6 @@
       </div>
 
       <div class="profile-drawer-content settings-drawer-content">
-        <!-- Error & Success alerts -->
-        <div v-if="settingsDrawerController.errorMessage.value" class="drawer-alert is-error" style="color:#d93025; background:#fce8e6; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:12px;">
-          {{ t(settingsDrawerController.errorMessage.value) }}
-        </div>
-        <div v-if="settingsDrawerController.successMessage.value" class="drawer-alert is-success" style="color:#188038; background:#e6f4ea; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:12px;">
-          {{ t(settingsDrawerController.successMessage.value) }}
-        </div>
-
         <!-- Interval -->
         <div class="drawer-setting-group">
           <label for="monitorEvery" class="drawer-setting-label">
@@ -111,18 +103,9 @@
 
         </div>
 
-<!-- Filter Danger -->
-        <div class="drawer-setting-group drawer-setting-switch">
-          <label class="drawer-switch-label">
-            <input
-              id="monitorFilterDanger"
-              v-model="settingsDrawerController.filterDanger.value"
-              type="checkbox"
-            />
-            <span>{{ t("过滤风险账号") }}</span>
-            <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。 排查命中关键词和危险信号的账号，确保回关安全性。&quot;)" :aria-label="t(&quot;过滤博彩、擦边、欺诈等命中规则的危险粉丝，不自动加入待回关队列。 排查命中关键词和危险信号的账号，确保回关安全性。&quot;)">?</span>
-          </label>
-
+        <div class="drawer-setting-group">
+          <button id="openFanReviewSettings" type="button" class="secondary" @click="openFollowReviewSettings('fans')">{{ t("AI 打标与初审配置") }}</button>
+          <FollowReviewConfigStatus v-if="settingsDrawerController.isOpen.value" :request="reviewRequest" :inspect="reviewInspect" :timeout-ms="timeoutMs" />
         </div>
 
         <!-- Checkpoint display -->
@@ -153,14 +136,18 @@
       </div>
 
       <!-- Actions -->
+      <div v-if="settingsDrawerController.errorMessage.value || settingsDrawerController.successMessage.value" class="drawer-save-feedback" :class="settingsDrawerController.errorMessage.value?'is-error':'is-success'" :role="settingsDrawerController.errorMessage.value?'alert':'status'">
+        {{ t(settingsDrawerController.errorMessage.value || settingsDrawerController.successMessage.value) }}
+        <button v-if="settingsDrawerController.errorMessage.value.includes('状态待确认')" type="button" class="secondary" :disabled="settingsDrawerController.reloading.value" @click="settingsDrawerController.reload()">{{ t(settingsDrawerController.reloading.value?'正在读取设置…':'重新读取设置') }}</button>
+      </div>
       <div class="profile-drawer-actions">
         <button
           id="saveSettingsDrawer"
           type="button"
-          :disabled="settingsDrawerController.saving.value"
+          :disabled="settingsDrawerController.saving.value || settingsDrawerController.reloading.value"
           @click="settingsDrawerController.save()"
         >
-          {{ settingsDrawerController.saving.value?t("保存中…"):t("保存配置") }}
+          {{ settingsDrawerController.saving.value?t("保存中…"):settingsDrawerController.successMessage.value==='配置已保存'?t("已保存 ✓"):t("保存配置") }}
         </button>
         <button
           id="runMonitorScanNow"
@@ -178,11 +165,15 @@
 
 <script setup>
 import {t} from '../../../shared/i18n.js';
+import {openFollowReviewSettings} from '../follow-review-settings.js';
 
 import {useDrawerFocus} from '../composables/useDrawerFocus.js';
 import { onMounted, onUnmounted } from 'vue';
 import PanelCloseButton from './PanelCloseButton.vue';
-import { settingsDrawerController } from '../composables/useSettingsDrawer.js';
+import FollowReviewConfigStatus from './FollowReviewConfigStatus.vue';
+import { settingsDrawerController as defaultController } from '../composables/useSettingsDrawer.js';
+const props=defineProps({controller:{type:Object,default:()=>defaultController},reviewRequest:Function,reviewInspect:Function,timeoutMs:{type:Number,default:8000}});
+const settingsDrawerController=props.controller;
 
 function onKeyDown(event) {
   if (event.key === 'Escape' && settingsDrawerController.isOpen.value) {
@@ -199,4 +190,7 @@ onUnmounted(() => {
 });
 useDrawerFocus(settingsDrawerController.isOpen, 'vueSettingsDrawer', 'openSettingsDrawer');
 </script>
+<style scoped>
+.drawer-save-feedback{flex-shrink:0;margin:0 16px 8px;padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}.drawer-save-feedback button{margin-top:6px}.drawer-save-feedback.is-error{color:#b42318;background:#fff0ec}.drawer-save-feedback.is-success{color:#187349;background:#edf7ef}
+</style>
 
