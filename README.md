@@ -1,4 +1,4 @@
-# XFollower · 粉丝跟进 · v4.16.0
+# XFollower · 粉丝跟进 · v4.17.0
 
 4.16.0 将图片原图预览与缩放迁移为独立 XZoom 插件。XFollower 不再注入看图控件或包含 Panzoom，避免双插件重复接管图片；原账号、队列、首页跟评、互关勿评与 AI 配置保持原状。XZoom 源码与安装指南位于独立仓库和 GoodExts。
 

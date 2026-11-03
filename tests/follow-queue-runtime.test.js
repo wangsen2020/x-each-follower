@@ -11,7 +11,7 @@ test('blue verification filter distinguishes verified, nonverified and missing e
 
 test('interaction exclusions block the real Arabic case before follow even when follow-back bypass is enabled', () => {
   const settings={minFollowers:0,ratioThreshold:0,skipRiskContent:false,followBackAllowAll:true};
-  for (const text of ['يا الله لك الحمد','赞美归于真主','صاروخ باليستي','انباء اوليه سقوط عدد من المرتزقه أسرى في جبهة كحلان','war in the region','戦争の報道']) {
+  for (const text of ['يا الله لك الحمد','أنا مسلم وأحتفل برمضان','أشارك آيات من القرآن','赞美归于真主','账号介绍安拉与伊斯兰信仰','صاروخ باليستي','انباء اوليه سقوط عدد من المرتزقه أسرى في جبهة كحلان','war in the region','戦争の報道']) {
     const profile={handle:'example',followersText:'200',followingText:'200',posts:[{text}]};
     assert.match(assessQueueProfile(profile,settings,true),/互动偏好跳过/,text);
   }

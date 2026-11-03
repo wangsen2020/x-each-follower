@@ -3,7 +3,7 @@ import {defaults,timingConfig,randomDue,validateConfig,beijingDay,commentPrompt,
 import {composeQueueFollowBack} from '../grok/grok-comment.js';
 import {appendQuoteTags,normalizeQuoteTags} from '../grok/quote-tags.js';
 import {resolveCommentLanguage} from '../grok/quote-text.js';
-import {isPostSafeForComment} from '../relationships/content-risk.js';
+import {isPostSafeForComment,interactionSkipReason} from '../relationships/content-risk.js';
 import {isPendingComment,commentPriority,compareCommentPriority,compareCommentList} from './priority.js';
 import {findTagCache,findReplyCache} from './cache.js';
 import {createTagRecovery,tagProgress,unfinishedTag,blockingAiResult,TAG_MAX_ATTEMPTS} from './tag-recovery.js';
@@ -81,6 +81,8 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
     try{
       await guard(account,'comment');
       if(await suppressComment(row))return {skipped:true};
+      const sourceInteractionReason=interactionSkipReason({...row,posts:[{text:row.text||''}]});
+      if(sourceInteractionReason){await store.updatePost({...row,status:'skipped',error:sourceInteractionReason});return {skipped:true};}
       if(!isPostSafeForComment(row).safe)throw Error('原帖未通过内容检查');
       if(row.status!=='draft'){
         if(!row.prompt){let context=await knowledge({ownerId:id,purpose:'reply',requestId:'mutual-comment:'+id+':'+row.postId});let prompt=commentPrompt(row,context);if(prompt.length>7400){context={text:'',wisdomVersion:null,warning:'输入超过上限，本次未引用智慧'};prompt=commentPrompt(row,context);}row={...row,prompt,knowledge:context,provider:config.commentProvider,botId:config.commentBotId};}
@@ -105,6 +107,8 @@ export function createMutualCommentRuntime({store,owner,scan,analyze,publisher,k
       }
       await guard(account,'comment');if(!await store.get(id,row.postId))return {expired:true};
       if(await suppressComment(row))return {skipped:true};
+      const finalInteractionReason=interactionSkipReason({...row,posts:[{text:row.text||''},{text:row.reply||''}]});
+      if(finalInteractionReason){await store.updatePost({...row,status:'skipped',error:finalInteractionReason});return {skipped:true};}
       row={...row,status:'publishing',publishAttemptedAt:now(),commentRunId:run.id};await store.updatePost(row);
       await store.updateConfig(id,{commentRun:{...run,remaining:run.remaining-1},nextItemAt:randomDue(now(),1,3,random)});
       const result=await publisher.publish({owner:account.handle,sourcePostUrl:row.url,text:row.reply,canPublish:async()=>{await guard(account,'comment');return Boolean(await store.get(id,row.postId))&&!await suppressComment(row);}});

@@ -126,6 +126,17 @@ test('armed-group and terrorism labels block the topic without treating Muslim i
   assert.match(interactionSkipReason({bio:'分享拜火教和祆教历史'}), /互动偏好跳过/);
   assert.match(interactionSkipReason({posts:[{text:'今天参加佛教寺院法会'}]}), /互动偏好跳过/);
   assert.match(interactionSkipReason({name:'Zoroastrian notes'}), /互动偏好跳过/);
+  for (const arabic of [
+    'أنا مسلم وأحتفل برمضان',
+    'الله أكبر والحمد لله',
+    'أشارك آيات من القرآن وأدعو إلى الصلاة',
+    'المسيحية والكنيسة في مدينتي',
+    'أنا بوذي وأدرس البوذية'
+  ]) {
+    assert.match(interactionSkipReason({bio: arabic}), /互动偏好跳过/, arabic);
+    assert.equal(detectContentRisks(arabic).hasRisk, false, arabic);
+  }
+  assert.match(interactionSkipReason({bio:'账号介绍：真主、安拉与伊斯兰信仰'}), /互动偏好跳过/);
   assert.equal(interactionSkipReason({handle:'normal_dev',name:'普通开发者',bio:'分享开源项目'}), '');
   assert.equal(detectContentRisks('我是一名普通穆斯林程序员').hasRisk,false);
   assert.ok(detectContentRisks('有人发布点名追杀令，号召围攻不信教的人').categories.includes('violence'));
