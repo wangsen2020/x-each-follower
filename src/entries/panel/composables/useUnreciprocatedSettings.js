@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import {DEFAULT_PROFILE_ATTEMPTS,profileAttemptLimit} from '../../../features/relationships/auto-unfollow-review.js';
 
 export function normalizeUnreciprocatedConfig(cfg = {}) {
   const defaults = {
@@ -13,6 +14,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
     autoUnfollow: false,
     autoUnfollowEvery: 10,
     autoUnfollowJitter: 0,
+    autoUnfollowMaxAttempts: DEFAULT_PROFILE_ATTEMPTS,
     batchLimit: 1,
     settingsSchemaVersion: 5,
     dailyLimit: 100,
@@ -45,6 +47,7 @@ export function normalizeUnreciprocatedConfig(cfg = {}) {
   res.autoUnfollowEvery = Math.max(1, Math.min(1440, Number(res.autoUnfollowEvery) || 10));
   res.autoUnfollowJitter = Math.max(0, Math.min(15, Number.isFinite(Number(res.autoUnfollowJitter)) ? Number(res.autoUnfollowJitter) : 0));
   res.batchLimit = 1;
+  res.autoUnfollowMaxAttempts = profileAttemptLimit(res);
   res.dailyLimit = Math.max(1, Math.min(400, Math.floor(Number(res.dailyLimit)) || 100));
   res.unfollowDelay = Math.max(3, Math.min(300, Number(res.unfollowDelay) || 15));
   res.unfollowDelayJitter = Math.max(0, Math.min(60, Number.isFinite(Number(res.unfollowDelayJitter)) ? Number(res.unfollowDelayJitter) : 5));
@@ -71,6 +74,7 @@ export function useUnreciprocatedSettings() {
   const autoUnfollow = ref(false);
   const autoUnfollowEvery = ref(10);
   const autoUnfollowJitter = ref(0);
+  const autoUnfollowMaxAttempts = ref(DEFAULT_PROFILE_ATTEMPTS);
   const batchLimit = ref(1);
   const dailyLimit = ref(100);
   const unfollowDelay = ref(15);
@@ -91,6 +95,7 @@ export function useUnreciprocatedSettings() {
       ? '请输入 1–1440 的整数分钟，默认 10 分钟。' : '';
   });
   let saveHandler = null;
+  const attemptsError = computed(()=>Number.isInteger(Number(autoUnfollowMaxAttempts.value)) && Number(autoUnfollowMaxAttempts.value)>=1 && Number(autoUnfollowMaxAttempts.value)<=10 ? '' : '请输入 1–10 的整数次数。');
   let runHandler = null;
 
   function setSaveHandler(fn) {
@@ -116,6 +121,7 @@ export function useUnreciprocatedSettings() {
     autoUnfollow.value = norm.autoUnfollow;
     autoUnfollowEvery.value = norm.autoUnfollowEvery;
     autoUnfollowJitter.value = norm.autoUnfollowJitter;
+    autoUnfollowMaxAttempts.value = norm.autoUnfollowMaxAttempts;
     batchLimit.value = norm.batchLimit;
     dailyLimit.value = norm.dailyLimit;
     unfollowDelay.value = norm.unfollowDelay;
@@ -154,6 +160,7 @@ export function useUnreciprocatedSettings() {
       autoUnfollow: Boolean(autoUnfollow.value),
       autoUnfollowEvery: Number(autoUnfollowEvery.value),
       autoUnfollowJitter: Number(autoUnfollowJitter.value),
+      autoUnfollowMaxAttempts: Number(autoUnfollowMaxAttempts.value),
       settingsSchemaVersion: 5,
       batchLimit: Number(batchLimit.value),
       dailyLimit: Number(dailyLimit.value),
@@ -171,8 +178,8 @@ export function useUnreciprocatedSettings() {
     if(saving.value)return false;
     errorMessage.value = '';
     successMessage.value = '';
-    if (intervalError.value) {
-      errorMessage.value = intervalError.value;
+    if (intervalError.value || attemptsError.value) {
+      errorMessage.value = intervalError.value || attemptsError.value;
       return false;
     }
     const cfg = toConfig();
@@ -230,6 +237,8 @@ export function useUnreciprocatedSettings() {
     autoUnfollowEvery,
     intervalError,
     autoUnfollowJitter,
+    autoUnfollowMaxAttempts,
+    attemptsError,
     batchLimit,
     dailyLimit,
     unfollowDelay,

@@ -20,7 +20,7 @@ export function isolatePending(state, reason = '') {
 
 export function targetCheckFailure(error) {
   return ['AUTO_UNFOLLOW_TARGET_MISSING', 'AUTO_UNFOLLOW_TARGET_MISMATCH', 'X_PROFILE_UNAVAILABLE',
-    'X_PROFILE_IDENTITY_UNRESOLVED', 'X_PROFILE_ACTION_UNAVAILABLE'].includes(error?.code);
+    'X_PROFILE_IDENTITY_UNRESOLVED', 'X_PROFILE_ACTION_UNAVAILABLE', 'X_PROFILE_BLOCKED', 'X_PROFILE_BLOCKED_BY'].includes(error?.code);
 }
 
 export function pauseDescription(error) {

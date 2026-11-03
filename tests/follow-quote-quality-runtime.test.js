@@ -5,6 +5,7 @@ import {createFollowQueueStore} from '../src/features/follow-queue/follow-queue-
 import {createFollowQueueRuntime,waitForQueueViewer} from '../src/features/follow-queue/follow-queue-runtime.js';
 import {quoteLengthPolicy} from '../src/features/grok/quote-quality.js';
 globalThis.IDBKeyRange=IDBKeyRange;
+const verifiedCommentTarget=async()=>({status:200,json:{rest_id:'456',core:{screen_name:'author'},relationship_perspectives:{following:true,followed_by:true}}});
 
 async function setup(generator,settings={},postPublisher,hooks={}) {
   const store=createFollowQueueStore({indexedDB,dbName:'quote-runtime-'+crypto.randomUUID()});
@@ -14,7 +15,7 @@ async function setup(generator,settings={},postPublisher,hooks={}) {
   await store.resolveJob({accountId:'123',id:job.id,state:'followed',followResult:{succeeded:true},evaluations:[{
     taskId:'123:789',originalPostId:'789',originalPostUrl:post.url,originalPostText:post.text,
     automaticComment:true,candidatePosts:[post],status:'pending',publicationMode:settings.publicationMode || 'quote'}]});
-  const data={followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{author:{bio:'software development',posts:[post]}}};
+  const data={'followQueueReviewSettings:123':{commentEngine:{provider:'codex',botId:'comment-fixture'}},followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{author:{bio:'software development',posts:[post]}}};
   let generated=0,removed=0;
   const api={storage:{local:{get:async key=>({[key]:data[key]}),set:async patch=>Object.assign(data,patch)}},
     tabs:{create:async()=>({id:900}),remove:async()=>{removed++;}},scripting:{executeScript:async({func})=>{
@@ -23,7 +24,7 @@ async function setup(generator,settings={},postPublisher,hooks={}) {
   const generate=async(...args)=>{
     generated++;return generator({store,post,args});
   };
-  const runtime=createFollowQueueRuntime({api,store,generateComment:generate,generatePost:generate,generateReply:generate,generateArticle:generate,postPublisher,...hooks});
+  const runtime=createFollowQueueRuntime({api,store,fetchProfile:verifiedCommentTarget,generateComment:generate,generatePost:generate,generateReply:generate,generateArticle:generate,postPublisher,...hooks});
   return {store,runtime,job,api,read:async()=> (await store.listByState({accountId:'123',state:'followed'})).find(j=>j.id===job.id),
     counts:()=>({generated,removed})};
 }
@@ -213,11 +214,11 @@ test('article image failure retains generated body and does not auto-regenerate 
 
 test('manual reply waits for a populated profile timeline rather than failing on initial empty render',async()=>{
  const store=createFollowQueueStore({indexedDB,dbName:'timeline-hydration-'+crypto.randomUUID()});await store.saveSettings('123',{publicationMode:'reply',grokEnabled:true,autoPublish:false});
- const job=await store.enqueue({accountId:'123',handle:'author',sources:[{module:'fans',enabled:true}]});await store.resolveJob({accountId:'123',id:job.id,state:'followed',followResult:{succeeded:true}});
+ const job=await store.enqueue({accountId:'123',handle:'author',targetUserId:'456',sources:[{module:'fans',enabled:true}]});await store.resolveJob({accountId:'123',id:job.id,state:'followed',followResult:{succeeded:true}});
  const post={url:'https://x.com/author/status/789',text:'A specific original post about building a tool.',textComplete:true,replyCount:1,repostCount:0,likeCount:1,bookmarkCount:0};
- const data={followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{}};let reads=0;
+ const data={'followQueueReviewSettings:123':{commentEngine:{provider:'codex',botId:'comment-fixture'}},followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{}};let reads=0;
  const api={storage:{local:{get:async key=>({[key]:data[key]}),set:async patch=>Object.assign(data,patch)}},tabs:{create:async()=>({id:900}),update:async()=>({id:900}),remove:async()=>{}},scripting:{executeScript:async({func})=>{if(func.name==='readQueueViewerOnPage')return [{result:'viewer'}];if(func.name==='readProfileBundle')return [{result:{pending:false,status:'ok',name:'author',bio:'software',posts:++reads===1?[]:[post]}}];if(func.name==='readPostMetricsOnPage')return [{result:{}}];throw Error('unexpected '+func.name)}}};
- const runtime=createFollowQueueRuntime({api,store,generateReply:async()=>({ok:true,reply:'A useful observation.',post,language:'en',grokCalls:1})});
+ const runtime=createFollowQueueRuntime({api,store,fetchProfile:verifiedCommentTarget,generateReply:async()=>({ok:true,reply:'A useful observation.',post,language:'en',grokCalls:1})});
  const result=await runtime.handle({cmd:'followQueueRetryEvaluation',jobId:job.id});assert.equal(reads,2);assert.equal(result.ok,true);assert.equal(result.evaluation.status,'draft');assert.equal(result.evaluation.originalPostId,'789');
 });
 

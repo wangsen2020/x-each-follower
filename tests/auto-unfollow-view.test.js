@@ -23,6 +23,15 @@ test('global pause, disabled, window, quota, and missing alarm have explicit exp
 test('an unresolved legacy pending target cannot appear in the runnable queue',()=>{
  const v=view(cfg,{...state,pending:{user:{handle:'first',id:'7'}}});assert.deepEqual(v.queue,['second']);
 });
+
+test('review and skipped rows stay inspectable, out of runnable/pending lists, with owner-scoped stable IDs',()=>{
+ const s={...state,queue:['first','second','blocked'],reviewItems:[{user:{id:'8',handle:'blocked'},status:'review',attempts:3,reason:'屏蔽'},{user:{id:'9',handle:'second'},status:'skipped',attempts:3}]};
+ const v=view(cfg,s);assert.deepEqual(v.queue,['first']);assert.equal(v.pending.length,0);assert.equal(v.review.length,1);assert.equal(v.skipped.length,1);
+ assert.equal(autoUnfollowRowView({id:'8',handle:'renamed'},v).label,'待人工审核');
+ assert.equal(autoUnfollowRowView({id:'9',handle:'second'},v).label,'已跳过');
+ assert.notEqual(autoUnfollowRowView({id:'999',handle:'blocked'},v).label,'待人工审核');
+ assert.equal(view({...cfg,autoUnfollowAccount:{id:'other',handle:'owner2'}},s).review.length,0);
+});
 test('an active reservation is shown as processing, and becomes pending recovery after interruption',()=>{
  const s={...state,pending:{user:{handle:'first',id:'7'}},scheduler:{phase:'running',updatedAt:now}};
  const v=view(cfg,s);assert.equal(v.label,'正在处理');assert.equal(v.pending.length,1);assert.equal(autoUnfollowRowView({id:'7',handle:'first'},v).label,'正在处理');

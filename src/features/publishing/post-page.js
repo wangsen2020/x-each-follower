@@ -1,7 +1,7 @@
 // Chrome serializes this function; all page helpers must remain inside it.
 export async function standaloneComposerOnPage(owner, text='', action='inspect', scopeToken='') {
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
-  const viewer=()=>document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').toLowerCase();
+  const viewer=()=>globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase();
   const visible=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0;};
   const key='__xfStandaloneComposerScope';
   if(action==='release'){
@@ -76,7 +76,7 @@ export async function standaloneComposerOnPage(owner, text='', action='inspect',
 export function readStandalonePublicationOnPage(owner,text,after=0) {
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
   const key=String(owner).replace(/^@/,'').toLowerCase();
-  if(document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').toLowerCase()!==key)return null;
+  if(globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase()!==key)return null;
   const wanted=normalize(text);
   for(const article of document.querySelectorAll('[data-testid="primaryColumn"] article')){
     const time=article.querySelector('time'),at=Date.parse(time?.getAttribute('datetime')||'');

@@ -2,6 +2,7 @@ import {t} from '../../shared/i18n.js';
 import {mountFollowQueuePanel} from './follow-queue-panel.js';
 
 let mounted;
+let mountedHost,mountedContent,mountedAccount;
 let generation = 0;
 const request = message => chrome.runtime.sendMessage(message);
 
@@ -9,7 +10,17 @@ export async function openFollowQueue(root) {
   const host = root?.querySelector('#followQueueContent');
   if (!host) throw new Error('关注队列内容容器缺失');
   const current = ++generation;
+  let knownIdentity;
+  if(mounted&&mountedHost===host&&mountedContent?.isConnected){
+    try{knownIdentity=await request({cmd:'followQueueIdentity'});}catch(error){return {ok:false,error:error.message||'无法读取 X 账号'};}
+    if(current!==generation)return;
+    if(!knownIdentity?.ok)return {ok:false,error:knownIdentity?.error||'无法读取 X 账号'};
+    if(knownIdentity?.ok&&knownIdentity.accountId===mountedAccount&&knownIdentity.binding?.activated){
+      await mounted.refresh({accountId:mountedAccount});return {ok:true,reused:true};
+    }
+  }
   mounted?.destroy(); mounted = null;
+  mountedHost=null;mountedContent=null;mountedAccount=null;
   host.replaceChildren();
   const card = document.createElement('div'); card.className = 'queue-onboarding';
   const heading = document.createElement('strong'); heading.textContent = t("正在为你准备关注队列");
@@ -27,7 +38,7 @@ export async function openFollowQueue(root) {
     catch {} finally { pollBusy = false; }
   }, 800);
   try {
-    const identity = await request({cmd:'followQueueIdentity'});
+    const identity = knownIdentity||await request({cmd:'followQueueIdentity'});
     clearInterval(poll);
     if (current !== generation) return;
     if (!identity?.ok) throw new Error(identity?.error || '无法读取 X 账号');
@@ -57,7 +68,7 @@ export async function openFollowQueue(root) {
       const body=document.createElement('div');body.className='fq-source-body';body.append(setup,help,status);sourceDialog.append(header,body);host.append(sourceDialog);
       const opened=sourceDialog;opened.addEventListener('close',()=>opened.remove());opened.showModal();
     }
-    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId,accountHandle:identity.handle,onManageSources:openSources}); };
+    const mount = () => { mounted?.destroy(); mounted = mountFollowQueuePanel(content,{request,accountId:identity.accountId,accountHandle:identity.handle,onManageSources:openSources});mountedHost=host;mountedContent=content;mountedAccount=identity.accountId; };
     const showList=()=>{sourceDialog?.close();host.replaceChildren(content);mount();};
     if(activated)showList();else host.replaceChildren(setup,help,status,content);
     activate.addEventListener('click',async()=>{

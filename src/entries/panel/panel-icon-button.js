@@ -22,3 +22,9 @@ export function panelIconButton(icon, {label, tip = label, className = '', onCli
   button.appendChild(panelIcon(icon));
   return button;
 }
+
+// Update state copy without replacing the SVG child.
+export function setPanelIconButtonLabel(button,label,tip=label){
+  button?.setAttribute('aria-label',t(label));
+  button?.setAttribute('data-panel-tip',t(tip));
+}

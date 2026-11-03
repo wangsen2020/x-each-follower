@@ -48,8 +48,8 @@
         <span class="sidebar-account-name">{{ (account.name || account.handle) }}</span>
         <svg v-if="account.blueVerified" class="sidebar-account-blue" viewBox="0 0 24 24" width="14" height="14" role="img" :aria-label="t(&quot;蓝 V 已认证&quot;)"><title>{{ t("蓝 V 已认证") }}</title><path fill="#1d9bf0" d="m12 1 3 2 3 .5 1.5 3L22 9l-.5 3 1 3-2.5 2-1 3-3 .5-3 2-3-2-3-.5-1.5-3L2 15l.5-3-1-3L4 7l1-3 3-.5z"/><path fill="none" stroke="#fff" stroke-width="2" d="m7 12 3 3 7-7"/></svg>
       </a>
-      <button v-else class="sidebar-account sidebar-account-empty" type="button" :title="(t(accountError) || t(&quot;从已登录的 X 页面读取账号，点击重试&quot;))" @click="loadAccount">{{ t(accountLoading ? t("正在识别账号…") : t("未识别 X 账号")) }}</button>
-      <button class="sidebar-account-refresh" type="button" :disabled="accountLoading" :aria-busy="accountLoading" :title="(t(accountError) || t(&quot;刷新账号&quot;))" :aria-label="t(&quot;刷新账号&quot;)" @click="loadAccount">
+      <button v-else class="sidebar-account sidebar-account-empty" type="button" :title="(t(accountError) || t(&quot;从已登录的 X 页面读取账号，点击重试&quot;))" @click="loadAccount(true)">{{ t(accountLoading ? t("正在识别账号…") : t("未识别 X 账号")) }}</button>
+      <button class="sidebar-account-refresh" type="button" :disabled="accountLoading" :aria-busy="accountLoading" :title="(t(accountError) || t(&quot;刷新账号&quot;))" :aria-label="t(&quot;刷新账号&quot;)" @click="loadAccount(true)">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
       </button>
       <SystemSettingsDialog />
@@ -86,8 +86,10 @@ const helpKey = ref('');
 const helpBubble = ref(null);
 const helpPosition = ref({});
 const account=ref(null), accountLoading=ref(false), accountError=ref(''), avatarFailed=ref(false);
-async function loadAccount(){if(accountLoading.value)return;accountLoading.value=true;try{const result=await chrome.runtime.sendMessage({action:'sidebarIdentity',force:true});if(!result?.ok)throw new Error(result?.error||'账号识别失败');account.value=result.account;avatarFailed.value=false;accountError.value='';}catch(error){account.value=null;accountError.value=error.message;}finally{accountLoading.value=false;}}
-onMounted(loadAccount);
+async function loadAccount(force=false){if(accountLoading.value)return;accountLoading.value=true;try{const result=await chrome.runtime.sendMessage({action:'accountState',force});if(!result?.ok)throw new Error(result?.error||'账号识别失败');account.value=result.account;avatarFailed.value=false;accountError.value='';}catch(error){accountError.value=error.message;}finally{accountLoading.value=false;}}
+const accountChanged=(changes,area)=>{if(area==='local'&&changes['xAccountState:v1']){account.value=changes['xAccountState:v1'].newValue?.account||null;accountError.value='';avatarFailed.value=false;}};
+onMounted(()=>{void loadAccount();chrome.storage.onChanged.addListener(accountChanged);});
+onUnmounted(()=>chrome.storage.onChanged.removeListener(accountChanged));
 let hideTimer;
 function cancelHide() { clearTimeout(hideTimer); }
 function hideHelp() { cancelHide(); helpKey.value = ''; }
@@ -132,5 +134,5 @@ function handleTabClick(tab) {
 .sidebar-account-footer{display:flex;align-items:center;justify-content:space-between}.sidebar-account{display:flex;align-items:center;min-width:0;flex:1;margin-right:10px;color:#e3eee9;text-decoration:none;font-size:12px;overflow:hidden}.sidebar-account-avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-right:8px}.sidebar-avatar-fallback{display:grid;place-items:center;background:#426759;color:#fff}.sidebar-account-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.sidebar-account-blue{flex-shrink:0;margin-left:4px}.sidebar-account-empty{background:transparent;border:0;padding:0;height:30px;text-align:left;font-weight:400;box-shadow:none}
 .sidebar-column-help { position: fixed; z-index: 10000; box-sizing: border-box; padding: 10px; border-radius: 6px; background: #18302e; color: #fff; box-shadow: 0 4px 14px #18302e33; font-size: 12px; font-weight: 400; line-height: 1.6; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 @media(min-width:601px) and (max-width:900px){:global(main:has(.vue-panel-sidebar)){grid-template-columns:180px minmax(0,1fr)}.sidebar-account-footer{flex-wrap:wrap;padding:8px 0}.sidebar-account{flex-basis:100%;margin-right:0;margin-bottom:4px}.sidebar-account-refresh{width:24px;margin-right:0}}
-@media(max-width:600px){.sidebar-account-footer{display:none}}
+@media(max-width:600px){.sidebar-account-footer{display:flex;padding-top:6px}}
 </style>

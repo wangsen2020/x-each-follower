@@ -9,21 +9,21 @@ export const EXECUTION_LOG_DB = 'x-each-follower-execution-logs';
 export const LOG_PAGE_SIZE = 30;
 export const QUEUE_LOG_LIMIT = 2000;
 export const BACKUP_ATTEMPT_LIMIT = 3;
-const UI_SCOPES = ['autoFollow', 'queue', 'queueFans', 'comment', 'mutual', 'fans', 'monitor', 'unreciprocated'];
+const UI_SCOPES = ['autoFollow', 'queue', 'queueFans', 'comment', 'mutual', 'fans', 'monitor', 'unreciprocated', 'fanReview', 'fanVerify', 'fanSchedule'];
 const LEGACY_KEYS = ['autoFollowLogs', 'monitorLogs', 'unreciprocatedLogs'];
 
 export function executionLogMembership(log, origin = 'autoFollowLogs') {
   const scopes = new Set();
   const verification = log?.scope === 'verification';
-  if (origin === 'monitorLogs') {
+  if (origin === 'monitorLogs' && log?.scope !== 'queue') {
     scopes.add('fans');
     scopes.add('monitor');
-    if (verification) UI_SCOPES.filter(scope => scope !== 'queue' && scope !== 'queueFans').forEach(scope => scopes.add(scope));
+    if (verification) UI_SCOPES.filter(scope => scope !== 'queue' && scope !== 'queueFans' && !['fanReview','fanVerify','fanSchedule'].includes(scope)).forEach(scope => scopes.add(scope));
     return [...scopes];
   }
   if (origin === 'unreciprocatedLogs') {
     scopes.add('unreciprocated');
-    if (verification) UI_SCOPES.filter(scope => scope !== 'queue' && scope !== 'queueFans').forEach(scope => scopes.add(scope));
+    if (verification) UI_SCOPES.filter(scope => scope !== 'queue' && scope !== 'queueFans' && !['fanReview','fanVerify','fanSchedule'].includes(scope)).forEach(scope => scopes.add(scope));
     return [...scopes];
   }
   for (const scope of UI_SCOPES) {
@@ -41,15 +41,18 @@ export function clearScopesFor(scope) {
 // gain the new queue view; versioned dropScopes backups must never re-add it.
 function upgradeQueueMembership(record) {
   const version = Number(record.scopeSchemaVersion) || 0;
-  if (version >= 3) return record;
+  if (version >= 4) return record;
   const membership = new Set(record.membership || []);
   if (version < 2) {
     if (record.scope === 'queue' && membership.has('autoFollow')) membership.add('queue');
     else membership.delete('queue');
   }
-  if (record.scope === 'queue' && membership.has('queue') && record.sources?.some(source => source.module === 'fans')) membership.add('queueFans');
-  else membership.delete('queueFans');
-  return {...record, membership:[...membership], scopeSchemaVersion:3};
+  if (version < 3) {
+    if (record.scope === 'queue' && membership.has('queue') && record.sources?.some(source => source.module === 'fans')) membership.add('queueFans');
+    else membership.delete('queueFans');
+  }
+  if (record.scope === 'queue') { membership.delete('fans'); membership.delete('monitor'); }
+  return {...record, membership:[...membership], scopeSchemaVersion:4};
 }
 
 export function assertLogScope(scope) {
@@ -455,7 +458,7 @@ export function createExecutionLogStore(options = {}) {
         origin,
         membership: executionLogMembership({...log, id: legacyId(origin, index, log)}, origin)
       };
-      record.scopeSchemaVersion = 3;
+      record.scopeSchemaVersion = 4;
       assignLogTime(record, log?.at, 'legacy');
       if (record.scope === 'verification') record.episodeKey = record.episodeKey || (record.tabId != null && record.at ? `${record.tabId}:${record.at}` : '');
       if (!record.episodeKey) delete record.episodeKey;
@@ -518,7 +521,7 @@ export function createExecutionLogStore(options = {}) {
 
   async function cleanupQueueFromFansScopes() {
     const db = await database();
-    const marker = await readMeta(db, 'fansQueueDisentangled');
+    const marker = await readMeta(db, 'fansQueueDisentangledV2');
     if (marker?.done) return;
     const read = db.transaction(['logs', 'scopeRows'], 'readonly');
     const scopeRowsStore = read.objectStore('scopeRows');
@@ -551,7 +554,7 @@ export function createExecutionLogStore(options = {}) {
       }
       await transactionDone(tx);
     }
-    await writeMeta(db, {key: 'fansQueueDisentangled', done: true, at: new Date().toISOString()});
+    await writeMeta(db, {key: 'fansQueueDisentangledV2', done: true, at: new Date().toISOString()});
   }
 
   async function migrateQueueScope() {
@@ -676,7 +679,7 @@ export function createExecutionLogStore(options = {}) {
           else delete record.episodeKey;
         }
         record.membership = executionLogMembership(record, record.origin);
-        record.scopeSchemaVersion = 3;
+        record.scopeSchemaVersion = 4;
         tx.objectStore('logs').put(record);
         await replaceScopeRows(tx, record);
         const prunedIds = record.scope === 'queue' ? await pruneQueueRows(tx) : [];

@@ -1,3 +1,5 @@
+import {removalHistoryRows} from '../relationships/fan-removal-history.js';
+import {fanRowOwned,fanRetentionDecision,fanRetentionBlocks,fanTargetId,hasNewerFanRelationship} from '../relationships/fan-retention.js';
 // Live record service. Archive migration stays lossless and immutable.
 // Dashboard pages use the projection index. Legacy modules are merged, never replaced by a page.
 
@@ -11,7 +13,10 @@ import {mutualUserCategory, personalRelationshipLabel} from '../relationships/ne
 import {applyRelationshipSnapshot, buildRelationshipIndex, commentRelationshipLabel, deriveNotMutualUsers, deriveTrackerUsers} from '../relationships/relationship-rules.js';
 import {createStorageWriteQueue} from '../../platform/storage-write-queue.js';
 import {PROFILE_ACCESS_PREFIX} from '../../platform/x/profile-access.js';
-import {buildFanDirectory, fanDirectoryRow, FAN_DIRECTORY_VERSION, FAN_TABS, normalizeFanSearch, exactFanSearchHandle} from '../relationships/fan-directory.js';
+import {fanDirectoryRow, FAN_DIRECTORY_VERSION, FAN_TABS, normalizeFanSearch, exactFanSearchHandle, matchesFanReviewResult, FAN_REVIEW_RESULT_FILTERS} from '../relationships/fan-directory.js';
+import {needsFanEnrichment} from '../relationships/fan-review-flow.js';
+import {unfollowLogReceipts,mergeUnfollowHistory,unfollowHistoryRows} from '../relationships/unfollow-history.js';
+import {REPLY_USER_ID_REPAIR_VERSION, replyIdEvidence, planReplyUserIdRepair, repairAutoUnfollowLedger} from './reply-user-id-repair.js';
 
 export const LEGACY_RECORD_KEYS = [
   'monitor', 'rows', 'profileCache', 'mutualNetwork', 'commentTracking',
@@ -47,6 +52,89 @@ const INCREMENTAL_PREFIX = 'recordIncremental:v1:';
 const INCREMENTAL_HEAD = 'recordIncremental:v1:head';
 const COLLECTION_FIELDS = new Set(['users', 'queue', 'followingUsers', 'posts', 'rows']);
 const RELATION_RANK = {'互相关注': 0, '对方关注你': 1, '你关注对方': 2, '未互关': 3, '你未关注对方': 4, '关系未知': 5};
+const FAN_REVIEW_PROJECTION_VERSION = 3;
+
+const fanId = value => typeof value === 'string' && /^\d+$/.test(value) ? value : '';
+function fanIds(payload = {}) {
+  return [...new Set([payload.id, payload.rest_id, payload.restId, payload.targetUserId].map(fanId).filter(Boolean))];
+}
+function fanOwnerClaims(payload = {}) {
+  return [...new Set([payload.ownerAccountId,payload.fanReview?.ownerAccountId,payload.fanReview?.accountId,
+    payload.fanReview?.grant?.ownerAccountId,payload.fanGrant?.ownerAccountId,payload.fanReview?.migration?.ownerAccountId]
+    .filter(value => typeof value === 'string' && value && value !== 'unassigned'))];
+}
+
+function confirmedFanRemoval(payload, accountId, targetUserId) {
+  if (!targetUserId) return null;
+  if (payload.followResult?.targetUserId && payload.followResult.targetUserId !== targetUserId) return null;
+  for (const receipt of [payload.followerRemoval, payload.fanReview?.removalReceipt, payload.followResult?.followerRemoval]) {
+    if (!receipt || receipt.removed !== true || !(Number(receipt.verifiedAt) > 0 || Date.parse(receipt.verifiedAt) > 0)) continue;
+    const receiptId = fanId(receipt.targetUserId || payload.targetUserId || (fanIds(payload).length === 1 ? fanIds(payload)[0] : ''));
+    if (receiptId !== targetUserId || (receipt.accountId && receipt.accountId !== accountId)
+      || (receipt.ownerAccountId && receipt.ownerAccountId !== accountId)) continue;
+    return clone({...receipt, accountId, targetUserId});
+  }
+  return null;
+}
+
+// Keep workflow separate from relationship facts, including malformed legacy removal labels.
+function reviewDirectoryRow(rows) {
+  const directory = fanDirectoryRow(rows);
+  if (!directory) return null;
+  const sources = rows.filter(row => row.sourceKey === 'monitor' && row.accountId === directory.accountId
+    && ['users', 'queue', 'followingUsers'].includes(row.sourcePath?.[1]));
+  const ids = new Set(sources.flatMap(row => fanIds(row.payload)));
+  const ownerClaims = new Set(sources.flatMap(row => fanOwnerClaims(row.payload)));
+  const ownerConflict = ownerClaims.size > 1 || directory.accountId !== 'unassigned' && [...ownerClaims].some(owner => owner !== directory.accountId);
+  const identityConflict = ownerConflict || ids.size > 1 || sources.some(row => row.payload?.status === 'identity_mismatch' || row.payload?.legacyHandleIdentityConflict);
+  const id = ids.size === 1 ? [...ids][0] : '';
+  const receipt = !identityConflict && sources.map(row => confirmedFanRemoval(row.payload || {}, row.accountId, id)).find(Boolean);
+  const review = directory.payload.fanReview;
+  const workflow = review?.state || review?.workflow;
+  const removalClaim = directory.payload.fanCategory === 'removed' || workflow === 'removed';
+  let category = directory.payload.fanCategory;
+  if(removalClaim&&!receipt&&category==='removed')category='unknown';
+  if(!identityConflict&&directory.payload.relationshipKnown&&directory.payload.relationship?.following===false&&directory.payload.relationship?.followedBy===false)category='none';
+  // Current relationship facts take precedence over historical workflow labels.
+  // A confirmed removal remains an audit record in its separate category.
+  if (category !== 'none' && directory.payload.relationshipKnown && directory.payload.relationship?.following !== true
+    && ((removalClaim && !receipt) || ['review', 'initial', 'failed'].includes(workflow))) category = 'review';
+  if (receipt && directory.payload.relationship?.following !== true && directory.payload.relationship?.followedBy !== true) category = 'removed';
+  if (identityConflict) category = 'unknown';
+  if(!identityConflict&&directory.payload.relationship?.following===false&&directory.payload.relationship?.followedBy===true
+    &&needsFanEnrichment(review))category='unknown';
+  if (identityConflict) {
+    // A handle can be reassigned. Do not borrow a biography, grant or AI decision from the other ID.
+    const primary = sources.find(row => row.userKey === directory.sourceUserKey) || sources[0];
+    for (const key of ['id','rest_id','restId','targetUserId','bio','name','avatarUrl','followersText','followingText','fanGrant','fanReview']) {
+      if (Object.hasOwn(primary.payload, key)) directory.payload[key] = clone(primary.payload[key]);
+      else delete directory.payload[key];
+    }
+    directory.payload.legacyHandleIdentityConflict = true;
+    directory.payload.relationship = {following:null,followedBy:null};
+    directory.payload.relationshipKnown = false;
+    directory.payload.fanRelationshipReason = '同名账号的用户 ID 不一致，需要重新核实';
+    directory.view = directory.payload.relationship;
+  }
+  directory.payload.fanCategory = category;
+  directory.payload.status = category === 'pending' ? 'pending' : ['mutual','following'].includes(category) ? 'followed' : category;
+  directory.status = directory.payload.status;
+  directory.tabs = category === 'none' ? ['none'] : ['all', category,...(!identityConflict&&directory.payload.relationshipKnown
+    &&directory.payload.relationship?.following===false&&directory.payload.relationship?.followedBy===true?['outstanding']:[])];
+  if (removalClaim && !receipt) directory.payload.fanRelationshipReason = '历史移除标记缺少确认回执，等待审核';
+  return directory;
+}
+
+function reviewDirectoryRows(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    if (row.sourceKey !== 'monitor' || !row.handle) continue;
+    const key = `${row.accountId}\0${row.handle}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return [...groups.values()].map(reviewDirectoryRow).filter(Boolean);
+}
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
@@ -402,6 +490,7 @@ function membershipOf(row) {
 
 function matches(moduleName, row, filter) {
   const payload = row.payload || {};
+  if(moduleName==='fans'&&!matchesFanReviewResult(payload,filter.reviewResult||''))return false;
   if (filter.searchHandle && row.handle !== filter.searchHandle) return false;
   if (Array.isArray(filter.statuses) && filter.statuses.length && !filter.statuses.includes(payload.status || row.status)) return false;
   if (filter.dateUnknown && Number.isFinite(Date.parse(payload.followedAt))) return false;
@@ -503,6 +592,7 @@ export function createRecordRuntime({
   durableAppendIncremental,
   durableCompactSnapshots,
   onBackupSettingsChanged,
+  readUnfollowLogs,
   indexedDB: indexedDBImpl,
   IDBKeyRange: keyRangeImpl,
   dbName = 'x-each-follower-records',
@@ -748,7 +838,98 @@ export function createRecordRuntime({
     return curSeq;
   }
 
+  let openRun = null, userIdUpgrade = null, userIdUpgradeComplete = false, userIdUpgradeResult = null;
   async function ensureOpen() {
+    if (!opened) {
+      openRun ||= openRecords().finally(() => { openRun = null; });
+      await openRun;
+    }
+    if (progress.cutover) { await upgradeReplyUserIds(); await upgradeUnfollowHistory(); }
+  }
+
+  let historyUpgrade=null,historyReady=false;
+  async function upgradeUnfollowHistory() {
+    if(historyReady)return;
+    if(!historyUpgrade)historyUpgrade=sequenceMutation(async()=>{
+      while(await retryPending(100)===100){ /* finish interrupted upgrade journals before advancing the log cursor */ }
+      const checkpoint=await projection.readState(),meta=checkpoint.metadata?.unreciprocatedTracker||{};
+      const saved=readUnfollowLogs?await storage.local.get(['followQueueBinding']):{};
+      const binding=saved.followQueueBinding||{};
+      const owner=checkpoint.fanReviewLegacyOwnerAccountId||meta.unfollowHistoryLegacyOwner||(binding.activated?binding.accountId:'')||'unassigned';
+      let history={...(meta.unfollowHistory||{})},cursor=null;
+      const startedAt=new Date(now()).toISOString();
+      if(readUnfollowLogs)do{
+        const page=await readUnfollowLogs({cursor,since:meta.unfollowHistoryUpgrade?.since||null});
+        history=mergeUnfollowHistory(history,(page.entries||[]).flatMap(log=>unfollowLogReceipts(log,{accountId:owner,handle:binding.handle})));
+        cursor=page.nextCursor;
+      }while(cursor);
+      for(const sourceKey of ['unreciprocatedTracker','derived:tracker']){
+        cursor=null;do{
+          const page=await projection.scanBySource({sourceKey,limit:100,cursor});
+          for(const row of page.records){const p=row.payload||{},at=Date.parse(p.unfollowedAt||'');
+            if(p.status==='unfollowed'&&Number.isFinite(at))history=mergeUnfollowHistory(history,[{accountId:row.accountId==='unassigned'?owner:row.accountId,
+              handle:row.handle,targetUserId:p.id||'',name:p.name||row.handle,at,source:'stored-outcome'}]);
+          }cursor=page.nextCursor;
+        }while(cursor);
+      }
+      if(readUnfollowLogs||Object.keys(history).length)await mergeRootBody('unreciprocatedTracker',{unfollowHistory:history,
+        unfollowHistoryLegacyOwner:owner,
+        unfollowHistoryUpgrade:{version:1,since:startedAt,at:now(),count:Object.keys(history).length}});
+      historyReady=true;
+    }).finally(()=>{historyUpgrade=null;});
+    return historyUpgrade;
+  }
+  async function historicalUnfollows(accountId) {
+    const state=await projection.readState();
+    return unfollowHistoryRows(state.metadata?.unreciprocatedTracker?.unfollowHistory||{},accountId,state.fanReviewLegacyOwnerAccountId||state.metadata?.unreciprocatedTracker?.unfollowHistoryLegacyOwner);
+  }
+
+  // Runs on the first ready access after an extension upgrade, before readers
+  // or schedulers receive records. Use the existing journal, not a CDP repair.
+  async function upgradeReplyUserIds() {
+    if (userIdUpgradeComplete) return;
+    if (!userIdUpgrade) userIdUpgrade = sequenceMutation(async () => {
+      const checkpoint = await projection.readState();
+      if (checkpoint.replyUserIdRepair?.version === REPLY_USER_ID_REPAIR_VERSION && checkpoint.replyUserIdRepair.status === 'done') {
+        userIdUpgradeResult = checkpoint.replyUserIdRepair;
+        userIdUpgradeComplete = true; return;
+      }
+      while (await retryPending(100) === 100) { /* recover interrupted journal writes */ }
+      const saved = await storage.local.get(['followQueueBinding']);
+      const binding = saved.followQueueBinding;
+      const legacyOwner = checkpoint.fanReviewLegacyOwnerAccountId || (binding?.activated ? binding.accountId : '');
+      const seeds = [];
+      let cursor = null;
+      do {
+        const page = await projection.scanBySource({sourceKey:'commentTracking',limit:100,cursor});
+        seeds.push(...page.records.filter(row => replyIdEvidence(row).length));
+        cursor = page.nextCursor;
+      } while (cursor);
+      const plans = [], seen = new Set();
+      for (const seed of seeds) {
+        const plan = planReplyUserIdRepair(seed, await projection.rowsByHandleKey(seed.handle), legacyOwner);
+        if (!plan || seen.has(plan.owner + ':' + plan.handle)) continue;
+        seen.add(plan.owner + ':' + plan.handle); plans.push(plan);
+      }
+      let records = 0;
+      for (const plan of plans) for (const {row,patch} of plan.changes) {
+        await applyMutation('patch', {module:row.module,accountId:row.accountId,userKey:row.userKey,expectedHandle:row.handle,
+          patch:{...patch,accountId:row.accountId,userIdRepair:{version:REPLY_USER_ID_REPAIR_VERSION,previousIds:plan.previousIds,replacementId:plan.replacementId,at:now()}},
+          operationId:`reply-user-id-v1:${row.accountId}:${row.module}:${row.userKey}`});
+        records++;
+      }
+      // Re-read after record writes; never overwrite a ledger captured before IO.
+      const ledger = (await storage.local.get(['autoUnfollowState'])).autoUnfollowState;
+      const repaired = repairAutoUnfollowLedger(ledger, plans, now());
+      if (repaired.changed) await storage.local.set({autoUnfollowState:repaired.ledger});
+      userIdUpgradeResult = {version:REPLY_USER_ID_REPAIR_VERSION,status:'done',at:now(),handles:plans.length,records,reviews:repaired.changed};
+      await projection.writeState({replyUserIdRepair:userIdUpgradeResult});
+      userIdUpgradeComplete = true;
+    }).finally(() => { userIdUpgrade = null; });
+    return userIdUpgrade;
+  }
+
+  async function openRecords() {
     if (opened) return;
     const state = await projection.readState();
     if (state.cutover) {
@@ -980,6 +1161,13 @@ export function createRecordRuntime({
   }
 
   async function migrate() {
+    const result = await migrateArchive();
+    if (progress.cutover) await upgradeReplyUserIds();
+    if (progress.cutover) await upgradeUnfollowHistory();
+    return result;
+  }
+
+  async function migrateArchive() {
     if (run) return run;
     run = (async () => {
       try {
@@ -1124,10 +1312,10 @@ export function createRecordRuntime({
   let directoryBuild = null;
   async function ensureFanDirectory() {
     const checkpoint = await projection.readState();
-    if (checkpoint.fanDirectoryVersion === FAN_DIRECTORY_VERSION && !checkpoint.fanDirectoryDirtyHandles?.length) return;
+    if (checkpoint.fanDirectoryVersion === FAN_DIRECTORY_VERSION && checkpoint.fanReviewProjectionVersion === FAN_REVIEW_PROJECTION_VERSION && !checkpoint.fanDirectoryDirtyHandles?.length) return;
     if (!directoryBuild) directoryBuild = sequenceMutation(async () => {
       const state = await projection.readState();
-      if (state.fanDirectoryVersion === FAN_DIRECTORY_VERSION) {
+      if (state.fanDirectoryVersion === FAN_DIRECTORY_VERSION && state.fanReviewProjectionVersion === FAN_REVIEW_PROJECTION_VERSION) {
         for (const handle of state.fanDirectoryDirtyHandles || []) await recomputeHandle(handle);
         return;
       }
@@ -1145,7 +1333,7 @@ export function createRecordRuntime({
         for (const row of page.records) if (!groups.has(row.accountId)) groups.set(row.accountId, []);
         previousCursor = page.nextCursor;
       } while (previousCursor);
-      for (const row of buildFanDirectory(rows)) {
+      for (const row of reviewDirectoryRows(rows)) {
         if (!groups.has(row.accountId)) groups.set(row.accountId, []);
         groups.get(row.accountId).push(row);
       }
@@ -1154,7 +1342,7 @@ export function createRecordRuntime({
       for (const [accountId, records] of groups) await projection.replaceModuleRows(accountId, 'fanDirectory', 'derived:fanDirectory', {
         rows:records, membership:records.flatMap(membershipOf)
       });
-      await projection.writeState({fanDirectoryVersion:FAN_DIRECTORY_VERSION,fanDirectoryDirtyHandles:[]});
+      await projection.writeState({fanDirectoryVersion:FAN_DIRECTORY_VERSION,fanReviewProjectionVersion:FAN_REVIEW_PROJECTION_VERSION,fanDirectoryDirtyHandles:[]});
     }).finally(() => {directoryBuild = null;});
     return directoryBuild;
   }
@@ -1163,10 +1351,24 @@ export function createRecordRuntime({
     return {...present(row), module:'fans', userKey:row.sourceUserKey};
   }
 
+  async function fanRemovalHistory(accountId) {
+    const state=await projection.readState();
+    const owner=accountId==='unassigned'?state.fanReviewLegacyOwnerAccountId:accountId;
+    if(!owner)return [];
+    const prefix='followQueueFanRemovalIntent:'+owner+':';
+    const tombstone=(await storage.local.get(['followQueueRemovalTombstones:'+owner]))['followQueueRemovalTombstones:'+owner]||{};
+    const keys=storage.local.getKeys?(await storage.local.getKeys()).filter(key=>key.startsWith(prefix)):Object.keys(tombstone.byId||{}).map(id=>prefix+id);
+    const receipts=Object.values(await storage.local.get(keys));
+    let cursor=null;
+    do{const page=await projection.queryPage({accountId,module:'fanDirectory',tab:'removed',limit:100,cursor});
+      for(const row of page.records){const p=row.payload||{},receipt=p.followerRemoval||p.fanReview?.removalReceipt;if(receipt)receipts.push({...receipt,handle:row.handle,accountId:receipt.accountId||owner});}cursor=page.nextCursor;
+    }while(cursor);
+    return removalHistoryRows(receipts,owner).map(row=>({...row,accountId}));
+  }
   async function directorySummary(accountId) {
     const saved = await projection.getSummary(accountId, 'fans');
     const directory = await projection.getSummary(accountId, 'fanDirectory');
-    return {...saved, tabs:{...(saved?.tabs || {}), ...Object.fromEntries(Object.entries(FAN_TABS).map(([tab, category]) => [tab,directory?.tabs?.[category] || 0]))}};
+    return {...saved, tabs:{...(saved?.tabs || {}), ...Object.fromEntries(Object.entries(FAN_TABS).map(([tab, category]) => [tab,directory?.tabs?.[category] || 0])),fanRemoved:(await fanRemovalHistory(accountId)).length}};
   }
 
   async function query(request = {}) {
@@ -1179,6 +1381,7 @@ export function createRecordRuntime({
     const accountId = request.accountId || 'unassigned';
     await flushDirty(moduleName);
     const filter = request.filter && typeof request.filter === 'object' ? {...request.filter} : {};
+    if(moduleName==='fans'&&!FAN_REVIEW_RESULT_FILTERS.includes(filter.reviewResult||''))throw Error('无效的审核结果筛选');
     const tab = filter.tab || 'all';
     const directory = moduleName === 'fans' && Object.hasOwn(FAN_TABS, tab);
     if (directory) {
@@ -1189,7 +1392,7 @@ export function createRecordRuntime({
     const storedModule = directory ? 'fanDirectory' : moduleName;
     const storedTab = directory ? FAN_TABS[tab] : tab;
     const show = directory ? presentDirectory : present;
-    const complex = Boolean(filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown || filter.availability);
+    const complex = Boolean(filter.reviewResult || filter.search || (filter.tags && filter.tags.length) || (Array.isArray(filter.statuses) && filter.statuses.length) || filter.dateUnknown || filter.dateKnown || filter.availability);
     const revision = (await projection.readState()).revision || 0;
     const filterHash = canonicalValue({module: moduleName, accountId, tab, filter});
     const parsed = request.cursor ? decodeCursor(request.cursor) : null;
@@ -1201,6 +1404,12 @@ export function createRecordRuntime({
     const stamp = cursor => cursor ? encodeCursor({
       v: 1, accountId, module: moduleName, tab, complex, filterHash, revision, sortKey: cursor.sortKey, userKey: cursor.userKey
     }) : null;
+    if(directory&&tab==='fanRemoved'){
+      const history=(await fanRemovalHistory(accountId)).filter(row=>!filter.search||row.searchText.includes(filter.search.toLowerCase()));
+      const remaining=history.filter(row=>!parsed||row.sortKey>parsed.sortKey||row.sortKey===parsed.sortKey&&row.userKey>parsed.userKey);
+      const records=remaining.slice(0,limit);
+      return {records:records.map(present),nextCursor:remaining.length>limit?stamp(records.at(-1)):null,scanned:history.length,matched:history.length,revision,summary:await directorySummary(accountId)};
+    }
     // Historical rows may have been indexed by followedAt in an older version.
     // Sort the history subset before pagination without rewriting source records.
     if(moduleName==='unreciprocated' && tab==='unfollowed'){
@@ -1209,6 +1418,9 @@ export function createRecordRuntime({
         const page=await projection.queryPage({accountId,module:moduleName,tab,limit:100,cursor});
         scanned+=page.scanned;history.push(...page.records.filter(row=>matches(moduleName,row,filter)));cursor=page.nextCursor;
       }while(cursor);
+      const unique=new Map(history.map(row=>[row.handle,row]));
+      for(const row of await historicalUnfollows(accountId))if(matches(moduleName,row,filter))unique.set(row.handle,row);
+      history.splice(0,history.length,...unique.values());
       for(const row of history){const at=Date.parse(row.payload?.unfollowedAt);row.sortKey=String(Number.isFinite(at)?999999999999999-at:999999999999999).padStart(15,'0');}
       history.sort((a,b)=>a.sortKey.localeCompare(b.sortKey)||a.userKey.localeCompare(b.userKey));
       const remaining=history.filter(row=>!parsed||row.sortKey>parsed.sortKey||(row.sortKey===parsed.sortKey&&row.userKey>parsed.userKey));
@@ -1319,6 +1531,13 @@ export function createRecordRuntime({
     requireReady();
     if (request.module) await flushDirty(request.module);
     const saved = await projection.getSummary(request.accountId || 'unassigned', request.module);
+    if(request.module==='unreciprocated'){
+      const handles=new Set((await historicalUnfollows(request.accountId||'unassigned')).map(row=>row.handle));
+      let cursor=null;do{const page=await projection.queryPage({accountId:request.accountId||'unassigned',module:'unreciprocated',tab:'unfollowed',limit:100,cursor});
+        for(const row of page.records)handles.add(row.handle);cursor=page.nextCursor;
+      }while(cursor);
+      return {...saved,tabs:{...saved?.tabs,unfollowed:handles.size}};
+    }
     if (request.module !== 'fans') return saved;
     await ensureFanDirectory();
     return directorySummary(request.accountId || 'unassigned');
@@ -1347,6 +1566,142 @@ export function createRecordRuntime({
     await ensureFanDirectory();
     if (!Array.isArray(request.handles) || request.handles.length > 100) throw new Error('fan directory lookup accepts at most 100 handles');
     return projection.rowsByHandle(request.accountId || 'unassigned','fanDirectory',request.handles.map(handle => String(handle).toLowerCase()));
+  }
+
+  async function fanReviewOwner() {
+    await ensureOpen();requireReady();
+    return (await projection.readState()).fanReviewLegacyOwnerAccountId || '';
+  }
+
+  // Called after the lossless archive migration and before any fan/queue scheduler starts.
+  // The coordinator supplies one owner's history; this service never mutates the queue database.
+  async function migrateFanReview(request = {}) {
+    await ensureOpen();requireReady();await flushDirty('fans');
+    const accountId = typeof request.accountId === 'string' ? request.accountId.trim() : '';
+    if (!accountId || accountId === 'unassigned') throw new Error('fan review migration requires a confirmed owner');
+    if (!Array.isArray(request.jobs || [])) throw new Error('fan review migration jobs must be an array');
+    // Native queue receipts can retain optional fields such as live:undefined.
+    // Archive their JSON evidence without changing the original queue records;
+    // undefined cannot participate in the strict canonical journal checksum.
+    const jobs = (request.jobs || []).filter(job => job?.accountId === accountId)
+      .map(job => JSON.parse(JSON.stringify(job)));
+    const tombstones = request.tombstones || {};
+    return sequenceMutation(async () => {
+      const checkpoint = await projection.readState();
+      if (request.includeUnassigned === true && checkpoint.fanReviewLegacyOwnerAccountId && checkpoint.fanReviewLegacyOwnerAccountId !== accountId) {
+        throw new Error('legacy fan records already belong to another owner');
+      }
+      if (request.includeUnassigned === true) await projection.writeState({fanReviewLegacyOwnerAccountId:accountId});
+      const rows = [];let cursor = null;
+      do {
+        const page = await projection.scanBySource({sourceKey:'monitor',limit:200,cursor});
+        rows.push(...page.records.filter(row => (row.accountId === accountId || request.includeUnassigned === true && row.accountId === 'unassigned')
+          && ['users','queue','followingUsers'].includes(row.sourcePath?.[1])
+          && !fanOwnerClaims(row.payload).some(owner => owner !== accountId)));
+        cursor = page.nextCursor;
+      } while (cursor);
+      const groups = new Map();
+      for (const row of rows) {
+        const key = `${row.accountId}\0${row.handle}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+      }
+      const result = {version:3,scanned:groups.size,updated:0,review:0,removed:0,skipped:0};
+      const jobsByHandle = new Map(),jobsById = new Map();
+      for (const job of jobs) {
+        const handle = String(job.handle || '').replace(/^@/, '').toLowerCase(),id = fanId(job.targetUserId);
+        if (!jobsByHandle.has(handle)) jobsByHandle.set(handle, []);
+        jobsByHandle.get(handle).push(job);
+        if (id) {if (!jobsById.has(id)) jobsById.set(id, []);jobsById.get(id).push(job);}
+      }
+      for (const sources of groups.values()) {
+        const directory = fanDirectoryRow(sources);
+        if (!directory) continue;
+        const handle = directory.handle,ids = new Set(sources.flatMap(row => fanIds(row.payload)));
+        const id = ids.size === 1 ? [...ids][0] : '';
+        const related = id ? [...new Set([...(jobsById.get(id) || []),...(jobsByHandle.get(handle) || []).filter(job => !fanId(job.targetUserId))])]
+          : (jobsByHandle.get(handle) || []).filter(job => !fanId(job.targetUserId));
+        const tombstone = (id && tombstones.byId?.[id]) || tombstones.byHandle?.[handle];
+        const matchingTombstone = tombstone && (!tombstone.accountId || tombstone.accountId === accountId)
+          && (!tombstone.targetUserId || tombstone.targetUserId === id) ? tombstone : null;
+        const identityConflict = ids.size > 1 || sources.some(row => row.payload.status === 'identity_mismatch' || row.payload.legacyHandleIdentityConflict);
+        const receipts = [...sources.map(row => confirmedFanRemoval(row.payload, accountId, id)),...related.map(job => confirmedFanRemoval(job, accountId, id))];
+        const receipt = !identityConflict && receipts.find(Boolean);
+        const removedClaim = sources.some(row => row.payload.fanReview?.state === 'removed' || row.payload.status === 'removed' || row.payload.state === 'removed_follower' || row.payload.followerRemovedAt);
+        const pendingExternal = related.some(job => job.followResult?.attemptedAt && !job.followResult?.succeeded
+          || job.followResult?.followerRemoval?.attemptedAt && !job.followResult?.followerRemoval?.removed);
+        const problematic = related.filter(job => ['skipped','excluded','uncertain','running'].includes(job.state)
+          || job.followResult?.attemptedAt && !job.followResult?.succeeded
+          || job.followResult?.followerRemoval?.attemptedAt && !job.followResult?.followerRemoval?.removed
+          || (job.state === 'followed' || job.followResult?.succeeded) && directory.payload.relationship?.following !== true);
+        const legacyBlocked = sources.some(row => ['skipped','excluded','uncertain','identity_mismatch','no_longer_following'].includes(row.payload.status)
+          || ['skipped','excluded','uncertain'].includes(row.payload.autoFollowState));
+        const legacyUnknown = directory.payload.fanCategory === 'unknown';
+        let reason = identityConflict ? '历史账号身份冲突，等待审核'
+          : !id ? '历史账号缺少稳定用户 ID，等待审核'
+          : removedClaim && !receipt ? '历史移除标记缺少确认回执，等待审核'
+          : matchingTombstone ? matchingTombstone.reason || '历史排除或移除记录，等待审核'
+          : problematic.length ? problematic.map(job => job.reason || job.followResult?.reason || `历史队列状态：${job.state}`).join('；')
+          : legacyBlocked ? '历史规则拦截或执行结果不明，等待审核'
+          : legacyUnknown ? directory.payload.fanRelationshipReason || '历史关系信息不完整，等待审核' : '';
+        const canShowRemoved = receipt && directory.payload.relationship?.following !== true && directory.payload.relationship?.followedBy !== true;
+        const state = canShowRemoved ? 'removed' : reason ? 'review' : '';
+        const ownerPatchFor = row => {
+          if (request.includeUnassigned !== true) return {};
+          const patch = row.payload.ownerAccountId !== accountId ? {ownerAccountId:accountId} : {};
+          const review = row.payload.fanReview;
+          if (review && (!review.ownerAccountId || id && !review.targetUserId)) {
+            patch.fanReview = {...review,ownerAccountId:accountId,...(id && !review.targetUserId ? {targetUserId:id} : {})};
+          }
+          return patch;
+        };
+        if (!state) {
+          for (const row of sources) {
+            // Ordinary history inherits the durable, exclusive projection owner.
+            // Avoid thousands of identical per-source journals for an ownership-only upgrade.
+            if (!row.payload.fanReview) continue;
+            const patch = ownerPatchFor(row);
+            if (!Object.keys(patch).length) continue;
+            await applyBatchBody('monitor',[{accountId:row.accountId,userKey:row.userKey,handle:row.handle,sourceBucket:row.sourcePath[1],patch}],row.accountId);
+            result.updated++;
+          }
+          result.skipped++;continue;
+        }
+        if (canShowRemoved) reason = receipt.reason || '已确认移除此关注者';
+        let changed = false;
+        for (const row of sources) {
+          const previous = row.payload.fanReview;
+          // Explicit current decisions win over a generic migration; identity/removal contradictions fail closed.
+          const ownerPatch = ownerPatchFor(row);
+          if (previous && previous.source !== 'legacy-migration' && !identityConflict && id && !matchingTombstone && !pendingExternal && !canShowRemoved
+            && !(removedClaim && (!receipt || !confirmedFanRemoval(row.payload, accountId, id)))) {
+            if (Object.keys(ownerPatch).length) {
+              await applyBatchBody('monitor',[{accountId:row.accountId,userKey:row.userKey,handle:row.handle,sourceBucket:row.sourcePath[1],patch:ownerPatch}],row.accountId);
+              result.updated++;changed = true;
+            }
+            continue;
+          }
+          const legacy = previous?.source === 'legacy-migration' ? previous.legacyReview : clone(previous);
+          const fanReview = {
+            ...(previous || {}),state,workflow:state,source:'legacy-migration',reason,ownerAccountId:accountId,
+            ...(id ? {targetUserId:id} : {}),
+            decision:state === 'removed' ? 'remove' : 'review',
+            ...(legacy ? {legacyReview:legacy} : {}),
+            ...(receipt ? {removalReceipt:receipt} : {}),
+            migration:{version:3,ownerAccountId:accountId,targetUserId:id,identityConflict,
+              sourceRecords:sources.map(source => ({accountId:source.accountId,userKey:source.userKey,targetUserIds:fanIds(source.payload)})),
+              queueHistory:clone(related),...(matchingTombstone ? {tombstone:clone(matchingTombstone)} : {})}
+          };
+          if (!Object.keys(ownerPatch).length && previous && canonicalValue(previous) === canonicalValue(fanReview)) continue;
+          await applyBatchBody('monitor',[{accountId:row.accountId,userKey:row.userKey,handle:row.handle,sourceBucket:row.sourcePath[1],patch:{...ownerPatch,fanReview}}],row.accountId);
+          result.updated++;changed = true;
+        }
+        if (changed) result[state]++;
+        else result.skipped++;
+      }
+      await projection.writeState({fanReviewMigrationVersion:3});
+      return result;
+    });
   }
 
   async function fanInspectionTargets(request = {}) {
@@ -1538,7 +1893,7 @@ export function createRecordRuntime({
     const directoryAccounts = new Set(rows.filter(row => row.sourceKey === 'monitor' || row.sourceKey === 'derived:fanDirectory').map(row => row.accountId));
     for (const accountId of directoryAccounts) {
       const previous = rows.find(row => row.module === 'fanDirectory' && row.accountId === accountId);
-      const next = fanDirectoryRow(rows.filter(row => row.accountId === accountId));
+      const next = reviewDirectoryRow(rows.filter(row => row.accountId === accountId));
       if (next || previous) await track('refresh-fan-directory', () => projection.mutateRow(next ? {row:next, membership:membershipOf(next)} : null,
         previous ? [accountId,'fanDirectory',handle] : null));
     }
@@ -1586,7 +1941,14 @@ export function createRecordRuntime({
     }
     const real = rows.find(row => row.sourceKey === 'unreciprocatedTracker' && row.sourcePath?.[1] === 'users');
     const synthetic = rows.find(row => row.sourceKey === 'derived:tracker' || row.sourcePath?.[1] === 'synthetic');
-    const source = trackerSource(rows);
+    const state = await projection.readState();
+    // Old relationship flags in retained customer profiles must not recreate a
+    // tracker after the current owner's verified no-relationship cleanup.
+    const source = trackerSource(rows.filter(row=>{
+      const owner=row.accountId==='unassigned'?[row.payload?.ownerAccountId,row.payload?.accountId,row.payload?.fanReview?.ownerAccountId,row.payload?.fanGrant?.ownerAccountId,state.fanReviewLegacyOwnerAccountId].find(id=>id&&id!=='unassigned'):row.accountId;
+      const marker=state.metadata?.monitor?.fanRetentionExclusions?.[owner+':'+handle];
+      return !(marker?.scope==='fans'&&fanRowOwned(row,owner,state.fanReviewLegacyOwnerAccountId)&&fanRetentionBlocks(marker,{sourceKey:'monitor',moduleName:row.module,payload:row.payload}));
+    }));
     if (real && synthetic) await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     if (!real && source) {
       const generated = trackerTemplate(source, rows);
@@ -1615,7 +1977,6 @@ export function createRecordRuntime({
       await track('delete-tracker-row', () => projection.mutateRow(null, [synthetic.accountId, synthetic.module, synthetic.userKey]));
     }
     await track('refresh-related-views', () => refreshBoundViews(handle, relation, rows));
-    const state = await projection.readState();
     if (state.fanDirectoryDirtyHandles?.includes(handle)) await projection.writeState({fanDirectoryDirtyHandles:state.fanDirectoryDirtyHandles.filter(item => item !== handle)});
   }
 
@@ -1631,6 +1992,14 @@ export function createRecordRuntime({
     if (row.handle) await recomputeHandle(row.handle);
     await bumpRevision();
     await persistIncremental(backup);
+    if(row.module==='unreciprocated'&&row.payload?.status==='unfollowed'){
+      const state=await projection.readState(),p=row.payload,at=Date.parse(p.unfollowedAt||'');
+      if(Number.isFinite(at)){
+        const history=mergeUnfollowHistory(state.metadata?.unreciprocatedTracker?.unfollowHistory||{},[{accountId:row.accountId==='unassigned'?state.fanReviewLegacyOwnerAccountId||state.metadata?.unreciprocatedTracker?.unfollowHistoryLegacyOwner||'unassigned':row.accountId,
+          handle:row.handle,targetUserId:p.id||'',name:p.name||row.handle,at,source:'stored-outcome'}]);
+        await mergeRootBody('unreciprocatedTracker',{unfollowHistory:history});
+      }
+    }
     const stored = await projection.getRow(row.accountId, row.module, row.userKey);
     return stored ? present(stored) : saved;
   }
@@ -1795,6 +2164,113 @@ export function createRecordRuntime({
     return sequenceMutation(() => applyMutation(kind, request));
   }
 
+  async function suppressRetainedRow({accountId,sourceKey,moduleName,payload}) {
+    const state=await projection.readState(),markers=state.metadata?.monitor?.fanRetentionExclusions||{};
+    const owner=accountId==='unassigned'?([payload.ownerAccountId,payload.accountId,state.fanReviewLegacyOwnerAccountId].find(id=>id&&id!=='unassigned')||'unassigned'):accountId;
+    const marker=markers[owner+':'+handleOf(payload)];
+    if(marker?.scope==='account'){
+      const access=(await storage.local.get([PROFILE_ACCESS_PREFIX+handleOf(payload)]))[PROFILE_ACCESS_PREFIX+handleOf(payload)];
+      if(access?.status==='ok'&&access.checkedAt>marker.observedAt)return false;
+    }
+    return fanRetentionBlocks(marker,{accountId,sourceKey,moduleName,payload});
+  }
+
+  async function fanCleanupCandidates(request={}) {
+    await ensureOpen();requireReady();await flushDirty('fans');
+    const owner=request.ownerId;if(!owner||owner==='unassigned')throw Error('缺少清理归属账号');
+    await sequenceMutation(()=>persistFanRetentionOwner(owner));
+    const state=await projection.readState(),groups=new Map();let cursor=null;
+    do {
+      const page=await projection.scanBySource({sourceKey:'monitor',limit:200,cursor});
+      for(const row of page.records)if(fanRowOwned(row,owner,state.fanReviewLegacyOwnerAccountId)){
+        if(!groups.has(row.handle))groups.set(row.handle,[]);groups.get(row.handle).push(row);
+      }
+      cursor=page.nextCursor;
+    }while(cursor);
+    const handles=[...groups.keys()],access=handles.length?await storage.local.get(handles.map(h=>PROFILE_ACCESS_PREFIX+h)):{};
+    const candidates=[];
+    for(const[handle,rows]of groups){const decision=fanRetentionDecision(rows,access[PROFILE_ACCESS_PREFIX+handle]);if(decision)candidates.push({handle,...decision});}
+    // A previous attempt may have removed records before queue cleanup failed.
+    const orphanTrackers=new Set();
+    for(const sourceKey of ['derived:tracker','unreciprocatedTracker']){
+      let trackerCursor=null;
+      do{
+        const page=await projection.scanBySource({sourceKey,limit:200,cursor:trackerCursor});
+        for(const row of page.records){const marker=state.metadata?.monitor?.fanRetentionExclusions?.[owner+':'+row.handle];
+          if(marker?.scope==='fans'&&fanRowOwned(row,owner,state.fanReviewLegacyOwnerAccountId)&&fanRetentionBlocks(marker,{sourceKey:'monitor',moduleName:row.module,payload:row.payload})){
+            const related=(await projection.rowsByHandleKey(row.handle)).filter(r=>fanRowOwned(r,owner,state.fanReviewLegacyOwnerAccountId));
+            if(!hasNewerFanRelationship(related,marker))orphanTrackers.add(row.handle);
+          }
+        }
+        trackerCursor=page.nextCursor;
+      }while(trackerCursor);
+    }
+    for(const[key,marker]of Object.entries(state.metadata?.monitor?.fanRetentionExclusions||{})){
+      if(marker.ownerId===owner&&!groups.has(key.slice(owner.length+1)))candidates.push({handle:key.slice(owner.length+1),...marker,orphan:true,hasRecords:orphanTrackers.has(key.slice(owner.length+1))});
+    }
+    return {candidates,scanned:handles.length};
+  }
+
+  async function cleanupFanRecord(request={}) {
+    await ensureOpen();requireReady();
+    const handle=String(request.handle||'').replace(/^@/,'').toLowerCase(),owner=request.ownerId;
+    if(!owner||owner==='unassigned'||!/^[a-z0-9_]{1,15}$/.test(handle))throw Error('清理目标或归属账号无效');
+    return sequenceMutation(async()=>{
+      await recoverBackups();await persistFanRetentionOwner(owner);const state=await projection.readState();
+      const rows=(await projection.rowsByHandleKey(handle)).filter(row=>fanRowOwned(row,owner,state.fanReviewLegacyOwnerAccountId));
+      const access=(await storage.local.get([PROFILE_ACCESS_PREFIX+handle]))[PROFILE_ACCESS_PREFIX+handle];
+      const prior=state.metadata?.monitor?.fanRetentionExclusions?.[owner+':'+handle];
+      if(prior?.scope==='fans'&&!rows.some(row=>row.sourceKey==='monitor')&&hasNewerFanRelationship(rows,prior))return {handle,deleted:0,skipped:true,reason:'relationship-renewed'};
+      const decision=fanRetentionDecision(rows,access)||(!rows.some(row=>row.sourceKey==='monitor')&&prior?.scope==='fans'?prior:null);
+      if(!decision)return {handle,deleted:0,skipped:true};
+      const ids=[...new Set(rows.filter(r=>decision.scope==='fans'?r.sourceKey==='monitor':r.module!=='logs').map(r=>fanTargetId(r.payload)).filter(Boolean))];
+      if(decision.scope==='account'&&ids.length>1)return {handle,deleted:0,skipped:true,reason:'identity-conflict'};
+      if(request.targetIds?.length&&ids.some(id=>!request.targetIds.includes(id)))return {handle,deleted:0,skipped:true,reason:'identity-changed'};
+      const markers={...(state.metadata?.monitor?.fanRetentionExclusions||{})};
+      const marker={...decision,ownerId:owner,targetIds:decision.targetIds.length?decision.targetIds:ids.length?ids:markers[owner+':'+handle]?.targetIds||[]};
+      const independentlyUsed=rows.some(row=>['mutual','comments','analysis','rows'].includes(row.module));
+      const modules=new Set(['fans','mutual','comments','unreciprocated','profiles','analysis','rows']);
+      const targets=(decision.scope==='account'?rows:rows.filter(row=>row.sourceKey==='monitor'||row.module==='unreciprocated'||!independentlyUsed&&row.module==='profiles'))
+        .filter(row=>modules.has(row.module)&&row.sourceKey!=='derived:notMutual')
+        .filter(row=>decision.scope==='account'||!decision.targetIds.length||!fanTargetId(row.payload)||decision.targetIds.includes(fanTargetId(row.payload)));
+      const removedRows=targets.map(row=>({accountId:row.accountId,module:row.module,userKey:row.userKey,handle,targetUserId:fanTargetId(row.payload)}));
+      if(targets.length||canonicalValue(markers[owner+':'+handle]||{})!==canonicalValue(marker)){
+        const key=owner+':'+handle;
+        // One durable deletion plan owns every bucket for this identity. A
+        // restart can replay the whole plan after any partial local deletion.
+        await persistIncremental({operationId:`fan-retention:${key}:${await hashCanonical({marker,removedRows})}`,
+          kind:'fanRetention',handle,payload:{key,marker,removedRows}});
+        markers[key]=marker;
+        await projection.writeState({metadata:{...(state.metadata||{}),monitor:{...(state.metadata?.monitor||{}),fanRetentionExclusions:markers}},
+          fanDirectoryDirtyHandles:targets.length?[...new Set([...(state.fanDirectoryDirtyHandles||[]),handle])]:state.fanDirectoryDirtyHandles||[]});
+      }
+      const deleted=await applyFanCleanupRows(removedRows);
+      if(deleted){await recomputeHandle(handle);await bumpRevision();}
+      const remaining=(await projection.rowsByHandleKey(handle)).filter(row=>fanRowOwned(row,owner,state.fanReviewLegacyOwnerAccountId));
+      if(remaining.some(row=>row.sourceKey==='monitor'))throw Error('粉丝记录清理后仍有残留');
+      return {handle,deleted,...decision,targetIds:marker.targetIds};
+    });
+  }
+
+  async function persistFanRetentionOwner(owner){
+    const state=await projection.readState();
+    if(state.fanReviewLegacyOwnerAccountId!==owner||state.fanRetentionOwnerJournaled===owner)return;
+    // The exclusive legacy owner is already confirmed. Preserve that proof for
+    // rebuilding into a fresh database, where old rows still say unassigned.
+    await persistIncremental({operationId:`fan-retention-owner:${owner}`,kind:'fanRetentionOwner',ownerId:owner});
+    await projection.writeState({fanRetentionOwnerJournaled:owner});
+  }
+
+  async function applyFanCleanupRows(removedRows=[]) {
+    let deleted=0;
+    for(const item of removedRows){
+      const row=await projection.getRow(item.accountId,item.module,item.userKey);
+      if(!row||row.handle!==item.handle||item.targetUserId&&fanTargetId(row.payload)!==item.targetUserId)continue;
+      await projection.mutateRow(null,[row.accountId,row.module,row.userKey]);deleted++;
+    }
+    return deleted;
+  }
+
   async function deleteFanAccount(request = {}) {
     await ensureOpen();
     requireReady();
@@ -1809,6 +2285,36 @@ export function createRecordRuntime({
         if (!result.missing) deleted++;
       }
       return {handle, deleted};
+    });
+  }
+
+  async function deleteAccountRows(rows, handle) {
+    const modules = new Set(['fans', 'mutual', 'comments', 'unreciprocated', 'profiles', 'analysis', 'rows']);
+    const targets = rows.filter(row => modules.has(row.module) && row.sourceKey !== 'derived:notMutual')
+      .sort((a, b) => Number(a.module === 'unreciprocated') - Number(b.module === 'unreciprocated'));
+    let deleted = 0;
+    for (const row of targets) {
+      const result = await applyMutation('delete', {module:row.module, accountId:row.accountId,
+        userKey:row.userKey, expectedHandle:handle, exactKeyOnly:true, operationId:crypto.randomUUID()});
+      if (!result.missing) deleted++;
+    }
+    return {handle, deleted};
+  }
+
+  async function deleteLocalAccount(request = {}) {
+    await ensureOpen();requireReady();
+    const handle=String(request.handle||'').replace(/^@/,'').toLowerCase();
+    if(!/^[a-z0-9_]{1,15}$/.test(handle) || !request.ownerId)throw new Error('删除目标或所属账号无效');
+    return sequenceMutation(async()=>{
+      await recoverBackups();
+      const owner = String(request.ownerId);
+      const rows=(await projection.rowsByHandleKey(handle)).filter(row=>['unassigned',owner].includes(row.accountId) && row.module!=='logs'
+        && [row.payload?.accountId,...fanOwnerClaims(row.payload || {})].filter(id=>id && id!=='unassigned').every(id=>id===owner));
+      // Manual confirmation selects this handle under its owner. Legacy source
+      // IDs may disagree (including old reply Tweet IDs); no X action is issued.
+      // An explicit local delete does not depend on API/availability analysis and
+      // is not a scheduling tombstone. Fresh collection may create a new record.
+      return deleteAccountRows(rows,handle);
     });
   }
 
@@ -1829,17 +2335,7 @@ export function createRecordRuntime({
         if(request.automatic)return {handle,deleted:0,skipped:true};
         throw new Error('账号尚未确认为封禁或不存在，请先重新检查');
       }
-      const modules = new Set(['fans', 'mutual', 'comments', 'unreciprocated', 'profiles', 'analysis', 'rows']);
-      // Delete original sources first, then tracker overlays. Derived rows are recomputed.
-      const targets = rows.filter(row => modules.has(row.module) && row.sourceKey !== 'derived:notMutual')
-        .sort((a, b) => Number(a.module === 'unreciprocated') - Number(b.module === 'unreciprocated'));
-      let deleted = 0;
-      for (const row of targets) {
-        const result = await applyMutation('delete', {module: row.module, accountId: row.accountId,
-          userKey: row.userKey, expectedHandle: handle, operationId: crypto.randomUUID()});
-        if (!result.missing) deleted++;
-      }
-      return {handle, deleted};
+      return deleteAccountRows(rows,handle);
     });
   }
 
@@ -1853,11 +2349,14 @@ export function createRecordRuntime({
       await persistIncremental(prior);
       return prior.result;
     }
-    const accountId = accountOf(request.record || request.patch || {}, request.accountId);
+    // Delete has no payload to assert ownership against. Its compound lookup
+    // already contains the explicit owner; payload validation applies to writes.
+    const accountId = kind==='delete'?(typeof request.accountId==='string'&&request.accountId.trim()?request.accountId:'unassigned')
+      :accountOf(request.record || request.patch || {}, request.accountId);
     if (kind === 'delete') {
       let existing = request.userKey ? await projection.getRow(accountId, moduleName, request.userKey) : null;
       if (existing && request.expectedHandle && String(existing.handle || '').toLowerCase() !== String(request.expectedHandle).toLowerCase()) existing = null;
-      if (!existing && request.expectedHandle) {
+      if (!existing && request.expectedHandle && !request.exactKeyOnly) {
         existing = (await projection.rowsByHandle(accountId, moduleName, [request.expectedHandle]))[0] || null;
       }
       if (!existing) return {deleted: request.userKey || null, missing: true};
@@ -1868,6 +2367,7 @@ export function createRecordRuntime({
         operationId: request.operationId,
         kind: 'delete',
         module: target.module,
+        accountId:target.accountId,
         userKey: target.userKey,
         handle: target.handle,
         sourceKey: target.sourceKey,
@@ -1898,6 +2398,7 @@ export function createRecordRuntime({
       assertExpectedHandle(existing, request.expectedHandle);
       existing = await sourceTarget(existing);
       const payload = {...existing.payload, ...stripRecordMeta(request.patch || {})};
+      if(await suppressRetainedRow({accountId,sourceKey:existing.sourceKey,moduleName,payload}))return {skipped:true,reason:'fan-retention'};
       const row = await materializeRow({
         previous: existing,
         payload,
@@ -1923,6 +2424,7 @@ export function createRecordRuntime({
     delete payload.userKey;
     const sourceKey = existing?.sourceKey || legacyKeyFor(moduleName);
     const sourcePath = existing?.sourcePath || canonicalSourcePath(moduleName, sourceKey, 'users', handleOf(payload) || request.operationId);
+    if(await suppressRetainedRow({accountId,sourceKey,moduleName,payload}))return {skipped:true,reason:'fan-retention'};
     const row = await materializeRow({
       previous: existing,
       payload,
@@ -2014,13 +2516,41 @@ export function createRecordRuntime({
         existing = await projection.getRow(accountId, moduleName, change.userKey);
       }
       if (existing?.sourceKey === 'derived:notMutual') existing = await sourceTarget(existing);
+      if(sourceKey==='profileCache'&&Object.hasOwn(change,'expectedTargetUserId')){
+        const expected=fanId(change.expectedTargetUserId),ids=fanIds(existing?.payload||{});
+        const declarations=[existing?.payload,patch].flatMap(p=>[p?.id,p?.targetUserId,p?.rest_id,p?.restId]).filter(v=>v!==null&&v!==undefined&&v!=='');
+        if(!expected||declarations.some(v=>typeof v!=='string'||v!==expected)||ids.some(id=>id!==expected)||!fanIds(patch).includes(expected)){
+          const error=new Error('profile cache stable user ID changed');error.name='RecordIdentityConflictError';throw error;
+        }
+      }
+      if (sourceKey === 'monitor' && (Object.hasOwn(change,'expectedTargetUserId') || Object.hasOwn(change,'expectedOwnerAccountId') || Object.hasOwn(change,'expectedFanReviewVersion'))) {
+        const reject = (name,message) => {const error=new Error(message);error.name=name;throw error;};
+        if (!existing) reject('RecordIdentityConflictError','guarded fan record was not found');
+        if (Object.hasOwn(change,'expectedTargetUserId')) {
+          const expected=fanId(change.expectedTargetUserId),ids=fanIds(existing.payload);
+          if (!expected || ids.length !== 1 || ids[0] !== expected) reject('RecordIdentityConflictError','fan record stable user ID changed');
+          if (['id','rest_id','restId','targetUserId'].some(key=>Object.hasOwn(patch,key) && fanId(patch[key])!==expected)) reject('RecordIdentityConflictError','guarded fan patch changes the stable user ID');
+        }
+        if (Object.hasOwn(change,'expectedOwnerAccountId')) {
+          const expected=change.expectedOwnerAccountId,claims=fanOwnerClaims(existing.payload);
+          const legacyOwner=existing.accountId==='unassigned' ? (await projection.readState()).fanReviewLegacyOwnerAccountId : null;
+          if (typeof expected!=='string' || !expected || expected==='unassigned' || claims.some(owner=>owner!==expected) || fanOwnerClaims(patch).some(owner=>owner!==expected)
+            || existing.accountId!==expected && !(existing.accountId==='unassigned' && (legacyOwner===expected || claims.includes(expected)))) {
+            reject('RecordIdentityConflictError','fan record owner changed');
+          }
+        }
+        if (Object.hasOwn(change,'expectedFanReviewVersion')) {
+          const expected=change.expectedFanReviewVersion,actual=Number(existing.payload.fanReview?.decisionVersion)||0;
+          if (!Number.isInteger(expected) || expected<0 || expected!==actual) reject('RecordReviewConflictError','fan review decision changed');
+        }
+      }
       const operationId = change.operationId || crypto.randomUUID();
       const accountId = existing?.accountId || requestedAccount || patch.accountId || 'unassigned';
       if (change.remove) {
         if (!existing) continue;
         const result = {deleted: existing.userKey};
         const backup = {
-          operationId, kind: 'delete', module: existing.module, userKey: existing.userKey, handle: existing.handle,
+          operationId, kind: 'delete', accountId:existing.accountId, module: existing.module, userKey: existing.userKey, handle: existing.handle,
           sourceKey: existing.sourceKey, sourcePath: existing.sourcePath, removed: true, status: 'pending', savedAt: now(), result
         };
         await projection.commitWithBackup([existing.accountId, existing.module, existing.userKey], null, backup);
@@ -2032,6 +2562,7 @@ export function createRecordRuntime({
       if (!existing && !change.create && bucket !== 'synthetic') throw new Error('batch record was not found');
       const payload = {...(existing?.payload || {}), ...patch};
       if (handle) payload.handle = patch.handle || existing?.payload?.handle || handle;
+      if(await suppressRetainedRow({accountId,sourceKey,moduleName,payload})){skipped++;continue;}
       if (existing && canonicalValue(payload) === canonicalValue(existing.payload)) { skipped++; continue; }
       const leaf = identity || handle || operationId;
       const sourcePath = existing?.sourcePath || canonicalSourcePath(moduleName, sourceKey, bucket, leaf);
@@ -2112,7 +2643,27 @@ export function createRecordRuntime({
   }
 
   async function applyReplay(entry) {
-    if (entry.kind === 'mergeRoot' && entry.sourceKey) {
+    if(entry.kind==='fanRetentionOwner'&&entry.ownerId){
+      const state=await projection.readState();
+      if(state.fanReviewLegacyOwnerAccountId&&state.fanReviewLegacyOwnerAccountId!==entry.ownerId)throw Error('恢复的粉丝历史归属相互冲突');
+      await projection.writeState({fanReviewLegacyOwnerAccountId:entry.ownerId,fanRetentionOwnerJournaled:entry.ownerId});
+      // Older deletion plans can precede this newly durable owner proof. Repair
+      // only affected derived trackers created while replay still lacked it.
+      const affected=new Set();let cursor=null;
+      do{
+        const page=await projection.scanBySource({sourceKey:'derived:tracker',limit:200,cursor});
+        for(const row of page.records){const marker=state.metadata?.monitor?.fanRetentionExclusions?.[entry.ownerId+':'+row.handle];
+          if(marker?.scope==='fans'&&fanRowOwned(row,entry.ownerId,entry.ownerId)&&fanRetentionBlocks(marker,{sourceKey:'monitor',moduleName:row.module,payload:row.payload}))affected.add(row.handle);
+        }
+        cursor=page.nextCursor;
+      }while(cursor);
+      for(const handle of affected)await recomputeHandle(handle,replayStep);
+    }else if(entry.kind==='fanRetention'&&entry.payload?.key&&entry.payload?.marker){
+      const state=await projection.readState(),metadata={...(state.metadata||{})},monitor={...(metadata.monitor||{})};
+      monitor.fanRetentionExclusions={...(monitor.fanRetentionExclusions||{}),[entry.payload.key]:entry.payload.marker};
+      await projection.writeState({metadata:{...metadata,monitor}});
+      await applyFanCleanupRows(entry.payload.removedRows);
+    } else if (entry.kind === 'mergeRoot' && entry.sourceKey) {
       const state = await replayStep('read-metadata', () => projection.readState());
       const metadata = {...(state.metadata || {})};
       metadata[entry.sourceKey] = {...(metadata[entry.sourceKey] || {}), ...(entry.payload || {})};
@@ -2125,6 +2676,7 @@ export function createRecordRuntime({
       }
     } else if (entry.payload && entry.module && entry.userKey) {
       const accountId = entry.accountId || entry.result?.accountId || 'unassigned';
+      if(await suppressRetainedRow({accountId,sourceKey:entry.sourceKey,moduleName:entry.module,payload:entry.payload}))return;
       const previous = await replayStep('read-row', () => projection.getRow(accountId, entry.module, entry.userKey));
       const row = await replayStep('prepare-row', () => materializeRow({
         previous,
@@ -2239,7 +2791,7 @@ export function createRecordRuntime({
     const op = message.op;
     if (op === 'status') {
       await ensureOpen();
-      return {ok: true, status: publicProgress()};
+      return {ok: true, status: {...publicProgress(),dataUpgrades:{replyUserIdRepair:userIdUpgradeResult}}};
     }
     if (op === 'migrate') return {ok: true, status: await migrate()};
     if (op === 'query') return {ok: true, page: await query(message)};
@@ -2247,11 +2799,16 @@ export function createRecordRuntime({
     if (op === 'put') return {ok: true, result: await mutate('put', message)};
     if (op === 'patch') return {ok: true, result: await mutate('patch', message)};
     if (op === 'delete') return {ok: true, result: await mutate('delete', message)};
+    if(op==='fanCleanupCandidates')return {ok:true,...await fanCleanupCandidates(message)};
+    if(op==='cleanupFanRecord')return {ok:true,result:await cleanupFanRecord(message)};
     if (op === 'deleteFanAccount') return {ok:true, result:await deleteFanAccount(message)};
+    if (op === 'deleteLocalAccount') return {ok:true, result:await deleteLocalAccount(message)};
     if (op === 'deleteUnavailableAccount') return {ok: true, result: await deleteUnavailableAccount(message)};
     if (op === 'summary') return {ok: true, summary: await summary(message)};
     if (op === 'relations') return {ok: true, relations: await relations(message)};
     if (op === 'fanDirectory') return {ok:true,records:(await fanDirectory(message)).map(presentDirectory)};
+    if (op === 'fanReviewOwner') return {ok:true,ownerAccountId:await fanReviewOwner()};
+    if (op === 'migrateFanReview') return {ok:true,result:await migrateFanReview(message)};
     if (op === 'fanInspectionTargets') return {ok:true,handles:await fanInspectionTargets(message)};
     if (op === 'relationSummary') return {ok: true, summary: await relationSummary()};
     if (op === 'profiles') return {ok: true, profiles: await profiles(message)};
@@ -2320,6 +2877,11 @@ export function createRecordRuntime({
     deleteRecord: request => mutate('delete', request),
     sourcePage,
     lookupAll,
+    fanDirectory,
+    fanReviewOwner,
+    fanInspectionTargets,
+    migrateFanReview,
+    batch: applyBatch,
     recoverBackups,
     maintainBackups,
     replayBackups,

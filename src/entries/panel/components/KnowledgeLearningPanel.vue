@@ -20,7 +20,7 @@
         <label><input v-model="draft.writingKnowledgeEnabled" type="checkbox">{{ t("生成时使用当前智慧") }}<InfoTip :text="t(&quot;开启后，面板评论与关注队列的引用/回复在生成时参考当前选中的智慧版本。文章、原创与测试连接不使用。经验需先合入智慧。&quot;)" /></label>
         <p class="learning-hint">{{ t("北京时间 · 下次总结 \u007b\u007bv0\u007d\u007d · 下次合并 \u007b\u007bv1\u007d\u007d",{v0:draft.enabled?date(state?.config.nextAt):t("未安排"),v1:draft.weeklyEnabled?date(state?.config.nextMergeAt):t("未安排")}) }}</p>
         <label>{{ t("每日预算") }}<PanelSelect v-model.number="draft.dailyBudget" :aria-label="t(&quot;每日整理预算&quot;)"><option v-for="n in 5" :key="n" :value="n">{{ t("\u007b\u007bv0\u007d\u007d 次",{v0:n}) }}</option></PanelSelect><InfoTip :text="t(&quot;经验总结和智慧融合共用预算。查询、选择智慧、手动编辑保存均不增加AI调用。&quot;)" /></label>
-        <label class="learning-engine">{{ t("AI 引擎") }}<PanelSelect v-model="draft.generationProvider" @change="changeEngine"><option v-for="item in LOCAL_AI_ENGINES" :key="item.provider" :value="item.provider">{{ t(item.label) }}</option></PanelSelect></label><label class="learning-engine">{{ t("生成会话") }}<PanelSelect id="knowledge-session" class="ai-session-select" :title="localBots.find(item=>item.id===draft.bot)?.title||draft.botName" v-model="draft.bot" :disabled="!localBots.length" @change="draft.botName=localBots.find(item=>item.id===draft.bot)?.name||''"><option value="">{{ t("请选择会话") }}</option><option v-if="draft.bot&&!localBots.some(item=>item.id===draft.bot)" :value="draft.bot">{{ t("\u007b\u007bv0\u007d\u007d（待确认）",{v0:(draft.botName || t("已保存的会话"))}) }}</option><option v-for="item in localBots" :key="item.id" :value="item.id" :title="item.title||item.name">{{ item.name }}</option></PanelSelect></label><div class="learning-engine-actions"><button type="button" class="secondary" @click="configureEngine">{{ t("管理连接") }}</button><button type="button" class="secondary" @click="refreshEngine">{{ t("重新检测") }}</button></div>
+        <label class="learning-engine">{{ t("AI 引擎") }}<PanelSelect v-model="draft.generationProvider" @change="changeEngine"><option v-for="item in LOCAL_AI_ENGINES" :key="item.provider" :value="item.provider">{{ t(item.label) }}</option></PanelSelect></label><label class="learning-engine">{{ t("生成会话") }}<PanelSelect id="knowledge-session" class="ai-session-select" :title="localBots.find(item=>item.id===draft.bot)?.title||draft.botName" v-model="draft.bot" :disabled="!localBots.length" @change="draft.botName=localBots.find(item=>item.id===draft.bot)?.name||''"><option value="">{{ t("请选择会话") }}</option><option v-if="draft.bot&&!localBots.some(item=>item.id===draft.bot)" :value="draft.bot">{{ t("\u007b\u007bv0\u007d\u007d（待确认）",{v0:(draft.botName || t("已保存的会话"))}) }}</option><option v-for="item in localBots" :key="item.id" :value="item.id" :title="item.title||item.name">{{ item.name }}</option></PanelSelect></label><div class="learning-engine-actions"><button type="button" class="secondary" @click="configureEngine">{{ t("管理连接") }}</button></div>
         <p class="learning-hint">{{ t("今日已用 \u007b\u007bv0\u007d\u007d / \u007b\u007bv1\u007d\u007d 次",{v0:(state?.budgetUsed || 0),v1:(state?.config.dailyBudget || 2)}) }}</p>
         <p v-if="settingsError" role="alert" class="learning-error">{{ t(settingsError) }}</p>
       </div>
@@ -33,12 +33,13 @@ import {t,locale} from '../../../shared/i18n.js';
 
 import PanelSelect from "./PanelSelect.vue";
 import InfoTip from './InfoTip.vue';
-import {computed,onBeforeUnmount,reactive,ref,watch} from 'vue';
+import {computed,onMounted,onBeforeUnmount,reactive,ref,watch} from 'vue';
 import {Eye} from 'lucide';
 import ActionSettingsDrawer from './ActionSettingsDrawer.vue';
 import PanelModal from './PanelModal.vue';
 import PanelPager from './PanelPager.vue';
 import PanelIconButton from './PanelIconButton.vue';
+import {AI_CONNECTION_KEY} from '../../../features/grok/ai-connection-state.js';
 import {getLocalAiService,LOCAL_AI_ENGINES} from '../../../features/grok/grok-local.js';
 const props=defineProps({ownerId:{type:String,required:true}}),emit=defineEmits(['updated']);
 const state=ref(null),error=ref(''),notice=ref(''),settingsError=ref(''),busy=ref(false),drawer=ref(null),localBot=ref(null),localBots=ref([]),draft=reactive({});
@@ -58,6 +59,9 @@ async function act(action,extra={}){busy.value=true;error.value='';notice.value=
 async function open(){await refresh();Object.assign(draft,{weeklyEnabled:false,weeklyDay:0,weeklyHour:22,generationProvider:'grok-local'},state.value?.config||{});settingsError.value='';drawer.value?.open();void refreshEngine();}
 let engineRevision=0;
 async function refreshEngine(){const ticket=++engineRevision;localBots.value=[];try{const service=getLocalAiService(draft.generationProvider),status=await service.status();const rows=status.enabled?await service.list(await service.configuration()):[];if(ticket!==engineRevision)return;localBot.value=status;localBots.value=rows;if(!status.enabled)settingsError.value='请先连接并测试所选 AI 引擎';else settingsError.value='';}catch(e){if(ticket===engineRevision)settingsError.value=e.message;}}
+function connectionChanged(changes,area){if(area==='local'&&changes[AI_CONNECTION_KEY]&&draft.generationProvider)void refreshEngine();}
+onMounted(()=>globalThis.chrome?.storage?.onChanged?.addListener(connectionChanged));
+onBeforeUnmount(()=>globalThis.chrome?.storage?.onChanged?.removeListener(connectionChanged));
 async function changeEngine(){draft.bot='';draft.botName='';await refreshEngine();}
 function configureEngine(){document.dispatchEvent(new CustomEvent('xfollower:bind-grok-local',{detail:{provider:draft.generationProvider}}));}
 async function save(){busy.value=true;try{state.value=await request('save',{config:{...draft}});drawer.value?.close();notice.value='自动学习设置已保存';}catch(e){settingsError.value=e.message;}finally{busy.value=false;}}

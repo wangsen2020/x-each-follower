@@ -1,4 +1,6 @@
-import test from 'node:test';
+import test, {beforeEach,afterEach} from 'node:test';
+beforeEach(()=>{globalThis.__xfAccountSnapshot={account:{id:'1',handle:'owner'},status:'ready'};});
+afterEach(()=>{delete globalThis.__xfAccountSnapshot;});
 import assert from 'node:assert/strict';
 import {createArticlePublisher,validateArticleInput} from '../src/features/publishing/article-publisher.js';
 import {articleComposerOnPage,readArticlePublicationOnPage} from '../src/features/publishing/article-page.js';

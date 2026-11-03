@@ -13,6 +13,6 @@ export function normalizeLowRules(value={}) {
 }
 export function validateLowRules(value) {
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('低表现帖配置无效');
-  for(const f of LOW_RULE_FIELDS)if(!Number.isInteger(value[f.key])||value[f.key]<f.min||value[f.key]>f.max)throw new Error(`${f.label}需为${f.min}–${f.max}的整数`);
+  for(const f of LOW_RULE_FIELDS)if(!Number.isInteger(value[f.key])||value[f.key]<f.min||value[f.key]>f.max)throw new Error(`${f.label}需为 ${f.min}–${f.max} 的整数`);
   return normalizeLowRules(value);
 }

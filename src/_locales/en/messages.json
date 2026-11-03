@@ -2784,7 +2784,7 @@
     }
   },
   "ui_3cd97e97": {
-    "message": "Ended"
+    "message": "Finished"
   },
   "ui_d52b11fd": {
     "message": "Switching steps"
@@ -3110,7 +3110,7 @@
     }
   },
   "ui_b3a12f45": {
-    "message": "$V0$ tasks selected",
+    "message": "$V0$ selected",
     "placeholders": {
       "v0": {
         "content": "$1"
@@ -6069,7 +6069,7 @@
     "message": "View saved portrait details in the right drawer"
   },
   "ui_6d6abe2e": {
-    "message": "Delete local record"
+    "message": "Delete local records"
   },
   "ui_fa194900": {
     "message": "Not recommended"
@@ -12059,7 +12059,7 @@
   "ui_5373cbca": {
     "message": "Low performance post configuration is invalid"
   },
-  "ui_2605095f": {
+  "ui_f32b78cb": {
     "message": "$V0$ needs to be an integer from $V1$–$V2$",
     "placeholders": {
       "v0": {
@@ -12177,7 +12177,7 @@
   "ui_9179cdef": {
     "message": "Unknown posts action"
   },
-  "ui_c4eb1fc7": {
+  "ui_eebd18f7": {
     "message": "The minimum time window has still reached $V0$, stop advancing to avoid missing posts; please check the interface later.",
     "placeholders": {
       "v0": {
@@ -15097,6 +15097,12 @@
   "ui_3eb9b48a": {
     "message": "Version record storage is unavailable"
   },
+  "ui_f2a8e12d": {
+    "message": "Skip fans"
+  },
+  "ui_cfe6b98f": {
+    "message": "Skip fans help"
+  },
   "ui_1b8a8b5e": {
     "message": "AI engine settings"
   },
@@ -15923,7 +15929,7 @@
     "message": "Could not load version records"
   },
   "ui_76edd44b": {
-    "message": "Could not load"
+    "message": "Unavailable"
   },
   "ui_e99e3928": {
     "message": "Settings saved"
@@ -17321,5 +17327,1614 @@
   },
   "ui_efb43c4c": {
     "message": "Already replied to this author’s mutual-follow post; skipped"
+  },
+  "ui_176fe7fd": {
+    "message": "Follower screening and AI tagging"
+  },
+  "ui_53963237": {
+    "message": "Follow queue review and comments"
+  },
+  "ui_3ba60a0": {
+    "message": "Close review settings"
+  },
+  "ui_6f0c23f8": {
+    "message": "Loading review settings…"
+  },
+  "ui_33138359": {
+    "message": "Initial follow-back screening"
+  },
+  "ui_8bf3a89d": {
+    "message": "Bypass follow-back checks"
+  },
+  "ui_c686d61b": {
+    "message": "About initial follow-back screening"
+  },
+  "ui_1c94749f": {
+    "message": "About bypassing follow-back checks"
+  },
+  "ui_908cd569": {
+    "message": "Abnormal following ratio"
+  },
+  "ui_857f1d8": {
+    "message": "×"
+  },
+  "ui_e70c0ddb": {
+    "message": "Remove a follower when their following count exceeds this multiple of their follower count. This filter is separate from priority scoring and does not run when follow-back checks are bypassed."
+  },
+  "ui_e827ae47": {
+    "message": "About the abnormal ratio filter"
+  },
+  "ui_8d2bda22": {
+    "message": "Not configured"
+  },
+  "ui_d48e8489": {
+    "message": "Dedicated session"
+  },
+  "ui_84988f41": {
+    "message": "The saved session is unavailable. Choose another session."
+  },
+  "ui_4539a319": {
+    "message": "Check connection"
+  },
+  "ui_4fa39da7": {
+    "message": "Accounts per batch"
+  },
+  "ui_85c42894": {
+    "message": "Batch interval (seconds)"
+  },
+  "ui_13e06f04": {
+    "message": "Comment prompt"
+  },
+  "ui_abd12d60": {
+    "message": "Review rules and prompt"
+  },
+  "ui_424196b5": {
+    "message": "Leave blank to use the default template"
+  },
+  "ui_b605b738": {
+    "message": "Restore default template"
+  },
+  "ui_d291c95d": {
+    "message": "Saves only this role's engine and session. Does not change the system default engine or other task settings."
+  },
+  "ui_ffb7c1e3": {
+    "message": "Initial screening AI"
+  },
+  "ui_13bfde5a": {
+    "message": "Screens bios from the followers list without visiting each profile. If screening is enabled but no engine is configured, tasks wait for configuration."
+  },
+  "ui_a07a0d73": {
+    "message": "Queue tagging AI"
+  },
+  "ui_6ee230a": {
+    "message": "After local filters pass, analyzes profile details and the first 10 posts. Uses a different session from initial follower screening."
+  },
+  "ui_b201319c": {
+    "message": "Comment engine"
+  },
+  "ui_a715d0fe": {
+    "message": "Generates comments or quote-post reviews after eligibility checks pass. Uses a dedicated session separate from tagging."
+  },
+  "ui_24e6dd73": {
+    "message": "Could not load review settings"
+  },
+  "ui_347699aa": {
+    "message": "Default template restored. Save to apply."
+  },
+  "ui_7d4026d5": {
+    "message": "Checking connection and sessions…"
+  },
+  "ui_b1c906ea": {
+    "message": "Not configured. Tasks that need this engine will wait."
+  },
+  "ui_6c1f36ec": {
+    "message": "Connected. Choose a dedicated session."
+  },
+  "ui_e569a88c": {
+    "message": "Not connected"
+  },
+  "ui_f61a9a77": {
+    "message": "Connect and test the selected AI engine in system settings first"
+  },
+  "ui_77a00b0c": {
+    "message": "The selected session is unavailable. Check again and choose a session."
+  },
+  "ui_16f1eb45": {
+    "message": "Off by default. When enabled, sends bios from the followers list to the tagging AI for batch screening. Approved accounts enter the follow-back list and follow queue; rule matches and uncertain results enter review. When disabled, candidates enter the queue directly. “Bypass follow-back checks” controls whether queue filters run."
+  },
+  "ui_3e6ec4a6": {
+    "message": "Off by default. When enabled, follow-back accounts admitted by follower management bypass all queue filters and AI tagging and proceed directly to following and comments. Admission includes direct queueing with initial screening off, AI approval, and manual approval. Identity and relationship checks still run. Filters for ordinary-source candidates are unchanged."
+  },
+  "ui_d998b009": {
+    "message": "Follower screening"
+  },
+  "ui_feeb8f2d": {
+    "message": "Queue tagging"
+  },
+  "ui_7dc5b2ae": {
+    "message": "Invalid review settings entry"
+  },
+  "ui_d8447ed5": {
+    "message": "The abnormal following ratio must be an integer from 1 to 1000"
+  },
+  "ui_47b688a6": {
+    "message": "Batch size must be an integer from 1 to 50, and interval from 0 to 300 seconds"
+  },
+  "ui_b3bb838": {
+    "message": "Review or comment prompts cannot exceed 6000 characters"
+  },
+  "ui_d5e0c871": {
+    "message": "This engine does not support dedicated sessions. Choose Grok Bot, Codex, or Antigravity."
+  },
+  "ui_6311fc38": {
+    "message": "Choose a dedicated session for the selected AI engine"
+  },
+  "ui_11497f2e": {
+    "message": "Follower screening, queue tagging, and comments must each use a separate session"
+  },
+  "ui_2275817b": {
+    "message": "Could not save review settings"
+  },
+  "ui_7bbe5d77": {
+    "message": "The X Grok web channel does not support dedicated sessions and cannot be used for these separate screening, tagging, or comment roles."
+  },
+  "ui_1743a90d": {
+    "message": "The cloud event channel uses a shared binding and does not currently support a separate session for each role."
+  },
+  "ui_76419f3e": {
+    "message": "Untitled session"
+  },
+  "ui_bdaa5dc6": {
+    "message": "No sessions are available for this engine. Create or refresh sessions in system settings."
+  },
+  "ui_642bf594": {
+    "message": "AI review"
+  },
+  "ui_74f2ff08": {
+    "message": "Approve and queue"
+  },
+  "ui_8fc4d594": {
+    "message": "Remove this follower"
+  },
+  "ui_476f7eca": {
+    "message": "Return to review"
+  },
+  "ui_6891bd0b": {
+    "message": "Invalid review action"
+  },
+  "ui_7801bcff": {
+    "message": "Select accounts first"
+  },
+  "ui_f7e1e93c": {
+    "message": "Review"
+  },
+  "ui_eb86d23d": {
+    "message": "In progress"
+  },
+  "ui_f5ec403a": {
+    "message": "Waiting"
+  },
+  "ui_65c32560": {
+    "message": "All $V0$ matching accounts selected",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_9da52e4d": {
+    "message": "Deselect all"
+  },
+  "ui_36873048": {
+    "message": "Select all matching accounts"
+  },
+  "ui_662bab2e": {
+    "message": "Approved"
+  },
+  "ui_c5f59a7a": {
+    "message": "Approval suggested"
+  },
+  "ui_ca6e7586": {
+    "message": "Review needed"
+  },
+  "ui_c3fa2799": {
+    "message": "Unable to determine"
+  },
+  "ui_26bdaeca": {
+    "message": "Removed"
+  },
+  "ui_d6c47762": {
+    "message": "Could not load review progress"
+  },
+  "ui_f8e9dbf6": {
+    "message": "Remove the selected $V0$ followers on X and keep removal records. Continue?",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bb526ac4": {
+    "message": "Could not start the review task"
+  },
+  "ui_d10c0913": {
+    "message": "Review task action failed"
+  },
+  "ui_bc224876": {
+    "message": "AI tagging and initial screening"
+  },
+  "ui_b56fbd7b": {
+    "message": "AI tagging, comments, and follow-back settings"
+  },
+  "ui_b1c0f20": {
+    "message": "Off by default. When enabled, filters by blue verification; unknown status waits for verification. This filter does not run when follow-back checks are bypassed."
+  },
+  "ui_52d339a": {
+    "message": "Comment creation and publishing"
+  },
+  "ui_7aac05b9": {
+    "message": "Tagging and comments have separate settings for engines, sessions, and prompts."
+  },
+  "ui_1441bdcc": {
+    "message": "Follow-back pending: admitted by initial screening, manual approval, or direct admission with screening off; waiting for the follow queue. Review pending: initial rule matches, uncertain results, or unresolved history. Removed: removal on X is confirmed and recorded. Missing relationship information is listed as unverified. Search covers all local accounts."
+  },
+  "ui_c1b84d8b": {
+    "message": "Continue processing"
+  },
+  "ui_191e0637": {
+    "message": "View review results"
+  },
+  "ui_2e85ff5b": {
+    "message": "Select accounts for batch AI review"
+  },
+  "ui_26a3d632": {
+    "message": "Awaiting initial screening"
+  },
+  "ui_5e7fb171": {
+    "message": "Initial screening failed"
+  },
+  "ui_672efec7": {
+    "message": "Admitted"
+  },
+  "ui_6f0f1423": {
+    "message": "Review record"
+  },
+  "ui_ddb7751d": {
+    "message": "No review evidence yet"
+  },
+  "ui_bc9ef808": {
+    "message": "View follow queue"
+  },
+  "ui_47f76c20": {
+    "message": "Filtering, following, and comments are handled in the follow queue"
+  },
+  "ui_6b115748": {
+    "message": "$V0$ · $V1$: $V2$/$V3$$V4$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      },
+      "v3": {
+        "content": "$4"
+      },
+      "v4": {
+        "content": "$5"
+      }
+    }
+  },
+  "ui_5a5222be": {
+    "message": " · $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bdcd3579": {
+    "message": "Could not load filtered results"
+  },
+  "ui_22a95631": {
+    "message": "Selected accounts have missing or conflicting user IDs. Verify their identities before removing them."
+  },
+  "ui_6ae9faad": {
+    "message": "Could not load account identities"
+  },
+  "ui_e73ec749": {
+    "message": "Could not add to the follow queue"
+  },
+  "ui_901d29f5": {
+    "message": "Check the queue status"
+  },
+  "ui_77b68354": {
+    "message": "@$V0$ · Follow queue: $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_9d38f91": {
+    "message": "Add to the follow queue for filtering, then follow and comment"
+  },
+  "ui_f56b5484": {
+    "message": "Fan review status changed; queue execution stopped"
+  },
+  "ui_7d90d333": {
+    "message": "The queue account changed while saving tagging results"
+  },
+  "ui_6d701929": {
+    "message": "The previous tagging result is unknown; the request was not sent again"
+  },
+  "ui_b17cb8c7": {
+    "message": "The original tagging batch snapshot is missing; no request was resent"
+  },
+  "ui_8c63dcf9": {
+    "message": "The original tagging batch is still pending; its task ID was retained"
+  },
+  "ui_203b832": {
+    "message": "The original tagging result was saved; changed profile data needs a new analysis"
+  },
+  "ui_9b4fad42": {
+    "message": "Queue tagging has no dedicated AI engine and session configured"
+  },
+  "ui_ed8dd633": {
+    "message": "Tagging data preloading stopped"
+  },
+  "ui_519eec8": {
+    "message": "The tagging batch interval exceeds this cycle’s time budget"
+  },
+  "ui_51b48460": {
+    "message": "The queue account changed before tagging completed; results were not written to another account"
+  },
+  "ui_46e3a0c3": {
+    "message": "Tagging returned no valid result"
+  },
+  "ui_cd81e111": {
+    "message": "The tagging batch does not contain the current task"
+  },
+  "ui_56c80aa": {
+    "message": "Follower removal confirmed"
+  },
+  "ui_928e1587": {
+    "message": "A follow submission is already recorded; verify the result before sending it again"
+  },
+  "ui_9bac4c60": {
+    "message": "This user identity was already removed or excluded"
+  },
+  "ui_55cdf273": {
+    "message": "AI did not confirm admission; no follow was sent"
+  },
+  "ui_370f8344": {
+    "message": "Follow-back rule bypass authorized"
+  },
+  "ui_124d5cc2": {
+    "message": "All admission checks passed"
+  },
+  "ui_c1be4bb4": {
+    "message": "The target identity could not be reconfirmed before execution; no follow was sent"
+  },
+  "ui_f3cfb151": {
+    "message": "The follow relationship is unclear or a request is already pending; no duplicate follow was sent"
+  },
+  "ui_7e9c8c64": {
+    "message": "The relationship must be verified before execution"
+  },
+  "ui_240e0cca": {
+    "message": "Exclusion status changed before submission; no follow was sent"
+  },
+  "ui_734d71a0": {
+    "message": "Follow-back bypass conditions changed; awaiting full screening"
+  },
+  "ui_aed8b2c5": {
+    "message": "Profile data changed before execution; awaiting new screening"
+  },
+  "ui_5d4162ce": {
+    "message": "Exclusion status changed after the follow checkpoint was saved; no request was sent"
+  },
+  "ui_76f72f7c": {
+    "message": "Admission authorization changed after the follow checkpoint was saved; no request was sent"
+  },
+  "ui_843a5ed5": {
+    "message": "This user identity was excluded; commenting stopped"
+  },
+  "ui_5b0216c4": {
+    "message": "The comment target has no stable user ID; no generation or publication request was sent"
+  },
+  "ui_3457dff0": {
+    "message": "The source post author does not match the comment target; no request was sent"
+  },
+  "ui_73ee86a8": {
+    "message": "The comment target identity is unverified or has changed; no request was sent"
+  },
+  "ui_f4fc7a93": {
+    "message": "The comment target’s current follow relationship could not be verified; no request was sent"
+  },
+  "ui_fed25d34": {
+    "message": "Comments have no dedicated AI engine and session configured"
+  },
+  "ui_8250039d": {
+    "message": "Admission authorization changed before commenting; the draft was retained"
+  },
+  "ui_49d218ae": {
+    "message": "No account is bound to the queue"
+  },
+  "ui_2e9e262b": {
+    "message": "Storage is unavailable"
+  },
+  "ui_874ce1d6": {
+    "message": "The account that owns this authorization is missing"
+  },
+  "ui_149ecd4e": {
+    "message": "Invalid fan admission source"
+  },
+  "ui_8cda7d53": {
+    "message": "AI returned an empty response; manual review is required"
+  },
+  "ui_59fc8151": {
+    "message": "AI returned invalid JSON; manual review is required"
+  },
+  "ui_62d9490b": {
+    "message": "AI did not return a JSON array; manual review is required"
+  },
+  "ui_92a783b3": {
+    "message": "The AI targetUserId does not match the candidate identity"
+  },
+  "ui_e32bc893": {
+    "message": "AI returned an invalid decision field"
+  },
+  "ui_656ffc37": {
+    "message": "AI review passed"
+  },
+  "ui_ad08f66d": {
+    "message": "AI flagged this account for attention"
+  },
+  "ui_9fd6390b": {
+    "message": "AI returned duplicate account entries; the result remains unresolved"
+  },
+  "ui_ad793cf7": {
+    "message": "AI returned no decision for this account"
+  },
+  "ui_bfebb4f3": {
+    "message": "$V0$ has no dedicated AI engine and session configured",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_271080cb": {
+    "message": "$V0$ does not support dedicated sessions; choose Grok Bot, Codex, or Antigravity",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_531dfda8": {
+    "message": "$V0$ is unavailable",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_89acebfc": {
+    "message": "$V0$ is disconnected or disabled",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b2c48da6": {
+    "message": "The session bound to $V0$ is missing or expired; select a session again",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b3845f13": {
+    "message": "$V0$ session verification failed: $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_9e382e12": {
+    "message": "Queue tagging engine"
+  },
+  "ui_ed55ce2e": {
+    "message": "Fan initial screening engine"
+  },
+  "ui_d78e5a7c": {
+    "message": "The original AI task cannot be recovered; it must not be submitted again"
+  },
+  "ui_7f7246a9": {
+    "message": "The tagging batch exceeds 120,000 characters. Reduce the batch size; original data was not truncated"
+  },
+  "ui_7e1465a2": {
+    "message": "Review submission safeguards changed"
+  },
+  "ui_f96a327f": {
+    "message": "$V0$ task is running; waiting for completion",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_1b9a2026": {
+    "message": "$V0$ request failed",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bd2cba96": {
+    "message": "$V0$ request encountered an error",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_5408ef58": {
+    "message": "Manual review status changed; the newer decision was preserved"
+  },
+  "ui_8311f01b": {
+    "message": "Review status changed"
+  },
+  "ui_b643c7c5": {
+    "message": "The account bound to the queue changed; the task was paused"
+  },
+  "ui_ab4d128c": {
+    "message": "The target’s stable identity changed or could not be verified"
+  },
+  "ui_b1967c77": {
+    "message": "Queue target identities do not match"
+  },
+  "ui_ac0fa0f9": {
+    "message": "The review decision was updated"
+  },
+  "ui_aa21204": {
+    "message": "Could not read the complete selected-follower list"
+  },
+  "ui_5105364b": {
+    "message": "No eligible follower accounts"
+  },
+  "ui_21efbf28": {
+    "message": "Invalid target identity list"
+  },
+  "ui_23996788": {
+    "message": "The target identity list has missing or conflicting entries"
+  },
+  "ui_f8e4bdbf": {
+    "message": "The target identity list is incomplete"
+  },
+  "ui_5fcbf031": {
+    "message": "A selected target identity changed; select it again"
+  },
+  "ui_da3a72c4": {
+    "message": "The original AI submission status is unknown; automatic resubmission is blocked"
+  },
+  "ui_f657a481": {
+    "message": "AI review is incomplete; paused with progress retained"
+  },
+  "ui_7bf4b231": {
+    "message": "AI returned no valid decision"
+  },
+  "ui_6015da1": {
+    "message": "A submitted action has an unknown result; verify it first"
+  },
+  "ui_960a04ef": {
+    "message": "This follower was removed and cannot return directly to pending follow-back"
+  },
+  "ui_4b69ee98": {
+    "message": "A prior follow succeeded; verify the current relationship first"
+  },
+  "ui_920f4ae4": {
+    "message": "Manually approved and added to the queue"
+  },
+  "ui_962dd8e5": {
+    "message": "The action result needs verification; the queue was not reactivated"
+  },
+  "ui_3e02cfd": {
+    "message": "Admitted and added to the follow queue"
+  },
+  "ui_92a244dc": {
+    "message": "Manually returned to pending review"
+  },
+  "ui_30d380ce": {
+    "message": "The guarded follower-removal executor is unavailable"
+  },
+  "ui_4c81a074": {
+    "message": "A removal or follow was submitted with an unknown result; resubmission is blocked"
+  },
+  "ui_b7eccef": {
+    "message": "This follower was already removed"
+  },
+  "ui_bf94ea19": {
+    "message": "Removal was submitted or is awaiting submission; the result is unconfirmed"
+  },
+  "ui_f7fe9376": {
+    "message": "The removal identity or confirmation time could not be verified; the result remains unconfirmed"
+  },
+  "ui_f49b6684": {
+    "message": "The removal result is unconfirmed and needs verification"
+  },
+  "ui_802b8983": {
+    "message": "A fan review task is already running"
+  },
+  "ui_2acc251": {
+    "message": "The original AI task is unconfirmed; continue the original review task"
+  },
+  "ui_8f5ba267": {
+    "message": "No fan review task is available to resume"
+  },
+  "ui_b16da5d6": {
+    "message": "The account that owns this review is missing"
+  },
+  "ui_976153fe": {
+    "message": "Required fan review background components are unavailable"
+  },
+  "ui_f907e08a": {
+    "message": "The account bound to the queue changed; review stopped"
+  },
+  "ui_7d2c1b3f": {
+    "message": "Initial screening returned no valid result"
+  },
+  "ui_f4fcb50c": {
+    "message": "Initial screening is off; admitted directly"
+  },
+  "ui_fc0ceda0": {
+    "message": "Waiting for fan initial screening results"
+  },
+  "ui_2bc26cb0": {
+    "message": "Unknown review action"
+  },
+  "ui_efd01b44": {
+    "message": "The review owner account does not match"
+  },
+  "ui_f7adf71f": {
+    "message": "Settings could not be read in time. Please try again."
+  },
+  "ui_2d8796d": {
+    "message": "The save response timed out; the result is unconfirmed. Your input is retained. Reload settings to verify."
+  },
+  "ui_796f62e0": {
+    "message": "Connection check timed out. Check the service and try again."
+  },
+  "ui_3bc2bb4": {
+    "message": "Unsaved changes"
+  },
+  "ui_73ddaec5": {
+    "message": "Saved · Checking connection"
+  },
+  "ui_786d9118": {
+    "message": "Saved · Connection unavailable"
+  },
+  "ui_6c6e7d41": {
+    "message": "Saved · Connection ready"
+  },
+  "ui_8f3c73e6": {
+    "message": "Saved · Session unavailable"
+  },
+  "ui_5ae72892": {
+    "message": "Saved · Not checked yet"
+  },
+  "ui_5b9f7f04": {
+    "message": "Dedicated session saved"
+  },
+  "ui_89d7a4a": {
+    "message": "Set up an engine and a dedicated session before AI review."
+  },
+  "ui_c4eb28b0": {
+    "message": "Could not read configuration status"
+  },
+  "ui_9116a1c9": {
+    "message": "Reading configuration status…"
+  },
+  "ui_7b19a486": {
+    "message": "The selected dedicated session is available"
+  },
+  "ui_c33a4d17": {
+    "message": "The previous settings were saved. Your latest changes are not saved yet."
+  },
+  "ui_d5551b6d": {
+    "message": "Current saved settings reloaded"
+  },
+  "ui_70d95d75": {
+    "message": "Reload saved settings"
+  },
+  "ui_37ec1c1f": {
+    "message": "Reading settings…"
+  },
+  "ui_44a42981": {
+    "message": "Neither account follows the other; excluded from fan management"
+  },
+  "ui_7bca1f5b": {
+    "message": "Already following; no follow-back review or enqueue needed"
+  },
+  "ui_dd00279": {
+    "message": "Relationship unverified; review and enqueue skipped"
+  },
+  "ui_5f243339": {
+    "message": "Relationship check incomplete: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_3ecca927": {
+    "message": "Relationship check returned a different target identity"
+  },
+  "ui_2f6cc44a": {
+    "message": "The stored fan account identity has changed"
+  },
+  "ui_c823cc87": {
+    "message": "Invalid stable target identity"
+  },
+  "ui_6c7d8ec5": {
+    "message": "Could not verify the full following relationship"
+  },
+  "ui_39d1c93a": {
+    "message": " · $V0$ unrelated accounts excluded; history retained",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_3bfb7b73": {
+    "message": "Review result"
+  },
+  "ui_22066563": {
+    "message": "Filter review results"
+  },
+  "ui_5973a4b2": {
+    "message": "All results"
+  },
+  "ui_9ea329d7": {
+    "message": "Not labeled"
+  },
+  "ui_956cf7b9": {
+    "message": "Invalid review-result filter"
+  },
+  "ui_5ac14f6d": {
+    "message": "Review result changed; skipped"
+  },
+  "ui_48d0e824": {
+    "message": "Filter the entire review list. Select all matching results to approve and enqueue across pages. Relationships are still verified before execution."
+  },
+  "ui_37b09ec3": {
+    "message": "Operation results"
+  },
+  "ui_b55c2782": {
+    "message": "Close result"
+  },
+  "ui_e52a539f": {
+    "message": "View $V0$ results",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_e9888de": {
+    "message": "Operation incomplete"
+  },
+  "ui_dc78aaf3": {
+    "message": "Verification $V0$: $V1$/$V2$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_79fecdb7": {
+    "message": "Profile cached"
+  },
+  "ui_47f79262": {
+    "message": "Profile cached; posts pending"
+  },
+  "ui_c46cc911": {
+    "message": "Profile caching incomplete"
+  },
+  "ui_acf94107": {
+    "message": "Profile collected"
+  },
+  "ui_6469a0": {
+    "message": "Post cache"
+  },
+  "ui_aacb23e2": {
+    "message": "Cache expired"
+  },
+  "ui_59c2a4e8": {
+    "message": "Pending collection"
+  },
+  "ui_3d07bd9e": {
+    "message": "Cached"
+  },
+  "ui_54d69a8c": {
+    "message": "Partially cached"
+  },
+  "ui_849aafd5": {
+    "message": "No public posts"
+  },
+  "ui_2624d35b": {
+    "message": "Collection failed"
+  },
+  "ui_5746ba74": {
+    "message": "Rate limited"
+  },
+  "ui_d0a4ab1e": {
+    "message": "Manual AI review reuses collected information. Post collection uses caching and rate limits without blocking relationship checks."
+  },
+  "ui_39abcfdb": {
+    "message": "Automatic screening uses follower biographies only. Manual AI review reuses collected profiles and up to 10 cached posts. Missing or expired posts are identified. Tasks wait until an engine is configured."
+  },
+  "ui_b924b634": {
+    "message": "No eligible original posts"
+  },
+  "ui_52a79939": {
+    "message": "Manual review"
+  },
+  "ui_457a90d8": {
+    "message": "Needs review"
+  },
+  "ui_e38a312d": {
+    "message": "Review status"
+  },
+  "ui_d119f021": {
+    "message": "Search accounts for review"
+  },
+  "ui_696209e9": {
+    "message": "Search account or reason…"
+  },
+  "ui_3c020b04": {
+    "message": "Retry selected"
+  },
+  "ui_2cf9bbe8": {
+    "message": "Reset selected check counts for the next scheduled run. Unconfirmed actions only verify existing results."
+  },
+  "ui_3e32d86c": {
+    "message": "Skip selected"
+  },
+  "ui_1a37ea6c": {
+    "message": "Keep deduplication markers and stop scheduling these accounts."
+  },
+  "ui_a1941588": {
+    "message": "Delete selected records"
+  },
+  "ui_23bf1660": {
+    "message": "Delete selected local records only. Accounts can be collected again."
+  },
+  "ui_262fb172": {
+    "message": "Select current page"
+  },
+  "ui_4447589d": {
+    "message": "Select @$V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b0f8337e": {
+    "message": "$V0$ checks",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_56c38bbf": {
+    "message": "Original result unconfirmed. Retry verifies the result before any further action."
+  },
+  "ui_a4789e08": {
+    "message": "Reset check count and check again on the next scheduled run."
+  },
+  "ui_67132055": {
+    "message": "Keep the deduplication marker and stop automatic scheduling."
+  },
+  "ui_49b6fb9d": {
+    "message": "Delete local records only. The account may be collected again."
+  },
+  "ui_e3f962e1": {
+    "message": "No accounts need review"
+  },
+  "ui_fbf36fc6": {
+    "message": "No skipped accounts"
+  },
+  "ui_e5b3b83e": {
+    "message": "Page $V0$ / $V1$ · $V2$ items",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_c8728f40": {
+    "message": "Delete local records for $V0$ accounts without changing anything on X. They may enter tasks again if collected later.",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b8b168c4": {
+    "message": "A run is active. Please try again shortly."
+  },
+  "ui_734e5f72": {
+    "message": "$V0$ completed, $V1$ failed",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_ba13196": {
+    "message": "Result unconfirmed. Refresh review status before trying again."
+  },
+  "ui_b4236c8b": {
+    "message": "Failure details"
+  },
+  "ui_7b6e688e": {
+    "message": "Checks $V0$ / $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_cff3ac0d": {
+    "message": "Automatic check limit"
+  },
+  "ui_b5d1c98b": {
+    "message": "About the automatic check limit"
+  },
+  "ui_1e96f9f9": {
+    "message": "Three consecutive failures, including the first check, require manual review by default. Counts persist across runs and restarts. Blocked accounts go directly to review; unconfirmed actions only verify existing results."
+  },
+  "ui_810c903c": {
+    "message": "Enter a whole number from 1 to 10."
+  },
+  "ui_8d174d36": {
+    "message": "The current account has blocked this user."
+  },
+  "ui_6cc28d11": {
+    "message": "Automatic checks stopped for accounts needing review. Other accounts continue as scheduled."
+  },
+  "ui_6a0c0274": {
+    "message": "Automatic check limit reached"
+  },
+  "ui_e26e0e28": {
+    "message": "Check result remains unclear"
+  },
+  "ui_9bb3c347": {
+    "message": "Expand reason"
+  },
+  "ui_e3c640ed": {
+    "message": "Collapse reason"
+  },
+  "ui_3a7f42cf": {
+    "message": "Profile follow control needs verification"
+  },
+  "ui_e5bb7d4f": {
+    "message": "Category changed"
+  },
+  "ui_322475d3": {
+    "message": "Search changed"
+  },
+  "ui_9cff5db0": {
+    "message": "Review filter changed"
+  },
+  "ui_b6f2b2f7": {
+    "message": "Page size changed"
+  },
+  "ui_2a30358d": {
+    "message": "Page changed"
+  },
+  "ui_c01e1557": {
+    "message": "Default page size changed"
+  },
+  "ui_34a97c0c": {
+    "message": "$V0$. $V1$ accounts remain unverified. Select them again to continue.",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_e519f589": {
+    "message": "Initial and manual AI reviews share this limit. Manual review splits batches by full prompt length without truncating evidence; actual counts may be lower. AI only recommends; you approve or remove."
+  },
+  "ui_fd4d163a": {
+    "message": "After results arrive, wait randomly within this range before submitting the next batch. Each task runs sequentially. Equal values give a fixed delay; both zero continues immediately. Stopping preserves progress and the scheduled time."
+  },
+  "ui_c1c05d05": {
+    "message": " · Stopping"
+  },
+  "ui_7c056806": {
+    "message": " · $COUNT$ accounts in this batch",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_c2668a89": {
+    "message": " · Next batch in $SECONDS$ s",
+    "placeholders": {
+      "seconds": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_85deab27": {
+    "message": "One account exceeds the AI input budget. Original evidence is preserved; review it manually."
+  },
+  "ui_f99a6d7": {
+    "message": "Batch intervals must be whole seconds from 0 to 300, with maximum at least minimum."
+  },
+  "ui_2dc64364": {
+    "message": "Use 1–50 accounts per batch and 0–300 seconds between batches, with maximum at least minimum."
+  },
+  "ui_b851cc4d": {
+    "message": "Post collection queue"
+  },
+  "ui_c3def7a3": {
+    "message": "View collection progress, rate limits and retries"
+  },
+  "ui_386c7571": {
+    "message": "Loading collection queue…"
+  },
+  "ui_be752344": {
+    "message": "Shows pending tasks and the latest 200 finished results. Earlier completed tasks are not included. Closing this window or refreshing the panel does not stop scheduling."
+  },
+  "ui_5cf64c0a": {
+    "message": "About collection progress"
+  },
+  "ui_ced5d50e": {
+    "message": "Collection progress"
+  },
+  "ui_b460ff3b": {
+    "message": "Finished $V0$ / $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_a352afb0": {
+    "message": "Filter collection status"
+  },
+  "ui_ed14ceb0": {
+    "message": "No collection tasks. After account verification, accounts without a valid post cache are queued automatically."
+  },
+  "ui_28fb4642": {
+    "message": "No tasks match this filter"
+  },
+  "ui_634657c": {
+    "message": "Attempts: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4ddb0ea6": {
+    "message": "$V0$ posts cached",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_77690225": {
+    "message": "Eligible at: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_5247517d": {
+    "message": "Collecting @$V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4f1d9e60": {
+    "message": "No pending tasks"
+  },
+  "ui_2ff02594": {
+    "message": "Previous collection was interrupted; resuming after the recovery window"
+  },
+  "ui_3301b821": {
+    "message": "No scheduled run detected. Check exception logs."
+  },
+  "ui_3a680fc6": {
+    "message": "Next run: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_1b7454f7": {
+    "message": "Collecting"
+  },
+  "ui_c71c06a1": {
+    "message": "Retries exhausted"
+  },
+  "ui_3a23cc65": {
+    "message": "Queue read timed out. Try again later."
+  },
+  "ui_60ed7f04": {
+    "message": "Could not load collection queue"
+  },
+  "ui_2f4a43e": {
+    "message": "Pending"
+  },
+  "ui_13de6e93": {
+    "message": "AI service rejected the request: body exceeds its limit"
+  },
+  "ui_63a6d38d": {
+    "message": "AI service rejected an oversized request before delivery. Adjust the limits, then resume."
+  },
+  "ui_e6cf81fe": {
+    "message": "The original AI task is missing its saved input. Paused to avoid skipping accounts."
+  },
+  "ui_4e2f8db9": {
+    "message": "Shows pending tasks and the latest 200 collection results, including saved profile records. Existing records use their saved status and time; attempt counts are not inferred. Closing this window or refreshing the panel does not stop scheduling."
+  },
+  "ui_8a15a286": {
+    "message": "Existing collection record"
+  },
+  "ui_9d80da87": {
+    "message": " · Checking records $CHECKED$/$TOTAL$ · @$HANDLE$",
+    "placeholders": {
+      "checked": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "handle": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_19327227": {
+    "message": " · Saving results $DONE$/$TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_c55349cf": {
+    "message": "Cannot review"
+  },
+  "ui_c7f3714f": {
+    "message": "No profile biography; cannot review"
+  },
+  "ui_87309b18": {
+    "message": "Original AI suggestion"
+  },
+  "ui_3de7d4b7": {
+    "message": "A profile biography is enough for initial review. Existing posts and follower data are optional context. No biography means no review; collection is not required."
+  },
+  "ui_1c65067e": {
+    "message": "Off by default. When enabled, batch AI screening requires only a profile biography. Existing related posts and follower data are optional; missing context does not block review. Without a biography, mark as unable to review and do not call AI or wait for profile collection or relationship checks. Passed accounts enter follow-back and follow queues; others stay for review. When disabled, accounts are admitted directly. The follow-back bypass controls later queue screening."
+  },
+  "ui_c35e0259": {
+    "message": "Verifies the accounts selected at the start. Changing pages, categories, search or pagination does not stop this batch. Use Stop to pause after the current account, then resume remaining accounts. Only updates local relationships; does not follow or unfollow."
+  },
+  "ui_be01546f": {
+    "message": "Stop verification"
+  },
+  "ui_7d2c6397": {
+    "message": "Pause after the current account. Remaining accounts wait; saved results are kept."
+  },
+  "ui_e3333638": {
+    "message": "Pending follow-back: approved and waiting for the follow queue. Pending review: matched a rule, uncertain, or needs attention. Accounts confirmed to have neither a following nor a follower relationship are cleaned up automatically. Unknown relationships require verification. Search covers all local accounts."
+  },
+  "ui_9b5a1c6f": {
+    "message": "Fan verification"
+  },
+  "ui_6927c338": {
+    "message": "Task progress"
+  },
+  "ui_84bc3078": {
+    "message": "Processed $DONE$/$TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_431067c7": {
+    "message": "Succeeded $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_795aef64": {
+    "message": "Failed $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_c20b6e70": {
+    "message": "Stopping after the current item"
+  },
+  "ui_f92cb2bb": {
+    "message": "$COUNT$ accounts in this batch",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_55bb6cca": {
+    "message": "Loading saved collection records…"
+  },
+  "ui_89bf7cc5": {
+    "message": "Followers awaiting follow-back: $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4d41b452": {
+    "message": "Awaiting follow-back: approved and queued. Review: awaiting AI or human judgment. Verification: collect profile details and up to 10 recent posts, then review once more. Confirmed follow-backs become mutual."
+  },
+  "ui_ac7efa91": {
+    "message": "Awaiting profile details, then re-review"
+  },
+  "ui_3fd8ecf5": {
+    "message": "X did not return the full follow relationship after one retry. Try again later."
+  },
+  "ui_9abb0590": {
+    "message": "X did not return this profile after one retry. Check whether the account is accessible."
+  },
+  "ui_451858fe": {
+    "message": "Passed"
+  },
+  "ui_c0a6c73": {
+    "message": "Rejected"
+  },
+  "ui_d64a578e": {
+    "message": "Insufficient information"
+  },
+  "ui_1b856336": {
+    "message": "Previous review pending"
+  },
+  "ui_4ba59d1b": {
+    "message": "Rejected · removed"
+  },
+  "ui_275a696": {
+    "message": "Rejected · removal unconfirmed"
+  },
+  "ui_f5cddd5b": {
+    "message": "Information still insufficient after collection; verify again"
+  },
+  "ui_f9c34383": {
+    "message": "Approved accounts enter the follow queue; rejected accounts are removed as followers; insufficient information goes to verification. A biography or usable posts are enough to review."
+  },
+  "ui_e4ad8606": {
+    "message": "Review error"
+  },
+  "ui_e8354647": {
+    "message": "Removal unconfirmed"
+  },
+  "ui_dbd590bf": {
+    "message": "Rejected · Removal pending"
+  },
+  "ui_84aca9a8": {
+    "message": "Waiting for cooldown"
+  },
+  "ui_d01b30cb": {
+    "message": "Message is empty or exceeds $LIMIT$ characters",
+    "placeholders": {
+      "limit": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_f93f07c8": {
+    "message": "Following $FOLLOWING$ exceeds $THRESHOLD$ times the follower count $FOLLOWERS$; skip follow-back and remove this follower",
+    "placeholders": {
+      "following": {
+        "content": "$1"
+      },
+      "followers": {
+        "content": "$2"
+      },
+      "threshold": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_ce5a07c4": {
+    "message": "Following does not exceed $THRESHOLD$ times the follower count; continue follow-back approval",
+    "placeholders": {
+      "threshold": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_81ab9332": {
+    "message": "Automatic review"
+  },
+  "ui_656dfbb2": {
+    "message": "Automatic verification"
+  },
+  "ui_707331b0": {
+    "message": "Check interval (minutes)"
+  },
+  "ui_4b8b7d57": {
+    "message": "Accounts per run"
+  },
+  "ui_a8d90c46": {
+    "message": "Retry the same account after (minutes)"
+  },
+  "ui_52f91110": {
+    "message": "Automatic scheduling is off"
+  },
+  "ui_43014435": {
+    "message": "Runs on schedule after saving"
+  },
+  "ui_50e792f5": {
+    "message": "Waiting for AI engine setup"
+  },
+  "ui_a6dfad82": {
+    "message": "Waiting for the manual task"
+  },
+  "ui_291215ba": {
+    "message": "Processing automatically"
+  },
+  "ui_860d6fd5": {
+    "message": "Checking pending accounts"
+  },
+  "ui_3f31ed2c": {
+    "message": "Waiting for the next check"
+  },
+  "ui_3a4d448a": {
+    "message": "Waiting to recover"
+  },
+  "ui_ba535f32": {
+    "message": "Next check"
+  },
+  "ui_25d10810": {
+    "message": "Removed at"
+  },
+  "ui_4a290b73": {
+    "message": "Invalid scheduling toggle"
+  },
+  "ui_e50ae6fd": {
+    "message": "Invalid schedule: interval 1–60 minutes, 1–50 accounts per run, verification retry 5–1440 minutes"
+  },
+  "ui_1e815b45": {
+    "message": "On by default. Review pending accounts using saved profiles and posts. Approved accounts enter the follow-back queue; rejected followers are removed; insufficient information goes to verification."
+  },
+  "ui_880690b1": {
+    "message": "On by default. Collect profile details and up to 10 posts, reusing cached data first. Return to review after collection. Respect the global access budget and retry interval."
+  },
+  "ui_3c18bacf": {
+    "message": "Initial and manual AI reviews share this limit. Batches adapt to full prompt length without truncating evidence. Approval queues the account, rejection removes the follower, and insufficient information requests verification."
+  },
+  "ui_3c711ae0": {
+    "message": "Off by default. When enabled, use profile descriptions and available posts for AI review. Missing evidence goes to automatic verification. Approval queues a follow-back; rejection removes the follower. When disabled, new candidates pass directly. Queue screening follows the follow-back bypass setting."
+  },
+  "ui_299a89a4": {
+    "message": "Review logs"
+  },
+  "ui_c74e26f7": {
+    "message": "Verification logs"
+  },
+  "ui_4d89f1e4": {
+    "message": "Schedule logs"
+  },
+  "ui_97f54ed1": {
+    "message": "Review schedule"
+  },
+  "ui_ddb410aa": {
+    "message": "Verification schedule"
+  },
+  "ui_2c2632a": {
+    "message": "Technical error"
+  },
+  "ui_967f3334": {
+    "message": "Review rejected"
+  },
+  "ui_d055125c": {
+    "message": "Ready for another review"
+  },
+  "ui_5fb9f525": {
+    "message": "Waiting for collection or retry"
+  },
+  "ui_6efcc9e6": {
+    "message": "Waiting for AI results"
+  },
+  "ui_cff5ba9c": {
+    "message": "Submitting to AI"
+  },
+  "ui_3c3bb31b": {
+    "message": "Preparing review"
+  },
+  "ui_86f415e4": {
+    "message": "Saving results"
+  },
+  "ui_90bc1836": {
+    "message": "AI results received"
+  },
+  "ui_870268a2": {
+    "message": "Schedule disabled"
+  },
+  "ui_b96aa57c": {
+    "message": "Waiting for next check"
+  },
+  "ui_4321cbd9": {
+    "message": "Checking"
+  },
+  "ui_8fec2b7d": {
+    "message": "Accounts this round"
+  },
+  "ui_3e9d9782": {
+    "message": "Submitted this batch"
+  },
+  "ui_7dda3491": {
+    "message": "Removal action"
+  },
+  "ui_2b780ee5": {
+    "message": "Owner account ID"
+  },
+  "ui_981f5584": {
+    "message": "Batch ID"
+  },
+  "ui_1b6bf359": {
+    "message": "Follower follow-up · Review logs"
+  },
+  "ui_f1e4a1ee": {
+    "message": "Follower follow-up · Verification logs"
+  },
+  "ui_a1e9ae55": {
+    "message": "Follower follow-up · Schedule logs"
+  },
+  "ui_5e8f80ea": {
+    "message": "No review logs yet"
+  },
+  "ui_2b2d31e1": {
+    "message": "No verification logs yet"
+  },
+  "ui_8953257a": {
+    "message": "No schedule logs yet"
+  },
+  "ui_d4c545dd": {
+    "message": "Review outcomes and reasons. Technical errors are separate from rejections."
+  },
+  "ui_7c05a764": {
+    "message": "Account relationship checks, additional data collection and retry reasons."
+  },
+  "ui_91efbc93": {
+    "message": "Automatic review and verification runs, wait reasons and next check times."
+  },
+  "ui_39e75686": {
+    "message": "View original task"
+  },
+  "ui_25b17f19": {
+    "message": "Removal rules"
+  },
+  "ui_ea05528c": {
+    "message": "Block suggestive content"
+  },
+  "ui_dc7f9c1a": {
+    "message": "Block empty profiles"
+  },
+  "ui_663ab6b0": {
+    "message": "Off by default. When enabled, keyword and AI checks queue followers for removal when evidence shows sexual or suggestive promotional content."
+  },
+  "ui_6ae37272": {
+    "message": "Off by default. Remove only after verification confirms both biography and posts are empty; otherwise allow under this rule. Failed requests, rate limits and private profiles do not count as empty."
+  },
+  "ui_20909eea": {
+    "message": "AI connection notice"
+  },
+  "ui_4ca25ffe": {
+    "message": "AI connection unavailable"
+  },
+  "ui_d5e2c044": {
+    "message": "Dismiss notice"
+  },
+  "ui_390da0e2": {
+    "message": "Connection temporarily unavailable"
+  },
+  "ui_32ea0b71": {
+    "message": "Retrying in $V0$ seconds",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_fc06d5c7": {
+    "message": "Waiting to retry…"
+  },
+  "ui_d2fff746": {
+    "message": "Retrying…"
+  },
+  "ui_c6b06334": {
+    "message": "Retry AI connection"
+  },
+  "ui_d79d67d0": {
+    "message": "Connection status could not be read. Open system settings."
+  },
+  "ui_104a2cf7": {
+    "message": "Reading connection status…"
+  },
+  "ui_dba59f9c": {
+    "message": "Session unavailable. Refresh sessions in system settings."
+  },
+  "ui_14c24f8c": {
+    "message": "Central connection check in progress"
+  },
+  "ui_31755ff9": {
+    "message": "AI client disconnected. Check its login in AgentRelay."
   }
 }

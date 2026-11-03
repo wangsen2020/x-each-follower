@@ -1,4 +1,5 @@
 import {readProfileBundle,readPostMetricsOnPage} from './page-reader.js';
+import {admitXAccess,observeXAccess,accessDeferred,readXChallengeOnPage} from './access-budget.js';
 
 export const PROFILE_ACCESS_PREFIX='xefProfileAccess:';
 export const PROFILE_UNAVAILABLE_TTL=86400000;
@@ -18,7 +19,7 @@ async function update(api,handle,patch,event){
 export async function assertProfileAvailable(api,handle,source){
   handle=String(handle||'').replace(/^@/,'').toLowerCase();if(!/^[a-z0-9_]{1,15}$/.test(handle))throw Error('账号名无效');
   const row=await read(api,handle);
-  if(row.status==='identity_unresolved')throw Object.assign(new Error('身份待核实，已暂停自动请求；请在回关监控点击状态图标重新检查'),{code:'X_PROFILE_IDENTITY_UNRESOLVED',handle});
+  if(row.status==='identity_unresolved')throw Object.assign(new Error('账号资料待核实，已暂停自动请求；请在回关监控点击状态图标重新检查'),{code:'X_PROFILE_IDENTITY_UNRESOLVED',handle});
   if(terminal(row.status)&&row.expiresAt>Date.now()){await update(api,handle,{}, {source,action:'blocked',status:row.status}).catch(()=>{});throw profileUnavailableError({...row,handle});}
 }
 export async function observeProfile(api,handle,result,source){
@@ -29,14 +30,21 @@ export async function observeProfile(api,handle,result,source){
   await update(api,handle,{status:result.status,reason:result.reason||'',checkedAt:Date.now(),expiresAt:terminal(result.status)?Date.now()+PROFILE_UNAVAILABLE_TTL:0},{source,action:'observed',status:result.status}).catch(()=>{});return result;
 }
 export async function createProfileTab(api,options,source,context={}){
-  const handle=profileHandle(options.url);if(handle)await assertProfileAvailable(api,handle,source);
+  const handle=profileHandle(options.url);if(handle){
+    if(!context.refreshAvailability)await assertProfileAvailable(api,handle,source);
+    await admitXAccess(api,{kind:'navigation',key:new URL(options.url).pathname.toLowerCase().replace(/\/$/,''),source},context);
+  }
   const tab=await api.tabs.create(options);if(handle)await update(api,handle,{}, {source,action:'open',tabId:tab.id,...(context.jobId?{jobId:context.jobId}:{}),...(context.runId?{runId:context.runId}:{})}).catch(()=>{});return tab;
 }
-export async function updateProfileTab(api,tabId,options,source){
-  const handle=profileHandle(options.url);if(handle)await assertProfileAvailable(api,handle,source);
+export async function updateProfileTab(api,tabId,options,source,context={}){
+  const handle=profileHandle(options.url);if(handle){await assertProfileAvailable(api,handle,source);await admitXAccess(api,{kind:'navigation',key:new URL(options.url).pathname.toLowerCase().replace(/\/$/,''),source},context);}
   const tab=await api.tabs.update(tabId,options);if(handle)await update(api,handle,{}, {source,action:'navigate',tabId}).catch(()=>{});return tab;
 }
 export async function readProfileOnTab(api,tabId,handle,limit,source){
+  if(api.runtime?.id){
+    const challenge=(await api.scripting.executeScript({target:{tabId},func:readXChallengeOnPage}))?.[0]?.result;
+    if(challenge===true){const retryAt=await observeXAccess(api,{challenge:true});throw accessDeferred(retryAt,'X 页面需要验证，自动采集已暂缓');}
+  }
   const results=await api.scripting.executeScript({target:{tabId},func:readProfileBundle,args:[handle,limit]});
   const result=results?.[0]?.result;
   if (result?.posts?.length) {

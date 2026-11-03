@@ -3052,7 +3052,7 @@
   "停滞增长比例": "stagnant growth ratio",
   "与停滞曝光增量共同判断；曝光下降或数据缺失不会判为停滞。": "Judged jointly with stagnant exposure incremental changes; exposure drops or missing data will not count as stagnant.",
   "低表现帖配置无效": "Low performance post configuration is invalid",
-  "{{v0}}需为{{v1}}–{{v2}}的整数": "{{v0}} needs to be an integer from {{v1}}–{{v2}}",
+  "{{v0}}需为 {{v1}}–{{v2}} 的整数": "{{v0}} needs to be an integer from {{v1}}–{{v2}}",
   "帖子任务正在执行，请稍后重试": "posts task is being executed, please try again later",
   "X 页面未加载完成，请稍后重试": "Page X has not been loaded, please try again later.",
   "未取得当前 X 请求，请检查登录、权限或网络后重试": "The current X request was not obtained, please check your login, permissions or network and try again",
@@ -3081,7 +3081,7 @@
   "没有删除任务": "No task deleted",
   "复查周期需为12、24或48小时": "The review cycle needs to be 12, 24 or 48 hours",
   "未知帖子操作": "Unknown posts action",
-  "最小时间窗口仍达到{{v0}}条，停止推进以避免漏帖；请稍后检查接口。": "The minimum time window has still reached {{v0}}, stop advancing to avoid missing posts; please check the interface later.",
+  "最小时间窗口仍达到 {{v0}} 条，停止推进以避免漏帖；请稍后检查接口。": "The minimum time window has still reached {{v0}}, stop advancing to avoid missing posts; please check the interface later.",
   "帖子记录库升级被占用，请关闭旧面板后重试。": "The posts record library upgrade is occupied. Please close the old panel and try again.",
   "帖子记录写入中断": "posts record write interruption",
   "缺少任务草稿标识": "Missing task draft ID",
@@ -3936,5 +3936,7 @@
   "通知来源打开失败:": "Failed to open notification source:",
   "未知设置分类": "Unknown setting classification",
   "请填写允许范围内的设置值": "Please fill in the setting value within the allowed range",
-  "设置存储不可用": "Settings storage is unavailable"
+  "设置存储不可用": "Settings storage is unavailable",
+  "跳过粉丝": "Skip fans",
+  "跳过粉丝说明": "Skip fans help"
 }

@@ -1,4 +1,6 @@
-import test from 'node:test';
+import test, {beforeEach,afterEach} from 'node:test';
+beforeEach(()=>{globalThis.__xfAccountSnapshot={account:{id:'1',handle:'owner'},status:'ready'};});
+afterEach(()=>{delete globalThis.__xfAccountSnapshot;});
 import assert from 'node:assert/strict';
 import {greetingDue, operateGreetingChatOnPage, sendGreetingViaChat} from '../src/features/relationships/greeting-chat.js';
 

@@ -15,12 +15,13 @@ async function fixture(overrides={}, generatedOverride) {
     reason:'Grok 提交后触发额度限制，结果待核实，未重复请求',grokCalls:2,attempts:11,automaticComment:true,...overrides};
   await store.resolveJob({accountId:'123',id:job.id,state:'followed',followResult:{succeeded:true},evaluations:[original]});
   const calls={generate:0,publish:0,verify:0,tabs:0};
-  const data={followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{target:{posts:[source]}}};
+  const data={'followQueueReviewSettings:123':{commentEngine:{provider:'codex',botId:'comment-fixture'}},followQueueBinding:{accountId:'123',handle:'viewer',activated:true},profileCache:{target:{posts:[source]}}};
   const api={storage:{local:{get:async()=>data,set:async v=>Object.assign(data,v)}},
     runtime:{sendMessage:async()=>{}},tabs:{query:async()=>[{id:1}],create:async()=>{calls.tabs++;return{id:99}},get:async()=>({id:99,status:'complete'}),remove:async()=>{}},
     scripting:{executeScript:async()=>[{result:'viewer'}]}};
   await store.saveSettings('123',{grokEnabled:true,autoPublish:true,publicationMode:'quote'});
   const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},
+    fetchProfile:async()=>({status:200,json:{rest_id:'42',core:{screen_name:'target'},relationship_perspectives:{following:true,followed_by:true}}}),
     generatePost:async()=>{calls.generate++;return generatedOverride || {ok:true,reply:'限制并发能降低争用，但吞吐量是否上升仍应由延迟和错误率验证。',post:source,language:'zh',quality:{scores:[2,2,2,1]}}},
     postPublisher:{verify:async()=>{calls.verify++;return null},publish:async()=>{calls.publish++;return{ok:true,status:'posted',publishedPostId:'777',publishedPostUrl:'https://x.com/viewer/status/777'}}}});
   const request=options=>runtime.handle({cmd:'followQueueRetryEvaluation',accountId:'123',jobId:job.id,taskId:'task',...options});

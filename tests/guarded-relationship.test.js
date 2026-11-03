@@ -1,8 +1,27 @@
-import test from 'node:test';
+import test, {beforeEach,afterEach} from 'node:test';
+beforeEach(()=>{globalThis.__xfAccountSnapshot={account:{id:'1',handle:'owner'},status:'ready'};});
+afterEach(()=>{delete globalThis.__xfAccountSnapshot;});
 import assert from 'node:assert/strict';
 import {mergeVerifiedRelationship,profileRelationshipOnPage,profileReadinessError,inspectOrActOnProfile} from '../src/platform/x/guarded-relationship.js';
 import {targetCheckFailure} from '../src/features/relationships/auto-unfollow-state.js';
 import {parseNetworkUsers} from '../src/features/relationships/network-api.js';
+
+test('exact target unblock control identifies blocking without clicking and excludes recommendations or other owners',()=>{
+ const oldDocument=globalThis.document,oldLocation=globalThis.location;
+ let viewer='/owner',controlId='12-unblock',recommendation=false,clicks=0;
+ const button={innerText:'已屏蔽',getAttribute:name=>name==='data-testid'?controlId:null,closest:()=>recommendation?{}:null,click:()=>clicks++};
+ const root={querySelector:()=>({innerText:'Target @target'}),querySelectorAll:()=>[button]};
+ globalThis.location={pathname:'/target'};
+ globalThis.document={querySelectorAll:()=>[],querySelector:selector=>selector.startsWith('a[')?{getAttribute:()=>viewer}:selector.includes('primaryColumn')?root:null};
+ try{
+  assert.equal(profileRelationshipOnPage('target','12','owner','read').code,'X_PROFILE_BLOCKED');
+  assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').code,'X_PROFILE_BLOCKED');
+  assert.equal(clicks,0);
+  controlId='999-unblock';assert.notEqual(profileRelationshipOnPage('target','12','owner').code,'X_PROFILE_BLOCKED');
+  controlId='12-unblock';recommendation=true;assert.notEqual(profileRelationshipOnPage('target','12','owner').code,'X_PROFILE_BLOCKED');
+  recommendation=false;viewer='/other';globalThis.__xfAccountSnapshot.account.handle='other';assert.notEqual(profileRelationshipOnPage('target','12','owner').code,'X_PROFILE_BLOCKED');
+ }finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
+});
 
 test('profile loading timeout isolates the target while wrong viewer still pauses the scheduler',()=>{
  assert.equal(targetCheckFailure(profileReadinessError({ready:false})),true);
@@ -114,8 +133,8 @@ test('page guard blocks wrong actor, follower, and recommendation buttons',()=>{
  globalThis.document={querySelector:s=>s.startsWith('a[')?{getAttribute:()=>viewer}:s.includes('primaryColumn')?root:null};
  try{
   assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').clicked,false);assert.equal(clicks,0);
-  follower=false;viewer='/other';assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').ready,false);
-  viewer='/owner';recommendation=true;assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').ready,false);
+  follower=false;viewer='/other';globalThis.__xfAccountSnapshot.account.handle='other';assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').ready,false);
+  viewer='/owner';globalThis.__xfAccountSnapshot.account.handle='owner';recommendation=true;assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').ready,false);
   recommendation=false;assert.equal(profileRelationshipOnPage('target','12','owner','unfollow').clicked,true);assert.equal(clicks,1);
  }finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
 });
@@ -157,6 +176,6 @@ test('missing sidebar is not owner mismatch when target header and action are ve
  const button={innerText:'Following',getAttribute:k=>k==='data-testid'?'12-unfollow':'Following @target',closest:()=>null};
  const root={querySelector:()=>({innerText:'@target'}),querySelectorAll:()=>[button]};
  globalThis.location={pathname:'/target'};globalThis.document={querySelector:s=>s.startsWith('a[')?(viewer?{getAttribute:()=>viewer}:null):s.includes('primaryColumn')?root:null};
- try{assert.equal(profileRelationshipOnPage('target','12','owner').following,true);viewer='/other';assert.equal(profileRelationshipOnPage('target','12','owner').reason,'登录账号不一致');}
+ try{assert.equal(profileRelationshipOnPage('target','12','owner').following,true);viewer='/other';globalThis.__xfAccountSnapshot.account.handle='other';assert.equal(profileRelationshipOnPage('target','12','owner').reason,'登录账号不一致');}
  finally{globalThis.document=oldDocument;globalThis.location=oldLocation;}
 });

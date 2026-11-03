@@ -13,7 +13,7 @@ export function buildVerificationSelfMessage(notice, identity) {
 // Serialized into X's page. Inspect the real chat DOM; never call private React handlers.
 export function operateSelfMessageOnPage({accountId,handle,message,action}) {
   if (location.hostname !== 'x.com') return {blocked:true,reason:'不是 X 页面'};
-  const viewer = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.split('/')[1];
+  const viewer = globalThis.__xfAccountSnapshot?.account?.handle;
   if (!viewer) return {ready:false};
   if (viewer.toLowerCase() !== handle.toLowerCase()) return {blocked:true,reason:'X 登录账号发生变化，已停止私信提醒'};
   const expected = `/i/chat/${accountId}-${accountId}`;

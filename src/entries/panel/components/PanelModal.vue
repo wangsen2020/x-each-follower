@@ -1,5 +1,5 @@
 <template>
-  <dialog ref="dialog" class="panel-modal" :aria-labelledby="titleId" @close="$emit('close')" @click="backdrop">
+  <dialog ref="dialog" class="panel-modal" :aria-labelledby="titleId" @cancel.prevent="close" @close="$emit('close', $event)" @click="backdrop">
     <header><strong :id="titleId">{{ t(title) }}</strong><div v-if="$slots.actions" class="modal-actions"><slot name="actions" /></div><PanelCloseButton class="modal-close" :label="t(&quot;关闭弹窗&quot;)" @click="close" /></header>
     <div class="modal-body"><slot /></div>
     <footer v-if="$slots.footer"><slot name="footer" /></footer>

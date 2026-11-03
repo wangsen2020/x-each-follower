@@ -641,3 +641,40 @@ test('one-shot batch runs with automatic switch off, excludes unrelated tasks an
   await store.pendingRetryBatch(accountId,{cancel:true});
   assert.equal(await store.pendingRetryBatch(accountId),0);
 });
+
+
+test('fan cleanup preserves mixed sources and does not tombstone independent future candidates',async()=>{
+ const store=storeFor('fan-cleanup-'+crypto.randomUUID());
+ const pure=await store.enqueue({accountId:'owner',handle:'pure',targetUserId:'42',sources:[{module:'fans',enabled:true}]});
+ const mixed=await store.enqueue({accountId:'owner',handle:'mixed',targetUserId:'43',sources:[{module:'fans',enabled:true},{module:'comments',enabled:true}]});
+ assert.equal((await store.deleteJob({accountId:'owner',id:pure.id,fanOnly:true})).deleted,1);
+ assert.equal((await store.stripFanSource({accountId:'owner',id:mixed.id})).ok,true);
+ assert.deepEqual((await store.get(mixed.id)).sources.map(s=>s.module),['comments']);
+ const again=await store.enqueue({accountId:'owner',handle:'pure',targetUserId:'42',sources:[{module:'comments',enabled:true}]});assert.ok(again.id);
+});
+
+
+test('retention removes stale publishing jobs but keeps meaningful results in the existing outcome store',async()=>{
+ const clock={t:1000},store=storeFor('fan-cleanup-stale-'+crypto.randomUUID(),clock);
+ const job=await store.enqueue({accountId:'owner',handle:'stale',targetUserId:'42',sources:[{module:'fans',enabled:true}]});
+ await store.resolveJob({accountId:'owner',id:job.id,state:'followed',evaluations:[{taskId:'old-publish',postId:'123',status:'publishing',text:'saved user draft',publishedAttemptedAt:1000}]});
+ assert.equal((await store.deleteJob({accountId:'owner',id:job.id,fanOnly:true})).ok,false);
+ clock.t=1000000;assert.equal((await store.deleteJob({accountId:'owner',id:job.id,fanOnly:true})).deleted,1);assert.equal(await store.get(job.id),null);
+ const restored=await store.enqueue({accountId:'owner',handle:'stale',targetUserId:'42',sources:[{module:'comments',enabled:true}]});
+ assert.equal(restored.evaluations[0].status,'uncertain');assert.equal(restored.evaluations[0].text,'saved user draft');
+});
+
+test('conditional queue recovery preserves concurrent manual exclusions and changed receipts',async()=>{
+ const store=storeFor('conditional-recovery-'+crypto.randomUUID());
+ const job=await store.enqueue({accountId:'owner',targetUserId:'42',handle:'person',sources:[{module:'fans',enabled:true}]});
+ const held={reason:'machine screening',relationshipDecision:{screening:'blocked'}};
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:held});
+ const request={accountId:'owner',id:job.id,state:'pending',expectedState:'skipped',expectedTargetUserId:'42',expectedFollowResult:held};
+ await store.resolveJob({accountId:'owner',id:job.id,state:'excluded',followResult:{reason:'manual'}});
+ assert.equal((await store.resolveJob(request)).reason,'changed');
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:{reason:'new hold'}});
+ assert.equal((await store.resolveJob(request)).reason,'changed');
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:held});
+ assert.equal((await store.resolveJob(request)).ok,true);
+ assert.equal((await store.lookup({accountId:'owner',handle:'person'})).state,'pending');
+});

@@ -998,6 +998,9 @@ main > :not(.sidebar){margin-left:20px}
 #monitorSection .tag-badge{max-width:100%;padding:0 5px}
 #monitorSection .monitor-actions{justify-self:end;gap:10px;width:max-content}
 #monitorSection .monitor-actions > :not(:last-child){margin-right:0}
+#monitorSection .monitor-info a > span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#monitorSection .col-tag-cell details{min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal}
+#monitorSection :is(.tag-badge,.monitor-badge)[data-panel-tip]::after{display:none}
 #monitorSection .fan-inspection-progress{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 0;font-size:12px;color:#456456}
 #monitorSection .fan-inspection-progress[hidden]{display:none}
 #monitorSection #fanInspectionStatus{flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
@@ -1034,7 +1037,7 @@ main > :not(.sidebar){margin-left:20px}
 /* Vue shell stays in source order while its children participate in the main grid. */
 #panel-vue-root, #panel-vue-container { display:contents; }
 main .vue-panel-header { padding:0 11px 4px; margin-left:0; }
-main .vue-panel-header:has(#recordMigration[hidden]):not(:has(.automation-alerts)) { display:none; }
+main .vue-panel-header:has(#recordMigration[hidden]):not(:has(.automation-alerts)):not(:has(#fanInspectionProgress:not([hidden]))) { display:none; }
 /* Borderless panels start their text one pixel before bordered cards. */
 #panel-vue-container:has(> :is(#candidatesSection, #followQueueSection, #knowledgeSection):not([hidden])) > .vue-panel-header { padding-left:10px; }
 #panel-vue-container > .tab-panel { padding-left:10px; padding-right:10px; }
@@ -1123,6 +1126,10 @@ body .panel-action-bar button.panel-icon-button {
 }
 body .panel-icon-button > svg { width:16px; height:16px; stroke-width:1.75; pointer-events:none; }
 body .panel-icon-button:focus-visible { outline:2px solid #14744c; outline-offset:2px; }
+body .panel-icon-button[aria-pressed="true"] {background:#d0e8d9;border-color:#8bc7a6;color:#174a37}
+#monitorSection .monitor-list-header .col-counts {white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+/* Progress rows must not inherit the legacy card children's 25px margins. */
+#monitorSection :is(.fan-inspection-progress,.fan-review-progress) {margin:0 0 4px;padding:0;min-height:30px;gap:8px}
 body .panel-action-bar .panel-icon-button:disabled { opacity:.55; cursor:default; }
 body .panel-action-bar button.panel-icon-primary { background:#205b45; border-color:#205b45; color:#fff; }
 

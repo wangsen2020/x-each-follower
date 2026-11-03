@@ -24,31 +24,9 @@
           <span id="logsTotalBadge" class="badge">{{ t(totalBadgeText) }}</span>
         </div>
         <div class="logs-modal-head-btns">
-          <button
-            id="logsPrevBtn"
-            class="secondary"
-            type="button"
-            :disabled="!canPrev"
-            style="margin-right: 10px"
-            @click="prevPage"
-          >{{ t("上一页") }}</button>
-          <button
-            id="logsNextBtn"
-            class="secondary"
-            type="button"
-            :disabled="!canNext"
-            style="margin-right: 10px"
-            @click="nextPage"
-          >{{ t("下一页") }}</button>
-          <button
-            id="clearLogsBtn"
-            class="secondary danger-btn"
-            type="button"
-            :title="isFansScope && fansSubTab === 'followBack'?t(&quot;队列回关记录由关注队列统一管理&quot;):t(&quot;清空当前范围的执行日志&quot;)"
-            :disabled="status === 'loading' || (isFansScope && fansSubTab === 'followBack')"
-            style="margin-right: 10px"
-            @click="clearLogs"
-          >{{ currentScope === 'unreciprocated'?t("清空全部分类"):t("清空日志") }}</button>
+          <PanelIconButton id="logsPrevBtn" :icon="ChevronLeft" label="上一页" :disabled="!canPrev" @click="prevPage" />
+          <PanelIconButton id="logsNextBtn" :icon="ChevronRight" label="下一页" :disabled="!canNext" @click="nextPage" />
+          <PanelIconButton id="clearLogsBtn" class="danger-btn" :icon="Trash2" :label="currentScope==='unreciprocated'?'清空全部分类':'清空日志'" :tip="isFansScope && fansSubTab==='followBack'?'队列回关记录由关注队列统一管理':'清空当前范围的执行日志'" :disabled="status==='loading' || (isFansScope && fansSubTab==='followBack')" @click="clearLogs" />
           <PanelCloseButton
             id="closeLogsModal"
             @click="close"
@@ -78,6 +56,7 @@
           :class="{ active: fansSubTab === 'followBack' }"
           @click="setFansSubTab('followBack')"
         >{{ t("🤝 队列回关日志") }}</button>
+        <button v-for="tab in fanWorkflowTabs" :id="'subtabFans'+tab.key" :key="tab.key" type="button" class="subtab-btn" :class="{active:fansSubTab===tab.value}" :aria-pressed="fansSubTab===tab.value" @click="setFansSubTab(tab.value)">{{ t(tab.label) }}</button>
       </div>
 
       <!-- Body Section -->
@@ -111,7 +90,21 @@
             class="log-card"
           >
             <!-- 1. Verification Log Card -->
-            <template v-if="getCardKind(rawLog) === 'verification'">
+            <template v-if="getCardKind(rawLog) === 'fanWorkflow'">
+              <div class="log-card-header">
+                <div class="log-card-meta"><span class="log-time">{{ formatTime(rawLog) }}</span><span class="log-scope-badge">{{ t(fanWorkflowScope(rawLog)) }}</span><span class="log-scope-badge">{{ t(rawLog.source==='scheduled'?'自动执行':'手动执行') }}</span></div>
+                <span class="badge" :class="['pass','approved','verified','ready','completed','removed'].includes(rawLog.result)?'candidate':'review'" :style="['error','failed','rejected'].includes(rawLog.result)?'background:#fbe9e7;color:#a12b20':''">{{ t(fanLogResultLabel(rawLog.result)) }}</span>
+              </div>
+              <div v-if="rawLog.handle" class="log-card-target"><a class="log-target-link" :href="'https://x.com/'+encodeURIComponent(rawLog.handle)" target="_blank" rel="noopener noreferrer">@{{ rawLog.handle }}</a></div>
+              <div v-else-if="rawLog.total!=null" class="log-stats-bar"><span>{{ t('本轮人数') }}: {{ rawLog.total }} {{ t('人') }}</span><span v-if="rawLog.completed!=null">{{ t('已处理') }}: {{ rawLog.completed }} {{ t('人') }}</span><span v-if="rawLog.requestSize">{{ t('本批提交') }}: {{ rawLog.requestSize }} {{ t('人') }}</span></div>
+              <p v-if="rawLog.detail" class="log-detail-text">{{ rawLog.detail }}</p>
+              <p v-if="rawLog.executionStatus" class="log-detail-text">{{ t('移除执行') }}: {{ t(fanLogResultLabel(rawLog.executionStatus)) }}</p>
+              <div v-if="rawLog.tags?.length" class="log-enqueued-row"><span v-for="tag in rawLog.tags" :key="tag" class="log-handle-tag">{{ tag }}</span></div>
+              <p v-if="rawLog.relationship" class="log-detail-text">{{ t('我关注对方') }}: {{ t(relationLabel(rawLog.relationship.following)) }} · {{ t('对方关注我') }}: {{ t(relationLabel(rawLog.relationship.followedBy)) }}</p>
+              <p v-if="rawLog.nextAt" class="log-detail-text">{{ t('下次检查') }}: {{ formatTime({at:rawLog.nextAt}) }}</p>
+              <details v-if="rawLog.batchId || rawLog.accountId" class="followback-log-details"><summary>{{ t('诊断详情') }}</summary><dl><dt>{{ t('所属账号 ID') }}</dt><dd>{{ rawLog.accountId }}</dd><dt>{{ t('批次编号') }}</dt><dd>{{ rawLog.batchId || '—' }}</dd></dl></details>
+            </template>
+            <template v-else-if="getCardKind(rawLog) === 'verification'">
               <div class="log-card-header">
                 <div class="log-card-meta">
                   <span class="log-time">{{ t(formatTime(rawLog)) }}</span>
@@ -147,13 +140,13 @@
                 </span>
               </div>
               <div class="log-stats-bar">
-                <span>{{ t("获取人数：") }}<strong>{{ (t(rawLog.scannedCount) ?? t(0)) }}</strong></span>
-                <span>{{ t("当前粉丝：") }}<strong>{{ (t(rawLog.totalFollowers) ?? t(0)) }}</strong></span>
-                <span>{{ t("当前关注：") }}<strong>{{ (t(rawLog.totalFollowing) ?? t(0)) }}</strong></span>
-                <span>{{ t("需要回关：") }}<strong style="color: #0284c7">{{ (t(rawLog.followBackCount) ?? t(0)) }}</strong></span>
-                <span>{{ t("未互关：") }}<strong style="color: #64748b">{{ (t(rawLog.notMutualCount) ?? t(0)) }}</strong></span>
-                <span>{{ t("本次新增：") }}<strong style="color: #059669">{{ (t(rawLog.newFollowersCount) ?? t(0)) }}</strong></span>
-                <span>{{ t("自动拉取入队：") }}<strong style="color: #16a34a">{{ (t(rawLog.enqueuedCount) ?? t(0)) }}</strong></span>
+                <span>{{ t("获取人数：") }}&nbsp;<strong>{{ (t(rawLog.scannedCount) ?? t(0)) }}</strong></span>
+                <span>{{ t("当前粉丝：") }}&nbsp;<strong>{{ (t(rawLog.totalFollowers) ?? t(0)) }}</strong></span>
+                <span>{{ t("当前关注：") }}&nbsp;<strong>{{ (t(rawLog.totalFollowing) ?? t(0)) }}</strong></span>
+                <span>{{ t("需要回关：") }}&nbsp;<strong style="color: #0284c7">{{ (t(rawLog.followBackCount) ?? t(0)) }}</strong></span>
+                <span>{{ t("未互关：") }}&nbsp;<strong style="color: #64748b">{{ (t(rawLog.notMutualCount) ?? t(0)) }}</strong></span>
+                <span>{{ t("本次新增：") }}&nbsp;<strong style="color: #059669">{{ (t(rawLog.newFollowersCount) ?? t(0)) }}</strong></span>
+                <span>{{ t("自动拉取入队：") }}&nbsp;<strong style="color: #16a34a">{{ (t(rawLog.enqueuedCount) ?? t(0)) }}</strong></span>
               </div>
               <div v-if="rawLog.summary" class="log-summary-row">{{ t(rawLog.summary) }}</div>
               <div v-if="rawLog.enqueuedHandles?.length" class="log-enqueued-row">
@@ -339,6 +332,12 @@
 
 <script setup>
 import {t} from '../../../shared/i18n.js';
+import {fanLogResultLabel} from '../../../features/relationships/fan-workflow-logs.js';
+import {ChevronLeft,ChevronRight,Trash2} from 'lucide';
+import PanelIconButton from './PanelIconButton.vue';
+const fanWorkflowTabs=[{key:'Review',value:'review',label:'审核日志'},{key:'Verify',value:'verify',label:'核实日志'},{key:'Schedule',value:'schedule',label:'调度日志'}];
+const fanWorkflowScope=log=>log.scope==='fanSchedule'?(log.kind==='verify'?'核实调度':'审核调度'):log.scope==='fanVerify'?'核实日志':'审核日志';
+const relationLabel=value=>value===true?'是':value===false?'否':'未知';
 
 import {unfollowLogHandles} from '../../../shared/execution-log-select.js';
 import {followbackLogPresentation,followbackLogContext} from '../../../features/relationships/followback-log.js';
@@ -392,6 +391,7 @@ function formatTime(log) {
 }
 
 function getCardKind(log) {
+  if (['fanReview','fanVerify','fanSchedule'].includes(log?.scope)) return 'fanWorkflow';
   if (log?.scope === 'verification') return 'verification';
   if (log?.origin === 'monitorLogs' || log?.scope === 'fans' || log?.scope === 'monitor') return 'fans';
   if (log?.origin === 'unreciprocatedLogs' || log?.scope === 'unreciprocated' || log?.totalTracked != null || log?.unfollowedHandles) {
@@ -568,6 +568,9 @@ async function copyText(text, event) {
 </script>
 
 <style scoped>
+.logs-modal-subtabs{flex-wrap:wrap}.logs-modal-subtabs .subtab-btn{margin-bottom:4px}.logs-modal-head-btns{flex-shrink:0}.logs-modal-head-btns>:not(:last-child){margin-right:10px}.log-detail-text,.followback-log-details dd{overflow-wrap:anywhere}.log-card-meta{flex-wrap:wrap}
+@media(max-width:600px){.logs-modal-head{flex-wrap:wrap}.logs-modal-title-box{margin-bottom:8px}.logs-modal-head-btns{margin-left:auto}}
+
 .logs-loading-spinner {
   display: inline-block;
   width: 26px;

@@ -2784,7 +2784,7 @@
     }
   },
   "ui_3cd97e97": {
-    "message": "Finalizado"
+    "message": "Finalizadas"
   },
   "ui_d52b11fd": {
     "message": "Cambiar de paso"
@@ -4647,7 +4647,7 @@
     }
   },
   "ui_f16297c7": {
-    "message": "Problema"
+    "message": "Error"
   },
   "ui_678e7511": {
     "message": "Captura vencida; esperando próxima recopilación"
@@ -5281,7 +5281,7 @@
     "message": "60 minutos"
   },
   "ui_2d1e1677": {
-    "message": "Máximo por lote"
+    "message": "Límite por lote"
   },
   "ui_407cb9d6": {
     "message": "Máximo revisado por lote"
@@ -6069,7 +6069,7 @@
     "message": "Ver el perfil guardado en el panel lateral"
   },
   "ui_6d6abe2e": {
-    "message": "Eliminar registro local"
+    "message": "Eliminar registros locales"
   },
   "ui_fa194900": {
     "message": "No recomendado"
@@ -12059,7 +12059,7 @@
   "ui_5373cbca": {
     "message": "Configuración de bajo rendimiento no válida"
   },
-  "ui_2605095f": {
+  "ui_f32b78cb": {
     "message": "$V0$ debe ser un entero de $V1$ a $V2$",
     "placeholders": {
       "v0": {
@@ -12177,7 +12177,7 @@
   "ui_9179cdef": {
     "message": "Acción de post desconocida"
   },
-  "ui_c4eb1fc7": {
+  "ui_eebd18f7": {
     "message": "La ventana mínima aún alcanza $V0$ posts. Se detuvo el avance para evitar omisiones; revisa la API más tarde.",
     "placeholders": {
       "v0": {
@@ -15097,6 +15097,12 @@
   "ui_3eb9b48a": {
     "message": "Almacenamiento de versiones no disponible"
   },
+  "ui_f2a8e12d": {
+    "message": "Omitir filtros de fans"
+  },
+  "ui_cfe6b98f": {
+    "message": "Ayuda de filtros de fans"
+  },
   "ui_1b8a8b5e": {
     "message": "Configuración de motores de IA"
   },
@@ -15923,7 +15929,7 @@
     "message": "No se pudo cargar el historial de versiones"
   },
   "ui_76edd44b": {
-    "message": "No se pudo cargar"
+    "message": "No disponible"
   },
   "ui_e99e3928": {
     "message": "Ajustes guardados"
@@ -17321,5 +17327,1614 @@
   },
   "ui_efb43c4c": {
     "message": "Ya se respondió una publicación de seguimiento mutuo de este autor; omitida"
+  },
+  "ui_176fe7fd": {
+    "message": "Revisión inicial de seguidores y etiquetado con IA"
+  },
+  "ui_53963237": {
+    "message": "Revisión y comentarios de la cola de seguimiento"
+  },
+  "ui_3ba60a0": {
+    "message": "Cerrar la configuración de revisión"
+  },
+  "ui_6f0c23f8": {
+    "message": "Cargando la configuración de revisión…"
+  },
+  "ui_33138359": {
+    "message": "Revisión inicial para seguir de vuelta"
+  },
+  "ui_8bf3a89d": {
+    "message": "Omitir filtros al seguir de vuelta"
+  },
+  "ui_c686d61b": {
+    "message": "Acerca de la revisión inicial para seguir de vuelta"
+  },
+  "ui_1c94749f": {
+    "message": "Acerca de omitir filtros al seguir de vuelta"
+  },
+  "ui_908cd569": {
+    "message": "Proporción anormal de cuentas seguidas"
+  },
+  "ui_857f1d8": {
+    "message": "×"
+  },
+  "ui_e70c0ddb": {
+    "message": "Se activa el filtro de eliminación cuando la cantidad de cuentas que sigue supera este múltiplo de sus seguidores. Es independiente de la puntuación de prioridad y no se aplica si se omiten los filtros para seguir de vuelta."
+  },
+  "ui_e827ae47": {
+    "message": "Acerca del filtro de proporción anormal"
+  },
+  "ui_8d2bda22": {
+    "message": "Sin configurar"
+  },
+  "ui_d48e8489": {
+    "message": "Sesión exclusiva"
+  },
+  "ui_84988f41": {
+    "message": "La sesión guardada no está disponible. Elige otra."
+  },
+  "ui_4539a319": {
+    "message": "Comprobar conexión"
+  },
+  "ui_4fa39da7": {
+    "message": "Cuentas por lote"
+  },
+  "ui_85c42894": {
+    "message": "Intervalo entre lotes (segundos)"
+  },
+  "ui_13e06f04": {
+    "message": "Instrucciones para comentarios"
+  },
+  "ui_abd12d60": {
+    "message": "Reglas e instrucciones de revisión"
+  },
+  "ui_424196b5": {
+    "message": "Déjalo vacío para usar la plantilla predeterminada"
+  },
+  "ui_b605b738": {
+    "message": "Restaurar plantilla predeterminada"
+  },
+  "ui_d291c95d": {
+    "message": "Solo guarda el motor y la sesión de esta función. No cambia el motor predeterminado del sistema ni otras tareas."
+  },
+  "ui_ffb7c1e3": {
+    "message": "IA de revisión inicial"
+  },
+  "ui_13bfde5a": {
+    "message": "Revisa las biografías de la lista de seguidores sin visitar cada perfil. Si la revisión está activada pero no hay un motor configurado, las tareas esperan la configuración."
+  },
+  "ui_a07a0d73": {
+    "message": "IA de etiquetado de la cola"
+  },
+  "ui_6ee230a": {
+    "message": "Después de pasar los filtros locales, analiza el perfil y las primeras 10 publicaciones. Usa una sesión distinta de la revisión inicial de seguidores."
+  },
+  "ui_b201319c": {
+    "message": "Motor de comentarios"
+  },
+  "ui_a715d0fe": {
+    "message": "Genera comentarios o evaluaciones con cita después de pasar los controles de admisión. Usa una sesión exclusiva, separada del etiquetado."
+  },
+  "ui_24e6dd73": {
+    "message": "No se pudo cargar la configuración de revisión"
+  },
+  "ui_347699aa": {
+    "message": "Se restauró la plantilla predeterminada. Guarda para aplicarla."
+  },
+  "ui_7d4026d5": {
+    "message": "Comprobando la conexión y las sesiones…"
+  },
+  "ui_b1c906ea": {
+    "message": "Sin configurar. Las tareas que necesitan este motor esperarán."
+  },
+  "ui_6c1f36ec": {
+    "message": "Conectado. Elige una sesión exclusiva."
+  },
+  "ui_e569a88c": {
+    "message": "Sin conexión"
+  },
+  "ui_f61a9a77": {
+    "message": "Primero conecta y prueba el motor de IA seleccionado en la configuración del sistema"
+  },
+  "ui_77a00b0c": {
+    "message": "La sesión seleccionada no está disponible. Vuelve a comprobar y elige una sesión."
+  },
+  "ui_16f1eb45": {
+    "message": "Desactivado de forma predeterminada. Al activarlo, envía las biografías de la lista de seguidores a la IA para una revisión inicial por lotes. Las cuentas aprobadas pasan a pendientes de seguir de vuelta y a la cola; las que coinciden con reglas o no tienen una conclusión pasan a revisión. Al desactivarlo, las candidatas entran directamente a la cola. “Omitir filtros al seguir de vuelta” determina si se aplican los filtros de la cola."
+  },
+  "ui_3e6ec4a6": {
+    "message": "Desactivado de forma predeterminada. Al activarlo, las cuentas admitidas por la gestión de seguidores omiten todos los filtros y el etiquetado con IA de la cola y pasan directamente al seguimiento y los comentarios. Incluye la entrada directa con la revisión inicial desactivada, la aprobación por IA y la aprobación manual. Se siguen comprobando la identidad y la relación. No afecta los filtros de candidatas de otras fuentes."
+  },
+  "ui_d998b009": {
+    "message": "Revisión inicial de seguidores"
+  },
+  "ui_feeb8f2d": {
+    "message": "Etiquetado de la cola"
+  },
+  "ui_7dc5b2ae": {
+    "message": "Entrada de configuración de revisión no válida"
+  },
+  "ui_d8447ed5": {
+    "message": "La proporción anormal de cuentas seguidas debe ser un entero de 1 a 1000"
+  },
+  "ui_47b688a6": {
+    "message": "Las cuentas por lote deben ser un entero de 1 a 50 y el intervalo de 0 a 300 segundos"
+  },
+  "ui_b3bb838": {
+    "message": "Las instrucciones de revisión o comentarios no pueden superar los 6000 caracteres"
+  },
+  "ui_d5e0c871": {
+    "message": "Este motor no admite sesiones exclusivas. Elige Grok Bot, Codex o Antigravity."
+  },
+  "ui_6311fc38": {
+    "message": "Elige una sesión exclusiva para el motor de IA seleccionado"
+  },
+  "ui_11497f2e": {
+    "message": "La revisión inicial, el etiquetado de la cola y los comentarios deben usar sesiones separadas"
+  },
+  "ui_2275817b": {
+    "message": "No se pudo guardar la configuración de revisión"
+  },
+  "ui_7bbe5d77": {
+    "message": "El canal web de X Grok no admite sesiones exclusivas y no puede usarse para estas funciones separadas de revisión, etiquetado o comentarios."
+  },
+  "ui_1743a90d": {
+    "message": "El canal de eventos en la nube usa una conexión compartida y por ahora no permite elegir una sesión exclusiva para cada función."
+  },
+  "ui_76419f3e": {
+    "message": "Sesión sin título"
+  },
+  "ui_bdaa5dc6": {
+    "message": "Este motor no tiene sesiones disponibles. Crea o actualiza las sesiones en la configuración del sistema."
+  },
+  "ui_642bf594": {
+    "message": "Revisión con IA"
+  },
+  "ui_74f2ff08": {
+    "message": "Aprobar y agregar a la cola"
+  },
+  "ui_8fc4d594": {
+    "message": "Eliminar este seguidor"
+  },
+  "ui_476f7eca": {
+    "message": "Volver a revisión"
+  },
+  "ui_6891bd0b": {
+    "message": "Acción de revisión no válida"
+  },
+  "ui_7801bcff": {
+    "message": "Primero selecciona las cuentas"
+  },
+  "ui_f7e1e93c": {
+    "message": "Revisión"
+  },
+  "ui_eb86d23d": {
+    "message": "En curso"
+  },
+  "ui_f5ec403a": {
+    "message": "En espera"
+  },
+  "ui_65c32560": {
+    "message": "Se seleccionaron las $V0$ cuentas que coinciden con el filtro",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_9da52e4d": {
+    "message": "Deseleccionar todo"
+  },
+  "ui_36873048": {
+    "message": "Seleccionar todas las cuentas del filtro"
+  },
+  "ui_662bab2e": {
+    "message": "Aprobado"
+  },
+  "ui_c5f59a7a": {
+    "message": "Se sugiere aprobar"
+  },
+  "ui_ca6e7586": {
+    "message": "Requiere revisión"
+  },
+  "ui_c3fa2799": {
+    "message": "Sin conclusión"
+  },
+  "ui_26bdaeca": {
+    "message": "Eliminado"
+  },
+  "ui_d6c47762": {
+    "message": "No se pudo cargar el progreso de revisión"
+  },
+  "ui_f8e9dbf6": {
+    "message": "Se eliminarán los $V0$ seguidores seleccionados en X y se guardará un registro. ¿Continuar?",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bb526ac4": {
+    "message": "No se pudo iniciar la revisión"
+  },
+  "ui_d10c0913": {
+    "message": "Falló la acción de la tarea de revisión"
+  },
+  "ui_bc224876": {
+    "message": "Etiquetado con IA y revisión inicial"
+  },
+  "ui_b56fbd7b": {
+    "message": "Configuración de etiquetado con IA, comentarios y seguimiento de vuelta"
+  },
+  "ui_b1c0f20": {
+    "message": "Desactivado de forma predeterminada. Al activarlo, filtra por verificación azul; los estados desconocidos esperan verificación. No se aplica si se omiten los filtros para seguir de vuelta."
+  },
+  "ui_52d339a": {
+    "message": "Creación y publicación de comentarios"
+  },
+  "ui_7aac05b9": {
+    "message": "El etiquetado y los comentarios tienen configuraciones independientes de motor, sesión e instrucciones."
+  },
+  "ui_1441bdcc": {
+    "message": "Pendientes de seguir de vuelta: aprobadas por la revisión inicial, manualmente o admitidas con la revisión desactivada; esperan la cola. Pendientes de revisión: reglas detectadas, resultados sin conclusión o problemas anteriores. Eliminados: la eliminación en X está confirmada y registrada. Las relaciones sin datos quedan pendientes de verificación. La búsqueda incluye todas las cuentas locales."
+  },
+  "ui_c1b84d8b": {
+    "message": "Continuar procesamiento"
+  },
+  "ui_191e0637": {
+    "message": "Ver resultados de revisión"
+  },
+  "ui_2e85ff5b": {
+    "message": "Selecciona cuentas para revisión por lotes con IA"
+  },
+  "ui_26a3d632": {
+    "message": "Pendiente de revisión inicial"
+  },
+  "ui_5e7fb171": {
+    "message": "Falló la revisión inicial"
+  },
+  "ui_672efec7": {
+    "message": "Admitido"
+  },
+  "ui_6f0f1423": {
+    "message": "Registro de revisión"
+  },
+  "ui_ddb7751d": {
+    "message": "Aún no hay evidencia de revisión"
+  },
+  "ui_bc9ef808": {
+    "message": "Ver cola de seguimiento"
+  },
+  "ui_47f76c20": {
+    "message": "Los filtros, el seguimiento y los comentarios se procesan en la cola de seguimiento"
+  },
+  "ui_6b115748": {
+    "message": "$V0$ · $V1$: $V2$/$V3$$V4$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      },
+      "v3": {
+        "content": "$4"
+      },
+      "v4": {
+        "content": "$5"
+      }
+    }
+  },
+  "ui_5a5222be": {
+    "message": " · $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bdcd3579": {
+    "message": "No se pudieron cargar los resultados del filtro"
+  },
+  "ui_22a95631": {
+    "message": "Las cuentas seleccionadas no tienen un ID de usuario claro o presentan un conflicto de identidad. Verifica sus identidades antes de eliminarlas."
+  },
+  "ui_6ae9faad": {
+    "message": "No se pudieron cargar las identidades de las cuentas"
+  },
+  "ui_e73ec749": {
+    "message": "No se pudo agregar a la cola de seguimiento"
+  },
+  "ui_901d29f5": {
+    "message": "Consulta el estado de la cola"
+  },
+  "ui_77b68354": {
+    "message": "@$V0$ · Cola de seguimiento: $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_9d38f91": {
+    "message": "Agregar a la cola de seguimiento para aplicar los filtros y después seguir y comentar"
+  },
+  "ui_f56b5484": {
+    "message": "Cambió el estado de revisión del seguidor; se detuvo la cola"
+  },
+  "ui_7d90d333": {
+    "message": "La cuenta de la cola cambió al guardar el etiquetado"
+  },
+  "ui_6d701929": {
+    "message": "Se desconoce el resultado del etiquetado anterior; no se reenvió la solicitud"
+  },
+  "ui_b17cb8c7": {
+    "message": "Falta la copia del lote de etiquetado original; no se reenvió la solicitud"
+  },
+  "ui_8c63dcf9": {
+    "message": "El lote de etiquetado original sigue pendiente; se conservó su ID de tarea"
+  },
+  "ui_203b832": {
+    "message": "Se guardó el etiquetado original; los datos del perfil modificados requieren otro análisis"
+  },
+  "ui_9b4fad42": {
+    "message": "El etiquetado de la cola no tiene un motor de IA y una sesión exclusivos configurados"
+  },
+  "ui_ed8dd633": {
+    "message": "Se detuvo la precarga de datos para el etiquetado"
+  },
+  "ui_519eec8": {
+    "message": "El intervalo entre lotes de etiquetado supera el tiempo disponible para este ciclo"
+  },
+  "ui_51b48460": {
+    "message": "La cuenta de la cola cambió antes de terminar el etiquetado; los resultados no se guardaron en otra cuenta"
+  },
+  "ui_46e3a0c3": {
+    "message": "El etiquetado no devolvió un resultado válido"
+  },
+  "ui_cd81e111": {
+    "message": "El lote de etiquetado no incluye la tarea actual"
+  },
+  "ui_56c80aa": {
+    "message": "Se confirmó la eliminación de este seguidor"
+  },
+  "ui_928e1587": {
+    "message": "Ya existe un registro de la solicitud para seguir; verifica el resultado antes de reenviarla"
+  },
+  "ui_9bac4c60": {
+    "message": "Esta identidad de usuario ya fue eliminada o excluida"
+  },
+  "ui_55cdf273": {
+    "message": "La IA no confirmó la admisión; no se siguió a la cuenta"
+  },
+  "ui_370f8344": {
+    "message": "Se autorizó omitir las reglas para devolver el seguimiento"
+  },
+  "ui_124d5cc2": {
+    "message": "Se aprobaron todos los filtros de admisión"
+  },
+  "ui_c1be4bb4": {
+    "message": "No se pudo volver a confirmar la identidad de destino antes de ejecutar; no se siguió a la cuenta"
+  },
+  "ui_f3cfb151": {
+    "message": "La relación de seguimiento no está clara o ya hay una solicitud pendiente; no se duplicó el seguimiento"
+  },
+  "ui_7e9c8c64": {
+    "message": "Es necesario verificar la relación antes de ejecutar"
+  },
+  "ui_240e0cca": {
+    "message": "El estado de exclusión cambió antes del envío; no se siguió a la cuenta"
+  },
+  "ui_734d71a0": {
+    "message": "Cambiaron las condiciones para omitir reglas al devolver el seguimiento; se espera el filtrado completo"
+  },
+  "ui_aed8b2c5": {
+    "message": "Los datos del perfil cambiaron antes de ejecutar; se espera un nuevo filtrado"
+  },
+  "ui_5d4162ce": {
+    "message": "El estado de exclusión cambió después de guardar el punto de control del seguimiento; no se envió la solicitud"
+  },
+  "ui_76f72f7c": {
+    "message": "La autorización de admisión cambió después de guardar el punto de control del seguimiento; no se envió la solicitud"
+  },
+  "ui_843a5ed5": {
+    "message": "Esta identidad de usuario fue excluida; se detuvieron los comentarios"
+  },
+  "ui_5b0216c4": {
+    "message": "El destino del comentario no tiene un ID de usuario estable; no se solicitó generar ni publicar"
+  },
+  "ui_3457dff0": {
+    "message": "La identidad del autor de la publicación original no coincide con el destino del comentario; no se envió la solicitud"
+  },
+  "ui_73ee86a8": {
+    "message": "No se verificó la identidad del destino del comentario o esta cambió; no se envió la solicitud"
+  },
+  "ui_f4fc7a93": {
+    "message": "No se pudo verificar la relación de seguimiento actual del destino del comentario; no se envió la solicitud"
+  },
+  "ui_fed25d34": {
+    "message": "Los comentarios no tienen un motor de IA y una sesión exclusivos configurados"
+  },
+  "ui_8250039d": {
+    "message": "La autorización de admisión cambió antes de enviar el comentario; se conservó el borrador"
+  },
+  "ui_49d218ae": {
+    "message": "No hay una cuenta vinculada a la cola"
+  },
+  "ui_2e9e262b": {
+    "message": "El almacenamiento no está disponible"
+  },
+  "ui_874ce1d6": {
+    "message": "Falta la cuenta a la que pertenece esta autorización"
+  },
+  "ui_149ecd4e": {
+    "message": "Origen de admisión del seguidor no válido"
+  },
+  "ui_8cda7d53": {
+    "message": "La IA devolvió una respuesta vacía; se requiere revisión manual"
+  },
+  "ui_59fc8151": {
+    "message": "La IA devolvió JSON no válido; se requiere revisión manual"
+  },
+  "ui_62d9490b": {
+    "message": "La IA no devolvió un arreglo JSON; se requiere revisión manual"
+  },
+  "ui_92a783b3": {
+    "message": "El targetUserId devuelto por la IA no coincide con la identidad de la cuenta candidata"
+  },
+  "ui_e32bc893": {
+    "message": "La IA devolvió un campo decision no válido"
+  },
+  "ui_656ffc37": {
+    "message": "Revisión de IA aprobada"
+  },
+  "ui_ad08f66d": {
+    "message": "La IA marcó esta cuenta para revisarla"
+  },
+  "ui_9fd6390b": {
+    "message": "La IA devolvió entradas de cuenta duplicadas; el resultado sigue sin resolverse"
+  },
+  "ui_ad793cf7": {
+    "message": "La IA no devolvió una decisión para esta cuenta"
+  },
+  "ui_bfebb4f3": {
+    "message": "$V0$: falta configurar un motor de IA y una sesión exclusivos",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_271080cb": {
+    "message": "$V0$ no admite sesiones exclusivas; elige Grok Bot, Codex o Antigravity",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_531dfda8": {
+    "message": "$V0$ no está disponible",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_89acebfc": {
+    "message": "$V0$ está sin conexión o desactivado",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b2c48da6": {
+    "message": "La sesión vinculada a $V0$ no existe o venció; vuelve a elegir una sesión",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b3845f13": {
+    "message": "Falló la verificación de la sesión de $V0$: $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_9e382e12": {
+    "message": "Motor de etiquetado de la cola"
+  },
+  "ui_ed55ce2e": {
+    "message": "Motor de revisión inicial de seguidores"
+  },
+  "ui_d78e5a7c": {
+    "message": "No se puede recuperar la tarea de IA original; no debe reenviarse"
+  },
+  "ui_7f7246a9": {
+    "message": "El lote de etiquetado supera los 120,000 caracteres. Reduce la cantidad por lote; no se truncaron los datos originales"
+  },
+  "ui_7e1465a2": {
+    "message": "Cambiaron las condiciones de protección para enviar la revisión"
+  },
+  "ui_f96a327f": {
+    "message": "La tarea de $V0$ está en curso; se espera que finalice",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_1b9a2026": {
+    "message": "Falló la solicitud a $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_bd2cba96": {
+    "message": "Se produjo un error en la solicitud a $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_5408ef58": {
+    "message": "Cambió el estado de la revisión manual; se conservó la decisión más reciente"
+  },
+  "ui_8311f01b": {
+    "message": "Cambió el estado de revisión"
+  },
+  "ui_b643c7c5": {
+    "message": "Cambió la cuenta vinculada a la cola; se pausó la tarea"
+  },
+  "ui_ab4d128c": {
+    "message": "La identidad estable del destino cambió o no pudo verificarse"
+  },
+  "ui_b1967c77": {
+    "message": "Las identidades del destino de la cola no coinciden"
+  },
+  "ui_ac0fa0f9": {
+    "message": "Se actualizó la decisión de revisión"
+  },
+  "ui_aa21204": {
+    "message": "No se pudo leer la lista completa de seguidores seleccionados"
+  },
+  "ui_5105364b": {
+    "message": "No hay cuentas de seguidores que cumplan los requisitos"
+  },
+  "ui_21efbf28": {
+    "message": "La lista de identidades de destino no es válida"
+  },
+  "ui_23996788": {
+    "message": "La lista de identidades de destino contiene datos faltantes o contradictorios"
+  },
+  "ui_f8e4bdbf": {
+    "message": "La lista de identidades de destino está incompleta"
+  },
+  "ui_5fcbf031": {
+    "message": "Cambió la identidad de un destino seleccionado; vuelve a seleccionarlo"
+  },
+  "ui_da3a72c4": {
+    "message": "Se desconoce el estado del envío original a la IA; se bloqueó el reenvío automático"
+  },
+  "ui_f657a481": {
+    "message": "La revisión de IA no terminó; se pausó y se conservó el progreso"
+  },
+  "ui_7bf4b231": {
+    "message": "La IA no devolvió una decisión válida"
+  },
+  "ui_6015da1": {
+    "message": "Hay una operación enviada con resultado desconocido; verifícala primero"
+  },
+  "ui_960a04ef": {
+    "message": "Este seguidor fue eliminado y no puede volver directamente a seguimiento pendiente"
+  },
+  "ui_4b69ee98": {
+    "message": "Un seguimiento anterior tuvo éxito; verifica primero la relación actual"
+  },
+  "ui_920f4ae4": {
+    "message": "Se aprobó manualmente y se agregó a la cola"
+  },
+  "ui_962dd8e5": {
+    "message": "Es necesario verificar el resultado de la operación; no se reactivó la cola"
+  },
+  "ui_3e02cfd": {
+    "message": "Se admitió y se agregó a la cola de seguimiento"
+  },
+  "ui_92a244dc": {
+    "message": "Se devolvió manualmente a revisión pendiente"
+  },
+  "ui_30d380ce": {
+    "message": "No está disponible el ejecutor protegido para eliminar seguidores"
+  },
+  "ui_4c81a074": {
+    "message": "Se envió una operación para eliminar o seguir con resultado desconocido; se bloqueó el reenvío"
+  },
+  "ui_b7eccef": {
+    "message": "Este seguidor ya fue eliminado"
+  },
+  "ui_bf94ea19": {
+    "message": "La eliminación se envió o está por enviarse; el resultado no está confirmado"
+  },
+  "ui_f7fe9376": {
+    "message": "No se pudo verificar la identidad o la hora de confirmación de la eliminación; el resultado sigue sin confirmar"
+  },
+  "ui_f49b6684": {
+    "message": "El resultado de la eliminación no está confirmado y debe verificarse"
+  },
+  "ui_802b8983": {
+    "message": "Ya hay una tarea de revisión de seguidores en curso"
+  },
+  "ui_2acc251": {
+    "message": "La tarea de IA original sigue sin confirmar; continúa la tarea de revisión original"
+  },
+  "ui_8f5ba267": {
+    "message": "No hay una tarea de revisión de seguidores para continuar"
+  },
+  "ui_b16da5d6": {
+    "message": "Falta la cuenta a la que pertenece esta revisión"
+  },
+  "ui_976153fe": {
+    "message": "No están disponibles los componentes de fondo necesarios para revisar seguidores"
+  },
+  "ui_f907e08a": {
+    "message": "Cambió la cuenta vinculada a la cola; se detuvo la revisión"
+  },
+  "ui_7d2c1b3f": {
+    "message": "La revisión inicial no devolvió un resultado válido"
+  },
+  "ui_f4fcb50c": {
+    "message": "La revisión inicial está desactivada; admisión directa"
+  },
+  "ui_fc0ceda0": {
+    "message": "Esperando los resultados de la revisión inicial de seguidores"
+  },
+  "ui_2bc26cb0": {
+    "message": "Operación de revisión desconocida"
+  },
+  "ui_efd01b44": {
+    "message": "La cuenta a la que pertenece la revisión no coincide"
+  },
+  "ui_f7adf71f": {
+    "message": "La lectura de la configuración agotó el tiempo de espera. Inténtalo de nuevo."
+  },
+  "ui_2d8796d": {
+    "message": "La respuesta de guardado agotó el tiempo de espera; el resultado no está confirmado. Se conservan los datos ingresados. Vuelve a cargar la configuración para verificar."
+  },
+  "ui_796f62e0": {
+    "message": "La comprobación de conexión agotó el tiempo de espera. Revisa el servicio e inténtalo de nuevo."
+  },
+  "ui_3bc2bb4": {
+    "message": "Cambios sin guardar"
+  },
+  "ui_73ddaec5": {
+    "message": "Guardado · Comprobando conexión"
+  },
+  "ui_786d9118": {
+    "message": "Guardado · Conexión no disponible"
+  },
+  "ui_6c6e7d41": {
+    "message": "Guardado · Conexión disponible"
+  },
+  "ui_8f3c73e6": {
+    "message": "Guardado · Sesión no disponible"
+  },
+  "ui_5ae72892": {
+    "message": "Guardado · Aún sin comprobar"
+  },
+  "ui_5b9f7f04": {
+    "message": "Sesión independiente guardada"
+  },
+  "ui_89d7a4a": {
+    "message": "Configura un motor y una sesión independiente antes de la revisión con IA."
+  },
+  "ui_c4eb28b0": {
+    "message": "No se pudo leer el estado de la configuración"
+  },
+  "ui_9116a1c9": {
+    "message": "Leyendo el estado de la configuración…"
+  },
+  "ui_7b19a486": {
+    "message": "La sesión independiente seleccionada está disponible"
+  },
+  "ui_c33a4d17": {
+    "message": "Se guardó la configuración anterior. Los últimos cambios aún no están guardados."
+  },
+  "ui_d5551b6d": {
+    "message": "Se volvió a leer la configuración guardada"
+  },
+  "ui_70d95d75": {
+    "message": "Volver a leer la configuración"
+  },
+  "ui_37ec1c1f": {
+    "message": "Leyendo configuración…"
+  },
+  "ui_44a42981": {
+    "message": "Ninguna cuenta sigue a la otra; excluida de la gestión de seguidores"
+  },
+  "ui_7bca1f5b": {
+    "message": "Ya sigues esta cuenta; no requiere revisión ni ingreso a la cola"
+  },
+  "ui_dd00279": {
+    "message": "Relación sin verificar; no se envió a revisión ni a la cola"
+  },
+  "ui_5f243339": {
+    "message": "Verificación de relación incompleta: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_3ecca927": {
+    "message": "La verificación devolvió una identidad de destino diferente"
+  },
+  "ui_2f6cc44a": {
+    "message": "Cambió la identidad de la cuenta guardada"
+  },
+  "ui_c823cc87": {
+    "message": "Identidad estable de destino no válida"
+  },
+  "ui_6c7d8ec5": {
+    "message": "No se pudo verificar la relación completa"
+  },
+  "ui_39d1c93a": {
+    "message": " · $V0$ cuentas sin relación excluidas; historial conservado",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_3bfb7b73": {
+    "message": "Resultado de revisión"
+  },
+  "ui_22066563": {
+    "message": "Filtrar resultados de revisión"
+  },
+  "ui_5973a4b2": {
+    "message": "Todos los resultados"
+  },
+  "ui_9ea329d7": {
+    "message": "Sin etiquetar"
+  },
+  "ui_956cf7b9": {
+    "message": "Filtro de resultados de revisión no válido"
+  },
+  "ui_5ac14f6d": {
+    "message": "El resultado cambió; se omitió"
+  },
+  "ui_48d0e824": {
+    "message": "Filtra toda la lista de revisión. Selecciona todos los resultados para aprobarlos y agregarlos a la cola en todas las páginas. Las relaciones se verifican antes de ejecutar."
+  },
+  "ui_37b09ec3": {
+    "message": "Resultados de operaciones"
+  },
+  "ui_b55c2782": {
+    "message": "Cerrar resultado"
+  },
+  "ui_e52a539f": {
+    "message": "Ver $V0$ resultados",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_e9888de": {
+    "message": "Operación incompleta"
+  },
+  "ui_dc78aaf3": {
+    "message": "Verificación $V0$: $V1$/$V2$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_79fecdb7": {
+    "message": "Perfil en caché"
+  },
+  "ui_47f79262": {
+    "message": "Perfil en caché; publicaciones pendientes"
+  },
+  "ui_c46cc911": {
+    "message": "Caché de perfil incompleta"
+  },
+  "ui_acf94107": {
+    "message": "Perfil recopilado"
+  },
+  "ui_6469a0": {
+    "message": "Caché de publicaciones"
+  },
+  "ui_aacb23e2": {
+    "message": "Caché vencida"
+  },
+  "ui_59c2a4e8": {
+    "message": "Recopilación pendiente"
+  },
+  "ui_3d07bd9e": {
+    "message": "En caché"
+  },
+  "ui_54d69a8c": {
+    "message": "Caché parcial"
+  },
+  "ui_849aafd5": {
+    "message": "Sin publicaciones públicas"
+  },
+  "ui_2624d35b": {
+    "message": "Error de recopilación"
+  },
+  "ui_5746ba74": {
+    "message": "Límite de solicitudes"
+  },
+  "ui_d0a4ab1e": {
+    "message": "La revisión manual con IA reutiliza los datos recopilados. La recopilación de publicaciones usa caché y límites sin bloquear la verificación de relaciones."
+  },
+  "ui_39abcfdb": {
+    "message": "El análisis automático usa solo biografías. La revisión manual con IA reutiliza perfiles y hasta 10 publicaciones en caché. Se indican los datos faltantes o vencidos. Las tareas esperan la configuración del motor."
+  },
+  "ui_b924b634": {
+    "message": "Sin publicaciones originales aptas"
+  },
+  "ui_52a79939": {
+    "message": "Revisión manual"
+  },
+  "ui_457a90d8": {
+    "message": "Pendiente de revisión"
+  },
+  "ui_e38a312d": {
+    "message": "Estado de revisión"
+  },
+  "ui_d119f021": {
+    "message": "Buscar cuentas en revisión"
+  },
+  "ui_696209e9": {
+    "message": "Buscar cuenta o motivo…"
+  },
+  "ui_3c020b04": {
+    "message": "Reintentar seleccionados"
+  },
+  "ui_2cf9bbe8": {
+    "message": "Reiniciar contadores para la próxima ejecución. Las acciones sin confirmar solo verifican resultados existentes."
+  },
+  "ui_3e32d86c": {
+    "message": "Omitir seleccionados"
+  },
+  "ui_1a37ea6c": {
+    "message": "Conservar marcadores de deduplicación y dejar de programar estas cuentas."
+  },
+  "ui_a1941588": {
+    "message": "Eliminar registros seleccionados"
+  },
+  "ui_23bf1660": {
+    "message": "Eliminar solo registros locales seleccionados. Las cuentas podrán recopilarse de nuevo."
+  },
+  "ui_262fb172": {
+    "message": "Seleccionar página actual"
+  },
+  "ui_4447589d": {
+    "message": "Seleccionar @$V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b0f8337e": {
+    "message": "$V0$ verificaciones",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_56c38bbf": {
+    "message": "Resultado original sin confirmar. El reintento verifica el resultado antes de actuar."
+  },
+  "ui_a4789e08": {
+    "message": "Reiniciar contador y verificar en la próxima ejecución."
+  },
+  "ui_67132055": {
+    "message": "Conservar el marcador de deduplicación y detener la programación automática."
+  },
+  "ui_49b6fb9d": {
+    "message": "Eliminar solo registros locales. La cuenta podrá recopilarse de nuevo."
+  },
+  "ui_e3f962e1": {
+    "message": "No hay cuentas pendientes de revisión"
+  },
+  "ui_fbf36fc6": {
+    "message": "No hay cuentas omitidas"
+  },
+  "ui_e5b3b83e": {
+    "message": "Página $V0$ / $V1$ · $V2$ elementos",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      },
+      "v2": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_c8728f40": {
+    "message": "Eliminar registros locales de $V0$ cuentas sin cambiar nada en X. Podrán volver a las tareas al recopilarse de nuevo.",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_b8b168c4": {
+    "message": "Hay una ejecución activa. Inténtalo de nuevo en breve."
+  },
+  "ui_734e5f72": {
+    "message": "$V0$ completados, $V1$ fallidos",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_ba13196": {
+    "message": "Resultado sin confirmar. Actualiza el estado antes de reintentar."
+  },
+  "ui_b4236c8b": {
+    "message": "Detalles de fallos"
+  },
+  "ui_7b6e688e": {
+    "message": "Verificaciones $V0$ / $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_cff3ac0d": {
+    "message": "Límite de verificaciones automáticas"
+  },
+  "ui_b5d1c98b": {
+    "message": "Acerca del límite de verificaciones automáticas"
+  },
+  "ui_1e96f9f9": {
+    "message": "De forma predeterminada, tres fallos consecutivos, incluida la primera verificación, requieren revisión manual. Los contadores persisten entre ejecuciones y reinicios. Las cuentas bloqueadas van directamente a revisión; las acciones sin confirmar solo verifican resultados existentes."
+  },
+  "ui_810c903c": {
+    "message": "Introduce un número entero de 1 a 10."
+  },
+  "ui_8d174d36": {
+    "message": "La cuenta actual ha bloqueado a este usuario."
+  },
+  "ui_6cc28d11": {
+    "message": "Se detuvieron las verificaciones de las cuentas en revisión. Las demás continúan según lo programado."
+  },
+  "ui_6a0c0274": {
+    "message": "Se alcanzó el límite de verificaciones automáticas"
+  },
+  "ui_e26e0e28": {
+    "message": "El resultado de la verificación sigue siendo incierto"
+  },
+  "ui_9bb3c347": {
+    "message": "Expandir motivo"
+  },
+  "ui_e3c640ed": {
+    "message": "Contraer motivo"
+  },
+  "ui_3a7f42cf": {
+    "message": "El control de seguimiento del perfil necesita verificación"
+  },
+  "ui_e5bb7d4f": {
+    "message": "Categoría cambiada"
+  },
+  "ui_322475d3": {
+    "message": "Búsqueda modificada"
+  },
+  "ui_9cff5db0": {
+    "message": "Filtro de revisión modificado"
+  },
+  "ui_b6f2b2f7": {
+    "message": "Cantidad por página modificada"
+  },
+  "ui_2a30358d": {
+    "message": "Página cambiada"
+  },
+  "ui_c01e1557": {
+    "message": "Paginación predeterminada modificada"
+  },
+  "ui_34a97c0c": {
+    "message": "$V0$. Quedan $V1$ cuentas sin verificar. Vuelve a seleccionarlas para continuar.",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_e519f589": {
+    "message": "La revisión inicial y manual con IA comparten este límite. La revisión manual divide lotes según la longitud del prompt completo sin recortar evidencia; la cantidad puede ser menor. La IA recomienda; tú apruebas o eliminas."
+  },
+  "ui_fd4d163a": {
+    "message": "Tras recibir el resultado, espera aleatoriamente dentro de este intervalo antes del siguiente lote. Cada tarea es secuencial. Valores iguales fijan el intervalo; ambos en cero continúa de inmediato. Al detener, se conserva el progreso y la hora prevista."
+  },
+  "ui_c1c05d05": {
+    "message": " · Deteniendo"
+  },
+  "ui_7c056806": {
+    "message": " · $COUNT$ cuentas en este lote",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_c2668a89": {
+    "message": " · Siguiente lote en $SECONDS$ s",
+    "placeholders": {
+      "seconds": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_85deab27": {
+    "message": "Una cuenta supera el límite de entrada de IA. La evidencia se conserva; revísala manualmente."
+  },
+  "ui_f99a6d7": {
+    "message": "Los intervalos deben ser segundos enteros de 0 a 300; el máximo debe ser igual o mayor al mínimo."
+  },
+  "ui_2dc64364": {
+    "message": "Usa de 1 a 50 cuentas por lote y de 0 a 300 segundos entre lotes, con máximo igual o mayor al mínimo."
+  },
+  "ui_b851cc4d": {
+    "message": "Cola de recopilación de publicaciones"
+  },
+  "ui_c3def7a3": {
+    "message": "Ver progreso, límites y reintentos"
+  },
+  "ui_386c7571": {
+    "message": "Cargando la cola…"
+  },
+  "ui_be752344": {
+    "message": "Muestra tareas pendientes y los últimos 200 resultados finalizados. No incluye tareas terminadas antes de habilitar esta función. Cerrar esta ventana o actualizar el panel no detiene la programación."
+  },
+  "ui_5cf64c0a": {
+    "message": "Acerca del progreso"
+  },
+  "ui_ced5d50e": {
+    "message": "Progreso de recopilación"
+  },
+  "ui_b460ff3b": {
+    "message": "Finalizadas $V0$ / $V1$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      },
+      "v1": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_a352afb0": {
+    "message": "Filtrar estado de recopilación"
+  },
+  "ui_ed14ceb0": {
+    "message": "No hay tareas. Tras verificar una cuenta, se añade automáticamente si no tiene publicaciones en caché vigentes."
+  },
+  "ui_28fb4642": {
+    "message": "No hay tareas con este filtro"
+  },
+  "ui_634657c": {
+    "message": "Intentos: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4ddb0ea6": {
+    "message": "$V0$ publicaciones en caché",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_77690225": {
+    "message": "Disponible: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_5247517d": {
+    "message": "Recopilando @$V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4f1d9e60": {
+    "message": "No hay tareas pendientes"
+  },
+  "ui_2ff02594": {
+    "message": "La recopilación se interrumpió; se reanudará tras el período de recuperación"
+  },
+  "ui_3301b821": {
+    "message": "No se detectó una ejecución programada. Revisa el registro de errores."
+  },
+  "ui_3a680fc6": {
+    "message": "Próxima ejecución: $V0$",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_1b7454f7": {
+    "message": "Recopilando"
+  },
+  "ui_c71c06a1": {
+    "message": "Reintentos agotados"
+  },
+  "ui_3a23cc65": {
+    "message": "La consulta de la cola agotó el tiempo. Inténtalo más tarde."
+  },
+  "ui_60ed7f04": {
+    "message": "No se pudo cargar la cola"
+  },
+  "ui_2f4a43e": {
+    "message": "Pendientes"
+  },
+  "ui_13de6e93": {
+    "message": "El servicio de IA rechazó la solicitud: el cuerpo supera el límite"
+  },
+  "ui_63a6d38d": {
+    "message": "El servicio rechazó una solicitud grande antes de entregarla a la IA. Ajusta los límites y continúa."
+  },
+  "ui_e6cf81fe": {
+    "message": "Falta la entrada guardada de la tarea de IA original. En pausa para no omitir cuentas."
+  },
+  "ui_4e2f8db9": {
+    "message": "Muestra tareas pendientes y los últimos 200 resultados, incluidos los registros guardados en perfiles. Se muestra su estado y fecha reales, sin inferir el número de intentos. Cerrar esta ventana o actualizar el panel no detiene la programación."
+  },
+  "ui_8a15a286": {
+    "message": "Registro de recopilación existente"
+  },
+  "ui_9d80da87": {
+    "message": " · Verificando registros $CHECKED$/$TOTAL$ · @$HANDLE$",
+    "placeholders": {
+      "checked": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      },
+      "handle": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_19327227": {
+    "message": " · Guardando resultados $DONE$/$TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_c55349cf": {
+    "message": "No se puede revisar"
+  },
+  "ui_c7f3714f": {
+    "message": "Sin biografía en el perfil; no se puede revisar"
+  },
+  "ui_87309b18": {
+    "message": "Sugerencia original de IA"
+  },
+  "ui_3de7d4b7": {
+    "message": "Una biografía basta para la revisión inicial. Las publicaciones y datos de seguidores guardados son contexto opcional. Sin biografía no hay revisión; no se espera a la recopilación."
+  },
+  "ui_1c65067e": {
+    "message": "Desactivado por defecto. La revisión con IA solo exige una biografía. Las publicaciones relacionadas y los datos de seguidores guardados son opcionales; su ausencia no bloquea la revisión. Sin biografía, marca como no revisable sin llamar a la IA ni esperar recopilación o verificación de relaciones. Los aprobados entran en las colas de seguimiento; los demás quedan en revisión. Desactivado, se admite directamente. La opción de omitir filtros controla la revisión posterior."
+  },
+  "ui_c35e0259": {
+    "message": "Verifica las cuentas seleccionadas al iniciar. Cambiar de página, categoría, búsqueda o paginación no detiene el lote. Usa Detener para pausar tras la cuenta actual y luego continuar. Solo actualiza relaciones locales; no sigue ni deja de seguir."
+  },
+  "ui_be01546f": {
+    "message": "Detener verificación"
+  },
+  "ui_7d2c6397": {
+    "message": "Pausa tras la cuenta actual. Las restantes esperan y se conservan los resultados."
+  },
+  "ui_e3333638": {
+    "message": "Pendiente de seguir: aprobado y en espera en la cola. Pendiente de revisión: coincide con una regla, es incierto o requiere atención. Las cuentas confirmadas sin relación de seguimiento en ninguno de los dos sentidos se eliminan automáticamente. Las relaciones desconocidas requieren verificación. La búsqueda incluye todas las cuentas locales."
+  },
+  "ui_9b5a1c6f": {
+    "message": "Verificación de seguidores"
+  },
+  "ui_6927c338": {
+    "message": "Progreso de la tarea"
+  },
+  "ui_84bc3078": {
+    "message": "Procesadas $DONE$/$TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1"
+      },
+      "total": {
+        "content": "$2"
+      }
+    }
+  },
+  "ui_431067c7": {
+    "message": "Correctas $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_795aef64": {
+    "message": "Fallidas $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_c20b6e70": {
+    "message": "Se detendrá tras el elemento actual"
+  },
+  "ui_f92cb2bb": {
+    "message": "$COUNT$ cuentas en este lote",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_55bb6cca": {
+    "message": "Cargando registros de recopilación guardados…"
+  },
+  "ui_89bf7cc5": {
+    "message": "Seguidores pendientes de seguir de vuelta: $COUNT$",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_4d41b452": {
+    "message": "Pendientes: aprobados y en cola. Revisión: evaluación por IA o manual. Verificación: recopilar el perfil y hasta 10 publicaciones recientes, y revisar una vez más. Tras confirmar el seguimiento, la relación es mutua."
+  },
+  "ui_ac7efa91": {
+    "message": "Esperando detalles del perfil para una nueva revisión"
+  },
+  "ui_3fd8ecf5": {
+    "message": "X no devolvió la relación completa después de un reintento. Inténtalo más tarde."
+  },
+  "ui_9abb0590": {
+    "message": "X no devolvió este perfil después de un reintento. Comprueba si la cuenta está disponible."
+  },
+  "ui_451858fe": {
+    "message": "Aprobado"
+  },
+  "ui_c0a6c73": {
+    "message": "Rechazado"
+  },
+  "ui_d64a578e": {
+    "message": "Información insuficiente"
+  },
+  "ui_1b856336": {
+    "message": "Revisión anterior pendiente"
+  },
+  "ui_4ba59d1b": {
+    "message": "Rechazado · eliminado"
+  },
+  "ui_275a696": {
+    "message": "Rechazado · eliminación sin confirmar"
+  },
+  "ui_f5cddd5b": {
+    "message": "La información sigue siendo insuficiente tras la recopilación; verifica de nuevo"
+  },
+  "ui_f9c34383": {
+    "message": "Las cuentas aprobadas entran en la cola; las rechazadas se eliminan de seguidores; la información insuficiente pasa a verificación. Una biografía o publicaciones útiles permiten la revisión."
+  },
+  "ui_e4ad8606": {
+    "message": "Error de revisión"
+  },
+  "ui_e8354647": {
+    "message": "Eliminación sin confirmar"
+  },
+  "ui_dbd590bf": {
+    "message": "Rechazado · Eliminación pendiente"
+  },
+  "ui_84aca9a8": {
+    "message": "Esperando para continuar"
+  },
+  "ui_d01b30cb": {
+    "message": "El mensaje está vacío o supera los $LIMIT$ caracteres",
+    "placeholders": {
+      "limit": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_f93f07c8": {
+    "message": "Siguiendo $FOLLOWING$ supera $THRESHOLD$ veces el número de seguidores $FOLLOWERS$; omitir seguir de vuelta y eliminar este seguidor",
+    "placeholders": {
+      "following": {
+        "content": "$1"
+      },
+      "followers": {
+        "content": "$2"
+      },
+      "threshold": {
+        "content": "$3"
+      }
+    }
+  },
+  "ui_ce5a07c4": {
+    "message": "Siguiendo no supera $THRESHOLD$ veces el número de seguidores; continuar con la aprobación para seguir de vuelta",
+    "placeholders": {
+      "threshold": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_81ab9332": {
+    "message": "Revisión automática"
+  },
+  "ui_656dfbb2": {
+    "message": "Verificación automática"
+  },
+  "ui_707331b0": {
+    "message": "Intervalo de comprobación (minutos)"
+  },
+  "ui_4b8b7d57": {
+    "message": "Cuentas por ejecución"
+  },
+  "ui_a8d90c46": {
+    "message": "Reintentar la misma cuenta después de (minutos)"
+  },
+  "ui_52f91110": {
+    "message": "Programación automática desactivada"
+  },
+  "ui_43014435": {
+    "message": "Se ejecuta según el horario después de guardar"
+  },
+  "ui_50e792f5": {
+    "message": "Esperando la configuración de IA"
+  },
+  "ui_a6dfad82": {
+    "message": "Esperando la tarea manual"
+  },
+  "ui_291215ba": {
+    "message": "Procesando automáticamente"
+  },
+  "ui_860d6fd5": {
+    "message": "Comprobando cuentas pendientes"
+  },
+  "ui_3f31ed2c": {
+    "message": "Esperando la próxima comprobación"
+  },
+  "ui_3a4d448a": {
+    "message": "Esperando la recuperación"
+  },
+  "ui_ba535f32": {
+    "message": "Próxima comprobación"
+  },
+  "ui_25d10810": {
+    "message": "Eliminado el"
+  },
+  "ui_4a290b73": {
+    "message": "Opción de programación no válida"
+  },
+  "ui_e50ae6fd": {
+    "message": "Programación no válida: intervalo de 1–60 minutos, 1–50 cuentas por ejecución, reintento de verificación de 5–1440 minutos"
+  },
+  "ui_1e815b45": {
+    "message": "Activado por defecto. Revisa cuentas pendientes usando perfiles y posts guardados. Las aprobadas entran en la cola de seguimiento; se eliminan los seguidores rechazados; la información insuficiente pasa a verificación."
+  },
+  "ui_880690b1": {
+    "message": "Activado por defecto. Recopila datos del perfil y hasta 10 posts, reutilizando primero la caché. Vuelve a revisión al terminar. Respeta el límite global de acceso y el intervalo de reintentos."
+  },
+  "ui_3c18bacf": {
+    "message": "La revisión inicial y manual comparten este límite. Los lotes se adaptan al prompt completo sin truncar pruebas. La aprobación añade a la cola; el rechazo elimina al seguidor; la información insuficiente requiere verificación."
+  },
+  "ui_3c711ae0": {
+    "message": "Desactivado por defecto. Al activar, usa descripciones y posts disponibles en la revisión por IA. La falta de pruebas pasa a verificación automática. Las cuentas aprobadas entran en la cola; se eliminan los seguidores rechazados. Al desactivar, los nuevos candidatos pasan directamente. El filtrado sigue la opción de omitir reglas al seguir de vuelta."
+  },
+  "ui_299a89a4": {
+    "message": "Registros de revisión"
+  },
+  "ui_c74e26f7": {
+    "message": "Registros de verificación"
+  },
+  "ui_4d89f1e4": {
+    "message": "Registros de programación"
+  },
+  "ui_97f54ed1": {
+    "message": "Programación de revisión"
+  },
+  "ui_ddb410aa": {
+    "message": "Programación de verificación"
+  },
+  "ui_2c2632a": {
+    "message": "Error técnico"
+  },
+  "ui_967f3334": {
+    "message": "Revisión rechazada"
+  },
+  "ui_d055125c": {
+    "message": "Listo para otra revisión"
+  },
+  "ui_5fb9f525": {
+    "message": "Esperando recopilación o reintento"
+  },
+  "ui_6efcc9e6": {
+    "message": "Esperando resultados de IA"
+  },
+  "ui_cff5ba9c": {
+    "message": "Enviando a la IA"
+  },
+  "ui_3c3bb31b": {
+    "message": "Preparando revisión"
+  },
+  "ui_86f415e4": {
+    "message": "Guardando resultados"
+  },
+  "ui_90bc1836": {
+    "message": "Resultados de IA recibidos"
+  },
+  "ui_870268a2": {
+    "message": "Programación desactivada"
+  },
+  "ui_b96aa57c": {
+    "message": "Esperando la próxima comprobación"
+  },
+  "ui_4321cbd9": {
+    "message": "Comprobando"
+  },
+  "ui_8fec2b7d": {
+    "message": "Cuentas de esta ronda"
+  },
+  "ui_3e9d9782": {
+    "message": "Enviados en este lote"
+  },
+  "ui_7dda3491": {
+    "message": "Acción de eliminación"
+  },
+  "ui_2b780ee5": {
+    "message": "ID de cuenta propietaria"
+  },
+  "ui_981f5584": {
+    "message": "ID de lote"
+  },
+  "ui_1b6bf359": {
+    "message": "Seguimiento de seguidores · Revisiones"
+  },
+  "ui_f1e4a1ee": {
+    "message": "Seguimiento de seguidores · Verificaciones"
+  },
+  "ui_a1e9ae55": {
+    "message": "Seguimiento de seguidores · Programación"
+  },
+  "ui_5e8f80ea": {
+    "message": "Aún no hay registros de revisión"
+  },
+  "ui_2b2d31e1": {
+    "message": "Aún no hay registros de verificación"
+  },
+  "ui_8953257a": {
+    "message": "Aún no hay registros de programación"
+  },
+  "ui_d4c545dd": {
+    "message": "Resultados y motivos de revisión. Los errores técnicos se distinguen de los rechazos."
+  },
+  "ui_7c05a764": {
+    "message": "Verificación de relaciones, recopilación adicional y motivos de reintento."
+  },
+  "ui_91efbc93": {
+    "message": "Ejecuciones automáticas, motivos de espera y próximas comprobaciones."
+  },
+  "ui_39e75686": {
+    "message": "Ver tarea original"
+  },
+  "ui_25b17f19": {
+    "message": "Reglas de eliminación"
+  },
+  "ui_ea05528c": {
+    "message": "Bloquear contenido sugerente"
+  },
+  "ui_dc7f9c1a": {
+    "message": "Bloquear perfiles vacíos"
+  },
+  "ui_663ab6b0": {
+    "message": "Desactivado por defecto. Las palabras clave y la IA eliminan seguidores cuando hay evidencia de contenido sexual o promoción sugerente."
+  },
+  "ui_6ae37272": {
+    "message": "Desactivado por defecto. Elimina solo si se confirma que no hay biografía ni publicaciones; si no, permite según esta regla. Los errores, límites y perfiles privados no cuentan como vacíos."
+  },
+  "ui_20909eea": {
+    "message": "Aviso de conexión de IA"
+  },
+  "ui_4ca25ffe": {
+    "message": "Conexión de IA no disponible"
+  },
+  "ui_d5e2c044": {
+    "message": "Ocultar aviso"
+  },
+  "ui_390da0e2": {
+    "message": "Conexión temporalmente no disponible"
+  },
+  "ui_32ea0b71": {
+    "message": "Reintento en $V0$ segundos",
+    "placeholders": {
+      "v0": {
+        "content": "$1"
+      }
+    }
+  },
+  "ui_fc06d5c7": {
+    "message": "Esperando el reintento…"
+  },
+  "ui_d2fff746": {
+    "message": "Reintentando…"
+  },
+  "ui_c6b06334": {
+    "message": "Reintentar conexión de IA"
+  },
+  "ui_d79d67d0": {
+    "message": "No se pudo leer el estado de conexión. Abre los ajustes del sistema."
+  },
+  "ui_104a2cf7": {
+    "message": "Leyendo el estado de conexión…"
+  },
+  "ui_dba59f9c": {
+    "message": "Sesión no disponible. Actualiza las sesiones en los ajustes del sistema."
+  },
+  "ui_14c24f8c": {
+    "message": "Comprobación central de conexión en curso"
+  },
+  "ui_31755ff9": {
+    "message": "Cliente de IA desconectado. Revisa su sesión en AgentRelay."
   }
 }

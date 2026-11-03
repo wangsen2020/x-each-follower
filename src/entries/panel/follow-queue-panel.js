@@ -1,11 +1,13 @@
+import {runVerificationItems,verificationRowState} from '../../features/relationships/verification-workflow.js';
+import {createTaskProgressReporter,publishPanelResult,PANEL_RESULT_ACTION_EVENT} from './result-notices.js';
 import {t} from '../../shared/i18n.js';
+import {openFollowReviewSettings} from './follow-review-settings.js';
 import {isLocalAiProvider} from '../../features/grok/grok-local.js';
-import {generationChoice, saveGenerationChoice} from './generation-choice.js';
 import {grokProviderController} from './composables/useGrokProvider.js';
 import {readSystemSettings, systemSettingsKey} from '../../shared/system-settings.js';
 import {cloudflareImagesController} from './composables/useCloudflareImages.js';
 import {watch} from 'vue';
-import {Clock3, RefreshCw, Sparkles, Settings, Zap, Square, ScrollText, UserRound, UserRoundCheck, Ban, ListTree, Trash2, RotateCcw, Send, ShieldCheck} from 'lucide';
+import {Clock3, RefreshCw, Sparkles, Settings, Zap, Square, ScrollText, UserRound, UserRoundCheck, Ban, ListTree, ListX, Trash2, RotateCcw, Send, ShieldCheck} from 'lucide';
 import {panelIcon, panelIconButton} from './panel-icon-button.js';
 import {quotePublishIssue} from '../../features/grok/quote-quality.js';
 import {originalQualityIssue,originalTextIssue} from '../../features/publishing/original-quality.js';
@@ -259,7 +261,7 @@ function el(tag, attrs = {}, children = []) {
  * @param {string} options.accountId Current logged-in X user ID
  * @returns {{ refresh: Function, destroy: Function }} Control handles
  */
-export function mountFollowQueuePanel(root, { request, accountId, accountHandle, onManageSources, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random } = {}) {
+export function mountFollowQueuePanel(root, { request, accountId, accountHandle, onManageSources, batchVerifyWait = ms => new Promise(resolve => setTimeout(resolve, ms)), batchVerifyRandom = Math.random, publishResult = publishPanelResult } = {}) {
   if (!root) throw new Error('mountFollowQueuePanel requires a root element');
 
   let currentAccountId = accountId || '';
@@ -291,8 +293,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
   let scanActive = false;
   const selectedJobIds = new Set();
   let batchAction = null;
-  let batchFeedbackTimer = null;
-  const clearBatchFeedbackTimer = () => { clearTimeout(batchFeedbackTimer); batchFeedbackTimer = null; };
+  const reportVerification=createTaskProgressReporter({publish:publishResult});
   let inspectingJob = null;
   let isSettingsOpen = false;
   let settingsDraft = null;
@@ -303,6 +304,13 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
   const activeEvaluations = new Set();
 
   const cleanups = [];
+  const actionTarget=root.ownerDocument||document;
+  const progressAction=event=>{const d=event.detail,b=batchAction;if(d?.kind!=='queue-verification'||!b||d.batchId!==b.id||b.account!==currentAccountId)return;
+    if(d.action==='stop'&&b.running){b.cancelled=true;render();}
+    if(d.action==='resume'&&!b.running&&b.stage==='paused')void processVerification(b);
+    if(d.action==='close'&&!b.running)batchAction=null;
+  };
+  actionTarget.addEventListener?.(PANEL_RESULT_ACTION_EVENT,progressAction);cleanups.push(()=>actionTarget.removeEventListener?.(PANEL_RESULT_ACTION_EVENT,progressAction));
 
   function createSettingsDraft(base = settings) {
     const normalized = normalizeSettings(base);
@@ -324,8 +332,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
   }
 
   function clearAccountState() {
-    clearBatchFeedbackTimer();
-    if (batchAction) batchAction.cancelled = true;
+    if(batchAction?.running){batchAction.cancelled=true;batchAction.running=false;batchAction.stage='paused';batchAction.resumable=false;batchAction.pauseReason='当前绑定账号已变化';renderBatchFeedback();}
     batchAction = null;
     jobs = [];
     selectedJobIds.clear();
@@ -362,7 +369,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
   let drawerOverlay = null;
 
   async function fetchAll(cursorRetries = 0, options = {}) {
-    if (isDestroyed || batchAction?.running) return;
+    if (isDestroyed || batchAction?.running&&!options.allowDuringVerification) return;
     const preserveSettings = options?.preserveSettings === true;
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
@@ -548,8 +555,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const reqAccount = currentAccountId;
     const reqId = ++activeReqId;
     isExecuting = true;
-    clearBatchFeedbackTimer();
-    if (!batchAction?.running) batchAction = null;
+
+
     render();
     try {
       const res = await request({ cmd: 'followQueueRun', accountId: reqAccount });
@@ -582,8 +589,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const reqAccount = currentAccountId;
     busyJobIds.add(job.id);
     error = null;
-    clearBatchFeedbackTimer();
-    if (!batchAction?.running) batchAction = null;
+
+
     render();
     try {
       const res = await request({cmd:'followQueueDelete', accountId:reqAccount, jobId:job.id, confirmed:true});
@@ -614,46 +621,24 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       : mode === 'exclude' ? '将任务标为已排除，停止后续执行，不会在 X 上取关。'
       : '逐项读取最新关注关系并更新任务状态；确认未关注的任务会恢复为待关注，开启定时调度时可能在后续执行。';
     if (!globalThis.confirm(t("对当前页选中的 \u007b\u007bv0\u007d\u007d 项任务批量\u007b\u007bv1\u007d\u007d？\u007b\u007bv2\u007d\u007d",{v0:targets.length,v1:t(label),v2:impact}))) return;
-    const account = currentAccountId;
-    clearBatchFeedbackTimer();
-    const action = batchAction = {running:true, cancelled:false, label, total:targets.length, processed:0, success:0, failures:[]};
-    render();
-    for (const job of targets) {
-      if (isDestroyed || currentAccountId !== account || action.cancelled || batchAction !== action) break;
-      try {
-        const result = await request(mode === 'delete'
-          ? {cmd:'followQueueDelete', accountId:account, jobId:job.id, confirmed:true}
-          : {cmd:'followQueueVerify', accountId:account, jobId:job.id, mode:mode === 'exclude' ? 'exclude' : 'check'});
-        if (!result?.ok) throw new Error(result?.error || result?.reason || `${label}失败`);
-        if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
-        action.success++;
-        (action.completedIds ||= []).push(job.id);
-      } catch (err) {
-        if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
-        action.failures.push({handle:job.handle || job.targetUserId || job.id, reason:err?.message || `${label}失败`});
-      }
-      action.processed++;
-      render();
-      if (mode === 'check' && action.processed < action.total && !action.cancelled && !isDestroyed && currentAccountId === account && batchAction === action) {
-        await batchVerifyWait(2000 + Math.floor(batchVerifyRandom() * 3001));
-      }
-    }
-    if (isDestroyed || currentAccountId !== account || batchAction !== action) return;
-    action.running = false;
-    for (const id of action.completedIds || []) selectedJobIds.delete(id);
-    currentPage = 1;
-    startCursors = [null];
-    await fetchAll();
-    if (!isDestroyed && batchAction === action && !action.cancelled && !action.failures.length && action.processed === action.total) {
-      action.dismissAt = Date.now() + 3000;
-      const tick = () => {
-        if (isDestroyed || batchAction !== action || currentAccountId !== account) return;
-        if (Date.now() >= action.dismissAt) { batchAction = null; batchFeedbackTimer = null; render(); return; }
-        render();
-        batchFeedbackTimer = setTimeout(tick, Math.min(1000, Math.max(1, action.dismissAt - Date.now())));
-      };
-      tick();
-    }
+    const action=batchAction={id:crypto.randomUUID(),account:currentAccountId,mode,running:true,cancelled:false,label,total:targets.length,processed:0,nextIndex:0,success:0,failures:[],targets:targets.map(({id,handle,targetUserId})=>({id,handle,targetUserId})),completedIds:[]};
+    await processVerification(action);
+  }
+  async function processVerification(action){
+    const account=action.account;action.running=true;action.cancelled=false;action.pauseReason='';render();
+    const result=await runVerificationItems({items:action.targets,startIndex:action.nextIndex||0,accountId:account,
+      readAccount:async()=>currentAccountId,shouldStop:()=>isDestroyed||action.cancelled||batchAction!==action,
+      discard:()=>isDestroyed||currentAccountId!==account||batchAction!==action,
+      onCurrent:job=>{action.currentHandle=job.handle||job.targetUserId||job.id;render();},
+      inspect:job=>request(action.mode==='delete'?{cmd:'followQueueDelete',accountId:account,jobId:job.id,confirmed:true}:{cmd:'followQueueVerify',accountId:account,jobId:job.id,mode:action.mode==='exclude'?'exclude':'check'}),
+      onSuccess:(_,job)=>{action.success++;action.completedIds.push(job.id);},
+      onFailure:(error,job)=>action.failures.push({handle:job.handle||job.targetUserId||job.id,reason:error?.message||'核验失败'}),
+      onAdvance:nextIndex=>{action.nextIndex=nextIndex;action.processed=nextIndex;render();},
+      wait:action.mode==='check'?batchVerifyWait:async()=>{},random:batchVerifyRandom});
+    if(isDestroyed||currentAccountId!==account||batchAction!==action)return;
+    action.running=false;action.stage=result.stage;action.nextIndex=result.nextIndex;action.processed=result.nextIndex;action.pauseReason=result.reason;action.currentHandle='';
+    action.cancelled=result.stage==='paused';for(const id of action.completedIds)selectedJobIds.delete(id);
+    await fetchAll();render();
   }
 
   async function handleBatchRetry() {
@@ -664,8 +649,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const visibleJobs = serverPaging ? filtered : filtered.slice(startIndex, startIndex + pageSize);
     const ids = visibleJobs.filter(job => job.state === 'retry' && selectedJobIds.has(job.id)).map(job => job.id);
     if (!ids.length) return;
-    clearBatchFeedbackTimer();
-    const action = {label:'重试排队',running:true,total:ids.length,processed:0,success:0,failures:[]};
+
+    const action = {id:crypto.randomUUID(),account,label:'重试排队',targets:ids.map(id=>({id})),running:true,total:ids.length,processed:0,success:0,failures:[]};
     batchAction = action; render();
     try {
       const response = await request({cmd:'followQueueRetryBatch',accountId:account,jobIds:ids});
@@ -681,45 +666,35 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     action.running = false; action.processed = ids.length;
     await fetchAll();
     if (isDestroyed || account !== currentAccountId || batchAction !== action) return;
-    {
-      action.dismissAt = Date.now()+3000;
-      const tick = () => {
-        if (isDestroyed || batchAction !== action || currentAccountId !== account) return;
-        if (Date.now() >= action.dismissAt) {batchAction=null;batchFeedbackTimer=null;render();return;}
-        render();batchFeedbackTimer=setTimeout(tick,Math.min(1000,Math.max(1,action.dismissAt-Date.now())));
-      };
-      tick();
-    }
+    action.stage='completed';render();
   }
 
-  function renderBatchFeedback() {
-    if (!batchAction) return null;
-    const b = batchAction;
-    const message = (b.label === '重试排队'?(b.running?t("正在加入重试批次…"):t("已加入优先重试 \u007b\u007bv0\u007d\u007d 项，未加入 \u007b\u007bv1\u007d\u007d 项；当前任务结束后处理",{v0:b.success,v1:b.failures.length})):t("\u007b\u007bv0\u007d\u007d\u007b\u007bv1\u007d\u007d：已处理 \u007b\u007bv2\u007d\u007d/\u007b\u007bv3\u007d\u007d，成功 \u007b\u007bv4\u007d\u007d，失败 \u007b\u007bv5\u007d\u007d\u007b\u007bv6\u007d\u007d",{v0:t(b.label),v1:(b.running?t("中"):(b.cancelled?t("已停止"):t("完成"))),v2:b.processed,v3:b.total,v4:b.success,v5:b.failures.length,v6:(b.cancelled && b.running?t("；当前项完成后停止"):'')}));
-    return el('div', {className:'fq-batch-feedback fq-batch-toast'}, [
-      el('span', {role:'status', 'aria-live':'polite'}, t(message)),
-      (b.dismissAt?el('span', {className:'fq-batch-countdown', 'aria-hidden':'true'}, t("\u007b\u007bv0\u007d\u007d 秒后关闭",{v0:Math.max(1, Math.ceil((b.dismissAt-Date.now())/1000))})):null),
-      (b.dismissAt?el('button', {type:'button',className:'fq-btn fq-btn-sm fq-btn-secondary','aria-label':t("关闭完成提示"),onClick:()=>{clearBatchFeedbackTimer();batchAction=null;render();}}, t("关闭")):null),
-      (b.running && b.label !== '重试排队'?el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', 'data-batch-stop':'true', disabled:b.cancelled,
-        onClick:()=>{b.cancelled=true;render();}}, (b.cancelled?t("正在停止"):t("停止后续"))):null),
-      (b.failures.length?el('details', {}, [el('summary', {}, t("失败详情 \u007b\u007bv0\u007d\u007d",{v0:b.failures.length})),
-        el('ul', {}, t(b.failures.map(f=>el('li', {}, t(`@${f.handle}：${f.reason}`)))))]):null)
-    ]);
+  function renderBatchFeedback(){
+    const b=batchAction;if(!b)return null;
+    const stage=b.running?'running':b.stage||'completed';
+    reportVerification({id:b.id,stage},{id:'queue-verification:'+b.id,kind:'queue-verification',batchId:b.id,
+      title:t(b.label)+' · '+t(stage==='running'?'进行中':stage==='paused'?'已暂停':'已完成'),
+      progress:{stage,done:b.processed,total:b.total,success:b.success,failed:b.failures.length},
+      note:b.running&&b.cancelled?t('当前项完成后停止'):b.pauseReason?t(b.pauseReason):b.currentHandle?'@'+b.currentHandle:b.label==='重试排队'?t('已加入优先重试 {{v0}} 项，未加入 {{v1}} 项；当前任务结束后处理',{v0:b.success,v1:b.failures.length}):'',
+      items:b.failures.map(f=>'@'+f.handle+'：'+f.reason),
+      actions:b.running&&b.label!=='重试排队'?[{action:'stop',label:'停止后续',disabled:!!b.cancelled}]:stage==='paused'&&b.processed<b.total&&b.resumable!==false?[{action:'resume',label:'继续核验'}]:[]});
+    return null;
   }
 
   function renderSelectionActions() {
-    if (!selectedJobIds.size) return null;
+    const selectedCount=batchAction?.running?batchAction.targets.length:selectedJobIds.size;
+    if (!selectedCount) return null;
+    const scope=t('已选 {{v0}} 项',{v0:selectedCount}),disabled=loading||!!batchAction?.running;
     return el('div', {className:'fq-selection-info'}, [
-      el('span', {}, t("已选 \u007b\u007bv0\u007d\u007d 项",{v0:selectedJobIds.size})),
-      ...(stateFilter === 'retry' ? [el('button', {type:'button',className:'fq-btn fq-btn-sm fq-btn-primary',
-        disabled:loading || batchAction?.running, title:t("所选任务优先重试一次；当前任务结束后处理，仍遵守每日上限和执行核验"),
-        onClick:handleBatchRetry}, t("批量重试"))] : []),
+      el('span', {}, scope),
+      ...(stateFilter === 'retry' ? [panelIconButton(RotateCcw,{label:'批量重试',className:'panel-icon-primary',disabled,
+        tip:t('所选任务优先重试一次；当前任务结束后处理，仍遵守每日上限和执行核验'),onClick:handleBatchRetry})] : []),
       ...(stateFilter === 'uncertain' ? [
-        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-primary', disabled:loading, onClick:()=>handleBatchUncertain('check')}, t("批量核对")),
-        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', disabled:loading, onClick:()=>handleBatchUncertain('exclude')}, t("批量排除")),
-        el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', disabled:loading, onClick:()=>handleBatchUncertain('delete')}, t("批量删除"))
+        panelIconButton(ShieldCheck,{label:'批量核对',tip:t('批量核对')+' · '+scope,className:'panel-icon-primary',disabled,onClick:()=>handleBatchUncertain('check')}),
+        panelIconButton(Ban,{label:'批量排除',tip:t('批量排除')+' · '+scope,disabled,onClick:()=>handleBatchUncertain('exclude')}),
+        panelIconButton(Trash2,{label:'批量删除',tip:t('批量删除')+' · '+scope,disabled,onClick:()=>handleBatchUncertain('delete')})
       ] : []),
-      el('button', {type:'button', className:'fq-btn fq-btn-sm fq-btn-secondary', onClick:()=>{selectedJobIds.clear();render();}}, t("清空选择"))
+      panelIconButton(ListX,{label:'清空选择',disabled,onClick:()=>{if(batchAction?.running)return;selectedJobIds.clear();render();}})
     ]);
   }
 
@@ -728,8 +703,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const reqAccount = currentAccountId;
     busyJobIds.add(job.id);
     error = null;
-    clearBatchFeedbackTimer();
-    if (!batchAction?.running) batchAction = null;
+
+
     render();
     try {
       const res = await request({
@@ -895,7 +870,7 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     settingsError = null;
     render();
     try {
-      const res = await saveGenerationChoice(formValues, () => request({ cmd: 'followQueueSaveSettings', accountId: reqAccount, settings: validated }));
+      const res = await request({ cmd: 'followQueueSaveSettings', accountId: reqAccount, settings: validated });
       await grokProviderController.refresh();
       if (isDestroyed || currentAccountId !== reqAccount || reqId !== activeReqId) return;
       if (res && res.ok) {
@@ -928,20 +903,18 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
   }
 
   function applyListChange() {
-    if (batchAction?.running) return;
     if (stateFilter === 'uncertain' || stateFilter === 'retry') selectedJobIds.clear();
     resetPageQuery();
-    if (serverPaging) fetchAll();
+    if (serverPaging) fetchAll(0,{allowDuringVerification:true});
     else render();
   }
 
   function turnPage(page) {
-    if (batchAction?.running) return;
     if (page < 1 || page === currentPage) return;
     if (serverPaging && page > 1 && !Object.prototype.hasOwnProperty.call(startCursors, page - 1)) return;
     if (stateFilter === 'uncertain' || stateFilter === 'retry') selectedJobIds.clear();
     currentPage = page;
-    if (serverPaging) fetchAll();
+    if (serverPaging) fetchAll(0,{allowDuringVerification:true});
     else render();
   }
 
@@ -1299,8 +1272,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       className: `fq-filter-tab ${stateFilter === s.id ? 'active' : ''}`,
       onClick: () => {
         if (stateFilter !== s.id) {
-          clearBatchFeedbackTimer();
-          if (batchAction && !batchAction.running) batchAction = null;
+
+
           selectedJobIds.clear();
           stateFilter = s.id;
           applyListChange();
@@ -1312,8 +1285,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       className: 'fq-select fq-module-select',
       value: moduleFilter,
       onChange: e => {
-        clearBatchFeedbackTimer();
-        if (batchAction && !batchAction.running) batchAction = null;
+
+
         selectedJobIds.clear();
         moduleFilter = e.target.value || 'all';
         applyListChange();
@@ -1361,13 +1334,15 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     const startIndex = (currentPage - 1) * pageSize;
     const visibleJobs = serverPaging ? filteredJobs : filteredJobs.slice(startIndex, startIndex + pageSize);
 
-    const isAllVisibleSelected = visibleJobs.length > 0 && visibleJobs.every(j => selectedJobIds.has(j.id));
-    const isSomeVisibleSelected = visibleJobs.length > 0 && visibleJobs.some(j => selectedJobIds.has(j.id));
+    const rowSelected=job=>verificationRowState({running:batchAction?.running,keys:(batchAction?.targets||[]).map(item=>item.id)},job.id,selectedJobIds.has(job.id)).checked;
+    const isAllVisibleSelected = visibleJobs.length > 0 && visibleJobs.every(rowSelected);
+    const isSomeVisibleSelected = visibleJobs.length > 0 && visibleJobs.some(rowSelected);
 
     const headerCheckbox = el('input', {
       type: 'checkbox',
       checked: isAllVisibleSelected,
       onChange: e => {
+        if(batchAction?.running)return;
         const checked = e.target.checked;
         visibleJobs.forEach(j => {
           if (checked) selectedJobIds.add(j.id);
@@ -1429,11 +1404,14 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       ]);
     } else {
       tbodyContent = visibleJobs.map(job => {
-        const isSelected = selectedJobIds.has(job.id);
+        const selection=verificationRowState({running:batchAction?.running,keys:(batchAction?.targets||[]).map(item=>item.id)},job.id,selectedJobIds.has(job.id));
+        const isSelected = selection.checked;
         const rowCheckbox = el('input', {
           type: 'checkbox',
           checked: isSelected,
+          disabled:selection.disabled,
           onChange: e => {
+            if(batchAction?.running)return;
             if (e.target.checked) selectedJobIds.add(job.id);
             else selectedJobIds.delete(job.id);
             render();
@@ -2237,14 +2215,14 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
       el('div', { className: 'fq-setting-section' }, [
         el('h4', { className: 'fq-setting-section-title' }, t("🛡️ 筛选过滤与意向门槛")),
         createNumberGroup('fq_minFollowers', '最低粉丝数', '过滤粉丝过少的小号，优先活跃账号，默认 50 (0-100000000)。', 'minFollowers', SETTINGS_BOUNDS.minFollowers.min, SETTINGS_BOUNDS.minFollowers.max),
-        createNumberGroup('fq_ratioThreshold', '关注／粉丝比', '关注数达到粉丝数该比例以上（默认 0.8 即 80%），防止骗关 (0-1)。', 'ratioThreshold', SETTINGS_BOUNDS.ratioThreshold.min, SETTINGS_BOUNDS.ratioThreshold.max, 0.05),
-        createSwitchGroup('fq_followBackAllowAll', '待回关放行', '默认关闭。仅粉丝跟进来源且执行时确认对方关注我、我尚未回关的任务，跳过普通关注筛选。例外：关注数超过粉丝数10倍时不回关，通过X接口移除此关注者；移除前再次核验，关系或数据不明时待核实。不影响采集、入队与评论审核。', 'followBackAllowAll'),
-        createSwitchGroup('fq_blueVerifiedOnly', '只关蓝 V', '默认关闭。开启后，执行前核验蓝 V；非蓝 V 跳过，状态未知时待核实。适用于所有来源，待回关放行也不例外；不影响采集和入队。', 'blueVerifiedOnly'),
+        el('button',{type:'button',id:'fq_review_settings',className:'fq-btn fq-btn-secondary',onClick:()=>openFollowReviewSettings('queue')},t('AI 打标、评论引擎与回关配置')),
+        createSwitchGroup('fq_blueVerifiedOnly', '只关蓝 V', '默认关闭。开启后按蓝 V 状态筛选，状态未知时待核实；待回关跳过生效时不执行此筛选。', 'blueVerifiedOnly'),
         createSwitchGroup('fq_skipRiskContent', '跳过敏感内容', '默认开启。原帖或账号若涉及高危内容，自动跳过关注与引用评论，杜绝违规封号风险。', 'skipRiskContent')
       ]),
       el('div', { className: 'fq-setting-section' }, [
-        el('h4', { className: 'fq-setting-section-title' }, t("🤖 Grok 创作与发布")),
-        generationChoice({el,help:settingHelp,draft:current,provider:grokProviderController.provider.value,onConfigure:engine=>document.dispatchEvent(new CustomEvent(isLocalAiProvider(engine)?'xfollower:bind-grok-local':'xfollower:bind-grok-bot',{detail:{provider:engine}}))}),
+        el('h4', { className: 'fq-setting-section-title' }, t('评论创作与发布')),
+        createSwitchGroup('fq_commentEnabled', '评论开关', '开启后使用独立配置的评论引擎生成内容；关闭则暂停生成，不影响关注。是否公开由“自动公开发布”控制。', 'grokEnabled'),
+        el('p',{className:'fq-setting-desc'},t('打标与评论使用独立配置，分别选择引擎、会话和提示词。')),
         createSwitchGroup('fq_followBackSuffixEnabled', '来关必回', '默认关闭。开启后，在评论和引用评论末尾另起一段追加互关邀请，支持中文、英文、拉美西班牙语、巴西葡萄牙语和越南语；已有同义文案不重复。空间不足时保留草稿并提示，不截断正文。文章不追加。', 'followBackSuffixEnabled'),
         publicationModeGroup,
         el('button', {type:'button',className:'fq-btn fq-btn-secondary',id:'fq_cloudflare_connection',title:t("文章配图优先使用 X.com Grok；额度耗尽或出图失败时，才使用已绑定的 Cloudflare 生成无文字封面兜底。点击管理、解绑或重新绑定。"),onClick:()=>cloudflareImagesController.open().catch(error=>{settingsError=error.message;render();})}, (cloudflareImagesController.connected.value?t("Cloudflare 已绑定 · 管理"):t("连接文章配图服务"))),
@@ -2338,7 +2316,8 @@ export function mountFollowQueuePanel(root, { request, accountId, accountHandle,
     root.replaceChildren(...children);
     if (batchAction?.running) {
       for (const tag of ['button','input','select']) for (const control of root.querySelectorAll(tag)) {
-        if (!control.hasAttribute('data-batch-stop')) control.disabled = true;
+        const viewControl=['fq-filter-tab','fq-module-select','fq-search-input','fq-pagesize-select','fq-page-nav-btn','fq-page-btn','fq-priority-sort'].some(name=>control.classList.contains(name));
+        if (!viewControl) control.disabled = true;
       }
     }
   }

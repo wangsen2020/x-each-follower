@@ -48,9 +48,12 @@ async function runtimeFixture({allowAll=true,followedBy=true,following=false,fol
  return {runtime,store,job,calls};
 }
 test('actual queue executor removes a confirmed excessive follower before posts and never calls follow',async()=>{
- const f=await runtimeFixture();await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);const job=await f.store.get(f.job.id);assert.equal(job.state,'excluded');assert.equal(job.followResult.followerRemoval.removed,true);
+ const f=await runtimeFixture();await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);const job=await f.store.get(f.job.id);assert.equal(job.state,'skipped');assert.equal(job.followResult.followerRemoval.removed,true);
 });
-for(const options of [{allowAll:false},{followedBy:false}])test('ordinary candidates or disabled allowance never authorize follower removal '+JSON.stringify(options),async()=>{
+test('legacy allowance does not control the mandatory abnormal-ratio filter',async()=>{
+ const f=await runtimeFixture({allowAll:false});await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);
+});
+for(const options of [{followedBy:false}])test('nonfollowers never authorize an actual follower removal '+JSON.stringify(options),async()=>{
  const f=await runtimeFixture(options);await f.runtime.run(true);assert.ok(!f.calls.includes('remove'));
 });
 test('missing counts and ambiguous removal are held without following',async()=>{

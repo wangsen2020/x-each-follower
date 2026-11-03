@@ -44,7 +44,9 @@ function heldState(user, attempt, forceFollowed) {
   if (following) state = 'followed';
   else if (user?.state === 'following' || user?.followedAt || attempt?.state === 'followed' || auto === 'followed') state = 'uncertain';
   if (attempt?.state === 'excluded') state = preferState(state, 'excluded');
-  if (attempt?.state === 'skipped' || auto === 'skipped') state = preferState(state, 'skipped');
+  if (attempt?.state === 'skipped' || auto === 'skipped' || user?.state === 'removed_follower' || user?.status === 'removed' || user?.fanReview?.state === 'removed') {
+    state = preferState(state, 'skipped');
+  }
   if (
     attempt?.state === 'failed'
     || attempt?.state === 'processing'
@@ -125,11 +127,20 @@ export function collectFollowQueueCandidates({
         sources: [],
         state: '',
         followResult: null,
-        restIds: new Set()
+        restIds: new Set(),
+        fanReview: null,
+        fanGrant: null
       };
       merged.set(canonical, row);
     }
-    if (module === 'fans' && isPendingFanFollowBack(user)) row.followBackCandidate = true;
+    if (module === 'fans') {
+      if (user.fanReview && typeof user.fanReview === 'object') row.fanReview = user.fanReview;
+      if (user.fanGrant && typeof user.fanGrant === 'object') row.fanGrant = user.fanGrant;
+      else if (user.fanReview?.grant && typeof user.fanReview.grant === 'object') row.fanGrant = user.fanReview.grant;
+      if (isPendingFanFollowBack(user) && !['review', 'initial', 'failed', 'removed'].includes(user.fanReview?.state)) {
+        row.followBackCandidate = true;
+      }
+    }
     const restId = verifiedRestId(user);
     if (restId) row.restIds.add(restId);
     const sourceUrls = urls.length ? urls : [''];
@@ -143,6 +154,8 @@ export function collectFollowQueueCandidates({
       row.followResult = {following: true, imported: true};
     } else if (!row.followResult && attempt?.reason && row.state) {
       row.followResult = {reason: String(attempt.reason), imported: true};
+    } else if (!row.followResult && row.state === 'skipped' && (user?.fanReview?.state === 'removed' || user?.state === 'removed_follower')) {
+      row.followResult = {reason: String(user.fanReview?.reason || '已从关注者中移除'), imported: true};
     }
   }
 
@@ -175,7 +188,9 @@ export function collectFollowQueueCandidates({
         sources: [],
         state: '',
         followResult: null,
-        restIds: new Set()
+        restIds: new Set(),
+        fanReview: null,
+        fanGrant: null
       };
       merged.set(canonical, row);
     }
@@ -195,6 +210,8 @@ export function collectFollowQueueCandidates({
       sources: row.sources
     };
     if (row.sources.some(source => source.module === 'fans')) candidate.followBackCandidate = !conflict && row.followBackCandidate === true;
+    if (row.fanReview) candidate.fanReview = row.fanReview;
+    if (row.fanGrant) candidate.fanGrant = row.fanGrant;
     if (state) candidate.state = state;
     if (conflict) {
       candidate.followResult = {reason: 'conflicting-rest-ids', imported: true};
