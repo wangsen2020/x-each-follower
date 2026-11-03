@@ -1,6 +1,6 @@
 import {createServer} from 'vite';import vue from '@vitejs/plugin-vue';import puppeteer from 'puppeteer-core';import fs from 'node:fs/promises';import assert from 'node:assert/strict';
 const folder='C:/jtmp/xf-auto-4260';await fs.mkdir(folder,{recursive:true});
-const server=await createServer({configFile:false,root:process.cwd(),plugins:[vue()],server:{host:'127.0.0.1',port:5188,strictPort:true}});await server.listen();
+const server=await createServer({configFile:false,optimizeDeps:{entries:['tests/fixtures/fan-review-settings-preview.html']},root:process.cwd(),plugins:[vue()],server:{host:'127.0.0.1',port:5188,strictPort:true}});await server.listen();
 const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--disable-gpu']});
 const checks=[],errors=[];
 try{const page=await browser.newPage();page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width:1280,height:900});await page.goto('http://127.0.0.1:5188/tests/fixtures/fan-review-settings-preview.html');await page.waitForFunction(()=>globalThis.__reviewFixture?.ready);

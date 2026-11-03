@@ -4,7 +4,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const folder='C:/jtmp/xf-ai-connection-state';await fs.mkdir(folder,{recursive:true});
-const server=await createServer({configFile:false,root:process.cwd(),plugins:[vue()],server:{host:'127.0.0.1',port:5188,strictPort:true}});await server.listen();
+const server=await createServer({configFile:false,optimizeDeps:{entries:['tests/fixtures/ai-connection-preview.html']},root:process.cwd(),plugins:[vue()],server:{host:'127.0.0.1',port:5188,strictPort:true}});await server.listen();
 const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 try{
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));

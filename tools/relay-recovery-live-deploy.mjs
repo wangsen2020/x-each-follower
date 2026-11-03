@@ -55,18 +55,20 @@ try {
   }}await verify();
   await fs.rename(dest,backup);try{await fs.rename(stage,dest);}catch(error){await fs.rename(backup,dest);throw error;}
   await fs.writeFile(folder+'/deployment.json',JSON.stringify({version,source,dest,backup,files,original},null,2));
+  const oldWorkers=(await(await fetch('http://127.0.0.1:9222/json/list')).json()).filter(t=>t.type==='service_worker').map(t=>t.id);
   await page.evaluate(()=>{setTimeout(()=>chrome.runtime.reload(),100);return true;});
   // Wait for the reloaded worker before opening its panel. Chrome otherwise
   // produces ERR_BLOCKED_BY_CLIENT and Page.url() becomes chrome-error:.
   const parsed=new URL(original.url),base=parsed.protocol+'//'+parsed.host;
-  await browser.waitForTarget(t=>t.type()==='service_worker'&&t.url().startsWith(base),{timeout:30000});
-  await sleep(1200);
+  const deadline=Date.now()+30000;let worker;
+  while(Date.now()<deadline){worker=(await(await fetch('http://127.0.0.1:9222/json/list')).json()).find(t=>t.type==='service_worker'&&t.url.startsWith(base)&&!oldWorkers.includes(t.id));if(worker)break;await sleep(250);}
+  assert.ok(worker,'Reloaded extension worker was not discovered');
   const targets=await(await fetch('http://127.0.0.1:9222/json/list')).json();
   let target=targets.find(t=>t.type==='page'&&t.url.startsWith(base+'/panel.html'));
   if(!target){const session=await browser.target().createCDPSession();const created=await session.send('Target.createTarget',{url:'about:blank',background:true});await session.detach();target={id:created.targetId};}
   page=await(await browser.waitForTarget(t=>t._targetId===target.id)).page();
   const restored=new URL(original.url);restored.searchParams.set('tab',original.tab||'monitor');
-  await page.goto(restored.href,{waitUntil:'domcontentloaded',timeout:30000});
+  for(let attempt=0;attempt<3;attempt++){try{await page.goto(restored.href,{waitUntil:'domcontentloaded',timeout:30000});break;}catch(error){if(attempt===2||!String(error.message).includes('ERR_BLOCKED_BY_CLIENT'))throw error;await sleep(1000);}}
   assert.ok(page);
   const loaded=await page.evaluate(async()=>({manifest:chrome.runtime.getManifest().version,background:await chrome.runtime.sendMessage({cmd:'getBackgroundBuildVersion'}),
    records:await chrome.runtime.sendMessage({cmd:'recordData',op:'status'})}));

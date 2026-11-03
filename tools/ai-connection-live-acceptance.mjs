@@ -1,7 +1,8 @@
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
-const folder='C:/jtmp/xf-ai-connection-state';await fs.mkdir(folder,{recursive:true});
+const expectedVersion=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8')).version;
+const folder=process.argv[2]||'C:/jtmp/xf-ai-connection-state';await fs.mkdir(folder,{recursive:true});
 const browser=await puppeteer.connect({browserURL:'http://127.0.0.1:9222',defaultViewport:null});
 try {
  const page=(await browser.pages()).find(p=>p.url().startsWith('chrome-extension://')&&p.url().includes('/panel.html'));assert.ok(page);
@@ -11,7 +12,7 @@ try {
   const after=await chrome.runtime.sendMessage({cmd:'aiConnection'});
   return {version:chrome.runtime.getManifest().version,before:Object.fromEntries(Object.entries(before.result).map(([p,s])=>[p,{state:s.state,checkedAt:s.checkedAt,nextAt:s.nextAt,sessions:s.sessions.length}])),after:Object.fromEntries(Object.entries(after.result).map(([p,s])=>[p,s.checkedAt])),readsOk:reads.every(r=>r.ok),alarms:(await chrome.alarms.getAll()).map(a=>({name:a.name,scheduledTime:a.scheduledTime,periodInMinutes:a.periodInMinutes}))};
  });
- assert.equal(result.version,'4.32.0');assert.equal(result.readsOk,true);
+ assert.equal(result.version,expectedVersion);assert.equal(result.readsOk,true);
  for(const[p,s]of Object.entries(result.before)){assert.equal(s.state,'ready');assert.equal(s.checkedAt,result.after[p]);}
  assert.equal(result.alarms.find(a=>a.name==='x-ai-connection-monitor').periodInMinutes,1);
  assert.equal(await page.$('.ai-connection-notice'),null);
@@ -23,6 +24,6 @@ try {
  await page.waitForFunction(async old=>{const r=await chrome.runtime.sendMessage({cmd:'aiConnection',provider:'grok-local'});return r.result?.connected&&r.result?.state==='ready'&&r.result.checkedAt>old;},{polling:200,timeout:60000},result.before['grok-local'].checkedAt);
  controls.manualRetryPassed=true;
  for(const[width,height]of [[1280,900],[390,844]]){await page.setViewport({width,height});const cdp=await page.createCDPSession();const shot=await cdp.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(`${folder}/live-settings-${width}.png`,Buffer.from(shot.data,'base64'));await cdp.detach();assert.ok(await page.$eval('#systemSettingsDrawer',e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}));}
- await page.keyboard.press('Escape');await page.setViewport({width:1280,height:900});
+ await page.keyboard.press('Escape');const viewportSession=await page.createCDPSession();await viewportSession.send('Emulation.clearDeviceMetricsOverride');await viewportSession.detach();
  await fs.writeFile(folder+'/live.json',JSON.stringify({...result,controls},null,2));console.log(JSON.stringify({version:result.version,states:result.before,readsDidNotProbe:true,alarmCount:result.alarms.length,controls}));
 }finally{browser.disconnect();}
