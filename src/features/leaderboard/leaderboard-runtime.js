@@ -1,3 +1,4 @@
+import {isAccessDeferred} from '../../platform/x/access-budget.js';
 import {createProfileTab,readProfileOnTab,assertProfileAvailable,profileUnavailableError} from '../../platform/x/profile-access.js';
 import {createXNetworkClient} from '../../platform/x/network-client.js';
 import {parsePublicProfile,parsePublicTimeline} from '../../platform/x/public-data.js';
@@ -168,6 +169,7 @@ export function createLeaderboardRuntime({api=globalThis.chrome,store,owner,clie
     const batch=automatic?members.slice(0,(await configFor(accountId)).scanBatchSize):members.slice(0,10),results=[];
     for(const member of batch){
       try{results.push({ok:true,...await scanOne(accountId,member)});}catch(error){
+        if(isAccessDeferred(error)){await api.storage.local.set({xefLeaderboardCooldown:error.retryAt});break;}
         if(error.message==='X 登录账号已切换，已停止榜单写入')throw error;
         await store.upsertMember({...member,lastError:error.message,lastErrorAt:now()});results.push({ok:false,creatorId:member.creatorId,error:error.message});
         if([401,403,429].includes(error.status)){await api.storage.local.set({xefLeaderboardCooldown:now()+Math.max(HOUR,(error.retryAfterSeconds||0)*1000)});break}

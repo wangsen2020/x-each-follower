@@ -1,12 +1,14 @@
 <template>
   <dialog ref="dialog" class="action-settings-drawer" :aria-labelledby="titleId" @click="backdrop" @close="$emit('close')">
-    <header class="action-drawer-header"><h2 :id="titleId">{{ title }}</h2><PanelCloseButton :label="closeLabel" @click="close" /></header>
+    <header class="action-drawer-header"><h2 :id="titleId">{{ t(title) }}</h2><PanelCloseButton :label="t(closeLabel)" @click="close" /></header>
     <div class="action-drawer-body"><slot /></div>
     <footer v-if="$slots.footer" class="action-drawer-footer"><slot name="footer" /></footer>
   </dialog>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import {ref,useId} from 'vue';
 import PanelCloseButton from './PanelCloseButton.vue';
 defineProps({title:{type:String,required:true},closeLabel:{type:String,default:'关闭'}});

@@ -1,5 +1,7 @@
 // Read-only profile annotation. Classic content script: no messages, storage or X requests.
 (() => {
+  const t=(source)=>globalThis.__xfollowerI18n?.t(source)??source;
+
   if (globalThis.__xefProfileFollowbackBadge) return;
   const BADGE = 'data-xef-followback-badge';
   const reserved = new Set(['home', 'explore', 'search', 'notifications', 'messages', 'i', 'settings', 'compose', 'intent', 'login', 'logout', 'signup', 'tos', 'privacy']);
@@ -31,7 +33,7 @@
   }
 
   function describe(model, following, followers, followingText, followersText) {
-    const formatted = n => Number.isFinite(n) ? n.toLocaleString('zh-CN') : '未读取到';
+    const formatted = n => Number.isFinite(n) ? n.toLocaleString(globalThis.chrome?.i18n?.getUILanguage?.()) : '未读取到';
     return [
       `回关风险：${model.label} · XFollower`,
       `正在关注：${formatted(following)}　粉丝：${formatted(followers)}`,
@@ -73,10 +75,11 @@
   function refresh() {
     timer = null;
     if (stopped) return;
+    if (globalThis.__xfollowerI18n && !globalThis.chrome?.runtime?.id) { api.destroy(); return; }
     const current = read();
     if (!current) { remove(); return; }
     const model = assess(current.following, current.followers);
-    const title = describe(model, current.following, current.followers, current.followingText, current.followersText);
+    const title = t(describe(model, current.following, current.followers, current.followingText, current.followersText));
     if (!badge?.isConnected || badge.parentElement !== current.nameRow) {
       remove();
       badge = document.createElement('span');
@@ -94,7 +97,7 @@
       badge.dataset.level = model.level;
       badge.dataset.handle = current.handle;
       badge.dataset.ratio = model.ratio === null ? '' : String(model.ratio);
-      badge.querySelector('text').textContent = model.symbol;
+      badge.querySelector('text').textContent = t(model.symbol);
     }
   }
   function schedule() { if (!stopped && timer === null) timer = setTimeout(refresh, 150); }

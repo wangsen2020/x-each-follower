@@ -1,3 +1,4 @@
+import {t} from '../../../shared/i18n.js';
 import {queryUnfollowLogs} from '../../../shared/execution-log-select.js';
 import {readSystemSettings} from '../../../shared/system-settings.js';
 import { ref, computed, getCurrentScope, onScopeDispose } from 'vue';
@@ -17,6 +18,7 @@ export function useExecutionLogs() {
     followbackSubTab.value = tab; logPager.reset();
     if (isOpen.value) await loadPage();
   }
+  const fanTabs={scan:{scope:'fans',label:'粉丝扫描日志'},followBack:{scope:'queueFans',label:'队列回关日志'},review:{scope:'fanReview',label:'审核日志'},verify:{scope:'fanVerify',label:'核实日志'},schedule:{scope:'fanSchedule',label:'调度日志'}};
   const fansSubTab = ref('scan'); // 'scan' | 'followBack'
   const status = ref('ready'); // 'loading' | 'error' | 'ready'
   const errorMessage = ref('');
@@ -78,7 +80,7 @@ export function useExecutionLogs() {
   const isFansScope = computed(() => currentScope.value === 'fans' || currentScope.value === 'monitor');
 
   async function setFansSubTab(tab) {
-    if (tab !== 'scan' && tab !== 'followBack') return;
+    if (!fanTabs[tab]) return;
     if (fansSubTab.value === tab) return;
     fansSubTab.value = tab;
     if (isOpen.value) {
@@ -92,7 +94,7 @@ export function useExecutionLogs() {
     if (scope === 'fans' || scope === 'monitor') {
       if (fansSubTab.value === 'scan') return '粉丝跟进 · 粉丝扫描日志';
       if (fansSubTab.value === 'followBack') return '粉丝跟进 · 队列回关日志';
-      return '粉丝跟进 · 全部执行日志';
+      return `粉丝跟进 · ${fanTabs[fansSubTab.value]?.label || '全部执行日志'}`;
     }
     if (scope === 'unreciprocated') {
       return `回关监控 · ${followbackSubTab.value === 'timeout-monitoring' ? '超时监测' : followbackSubTab.value === 'greeting' ? '私信提醒' : '取消关注'}`;
@@ -125,7 +127,7 @@ export function useExecutionLogs() {
     if (scope === 'fans' || scope === 'monitor') {
       if (fansSubTab.value === 'scan') return '暂无粉丝扫描日志';
       if (fansSubTab.value === 'followBack') return '暂无队列回关日志';
-      return '暂无粉丝跟进执行日志';
+      return fanTabs[fansSubTab.value] ? `暂无${fanTabs[fansSubTab.value].label}` : '暂无粉丝跟进执行日志';
     }
     if (scope === 'unreciprocated') return followbackSubTab.value === 'timeout-monitoring' ? '暂无超时监测日志' : followbackSubTab.value === 'greeting' ? '暂无私信提醒日志' : '暂无取消关注日志';
     return '暂无执行日志记录';
@@ -140,7 +142,7 @@ export function useExecutionLogs() {
       if (fansSubTab.value === 'followBack') {
         return '待回关粉丝加入关注队列并被执行回关时，将记录访问主页、回关结果与互动评价等明细。';
       }
-      return '点击“↻ 增量同步关注与粉丝数据”或关注队列执行回关后，相关明细将显示在此。';
+      return {review:'记录审核结果及处理原因，技术异常不会当成审核不通过。',verify:'记录账号关系核实、资料补采及重试原因。',schedule:'记录自动审核与核实的执行、等待原因及下次检查时间。'}[fansSubTab.value];
     }
     if (scope === 'unreciprocated') {
       return followbackSubTab.value === 'timeout-monitoring' ? '查看关系比对、等待天数和超时判定；监测本身不会发送提醒或取关。' : followbackSubTab.value === 'greeting' ? '查看私信提醒及发送结果；待确认的私信不会重复发送。' : '查看自动和手动取关的账号及结果；跳过或待确认不代表已取关。';
@@ -164,8 +166,8 @@ export function useExecutionLogs() {
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         let queryScope = currentScope.value;
-        if (isFansScope.value && fansSubTab.value === 'followBack') {
-          queryScope = 'queueFans';
+        if (isFansScope.value) {
+          queryScope = fanTabs[fansSubTab.value]?.scope || 'fans';
         }
         const query = {
           cmd: 'queryExecutionLogs',
@@ -260,18 +262,18 @@ export function useExecutionLogs() {
     const scope = currentScope.value;
     if (isFansScope.value && fansSubTab.value === 'followBack') {
       if (typeof window !== 'undefined' && window.alert) {
-        window.alert('队列回关记录由关注队列统一管理，如需清空请前往“关注队列”面板。');
+        window.alert(t('队列回关记录由关注队列统一管理，如需清空请前往“关注队列”面板。'));
       }
       return;
     }
 
     const label = scope === 'fans' || scope === 'monitor'
-      ? (fansSubTab.value === 'scan' ? '粉丝扫描日志' : '粉丝跟进全部日志')
+      ? fanTabs[fansSubTab.value].label
       : scope === 'unreciprocated'
         ? '超时监测、私信提醒和取消关注的全部日志'
         : '当前范围的执行日志';
 
-    if (typeof window !== 'undefined' && window.confirm && !window.confirm(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`)) {
+    if (typeof window !== 'undefined' && window.confirm && !window.confirm(t(`确定清空${label}吗？包含全部时间的历史记录，此操作不可撤销。`))) {
       return;
     }
 
@@ -279,7 +281,7 @@ export function useExecutionLogs() {
     let saved;
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        saved = await chrome.runtime.sendMessage({ cmd: 'clearExecutionLogs', scope });
+        saved = await chrome.runtime.sendMessage({ cmd: 'clearExecutionLogs', scope: isFansScope.value ? fanTabs[fansSubTab.value].scope : scope });
       } else {
         saved = { ok: true };
       }

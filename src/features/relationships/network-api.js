@@ -32,11 +32,14 @@ function collectUsers(value, out = new Map()) {
     bio:repairMojibake(legacy?.description || value.profile_bio?.description || value.description || ''),
     followersText:followers == null ? '' : String(followers),
     followingText:following == null ? '' : String(following),
+    avatarUrl:legacy?.profile_image_url_https || value.avatar?.image_url || value.profile_image_url_https || '',
+    profileFieldPresence:{bio:legacy?.description!=null||value.profile_bio?.description!=null||value.description!=null,
+      followersText:followers!=null,followingText:following!=null},
     state:followsAccount === true ? 'following' : followsAccount === false && followsYou === true ? 'follow_back'
       : followsAccount === false && followsYou === false ? 'none' : 'unknown',
     relationshipKnown,
     ...(protectedAccount !== null ? {protected:protectedAccount} : {}),
-    relationship:{blocking:relationship.blocking === true, followedBy:typeof followsYou === 'boolean' ? followsYou : null, following:typeof followsAccount === 'boolean' ? followsAccount : null, ...(requestSent !== null ? {followRequestSent:requestSent} : {})}
+    relationship:{blocking:[relationship.blocking,legacy?.blocking,value.blocking].some(flag=>flag===true), followedBy:typeof followsYou === 'boolean' ? followsYou : null, following:typeof followsAccount === 'boolean' ? followsAccount : null, ...(requestSent !== null ? {followRequestSent:requestSent} : {})}
   });
   for (const child of Object.values(value)) collectUsers(child, out);
   return out;

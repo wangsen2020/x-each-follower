@@ -1,119 +1,119 @@
 <template>
-  <section id="knowledgeSection" class="tab-panel knowledge-panel" data-panel="knowledge" :hidden="activeTab !== 'knowledge'" aria-label="知识库">
-    <div class="kb-head"><p class="kb-context">经验持续积累，合入智慧后用于生成</p><PanelActionBar class="kb-head-actions"><KnowledgeWisdomPanel v-if="ownerId && activeTab === 'knowledge'" ref="wisdomRef" :owner-id="ownerId" @state="wisdomState=$event" @updated="onWisdomUpdated" /><PanelIconButton :icon="Settings" label="知识库设置" :disabled="!ownerId" @click="openSettings" /><PanelIconButton :icon="Plus" label="新增经验" :disabled="!ownerId || busy" @click="openCreateDrawer" /><PanelIconButton :icon="RefreshCw" label="刷新经验" :disabled="loading || busy" @click="loadData" /></PanelActionBar></div>
-    <div v-if="error" class="kb-alert kb-alert-error" role="alert"><span>{{ error }}</span><PanelCloseButton label="关闭提示" @click="error=''" /></div><div v-if="notice" class="kb-alert kb-alert-notice" role="status"><span>{{ notice }}</span><PanelCloseButton label="关闭提示" @click="notice=''" /></div>
+  <section id="knowledgeSection" class="tab-panel knowledge-panel" data-panel="knowledge" :hidden="activeTab !== 'knowledge'" :aria-label="t(&quot;知识库&quot;)">
+    <div class="kb-head"><p class="kb-context">{{ t("经验持续积累，合入智慧后用于生成") }}</p><PanelActionBar class="kb-head-actions"><KnowledgeWisdomPanel v-if="ownerId && activeTab === 'knowledge'" ref="wisdomRef" :owner-id="ownerId" @state="wisdomState=$event" @updated="onWisdomUpdated" /><PanelIconButton :icon="Settings" :label="t(&quot;知识库设置&quot;)" :disabled="!ownerId" @click="openSettings" /><PanelIconButton :icon="Plus" :label="t(&quot;新增经验&quot;)" :disabled="!ownerId || busy" @click="openCreateDrawer" /><PanelIconButton :icon="RefreshCw" :label="t(&quot;刷新经验&quot;)" :disabled="loading || busy" @click="loadData" /></PanelActionBar></div>
+    <div v-if="error" class="kb-alert kb-alert-error" role="alert"><span>{{ t(error) }}</span><PanelCloseButton :label="t(&quot;关闭提示&quot;)" @click="error=''" /></div><div v-if="notice" class="kb-alert kb-alert-notice" role="status"><span>{{ t(notice) }}</span><PanelCloseButton :label="t(&quot;关闭提示&quot;)" @click="notice=''" /></div>
     <KnowledgeLearningPanel v-if="ownerId && activeTab === 'knowledge'" ref="automationRef" :owner-id="ownerId" @updated="loadData" />
-    <div class="kb-filter-row"><div class="kb-status-tabs" role="tablist" aria-label="经验状态"><button v-for="st in statusTabs" :key="st.key" type="button" class="kb-status-tab" :class="{active:currentStatus===st.key}" role="tab" :aria-selected="currentStatus===st.key" @click="setStatusFilter(st.key)">{{ st.label }} <span class="kb-tab-count">{{ countByStatus[st.key] || 0 }}</span></button></div>
-      <div class="kb-filter-controls"><label class="kb-select-field"><PanelSelect v-model="sourceFilter" aria-label="经验来源"><option value="all">全部来源</option><option v-for="(label,key) in experienceChannels" :key="key" :value="key" :disabled="key==='blogger_analysis'">{{ label }}{{ key==='blogger_analysis'?' · 未接入':'' }}</option><option value="legacy">历史来源待核实</option></PanelSelect></label><input v-model="searchQuery" type="search" aria-label="搜索经验" placeholder="搜索经验…"></div>
-      <div class="experience-batch"><label><input type="checkbox" :checked="pageSelected" :disabled="!selectablePage.length" aria-label="选择本页经验" @change="togglePage($event.target.checked)"> 本页</label><span>已选 {{ selectedIds.length }} 条</span><button type="button" :disabled="!selectedIds.length" @click="wisdomRef?.merge([...selectedIds])">合入智慧</button><button v-if="selectedIds.length" type="button" class="secondary" @click="selectedIds=[]">清空</button><InfoTip text="单条或批量合入均生成一个智慧版本。先预览再确认；同一条经验不会重复合入当前版本。" /></div>
-      <nav class="kb-pagination" aria-label="经验分页"><span>{{ currentPage }} / {{ pageCount }} · {{ filteredItems.length }} 条</span><div class="kb-page-controls"><label class="kb-select-field"><span>每页</span><PanelSelect v-model.number="pageSize" aria-label="经验每页条数"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></PanelSelect><span>条</span></label><button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--">‹</button><button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++">›</button></div></nav>
+    <div class="kb-filter-row"><div class="kb-status-tabs" role="tablist" :aria-label="t(&quot;经验状态&quot;)"><button v-for="st in statusTabs" :key="st.key" type="button" class="kb-status-tab" :class="{active:currentStatus===st.key}" role="tab" :aria-selected="currentStatus===st.key" @click="setStatusFilter(st.key)">{{ t(st.label) }} <span class="kb-tab-count">{{ (t(countByStatus[st.key]) || t(0)) }}</span></button></div>
+      <div class="kb-filter-controls"><label class="kb-select-field"><PanelSelect v-model="sourceFilter" :aria-label="t(&quot;经验来源&quot;)"><option value="all">{{ t("全部来源") }}</option><option v-for="(label,key) in experienceChannels" :key="key" :value="key" :disabled="key==='blogger_analysis'">{{ t(label) }}{{ key==='blogger_analysis'?t(" · 未接入"):'' }}</option><option value="legacy">{{ t("历史来源待核实") }}</option></PanelSelect></label><input v-model="searchQuery" type="search" :aria-label="t(&quot;搜索经验&quot;)" :placeholder="t(&quot;搜索经验…&quot;)"></div>
+      <div class="experience-batch"><label><input type="checkbox" :checked="pageSelected" :disabled="!selectablePage.length" :aria-label="t(&quot;选择本页经验&quot;)" @change="togglePage($event.target.checked)">{{ t("本页") }}</label><span>{{ t("已选 \u007b\u007bv0\u007d\u007d 条",{v0:selectedIds.length}) }}</span><button type="button" :disabled="!selectedIds.length" @click="wisdomRef?.merge([...selectedIds])">{{ t("合入智慧") }}</button><button v-if="selectedIds.length" type="button" class="secondary" @click="selectedIds=[]">{{ t("清空") }}</button><InfoTip :text="t(&quot;单条或批量合入均生成一个智慧版本。先预览再确认；同一条经验不会重复合入当前版本。&quot;)" /></div>
+      <nav class="kb-pagination" :aria-label="t(&quot;经验分页&quot;)"><span>{{ t("\u007b\u007bv0\u007d\u007d / \u007b\u007bv1\u007d\u007d · \u007b\u007bv2\u007d\u007d 条",{v0:currentPage,v1:pageCount,v2:filteredItems.length}) }}</span><div class="kb-page-controls"><label class="kb-select-field"><span>{{ t("每页") }}</span><PanelSelect v-model.number="pageSize" :aria-label="t(&quot;经验每页条数&quot;)"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></PanelSelect><span>{{ t("条") }}</span></label><button type="button" class="secondary" :disabled="currentPage <= 1" @click="currentPage--">‹</button><button type="button" class="secondary" :disabled="currentPage >= pageCount" @click="currentPage++">›</button></div></nav>
     </div>
-    <div class="kb-list-container" :aria-busy="loading || busy"><p v-if="loading && !knowledgeItems.length" class="kb-empty" role="status">正在读取经验…</p><div v-else-if="!ownerId" class="kb-empty-box"><p>请先登录 X，确认账号后刷新。</p></div><div v-else-if="!filteredItems.length" class="kb-empty-box"><p>暂无{{ currentStatus==='pending'?'待合入':'' }}经验</p><p class="kb-hint">定时总结或手动录入经验后，在这里选择合入智慧。</p></div><div v-else class="experience-table-wrap"><table class="experience-table" aria-label="经验列表"><thead><tr><th class="experience-select"></th><th>经验</th><th class="experience-source-col">来源</th><th class="experience-state-col">状态</th><th class="experience-time-col">总结时间</th><th class="experience-detail-col">操作</th></tr></thead><tbody><tr v-for="item in pagedItems" :key="item.id"><td class="experience-select"><input type="checkbox" :checked="selectedIds.includes(item.id)" :disabled="experienceState(item)!=='pending'" :aria-label="'选择经验 '+item.statement" @change="toggleItem(item.id,$event.target.checked)"></td><td class="experience-summary-col"><span class="experience-summary" :title="item.statement">{{ item.statement }}</span><span class="experience-mobile-source">{{ sourceLabel(item) }}</span></td><td class="experience-source-col"><span class="experience-source" :title="sourceLabel(item)">{{ sourceLabel(item) }}</span></td><td class="experience-state-col"><span class="kb-status-badge" :class="experienceState(item)==='included'?'active':'candidate'">{{ ({pending:'待合入',included:'已合入',ignored:'已忽略'})[experienceState(item)] }}</span></td><td class="experience-time-col">{{ formatDate(item.createdAt) }}</td><td class="experience-detail-col"><PanelIconButton :icon="Eye" label="查看经验详情" @click="openEvidence(item)" /></td></tr></tbody></table></div></div>
+    <div class="kb-list-container" :aria-busy="loading || busy"><p v-if="loading && !knowledgeItems.length" class="kb-empty" role="status">{{ t("正在读取经验…") }}</p><div v-else-if="!ownerId" class="kb-empty-box"><p>{{ t("请先登录 X，确认账号后刷新。") }}</p></div><div v-else-if="!filteredItems.length" class="kb-empty-box"><p>{{ t("暂无\u007b\u007bv0\u007d\u007d经验",{v0:currentStatus==='pending'?t("待合入"):''}) }}</p><p class="kb-hint">{{ t("定时总结或手动录入经验后，在这里选择合入智慧。") }}</p></div><div v-else class="experience-table-wrap"><table class="experience-table" :aria-label="t(&quot;经验列表&quot;)"><thead><tr><th class="experience-select"></th><th>{{ t("经验") }}</th><th class="experience-source-col">{{ t("来源") }}</th><th class="experience-state-col">{{ t("状态") }}</th><th class="experience-time-col">{{ t("总结时间") }}</th><th class="experience-detail-col">{{ t("操作") }}</th></tr></thead><tbody><tr v-for="item in pagedItems" :key="item.id"><td class="experience-select"><input type="checkbox" :checked="selectedIds.includes(item.id)" :disabled="experienceState(item)!=='pending'" :aria-label="t(&quot;选择经验 {{v0}}&quot;,{v0:item.statement})" @change="toggleItem(item.id,$event.target.checked)"></td><td class="experience-summary-col"><span class="experience-summary" :title="item.statement">{{ item.statement }}</span><span class="experience-mobile-source">{{ t(sourceLabel(item)) }}</span></td><td class="experience-source-col"><span class="experience-source" :title="t(sourceLabel(item))">{{ t(sourceLabel(item)) }}</span></td><td class="experience-state-col"><span class="kb-status-badge" :class="experienceState(item)==='included'?'active':'candidate'">{{ t(({pending:'待合入',included:'已合入',ignored:'已忽略'})[experienceState(item)]) }}</span></td><td class="experience-time-col">{{ t(formatDate(item.createdAt)) }}</td><td class="experience-detail-col"><PanelIconButton :icon="Eye" :label="t(&quot;查看经验详情&quot;)" @click="openEvidence(item)" /></td></tr></tbody></table></div></div>
 
     <!-- Candidate Creation Drawer -->
-    <ActionSettingsDrawer ref="createDrawerRef" title="新增经验" @close="resetCandidateDraft">
+    <ActionSettingsDrawer ref="createDrawerRef" :title="t(&quot;新增经验&quot;)" @close="resetCandidateDraft">
       <div class="kb-drawer-form">
         <label class="kb-form-field">
-          <span>知识类型 <strong class="kb-req">*</strong></span>
+          <span>{{ t("知识类型") }}<strong class="kb-req">*</strong></span>
           <PanelSelect v-model="candidateDraft.type">
-            <option value="writing_principle">写作原则</option>
-            <option value="pitfall">常见陷阱</option>
-            <option value="conditional_observation">条件观察</option>
+            <option value="writing_principle">{{ t("写作原则") }}</option>
+            <option value="pitfall">{{ t("常见陷阱") }}</option>
+            <option value="conditional_observation">{{ t("条件观察") }}</option>
           </PanelSelect>
         </label>
 
         <label class="kb-form-field">
-          <span>经验内容 <strong class="kb-req">*</strong></span>
+          <span>{{ t("经验内容") }}<strong class="kb-req">*</strong></span>
           <textarea
             v-model="candidateDraft.statement"
             rows="3"
             maxlength="1000"
-            placeholder="写下结论，并注明它适用的对象、条件或反例。"
+            :placeholder="t(&quot;写下结论，并注明它适用的对象、条件或反例。&quot;)"
           ></textarea>
         </label>
 
         <label class="kb-form-field">
-          <span>原始参考文本（可选，完整保留原文）</span>
+          <span>{{ t("原始参考文本（可选，完整保留原文）") }}</span>
           <textarea
             v-model="candidateDraft.originalText"
             rows="3"
             maxlength="2000"
-            placeholder="参考推文正文或备忘文本…"
+            :placeholder="t(&quot;参考推文正文或备忘文本…&quot;)"
           ></textarea>
         </label>
 
         <label class="kb-form-field">
-          <span>来源 X 推文链接（可选）</span>
+          <span>{{ t("来源 X 推文链接（可选）") }}</span>
           <input
             v-model="candidateDraft.sourceUrl"
             type="url"
             placeholder="https://x.com/username/status/1234567890"
           >
-          <small class="kb-hint">仅允许安全的 https://x.com 或 twitter.com 链接</small>
+          <small class="kb-hint">{{ t("仅允许安全的 https://x.com 或 twitter.com 链接") }}</small>
         </label>
 
         <label v-if="candidateDraft.sourceUrl.trim()" class="kb-form-field">
-          <span>证据关联关系</span>
+          <span>{{ t("证据关联关系") }}</span>
           <PanelSelect v-model="candidateDraft.relation">
-            <option value="support">正向支撑</option>
-            <option value="counterexample">反例/避坑</option>
-            <option value="scope_limitation">范围局限</option>
+            <option value="support">{{ t("正向支撑") }}</option>
+            <option value="counterexample">{{ t("反例/避坑") }}</option>
+            <option value="scope_limitation">{{ t("范围局限") }}</option>
           </PanelSelect>
         </label>
 
         <label class="kb-form-field">
-          <span>关联主题/场景标签（可选）</span>
+          <span>{{ t("关联主题/场景标签（可选）") }}</span>
           <input
             v-model="candidateDraft.theme"
             type="text"
-            placeholder="例如：技术分享、新账号、中文帖子"
+            :placeholder="t(&quot;例如：技术分享、新账号、中文帖子&quot;)"
           >
         </label>
 
         <label class="kb-form-field">
-          <span>适用条件（可选）</span>
-          <input v-model="candidateDraft.conditions" type="text" maxlength="2000" placeholder="例如：仅适用于中文技术分享，不适用于促销帖">
+          <span>{{ t("适用条件（可选）") }}</span>
+          <input v-model="candidateDraft.conditions" type="text" maxlength="2000" :placeholder="t(&quot;例如：仅适用于中文技术分享，不适用于促销帖&quot;)">
         </label>
 
         <label class="kb-form-field">
-          <span>添加原因或备注（可选）</span>
+          <span>{{ t("添加原因或备注（可选）") }}</span>
           <input
             v-model="candidateDraft.reason"
             type="text"
-            placeholder="人工经验沉淀、实机测试等…"
+            :placeholder="t(&quot;人工经验沉淀、实机测试等…&quot;)"
           >
         </label>
 
-        <p v-if="createError" class="kb-form-error" role="alert">{{ createError }}</p>
+        <p v-if="createError" class="kb-form-error" role="alert">{{ t(createError) }}</p>
       </div>
 
       <template #footer>
-        <button type="button" class="secondary" @click="closeCreateDrawer">取消</button>
+        <button type="button" class="secondary" @click="closeCreateDrawer">{{ t("取消") }}</button>
         <button
           type="button"
           class="kb-btn-primary"
           :disabled="busy || !candidateDraft.statement.trim()"
           @click="submitCandidate"
         >
-          {{ busy ? '提交中…' : '新增经验' }}
+          {{ busy?t("提交中…"):t("新增经验") }}
         </button>
       </template>
     </ActionSettingsDrawer>
 
     <!-- Source Evidence Viewer Drawer -->
-    <ActionSettingsDrawer ref="evidenceDrawerRef" title="经验详情" @close="activeEvidenceItem = null">
+    <ActionSettingsDrawer ref="evidenceDrawerRef" :title="t(&quot;经验详情&quot;)" @close="activeEvidenceItem = null">
       <div v-if="activeEvidenceItem" class="kb-drawer-content">
         <section class="kb-drawer-section">
-          <h3>经验内容</h3>
-          <p class="kb-statement-preview">{{ activeEvidenceItem.statement }}</p><p v-if="activeEvidenceItem.scope?.conditions" class="kb-hint">适用条件：{{ activeEvidenceItem.scope.conditions }}</p><p class="kb-hint">{{ stateLabel(activeEvidenceItem) }} · 总结时间 {{ formatDate(activeEvidenceItem.createdAt) }}</p>
+          <h3>{{ t("经验内容") }}</h3>
+          <p class="kb-statement-preview">{{ activeEvidenceItem.statement }}</p><p v-if="activeEvidenceItem.scope?.conditions" class="kb-hint">{{ t("适用条件：\u007b\u007bv0\u007d\u007d",{v0:activeEvidenceItem.scope.conditions}) }}</p><p class="kb-hint">{{ t("\u007b\u007bv0\u007d\u007d · 总结时间 \u007b\u007bv1\u007d\u007d",{v0:stateLabel(activeEvidenceItem),v1:formatDate(activeEvidenceItem.createdAt)}) }}</p>
         </section>
 
         <section class="kb-drawer-section">
-          <h3>来源渠道</h3><p>{{ sourceLabel(activeEvidenceItem) }}</p><article v-for="source in itemSources(activeEvidenceItem)" :key="source.key" class="kb-evidence-card"><p>{{ experienceChannels[source.channel] || '来源待核实' }}<span v-if="source.handle"> · @{{ source.handle }}</span></p><p class="kb-hint">总结时间：{{ formatDate(source.summarizedAt) }} · 采集时间：{{ formatDate(source.capturedAt) }}</p><a v-if="safeUrl(source.url)" :href="safeUrl(source.url)" target="_blank" rel="noopener noreferrer">查看来源帖子</a><small class="kb-hint" :title="source.analysisId"> 分析批次已记录</small></article><h3>原帖证据</h3>
-          <p v-if="loadingEvidence" class="kb-hint">正在读取证据列表…</p>
+          <h3>{{ t("来源渠道") }}</h3><p>{{ t(sourceLabel(activeEvidenceItem)) }}</p><article v-for="source in itemSources(activeEvidenceItem)" :key="source.key" class="kb-evidence-card"><p>{{ (t(experienceChannels[source.channel]) || t("来源待核实")) }}<span v-if="source.handle"> · @{{ source.handle }}</span></p><p class="kb-hint">{{ t("总结时间：\u007b\u007bv0\u007d\u007d · 采集时间：\u007b\u007bv1\u007d\u007d",{v0:formatDate(source.summarizedAt),v1:formatDate(source.capturedAt)}) }}</p><a v-if="safeUrl(source.url)" :href="safeUrl(source.url)" target="_blank" rel="noopener noreferrer">{{ t("查看来源帖子") }}</a><small class="kb-hint" :title="t(source.analysisId)">{{ t("分析批次已记录") }}</small></article><h3>{{ t("原帖证据") }}</h3>
+          <p v-if="loadingEvidence" class="kb-hint">{{ t("正在读取证据列表…") }}</p>
           <div v-else-if="evidenceList.length === 0" class="kb-empty-box">
-            <p class="kb-empty-title">暂无关联证据</p>
-            <p class="kb-empty-desc">该知识条目为直接录入，未关联 X 推文证据快照。</p>
+            <p class="kb-empty-title">{{ t("暂无关联证据") }}</p>
+            <p class="kb-empty-desc">{{ t("该知识条目为直接录入，未关联 X 推文证据快照。") }}</p>
           </div>
           <div v-else class="kb-evidence-list">
             <article
@@ -123,10 +123,10 @@
             >
               <div class="kb-evidence-header">
                 <span class="kb-relation-badge" :class="ev.relation">
-                  {{ formatRelation(ev.relation) }}
+                  {{ t(formatRelation(ev.relation)) }}
                 </span>
                 <span v-if="ev.handleAtCapture" class="kb-evidence-handle">
-                  @{{ ev.handleAtCapture }}
+                  @{{ t(ev.handleAtCapture) }}
                 </span>
                 <a
                   v-if="safeUrl(ev.url)"
@@ -134,46 +134,44 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="kb-ext-link"
-                >
-                  在 X 查看原帖 ↗
-                </a>
+                >{{ t("在 X 查看原帖 ↗") }}</a>
               </div>
 
-              <blockquote class="kb-evidence-text">{{ ev.text || '（无正文）' }}</blockquote>
+              <blockquote class="kb-evidence-text">{{ (ev.text || t("（无正文）")) }}</blockquote>
 
               <div v-if="ev.metrics" class="kb-evidence-metrics">
-                <span>曝光 {{ ev.metrics.impressions ?? '—' }}</span>
-                <span>点赞 {{ ev.metrics.likes ?? '—' }}</span>
-                <span>评论 {{ ev.metrics.replies ?? '—' }}</span>
-                <span>转帖 {{ ev.metrics.reposts ?? '—' }}</span>
+                <span>{{ t("曝光 \u007b\u007bv0\u007d\u007d",{v0:(ev.metrics.impressions ?? '—')}) }}</span>
+                <span>{{ t("点赞 \u007b\u007bv0\u007d\u007d",{v0:(ev.metrics.likes ?? '—')}) }}</span>
+                <span>{{ t("评论 \u007b\u007bv0\u007d\u007d",{v0:(ev.metrics.replies ?? '—')}) }}</span>
+                <span>{{ t("转帖 \u007b\u007bv0\u007d\u007d",{v0:(ev.metrics.reposts ?? '—')}) }}</span>
               </div>
 
               <div class="kb-evidence-meta">
-                <span>{{ ev.availability === 'legacy_reference' ? '手动引用，未抓取核验 · 录入时间' : '抓取时间' }}: {{ formatDate(ev.capturedAt) }}</span>
-                <span v-if="ev.availability !== 'available' && ev.availability !== 'legacy_reference'"> · 来源状态：{{ ev.availability }}</span>
-                <span v-if="ev.reason"> · {{ ev.reason }}</span>
+                <span>{{ ev.availability === 'legacy_reference'?t("手动引用，未抓取核验 · 录入时间"):t("抓取时间") }}: {{ t(formatDate(ev.capturedAt)) }}</span>
+                <span v-if="ev.availability !== 'available' && ev.availability !== 'legacy_reference'">{{ t("· 来源状态：\u007b\u007bv0\u007d\u007d",{v0:ev.availability}) }}</span>
+                <span v-if="ev.reason"> · {{ t(ev.reason) }}</span>
               </div>
             </article>
           </div>
         </section>
       </div>
-      <template #footer><template v-if="activeEvidenceItem"><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'reject')">忽略</button><button v-if="activeEvidenceItem.status==='disabled'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'candidate')">恢复待合入</button><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="kb-btn-primary" :disabled="busy" @click="mergeFromDetail(activeEvidenceItem)">合入智慧</button></template></template>
+      <template #footer><template v-if="activeEvidenceItem"><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'reject')">{{ t("忽略") }}</button><button v-if="activeEvidenceItem.status==='disabled'" type="button" class="secondary" :disabled="busy" @click="reviewItem(activeEvidenceItem,'candidate')">{{ t("恢复待合入") }}</button><button v-if="experienceState(activeEvidenceItem)==='pending'" type="button" class="kb-btn-primary" :disabled="busy" @click="mergeFromDetail(activeEvidenceItem)">{{ t("合入智慧") }}</button></template></template>
     </ActionSettingsDrawer>
 
     <!-- Revision History Drawer -->
-    <ActionSettingsDrawer ref="revisionsDrawerRef" title="知识修订历史" @close="activeRevisionsItem = null">
+    <ActionSettingsDrawer ref="revisionsDrawerRef" :title="t(&quot;知识修订历史&quot;)" @close="activeRevisionsItem = null">
       <div v-if="activeRevisionsItem" class="kb-drawer-content">
         <section class="kb-drawer-section">
-          <h3>知识条目</h3>
+          <h3>{{ t("知识条目") }}</h3>
           <p class="kb-statement-preview">{{ activeRevisionsItem.statement }}</p>
         </section>
 
         <section class="kb-drawer-section">
-          <h3>版本记录</h3>
-          <p v-if="loadingRevisions" class="kb-hint">正在读取版本历史…</p>
+          <h3>{{ t("版本记录") }}</h3>
+          <p v-if="loadingRevisions" class="kb-hint">{{ t("正在读取版本历史…") }}</p>
           <div v-else-if="revisionsList.length === 0" class="kb-empty-box">
-            <p class="kb-empty-title">暂无独立修订快照</p>
-            <p class="kb-empty-desc">当前条目尚无历史修订记录，当前版本为 v{{ activeRevisionsItem.revision }}。</p>
+            <p class="kb-empty-title">{{ t("暂无独立修订快照") }}</p>
+            <p class="kb-empty-desc">{{ t("当前条目尚无历史修订记录，当前版本为 v\u007b\u007bv0\u007d\u007d。",{v0:activeRevisionsItem.revision}) }}</p>
           </div>
           <div v-else class="kb-revisions-timeline">
             <div
@@ -182,12 +180,12 @@
               class="kb-rev-item"
             >
               <div class="kb-rev-meta-line">
-                <span class="kb-rev-tag">修订 v{{ rev.revision }}</span>
-                <span class="kb-status-badge" :class="rev.status">{{ formatStatus(rev.status) }}</span>
-                <span class="kb-rev-operator">操作者: {{ rev.operator || 'system' }}</span>
-                <span class="kb-date-meta">{{ formatDate(rev.createdAt) }}</span>
+                <span class="kb-rev-tag">{{ t("修订 v\u007b\u007bv0\u007d\u007d",{v0:rev.revision}) }}</span>
+                <span class="kb-status-badge" :class="rev.status">{{ t(formatStatus(rev.status)) }}</span>
+                <span class="kb-rev-operator">{{ t("操作者: \u007b\u007bv0\u007d\u007d",{v0:(rev.operator || 'system')}) }}</span>
+                <span class="kb-date-meta">{{ t(formatDate(rev.createdAt)) }}</span>
               </div>
-              <p class="kb-rev-reason">审核/变更原因: {{ rev.reason || '无备注' }}</p>
+              <p class="kb-rev-reason">{{ t("审核/变更原因: \u007b\u007bv0\u007d\u007d",{v0:(rev.reason || t("无备注"))}) }}</p>
               <blockquote class="kb-rev-statement">{{ rev.statement }}</blockquote>
             </div>
           </div>
@@ -198,6 +196,8 @@
 </template>
 
 <script setup>
+import {t,locale} from '../../../shared/i18n.js';
+
 import PanelSelect from "../components/PanelSelect.vue";
 import InfoTip from '../components/InfoTip.vue';
 import PanelActionBar from '../components/PanelActionBar.vue';
@@ -302,7 +302,7 @@ function safeUrl(url) {
 function formatDate(ts) {
   if (!ts) return '—';
   try {
-    return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+    return new Date(ts).toLocaleString(locale.value, { hour12: false });
   } catch {
     return String(ts);
   }

@@ -1,3 +1,11 @@
+import {createAiConnectionMonitor,installAiConnectionMonitor} from '../../features/grok/ai-connection-state.js';
+import {createAgentRelayClient,LOCAL_AI_ENGINES} from '../../features/grok/agent-relay-client.js';
+import {createFanAutomation,FAN_AUTOMATION_ALARM} from '../../features/relationships/fan-automation.js';
+import {createFanRemovalQueue,FAN_REMOVAL_ALARM} from '../../features/relationships/fan-removal-queue.js';
+import '../../shared/capture-background-errors.js';
+import {FAN_PROFILE_ALARM} from '../../features/relationships/fan-profile-collector.js';
+import {reportSystemException} from '../../shared/system-exceptions.js';
+import {finishScheduledPanel} from '../../platform/panel-scan-messages.js';
 import {createLearningRuntime} from '../../features/knowledge/learning-runtime.js';
 import {createMutualCommentRuntime} from '../../features/mutual-comments/runtime.js';
 import {createMutualCommentStore} from '../../features/mutual-comments/store.js';
@@ -23,14 +31,19 @@ import {createGreetingLedger} from '../../features/relationships/greeting-ledger
 import {AUTO_UNFOLLOW_ALARM, autoUnfollowScheduleChanged} from '../../features/relationships/auto-unfollow.js';
 import {createBackgroundAutoUnfollow} from '../../features/relationships/auto-unfollow-adapter.js';
 import {createProfileTab,updateProfileTab,readProfileOnTab} from '../../platform/x/profile-access.js';
+import {isAccessDeferred} from '../../platform/x/access-budget.js';
 import {pageFailureMessage} from '../../platform/page-failure.js';
 import {APP_VERSION} from '../../shared/version.js';
 import {createVersionHistory} from '../../shared/version-history.js';
 import {createSidebarIdentity} from '../../platform/x/sidebar-identity.js';
+import {createAccountState} from '../../platform/x/account-state.js';
 import {createPanelLauncher} from '../../platform/panel-launcher.js';
 import {createNotificationClickHandler, notificationSource} from '../../shared/notification-source.js';
 import {TEMP_WINDOW_ALARM, ensureTemporaryWindowCleanup, scanTemporaryWindows, handleGrokWindowPool, markTemporaryWindowReady,createTemporaryWindow,closeTemporaryWindow} from '../../features/grok/temporary-windows.js';
 import {createFollowQueueRuntime, QUEUE_ALARM, COMMENT_ALARM, RETRY_BATCH_ALARM} from '../../features/follow-queue/follow-queue-runtime.js';
+import {createFollowReviewBackground,FOLLOW_REVIEW_COMMANDS} from '../../features/relationships/follow-review-background.js';
+import {createFanReviewRemoval} from '../../features/relationships/fan-review-removal.js';
+import {readRemovalTombstones,readReviewSettings} from '../../features/relationships/follow-review-engine.js';
 import { networkFetch, networkGetUserProfile, networkFollow, parseNetworkUsers, parseTweetReplies, findBottomCursor, mergeCommentTracking, mergeRecentPosts } from '../../features/relationships/network-api.js';
 import { durableGet, durableSet, durableKeys, durableGetStrict, durableKeysStrict, durableAppendIncremental, durableCompactSnapshots } from '../../platform/persistent-db.js';
 import { readProfileBundle, simulateProfileScrollStep, publishQuotePostOnPage } from '../../platform/x/page-reader.js';
@@ -39,10 +52,11 @@ import { randomizedInteger, randomizedSeconds } from '../../shared/timing.js';
 import { requestGrokComment, requestGrokText, postQuoteOnTab, deliverGrokStream, appendFollowBackSuffix } from '../../features/grok/grok-comment.js';
 import {interactionSkipReason} from '../../features/relationships/content-risk.js';
 import { loadCommentTracking } from '../../platform/tracking-storage.js';
+import {fanCheckpointLogEntries,createFanLogSink} from '../../features/relationships/fan-workflow-logs.js';
 import {appendExecutionLog} from '../../shared/execution-log.js';
 import {handleExecutionLogRequest} from '../../shared/execution-log-store.js';
 import {getDefaultExecutionLogStore} from '../../shared/execution-log-store.js';
-import {createAutomationHealthRuntime} from '../../shared/automation-health.js';
+import {createAutomationHealthRuntime,reportMutualCommentHealth} from '../../shared/automation-health.js';
 import {createBackgroundRecords, mergeCollectedReplies, selectCommentCandidates} from '../../features/records/background-record-data.js';
 import {mergeAutoFollowProgress} from '../../shared/auto-follow-history.js';
 import {sendVerificationSelfMessage} from '../../features/grok/verification-self-message.js';
@@ -61,6 +75,12 @@ import {canUseLeaderboardAction} from '../../features/leaderboard/leaderboard-ac
 
 const storageWriteQueue = createStorageWriteQueue({onError: error => console.warn('本地写入失败:', error?.message || error)});
 const sidebarIdentity = createSidebarIdentity({api: chrome, fetchProfile: networkGetUserProfile, parseUsers: parseNetworkUsers});
+const accountState=createAccountState({api:chrome,probe:sidebarIdentity});
+const aiConnectionMonitor=createAiConnectionMonitor({api:chrome,clients:Object.fromEntries(LOCAL_AI_ENGINES.map(({provider,engine})=>[provider,createAgentRelayClient({engine,readRetries:0})]))});
+installAiConnectionMonitor(aiConnectionMonitor);
+void aiConnectionMonitor.start().catch(error=>console.warn('AI connection monitor:',error.message));
+void accountState.start().catch(console.warn);
+const readAccount=()=>accountState.read().then(result=>result.account);
 const storageWrites = createStorageWriteAdapter({chromeApi: chrome, queue: storageWriteQueue});
 const writeLocal = payload => storageWrites.perform({op: 'localSet', payload});
 const versionHistory = createVersionHistory({storage:chrome.storage.local,version:APP_VERSION});
@@ -68,6 +88,7 @@ const greetingLedger=createGreetingLedger({storage:chrome.storage.local,write:wr
 const handleFirstGreetingClaim=message=>greetingLedger.claim(message);
 const handleFirstGreetingFinish=message=>greetingLedger.finish(message);
 const recordRuntimeService = createRecordRuntime({
+  readUnfollowLogs:request=>getDefaultExecutionLogStore().query({scope:'unreciprocated',limit:50,...request}),
   storage: chrome.storage,
   durableGet,
   durableSet,
@@ -111,13 +132,74 @@ const backgroundRecords = createBackgroundRecords({
   service: recordRuntimeService,
   extensionUrl: chrome.runtime.getURL('')
 });
-const autoGreetingRuntime=createBackgroundAutoGreeting({api:chrome,service:recordRuntimeService,records:backgroundRecords,ledger:greetingLedger});
+const autoGreetingRuntime=createBackgroundAutoGreeting({api:chrome,readAccount,service:recordRuntimeService,records:backgroundRecords,ledger:greetingLedger});
 autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划恢复失败',error));
-const autoUnfollowRuntime=createBackgroundAutoUnfollow({api:chrome,service:recordRuntimeService,records:backgroundRecords,normalize:normalizeUnreciprocatedConfig});
+const autoUnfollowRuntime=createBackgroundAutoUnfollow({api:chrome,readAccount,service:recordRuntimeService,records:backgroundRecords,normalize:normalizeUnreciprocatedConfig});
 autoUnfollowRuntime.schedule(true).catch(error=>console.warn('自动取关计划恢复失败',error));
 const botOnboarding=createBotOnboarding({workerSource:onboardingWorkerSource,schema:onboardingSchema});
-const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords});
-const unavailableCleanup=createUnavailableCleanup({storage:chrome.storage.local,queue:followQueueRuntime.store,records:{handle:request=>recordRuntimeService.handle(request,chrome.runtime.getURL('background.js'))}});
+const readFollowReviewBinding=async()=> (await chrome.storage.local.get('followQueueBinding')).followQueueBinding || null;
+const logFanWorkflow=createFanLogSink(appendExecutionLog);
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local')for(const entry of fanCheckpointLogEntries(changes))void logFanWorkflow(entry);});
+let followReviewBackground,fanAutomation;
+const followQueueRuntime = createFollowQueueRuntime({records: backgroundRecords,readAccount,
+  gateCandidates:(binding,candidates)=>followReviewBackground.gateCandidates(binding,candidates),
+  ensureReviewReady:binding=>followReviewBackground.ensureReady(binding),onFanRelationChanged:async item=>{
+    queueMicrotask(()=>unavailableCleanup.run().catch(console.warn));
+    if(item.manualVerification)return followReviewBackground.completeCachedVerification(item.accountId,item);
+  }});
+// Activation already requires the user to confirm ownership of legacy local
+// records. Remember that owner once so switching X accounts cannot adopt them.
+let legacyFanOwnerClaim=Promise.resolve();
+function allowUnassignedFans(binding) {
+  const claim=legacyFanOwnerClaim.catch(()=>{}).then(async()=>{
+    const current=await readFollowReviewBinding();
+    if(!binding?.activated || current?.accountId!==binding.accountId || !Number.isFinite(binding.confirmedAt) || !binding.handle)return false;
+    const key='followQueueLegacyFanOwner';
+    const saved=(await chrome.storage.local.get(key))[key];
+    if(saved?.accountId)return saved.accountId===binding.accountId;
+    await writeLocal({[key]:{accountId:binding.accountId,handle:binding.handle,confirmedAt:binding.confirmedAt}});
+    return true;
+  });
+  legacyFanOwnerClaim=claim;return claim;
+}
+let reviewSourceSyncTimer,reviewSourceSyncActive=false,reviewSourceSyncDirty=false;
+function notifyFollowReviewChanges() {
+  reviewSourceSyncDirty=true;
+  if(reviewSourceSyncActive)return;
+  clearTimeout(reviewSourceSyncTimer);
+  reviewSourceSyncTimer=setTimeout(async()=>{
+    reviewSourceSyncActive=true;
+    try {
+      while(reviewSourceSyncDirty) {
+        reviewSourceSyncDirty=false;
+        await followQueueRuntime.syncCandidates();await followQueueRuntime.schedule();
+      }
+    }catch(error){console.warn('审核结果入队同步失败:',error.message);}
+    finally{reviewSourceSyncActive=false;if(reviewSourceSyncDirty)notifyFollowReviewChanges();}
+  },800);
+}
+const fanRemovalQueue=createFanRemovalQueue({api:chrome,readBinding:readFollowReviewBinding,records:backgroundRecords,store:followQueueRuntime.store,
+  removeFollower:createFanReviewRemoval({api:chrome,readBinding:readFollowReviewBinding,records:backgroundRecords,readAccount}),
+  list:id=>followReviewBackground.automaticCandidates(id,'review'),onChanged:notifyFollowReviewChanges,onLog:logFanWorkflow});
+followReviewBackground=createFollowReviewBackground({storage:chrome.storage.local,records:backgroundRecords,readAccount,
+  enqueueRemoval:request=>fanRemovalQueue.enqueue(request),
+  store:followQueueRuntime.store,readBinding:readFollowReviewBinding,
+  removeFollower:createFanReviewRemoval({api:chrome,readBinding:readFollowReviewBinding,records:backgroundRecords,readAccount}),
+  automationManaged:true,automationStatus:id=>fanAutomation?.status(id)||{},
+  allowUnassigned:allowUnassignedFans,
+  verifyRelationship:async item=>{
+    const result=await followQueueRuntime.handle({cmd:'followQueueInspectFan',handle:item.handle,expectedTargetUserId:item.targetUserId,recordLog:false});
+    if(!result?.ok||!result.relationship)throw Error(result?.error||'无法核实完整关注关系');
+    return result;
+  },
+  migrate:async binding=>recordRuntimeService.migrateFanReview({accountId:binding.accountId,
+    jobs:await followQueueRuntime.store.list({accountId:binding.accountId}),
+    tombstones:await readRemovalTombstones(chrome.storage.local,binding.accountId),
+    includeUnassigned:await allowUnassignedFans(binding)}),
+  // Admission itself owns an account-scoped queue. Never await a recursive
+  // source sync from inside its record update callback.
+  onChanged:notifyFollowReviewChanges});
+const unavailableCleanup=createUnavailableCleanup({storage:chrome.storage.local,queue:followQueueRuntime.store,isJobActive:job=>followQueueRuntime.isJobActive(job),discardProfiles:item=>followQueueRuntime.fanProfiles.discard(item),records:{handle:request=>recordRuntimeService.handle(request,chrome.runtime.getURL('background.js'))}});
 chrome.alarms.create(UNAVAILABLE_CLEANUP_ALARM,{periodInMinutes:5});
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===UNAVAILABLE_CLEANUP_ALARM)unavailableCleanup.run().catch(console.warn);});
 unavailableCleanup.run().catch(console.warn);
@@ -133,12 +215,14 @@ const leaderboardRuntime = createLeaderboardRuntime({
 });
 const knowledgeLibrary=createKnowledgeStore();
 const mutualComments=createMutualCommentRuntime({store:createMutualCommentStore(),
+  reportHealth:status=>reportMutualCommentHealth(status),
   validateEngine:async config=>{if(config.generationProvider==='grok')return;const service=isLocalAiProvider(config.generationProvider)?getLocalAiService(config.generationProvider):grokBotRelay;const status=await service.status();if(!status.enabled||isLocalAiProvider(config.generationProvider)&&!(await service.list(await service.configuration())).some(bot=>bot.id===config.generationBotId))throw Error('所选 AI 引擎未连接，或 Bot 已变化，请重新选择');},
   owner:async()=>{const value=await followQueueRuntime.handle({cmd:'followQueueIdentity'});if(!value?.ok)throw Error('无法确认 X 账号');return value;},
   scan:createHomeScanner({api:chrome,openPage:async()=>{const win=await createTemporaryWindow({url:'https://x.com/home',type:'popup',focused:false,width:1000,height:800},'mutual-home');return {tabId:win.tabs[0].id,close:()=>closeTemporaryWindow(win.id)};}}),analyze:requestGrokText,publisher:createReplyPublisher({api:chrome}),knowledge:resolveWritingContext});
 chrome.alarms.clear('xef-mutual-comments').catch(console.warn);
 for(const name of [MUTUAL_SCAN_ALARM,MUTUAL_COMMENT_ALARM])chrome.alarms.get(name).then(alarm=>{if(alarm?.periodInMinutes!==1)return chrome.alarms.create(name,{periodInMinutes:1});}).catch(console.warn);
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===MUTUAL_SCAN_ALARM)mutualComments.tick('scan').catch(console.warn);if(alarm.name===MUTUAL_COMMENT_ALARM)mutualComments.tick('comment').catch(console.warn);});
+mutualComments.refreshHealth().catch(console.warn);
 const knowledgeLearning=createLearningRuntime({repository:learningStore,library:knowledgeLibrary,
   queue:createKnowledgeQueue({store:knowledgeLibrary}),bot:{status:async(provider,botId)=>{const service=getLocalAiService(provider||'grok-local'),status=await service.status();if(!botId||!status.enabled)return status;const selected=(await service.list(await service.configuration())).find(item=>item.id===botId);return {...status,enabled:Boolean(selected),bot:selected?.id||'',botName:selected?.name||''};},generate:(prompt,options)=>getLocalAiService(options.provider||'grok-local').generate(prompt,options),resume:id=>grokLocal.resume(id)},
   sources:createLearningSources({posts:createPostStore(),leaderboard:createLeaderboardStore(),config:async()=> (await chrome.storage.local.get('ownPostTracking')).ownPostTracking||{}}),
@@ -476,6 +560,11 @@ async function executeCommentAutoFollow(source = 'alarm') {
           await appendAutoFollowLog({scope:'comment',source,handle,result:'skipped',detail:error.message});
           processedCount++;continue;
         }
+        if(isAccessDeferred(error)){
+          await recordAutoFollowAttempt(handle,'waiting',error.message,undefined);
+          await appendAutoFollowLog({scope:'comment',source,handle,result:'waiting',detail:error.message});
+          break;
+        }
         user.followFailedAt = new Date().toISOString(); user.followFailureReason = String(error?.message || error);
       }
       cfg.processedHandles = [...new Set([...(cfg.processedHandles || []), handle.toLowerCase()])].slice(-2000);
@@ -614,10 +703,32 @@ export const BACKGROUND_BUILD_VERSION = APP_VERSION;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const cmd = message?.cmd || message?.action;
+  if(cmd==='aiConnection'){
+    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅账号设置面板可管理 AI 连接'});return false;}
+    aiConnectionMonitor.request(message).then(result=>sendResponse({ok:true,result})).catch(error=>sendResponse({ok:false,error:error.message}));return true;
+  }
+  if(cmd==='fanRemovalQueueStatus'){
+    if(sender.id!==chrome.runtime.id||sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可读取移除队列'});return false;}
+    readFollowReviewBinding().then(async binding=>sendResponse({ok:true,jobs:binding?.accountId?await fanRemovalQueue.status(binding.accountId):[]})).catch(error=>sendResponse({ok:false,error:error.message}));return true;
+  }
+  const reply = sendResponse;
+  sendResponse = response => {
+    if (response?.error && cmd !== 'reportSystemException') {
+      void reportSystemException({source:'background',kind:'request',message:`${cmd || 'request'}：${response.error}`});
+    }
+    try { reply(response); }
+    catch (error) { void reportSystemException({source:'background',kind:'response-channel',error}); }
+  };
   if(cmd==='retryExecutionLogBackup'){
     if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html')){sendResponse({ok:false,error:'仅管理面板可重试备份'});return false;}
     const store=getDefaultExecutionLogStore();
     store.retryBackup().then(backup=>sendResponse({ok:true,backup}),error=>sendResponse({ok:false,error:error.message}));return true;
+  }
+  if (cmd === 'resolveAutoUnfollowReview') {
+    if(sender.id!==chrome.runtime.id || sender.url?.split(/[?#]/)[0]!==chrome.runtime.getURL('panel.html') || !/^[a-z0-9_]{1,15}$/i.test(message.handle||'')){
+      sendResponse({error:'仅管理面板可处理有效的审核记录'});return false;
+    }
+    autoUnfollowRuntime.review(message).then(sendResponse,error=>sendResponse({error:error.message}));return true;
   }
   if (cmd === 'reviewAutoUnfollowPending') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || !/^[a-z0-9_]{1,15}$/i.test(message.handle || '')) {
@@ -626,11 +737,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     autoUnfollowRuntime.run({reviewHandle:message.handle,retryConfirmed:message.retryConfirmed===true}).then(sendResponse,error=>sendResponse({error:error.message}));
     return true;
   }
-  if (cmd === 'sidebarIdentity') {
+  if (cmd === 'sidebarIdentity' || cmd === 'accountState') {
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html')) {
-      sendResponse({ok: false, error: '仅管理面板可读取账号身份'}); return false;
+      sendResponse({ok: false, error: '仅管理面板可读取账号信息'}); return false;
     }
-    sidebarIdentity.read({force: message.force === true}).then(sendResponse, error => sendResponse({ok: false, error: error.message}));
+    (message.force===true?accountState.refresh():accountState.read()).then(sendResponse, error => sendResponse({ok: false, error: error.message}));
     return true;
   }
 
@@ -643,17 +754,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (cmd === 'scheduledFollowersDone') {
-    const tab = sender.tab;
-    const expectedUrl = chrome.runtime.getURL('panel.html');
-    if (sender.id !== chrome.runtime.id || !tab?.id || !tab.url?.startsWith(`${expectedUrl}?scheduledFollowers=`)) {
-      sendResponse({ok:false}); return false;
-    }
-    const token = new URL(tab.url).searchParams.get('scheduledFollowers');
-    if (token !== message.token) { sendResponse({ok:false}); return false; }
-    chrome.tabs.remove(tab.id).then(() => sendResponse({ok:true}), error => sendResponse({ok:false,error:String(error?.message || error)}));
+  if (cmd === 'reportSystemException') {
+    if (sender.id !== chrome.runtime.id) { sendResponse({ok:false}); return false; }
+    reportSystemException({...message.entry, source:sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')) ? 'content' : 'panel'})
+      .then(ok => sendResponse({ok}), () => sendResponse({ok:false}));
     return true;
   }
+  if (cmd === 'scheduledFollowersDone') return finishScheduledPanel(message, sender, sendResponse, chrome);
   if (cmd === 'runFollowersScanTick') return false;
 
   if (cmd === 'xLeaderboard') {
@@ -692,7 +799,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'getNetworkTemplates') {
-    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates));
+    chrome.storage.local.get('networkTemplates').then(({networkTemplates = {}}) => sendResponse(networkTemplates), error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (handleExecutionLogRequest(message, sender, sendResponse)) {
@@ -809,9 +916,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if(!action){sendResponse({ok:false,error:'未知接入步骤'});return false;}
     action().then(state=>sendResponse({ok:true,state}),()=>sendResponse({ok:false,error:'接入操作未完成，请保留配置页面后重试'}));return true;
   }
+  if(cmd==='followQueueFanCleanup'){
+    if(!sender.url?.startsWith(chrome.runtime.getURL(''))){sendResponse({ok:false,error:'仅扩展页面可清理粉丝记录'});return false;}
+    unavailableCleanup.run().then(result=>sendResponse({ok:true,...result}),error=>sendResponse({ok:false,error:error.message}));return true;
+  }
   if (cmd?.startsWith('followQueue')) {
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ok:false,error:'仅扩展页面可操作关注队列'}); return false; }
-    followQueueRuntime.handle(message).then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
+    const operation=FOLLOW_REVIEW_COMMANDS.includes(cmd) ? followReviewBackground.handle(message) : followQueueRuntime.handle(message);
+    operation.then(sendResponse,error=>sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (cmd === 'configureCommentAutoFollow') {
@@ -826,7 +938,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (cmd === 'runCommentAutoFollowNow') {
-    runCommentAutoFollow('manual').then(sendResponse);
+    runCommentAutoFollow('manual').then(sendResponse, error => sendResponse({ok:false,error:String(error?.message || error)}));
     return true;
   }
   if (cmd === 'trackTweetReplies') {
@@ -878,6 +990,7 @@ function safeSendMessageToPanel(message) {
 }
 
 chrome.alarms.onAlarm.addListener(async alarm => {
+  if(alarm.name===FAN_PROFILE_ALARM){await followQueueRuntime.fanProfiles.run().catch(error=>console.warn('粉丝资料补采:',error.message));notifyFollowReviewChanges();return;}
   if(alarm.name===AUTO_GREETING_ALARM){await autoGreetingRuntime.run();return;}
   if(alarm.name===AUTO_UNFOLLOW_ALARM){await autoUnfollowRuntime.run();return;}
   if (alarm.name === 'x-record-backup-maintenance') {
@@ -990,11 +1103,25 @@ chrome.runtime.onInstalled.addListener(async details => {
 recoverAlarms().catch(error => console.warn('恢复自动任务失败:', error));
 
 followQueueRuntime.schedule({preserve:true}).catch(error => console.warn('恢复关注队列失败:', error));
+followQueueRuntime.fanProfiles.schedule().catch(error=>console.warn('恢复粉丝资料补采失败:',error.message));
+fanAutomation=createFanAutomation({onLog:logFanWorkflow,storage:chrome.storage.local,alarms:chrome.alarms,binding:readFollowReviewBinding,
+  settings:id=>readReviewSettings(chrome.storage.local,id),list:(id,kind)=>followReviewBackground.automaticCandidates(id,kind),
+  reviewBatch:followReviewBackground.reviewBatch,verify:(id,item)=>followReviewBackground.automaticVerify(id,item),
+  manualVerificationBusy:async()=>{const status=await followQueueRuntime.handle({cmd:'followQueueFanBatchStatus'});return status.batch?.stage==='running';},sync:async()=>notifyFollowReviewChanges()});
+fanAutomation.schedule().then(()=>fanAutomation.run()).catch(console.warn);
+fanRemovalQueue.schedule().then(()=>fanRemovalQueue.run()).catch(console.warn);
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===FAN_REMOVAL_ALARM)fanRemovalQueue.run().catch(console.warn);});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===FAN_AUTOMATION_ALARM)fanAutomation.run().catch(console.warn);});
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&Object.keys(changes).some(key=>key.startsWith('followQueueReviewSettings:')||key==='followQueueBinding'))fanAutomation.run({force:true}).catch(console.warn);});
+chrome.alarms.create('x-fan-review-recovery',{periodInMinutes:5});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='x-fan-review-recovery')notifyFollowReviewChanges();});
+notifyFollowReviewChanges();
 postTrackingRuntime.schedule().catch(error=>console.warn('恢复帖子监控失败:',error.message));
 leaderboardRuntime.schedule().catch(error=>console.warn('恢复 X 榜单监控失败:',error.message));
 
 let queueSourceSyncTimer;
 chrome.storage.onChanged.addListener((changes, area) => {
+  if(area==='local'&&changes.followQueueBinding)followQueueRuntime.fanProfiles.schedule().catch(error=>console.warn('粉丝资料补采调度恢复失败:',error.message));
   if(area==='local' && changes['systemSettings:windows'])ensureTemporaryWindowCleanup().catch(error=>console.warn('窗口回收设置应用失败',error));
   if(area==='local' && changes.unreciprocatedSettings)autoGreetingRuntime.schedule().catch(error=>console.warn('自动私信计划更新失败',error));
   if(area==='local' && changes.unreciprocatedSettings){

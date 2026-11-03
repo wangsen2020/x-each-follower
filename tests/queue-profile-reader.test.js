@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readQueueProfile} from '../src/features/follow-queue/profile-reader.js';
+import {readQueueProfile,queueExecutionRelationship} from '../src/features/follow-queue/profile-reader.js';
+
+test('ID-bound follow buttons fill missing own state but never reverse a positive receipt',()=>{
+  const target={id:'123',relationship:{following:null,followedBy:null}};
+  assert.deepEqual(queueExecutionRelationship(target,{id:'123',relationship:{following:false}}),{following:false,followedBy:null,followRequestSent:false});
+  assert.equal(queueExecutionRelationship(target,{id:'456',relationship:{following:false}}).following,null);
+  assert.equal(queueExecutionRelationship({...target,relationship:{following:false}},{id:'123',relationship:{following:true}}).following,true);
+  assert.equal(queueExecutionRelationship({...target,relationship:{following:true}},{id:'123',relationship:{following:false}}).following,true);
+  assert.equal(queueExecutionRelationship(target,{pendingRequestUserId:'123'}).followRequestSent,true);
+  assert.equal(queueExecutionRelationship(target,{pendingRequestUserId:'456'}).followRequestSent,undefined);
+});
 const lookup={status:200,json:{rest_id:'123',legacy:{screen_name:'Target',name:'Target',followers_count:10,friends_count:20,following:false,followed_by:true}}};
 function fixture(extra={}) {
   let time=0,calls=0;

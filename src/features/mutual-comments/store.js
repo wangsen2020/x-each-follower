@@ -15,6 +15,13 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
       delete row.relayJobId;delete row.prompt;
     });
   });
+  const receipt=row=>row.tag==='mutual'&&row.status==='posted'&&/^\d+$/.test(String(row.authorId||''))&&/^\d+$/.test(String(row.publishedPostId||''))
+    ? {ownerId:row.ownerId,authorId:String(row.authorId),postId:row.postId,publishedPostId:row.publishedPostId,at:row.finishedAt||row.createdAt}:null;
+  db.version(3).stores({commentedAuthors:'[ownerId+authorId],ownerId'}).upgrade(async tx=>{
+    const history=(await tx.table('posts').toArray()).map(receipt).filter(Boolean);
+    for(const proof of history)if(!await tx.table('commentedAuthors').get([proof.ownerId,proof.authorId]))await tx.table('commentedAuthors').put(proof);
+  });
+  async function remember(row){const proof=receipt(row);if(proof&&!await db.commentedAuthors.get([proof.ownerId,proof.authorId]))await db.commentedAuthors.put(proof);}
   const newer=(a,b)=>a.length-b.length||a.localeCompare(b);
   const trim=async ownerId=>{
     const rows=await db.posts.where('ownerId').equals(ownerId).toArray();
@@ -27,7 +34,7 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
       const config=await db.settings.get(ownerId),retired=expired.map(r=>r.postId).filter(id=>/^\d+$/.test(id)).sort(newer).at(-1);
       if(retired&&(!config?.retiredPostId||newer(retired,config.retiredPostId)>0))await db.settings.update(ownerId,{retiredPostId:retired});
     }
-    const retained=rows.slice(0,MUTUAL_RECORD_LIMIT),refs=new Set(retained.map(row=>row.tagBatchId));
+    const retained=rows.slice(0,MUTUAL_RECORD_LIMIT),refs=new Set(retained.flatMap(row=>[row.tagBatchId,...(row.tagHistory||[]).map(item=>item.batchId)]));
     const batches=await db.batches.where('ownerId').equals(ownerId).toArray();
     await db.batches.bulkDelete(batches.filter(b=>!refs.has(b.id)).map(b=>b.id));
     const scans=(await db.scans.where('ownerId').equals(ownerId).toArray()).sort((a,b)=>b.at-a.at);
@@ -43,20 +50,35 @@ export function createMutualCommentStore({name='xef-mutual-comments-v1',dependen
       const observations={};
       for(const field of ['following','replyCount','repostCount','likeCount','bookmarkCount'])if(Object.hasOwn(row,field))observations[field]=row[field];
       if(Object.keys(observations).length)await db.posts.update(key,observations);
-    }else if(!config?.retiredPostId||newer(row.postId,config.retiredPostId)>0)await db.posts.add(row);
+    }else if(!config?.retiredPostId||newer(row.postId,config.retiredPostId)>0){await db.posts.add(row);await remember(row);}
   }};
   return {db,
-    enabled:async phase=>(await db.settings.toArray()).some(row=>row[phase+'Enabled']),
+    enabled:async phase=>(await db.settings.toArray()).some(row=>row[phase+'Enabled']||(phase==='scan'&&row.manualTagRun?.status==='running')),
     config:id=>db.settings.get(id),saveConfig:row=>db.settings.put(row),updateConfig:(id,value)=>db.settings.update(id,value),
-    prune,list:async id=>{await prune(id);return db.posts.where('ownerId').equals(id).toArray();},get:(ownerId,postId)=>db.posts.get([ownerId,postId]),put:row=>db.posts.put(row),
-    updatePost:row=>db.posts.update([row.ownerId,row.postId],row),
-    addPosts:rows=>db.transaction('rw',db.posts,db.settings,db.batches,db.scans,async()=>{await add(rows);for(const id of new Set(rows.map(r=>r.ownerId)))await trim(id);}),
-    checkpoint:(ownerId,rows,anchor,run)=>db.transaction('rw',db.posts,db.settings,db.scans,db.batches,async()=>{await add(rows);await db.settings.update(ownerId,{anchor});await db.scans.put(run);await trim(ownerId);}),
+    prune,list:async id=>{await prune(id);return db.posts.where('ownerId').equals(id).toArray();},get:(ownerId,postId)=>db.posts.get([ownerId,postId]),
+    put:row=>db.transaction('rw',db.posts,db.commentedAuthors,async()=>{const key=await db.posts.put(row);await remember(row);return key;}),
+    updatePost:row=>db.transaction('rw',db.posts,db.commentedAuthors,async()=>{const key=[row.ownerId,row.postId],changed=await db.posts.update(key,row);if(changed)await remember(await db.posts.get(key));return changed;}),
+    commentedAuthorIds:async ownerId=>(await db.commentedAuthors.where('ownerId').equals(ownerId).toArray()).map(row=>row.authorId),
+    hasCommentedAuthor:async(ownerId,authorId)=>/^\d+$/.test(String(authorId||''))&&Boolean(await db.commentedAuthors.get([ownerId,String(authorId)])),
+    addPosts:rows=>db.transaction('rw',db.posts,db.settings,db.batches,db.scans,db.commentedAuthors,async()=>{await add(rows);for(const id of new Set(rows.map(r=>r.ownerId)))await trim(id);}),
+    checkpoint:(ownerId,rows,anchor,run)=>db.transaction('rw',db.posts,db.settings,db.scans,db.batches,db.commentedAuthors,async()=>{await add(rows);await db.settings.update(ownerId,{anchor});await db.scans.put(run);await trim(ownerId);}),
     saveScan:row=>db.scans.put(row),scans:async id=>(await db.scans.where('ownerId').equals(id).toArray()).sort((a,b)=>b.at-a.at).slice(0,10),
     getBatch:id=>db.batches.get(id),
     batches:id=>db.batches.where('ownerId').equals(id).toArray(),saveBatch:row=>db.batches.put(row),
-    reserveBatch:batch=>db.transaction('rw',db.posts,db.batches,async()=>{for(const postId of batch.postIds){const row=await db.posts.get([batch.ownerId,postId]);if(row?.tag!=='pending')throw Error('帖子已经进入打标批次');await db.posts.update([batch.ownerId,postId],{tag:'tagging',tagBatchId:batch.id});}await db.batches.put(batch);}),
+    reserveBatch:batch=>db.transaction('rw',db.posts,db.batches,async()=>{for(const postId of batch.postIds){const row=await db.posts.get([batch.ownerId,postId]);if(!row||!['pending','failed'].includes(row.tag))throw Error('帖子已经进入打标批次');await db.posts.update([batch.ownerId,postId],{tag:'tagging',tagBatchId:batch.id,tagAttempts:(row.tagAttempts||0)+1,tagRetryAt:0,tagHistory:[...(row.tagHistory||[]),...(row.tagBatchId?[{batchId:row.tagBatchId,at:batch.at}]:[])].slice(-4)});}await db.batches.put(batch);}),
     finishBatch:(batch,items,at)=>db.transaction('rw',db.posts,db.batches,async()=>{for(const item of items){const key=[batch.ownerId,item.postId],row=await db.posts.get(key);if(!row)continue;if(row.tagBatchId!==batch.id)throw Error('打标归属已变化');await db.posts.update(key,{tag:item.tag,tagReason:item.reason,taggedAt:at,status:row.status==='idle'?(item.tag==='mutual'?'ready':'skipped'):row.status});}await db.batches.put({...batch,status:'completed',finishedAt:at,error:''});}),
-    failBatch:(batch,error)=>db.transaction('rw',db.posts,db.batches,async()=>{for(const id of batch.postIds)await db.posts.update([batch.ownerId,id],{tag:'failed',tagReason:error});await db.batches.put({...batch,status:'failed',error});})
+    retryBatch:batch=>db.transaction('rw',db.posts,db.batches,async()=>{
+      for(const id of batch.postIds){const row=await db.posts.get([batch.ownerId,id]);if(row?.tagBatchId===batch.id)await db.posts.update([batch.ownerId,id],{tagAttempts:(row.tagAttempts||1)+1});}
+      await db.batches.put({...batch,error:'',retryAt:0});
+    }),
+    startManual:(ownerId,id,at)=>db.transaction('rw',db.posts,db.settings,db.batches,async()=>{
+      const config=await db.settings.get(ownerId);if(config?.manualTagRun?.status==='running')return config.manualTagRun;
+      const rows=(await db.posts.where('ownerId').equals(ownerId).toArray()).filter(r=>['pending','tagging','failed'].includes(r.tag)||!r.tag);
+      const run={id,at,status:rows.length?'running':'completed',postIds:rows.map(r=>r.postId),total:rows.length};
+      for(const row of rows)await db.posts.update([ownerId,row.postId],{tagAttempts:row.tag==='tagging'?1:0,tagRetryAt:0,...(!row.tag?{tag:'pending'}:{})});
+      for(const batch of await db.batches.where('ownerId').equals(ownerId).toArray())if(['waiting','prepared','raw_saved'].includes(batch.status))await db.batches.update(batch.id,{retryAt:0});
+      await db.settings.update(ownerId,{manualTagRun:run});return run;
+    }),
+    failBatch:(batch,error,retryAt=0)=>db.transaction('rw',db.posts,db.batches,async()=>{for(const id of batch.postIds){const row=await db.posts.get([batch.ownerId,id]);if(row?.tagBatchId===batch.id)await db.posts.update([batch.ownerId,id],{tag:'failed',tagReason:error,tagRetryAt:retryAt});}await db.batches.put({...batch,status:'failed',error});})
   };
 }

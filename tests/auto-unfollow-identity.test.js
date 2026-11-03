@@ -23,6 +23,19 @@ function setup(response, {pending=false,ownerId='999',page=null}={}) {
   return {runner,data,inspected,fetched,logs,patches,deleted,api};
 }
 
+for(const field of ['relationship_perspectives','legacy'])test(`explicit ${field} blocking skips before opening the profile and does not consume action quota`,async()=>{
+ const json={rest_id:'123',legacy:{screen_name:'missing',following:true,followed_by:false},[field]:field==='legacy'?{screen_name:'missing',following:true,followed_by:false,blocking:true}:{blocking:true}};
+ const f=setup({status:200,json});await f.runner.run();
+ assert.deepEqual(f.inspected,['later']);assert.equal(f.data.autoUnfollowState.accounts[999].used,0);
+ assert.equal(f.data.autoUnfollowState.accounts[999].reviewItems[0].code,'X_PROFILE_BLOCKED');
+});
+
+test('explicit suspension is target-specific and goes directly to review instead of repeating as a global HTTP error',async()=>{
+ const f=setup({status:200,json:{errors:[{code:63}]}});await f.runner.run();
+ assert.deepEqual(f.inspected,['later']);assert.equal(f.data.autoUnfollowState.accounts[999].reviewItems[0].status,'review');
+ assert.equal(f.data.autoUnfollowState.accounts[999].reviewItems[0].attempts,1);
+});
+
 for(const [name,response,code] of [
   ['empty HTTP 200 data (live failure)',{status:200,json:{data:{}}},'AUTO_UNFOLLOW_TARGET_MISSING'],
   ['null user',{status:200,json:{data:{user:{result:null}}}},'AUTO_UNFOLLOW_TARGET_MISSING'],

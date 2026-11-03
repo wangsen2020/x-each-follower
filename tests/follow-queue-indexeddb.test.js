@@ -13,6 +13,28 @@ function storeFor(name, clock = {t: 5_000}) {
   });
 }
 
+test('restart backoff survives new store instances and resync, then stops only the interrupted job',async()=>{
+  const name=`backoff-${crypto.randomUUID()}`,clock={t:5000};
+  let store=storeFor(name,clock);
+  const input={accountId:'owner',handle:'Interrupted',sources:[{module:'fans',enabled:true}]};
+  const job=await store.enqueue(input);
+  for(let round=1;round<=3;round++) {
+    const claimed=await store.claim({accountId:'owner',owner:`worker-${round}`,leaseMs:60000});
+    assert.equal(claimed.id,job.id);
+    store=storeFor(name,clock);
+    await store.recoverInterrupted({accountId:'owner',currentOwner:`next-${round}`});
+    await store.enqueue(input);
+    const row=await store.get(job.id);
+    assert.equal(row.interruptionCount,round);
+    assert.equal(row.state,round===3?'uncertain':'pending');
+    assert.equal(row.nextEligibleAt,clock.t+60000*2**(round-1));
+    assert.equal(await store.claim({accountId:'owner',owner:'too-early',leaseMs:60000}),null);
+    clock.t=row.nextEligibleAt;
+  }
+  const healthy=await store.enqueue({...input,handle:'Healthy'});
+  assert.equal((await store.claim({accountId:'owner',owner:'healthy',leaseMs:60000})).id,healthy.id);
+});
+
 test('restart archives old worker checkpoints, releases leases and preserves uncertain actions',async()=>{
   const name=`restart-${crypto.randomUUID()}`,store=storeFor(name);
   const ids=[];
@@ -618,4 +640,41 @@ test('one-shot batch runs with automatic switch off, excludes unrelated tasks an
   await store.requestRetryBatch({accountId,jobIds:[retry.id]});
   await store.pendingRetryBatch(accountId,{cancel:true});
   assert.equal(await store.pendingRetryBatch(accountId),0);
+});
+
+
+test('fan cleanup preserves mixed sources and does not tombstone independent future candidates',async()=>{
+ const store=storeFor('fan-cleanup-'+crypto.randomUUID());
+ const pure=await store.enqueue({accountId:'owner',handle:'pure',targetUserId:'42',sources:[{module:'fans',enabled:true}]});
+ const mixed=await store.enqueue({accountId:'owner',handle:'mixed',targetUserId:'43',sources:[{module:'fans',enabled:true},{module:'comments',enabled:true}]});
+ assert.equal((await store.deleteJob({accountId:'owner',id:pure.id,fanOnly:true})).deleted,1);
+ assert.equal((await store.stripFanSource({accountId:'owner',id:mixed.id})).ok,true);
+ assert.deepEqual((await store.get(mixed.id)).sources.map(s=>s.module),['comments']);
+ const again=await store.enqueue({accountId:'owner',handle:'pure',targetUserId:'42',sources:[{module:'comments',enabled:true}]});assert.ok(again.id);
+});
+
+
+test('retention removes stale publishing jobs but keeps meaningful results in the existing outcome store',async()=>{
+ const clock={t:1000},store=storeFor('fan-cleanup-stale-'+crypto.randomUUID(),clock);
+ const job=await store.enqueue({accountId:'owner',handle:'stale',targetUserId:'42',sources:[{module:'fans',enabled:true}]});
+ await store.resolveJob({accountId:'owner',id:job.id,state:'followed',evaluations:[{taskId:'old-publish',postId:'123',status:'publishing',text:'saved user draft',publishedAttemptedAt:1000}]});
+ assert.equal((await store.deleteJob({accountId:'owner',id:job.id,fanOnly:true})).ok,false);
+ clock.t=1000000;assert.equal((await store.deleteJob({accountId:'owner',id:job.id,fanOnly:true})).deleted,1);assert.equal(await store.get(job.id),null);
+ const restored=await store.enqueue({accountId:'owner',handle:'stale',targetUserId:'42',sources:[{module:'comments',enabled:true}]});
+ assert.equal(restored.evaluations[0].status,'uncertain');assert.equal(restored.evaluations[0].text,'saved user draft');
+});
+
+test('conditional queue recovery preserves concurrent manual exclusions and changed receipts',async()=>{
+ const store=storeFor('conditional-recovery-'+crypto.randomUUID());
+ const job=await store.enqueue({accountId:'owner',targetUserId:'42',handle:'person',sources:[{module:'fans',enabled:true}]});
+ const held={reason:'machine screening',relationshipDecision:{screening:'blocked'}};
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:held});
+ const request={accountId:'owner',id:job.id,state:'pending',expectedState:'skipped',expectedTargetUserId:'42',expectedFollowResult:held};
+ await store.resolveJob({accountId:'owner',id:job.id,state:'excluded',followResult:{reason:'manual'}});
+ assert.equal((await store.resolveJob(request)).reason,'changed');
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:{reason:'new hold'}});
+ assert.equal((await store.resolveJob(request)).reason,'changed');
+ await store.resolveJob({accountId:'owner',id:job.id,state:'skipped',followResult:held});
+ assert.equal((await store.resolveJob(request)).ok,true);
+ assert.equal((await store.lookup({accountId:'owner',handle:'person'})).state,'pending');
 });

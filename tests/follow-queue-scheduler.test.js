@@ -1069,3 +1069,11 @@ test('AbortController deadline aborts hung execution without infinite wait and s
   assert.equal(settled.state, 'retry');
   assert.equal(settled.followResult?.retryCount || 0, 0, 'budget rollover must not consume retry allowance');
 });
+
+
+test('intentional pre-action pause returns the job pending without failure count or retry backoff',async()=>{
+ const db=createFakeIndexedDB(),store=createFollowQueueStore({indexedDB:db,dbName:'pause-no-failure-'+Date.now()});
+ await store.saveSettings('acc',{enabled:true});const job=await store.enqueue({accountId:'acc',handle:'paused_fan',sources:[{module:'fans',enabled:true}]});
+ let scheduler;scheduler=createFollowQueueScheduler({store,execute:async()=>{await scheduler.pause('acc');return {state:'pending',paused:true,reason:'队列已暂停，已保存进度'};}});
+ const result=await scheduler.run({accountId:'acc'});const saved=await store.get(job.id);assert.equal(saved.state,'pending');assert.equal(saved.followResult.retryCount,undefined);assert.equal(result.counters.failed,0);assert.equal(result.counters.retried,0);
+});

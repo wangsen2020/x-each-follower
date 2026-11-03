@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 连接状态验收</title><link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/admin.css"></head>
+<body style="padding:20px"><h1>AI 连接状态验收</h1><p>隔离数据，不操作真实 AI 或 X 账号。</p><div id="mount"></div>
+<script>
+const listeners=new Set();globalThis.chrome={i18n:{getUILanguage:()=> 'zh-CN'},runtime:{id:'test'},storage:{onChanged:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}}};
+globalThis.__aiFixture={retries:0,states:{'grok-local':{provider:'grok-local',state:'offline',connected:false,reason:'AI 客户端未连接，请在 AgentRelay 检查登录状态',nextAt:Date.now()+60000}},update(value){this.states=value;for(const fn of listeners)fn({xfollowerAiConnectionState:{newValue:value}},'local');}};
+</script>
+<script type="module">
+import {createApp,h} from 'vue';
+import Notice from '/src/entries/panel/components/AiConnectionNotice.vue';
+import Status from '/src/entries/panel/components/FollowReviewConfigStatus.vue';
+import InfoTipLayer from '/src/entries/panel/components/InfoTipLayer.vue';
+import {locale} from '/src/shared/i18n.js';
+const f=__aiFixture;let notice;
+const request=async payload=>{if(payload?.op==='retry'){f.retries++;f.update({'grok-local':{...f.states['grok-local'],state:'checking'}});await new Promise(r=>setTimeout(r,500));const ready={provider:'grok-local',state:'ready',connected:true,sessions:[{id:'s',name:'粉丝审核'}]};f.update({'grok-local':ready});return ready;}return f.states;};
+createApp({render:()=>h('div',[
+h('div',{style:'position:fixed;left:24px;bottom:24px;background:#18302e;padding:10px;overflow:hidden;width:180px;height:80px'},[h('span',{style:'display:inline-flex;position:relative;float:right'},[h(Notice,{request,ref:el=>notice=el,onConfigure:p=>f.configured=p}),h('button',{id:'settings',onFocus:()=>notice?.show(),onMouseenter:()=>notice?.show(),'aria-label':'系统设置'},'⚙')])]),
+h(Status,{request:async()=>({ok:true,settings:{fanTagging:{provider:'grok-local',botId:'s'}}}),inspect:async()=>({connected:f.states['grok-local'].connected,reason:f.states['grok-local'].reason,sessions:[{id:'s',name:'粉丝审核'}]})}),h(InfoTipLayer)])}).mount('#mount');
+f.locale=v=>locale.value=v;f.ready=true;
+</script></body></html>

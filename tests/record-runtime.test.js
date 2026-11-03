@@ -63,7 +63,7 @@ function memoryDurable() {
   return store;
 }
 
-function runtime(name, storage, durable, hooks = {}) {
+function runtime(name, storage, durable, hooks = {}, extra = {}) {
   return createRecordRuntime({
     storage,
     durableGet: durable.get,
@@ -72,9 +72,63 @@ function runtime(name, storage, durable, hooks = {}) {
     IDBKeyRange,
     dbName: name,
     hooks,
-    now: () => 1000
+    now: () => 1000,
+    ...extra
   });
 }
+
+test('unfollow history upgrades from logs, survives cleanup and backup restore independently of source rows',async()=>{
+ const storage=memoryStorage({followQueueBinding:{activated:true,accountId:'owner',handle:'me'},monitor:{users:[{handle:'gone',id:'12'}]}}),durable=memoryDurable();
+ let reads=0;
+ const service=runtime('unfollow-history-upgrade',storage,durable,{}, {readUnfollowLogs:async()=>{reads++;return {entries:[{id:'log1',result:'success',at:'2026-10-01T00:00:00Z',unfollowedHandles:['gone'],details:{'绑定账号':'me'}}],nextCursor:null};}});
+ await service.migrate();assert.equal(reads,1);
+ await service.handle({op:'deleteLocalAccount',handle:'gone',ownerId:'owner'});
+ assert.equal((await service.summary({module:'unreciprocated'})).tabs.unfollowed,1);
+ assert.equal((await service.query({module:'unreciprocated',filter:{tab:'unfollowed',search:'gone'}})).records[0].payload.historyOnly,true);
+ assert.equal((await service.lookupAll({handle:'gone'})).length,0);
+ const restored=runtime('unfollow-history-recovered',storage,durable);await restored.migrate();
+ assert.equal((await restored.summary({module:'unreciprocated'})).tabs.unfollowed,1);
+ assert.equal((await restored.summary({module:'unreciprocated',accountId:'other'})).tabs.unfollowed,0);
+});
+
+test('new successful tracker writes preserve history before the local row is deleted',async()=>{
+ const storage=memoryStorage({unreciprocatedTracker:{users:[{handle:'person',id:'123',status:'pending'}]}}),durable=memoryDurable();
+ const service=runtime('unfollow-history-new-outcome',storage,durable);await service.migrate();
+ await service.batch({sourceKey:'unreciprocatedTracker',changes:[{handle:'person',patch:{status:'unfollowed',unfollowedAt:'2026-11-01T00:00:00Z'}}]});
+ await service.handle({op:'deleteLocalAccount',handle:'person',ownerId:'owner'});
+ assert.equal((await service.summary({module:'unreciprocated'})).tabs.unfollowed,1);
+});
+
+test('no-relationship cleanup and an interrupted upgrade preserve independent unfollow receipts',async()=>{
+ const user={accountId:'owner',handle:'gone',id:'42',status:'unfollowed',unfollowedAt:'2026-11-01T00:00:00Z',relationship:{following:false,followedBy:false},relationshipVerifiedAt:100};
+ const storage=memoryStorage({monitor:{users:[user]},unreciprocatedTracker:{users:[user]}}),durable=memoryDurable();
+ const initial=runtime('history-interruption',storage,durable);await initial.migrate();
+ let reads=0;
+ const readUnfollowLogs=async({cursor})=>{reads++;return cursor?{entries:[{id:'log2',accountId:'owner',result:'success',at:'2026-10-01T00:00:00Z',unfollowedHandles:['earlier']}]}:
+   {entries:[{id:'log1',accountId:'owner',result:'success',at:'2026-11-01T00:00:00Z',unfollowedHandles:['gone']}],nextCursor:'page2'};};
+ const upgraded=runtime('history-interruption',storage,durable,{}, {readUnfollowLogs});
+ durable.failIncremental=true;await assert.rejects(upgraded.summary({module:'unreciprocated',accountId:'owner'}),/incremental backup failed/);
+ durable.failIncremental=false;
+ assert.equal((await upgraded.summary({module:'unreciprocated',accountId:'owner'})).tabs.unfollowed,2);
+ assert.ok(reads>=4);
+ await upgraded.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone',targetIds:['42']});
+ assert.equal((await upgraded.lookupAll({handle:'gone'})).length,0);
+ const restored=runtime('history-interruption-restored',storage,durable);await restored.migrate();
+ assert.equal((await restored.summary({module:'unreciprocated',accountId:'owner'})).tabs.unfollowed,2);
+ assert.equal((await restored.lookupAll({handle:'gone'})).length,0);
+});
+
+test('removed history survives source cleanup, supports search and never counts local deletion or unconfirmed receipts',async()=>{
+ const receipt={accountId:'123',targetUserId:'42',handle:'old_fan',removed:true,verifiedAt:2000,reason:'confirmed removal'};
+ const storage=memoryStorage({monitor:{users:[]},'followQueueRemovalTombstones:123':{byId:{42:{state:'removed'},43:{state:'excluded'}}},
+  'followQueueFanRemovalIntent:123:42':receipt,'followQueueFanRemovalIntent:123:43':{...receipt,targetUserId:'43',handle:'unknown',removed:false}});
+ const service=runtime('removed-receipt-history',storage,memoryDurable());await service.migrate();
+ assert.equal((await service.summary({module:'fans',accountId:'123'})).tabs.fanRemoved,1);
+ const page=await service.query({module:'fans',accountId:'123',filter:{tab:'fanRemoved',search:'old_fan'},limit:20});
+ assert.equal(page.records.length,1);assert.equal(page.records[0].payload.historyOnly,true);assert.equal(page.records[0].payload.id,'42');
+ assert.equal((await service.query({module:'fans',accountId:'456',filter:{tab:'fanRemoved'},limit:20})).records.length,0);
+ assert.equal((await service.query({module:'fans',accountId:'123',filter:{tab:'fanAll'},limit:20})).records.length,0);
+});
 
 function comments(count, extra = {}) {
   return {
@@ -140,7 +194,7 @@ test('fan directory recovers a source commit interrupted before derived view ref
   const durable=memoryDurable();
   const service=runtime('fan-directory-interrupted',storage,durable);
   await service.migrate();
-  assert.equal((await service.summary({module:'fans'})).tabs.fanPending,1);
+  assert.equal((await service.summary({module:'fans'})).tabs.fanReview,1);
   const source=(await service.lookupAll({sourceKey:'monitor',bucket:'users',handle:'ada'}))[0];
   const projection=createRecordProjection({indexedDB,IDBKeyRange,dbName:'fan-directory-interrupted-dashboard'});
   const raw=await projection.getRow('unassigned','fans',source.userKey);
@@ -170,7 +224,8 @@ test('global fan search counts beyond one scan batch and paginates unique accoun
   assert.equal(new Set(all).size,230);
   const summary=await service.summary({module:'fans'});
   assert.equal(summary.tabs.fanAll,230);
-  assert.equal(summary.tabs.fanPending,115);
+  assert.equal(summary.tabs.fanReview,115);
+  assert.equal(summary.tabs.fanOutstanding,115);
   assert.equal(summary.tabs.fanMutual,115);
   const exact=await service.query({module:'fans',filter:{tab:'fanAll',search:'@fan000'},limit:20});
   assert.equal(exact.matched,1);
@@ -232,6 +287,90 @@ test('unavailable deletion rejects healthy or unknown accounts and respects newe
   await assert.rejects(service.handle({op:'deleteUnavailableAccount', handle:'safeuser'}), /尚未确认/);
   await assert.rejects(service.handle({op:'deleteUnavailableAccount', handle:'unknown'}), /尚未确认/);
   assert.ok((await service.handle({op:'lookupAll', handle:'safeuser'})).records.length);
+});
+
+test('explicit review deletion removes local data without availability analysis, retains logs and permits recollection',async()=>{
+ const user={id:'123',handle:'ReviewUser',relationship:{following:true,followedBy:false},accountAvailability:{status:'ok'}};
+ const storage=memoryStorage({monitor:{users:[user],followingUsers:[user]},unreciprocatedTracker:{users:[{...user,status:'overdue'}]},profileCache:{reviewuser:user},autoFollowLogs:[{handle:'ReviewUser',result:'followed',at:'2026-10-01T00:00:00Z'}]});
+ const durable=memoryDurable(),service=runtime('review-delete-local',storage,durable);await service.migrate();
+ assert.ok((await service.lookupAll({handle:'reviewuser'})).some(row=>row.module==='fans'));
+ const result=await service.handle({op:'deleteLocalAccount',handle:'reviewuser',ownerId:'owner',expectedId:'999'});assert.ok(result.result.deleted>=3);
+ assert.ok((await service.lookupAll({handle:'reviewuser'})).every(row=>row.module==='logs'));
+ const reopened=runtime('review-delete-local',storage,durable);
+ assert.ok((await reopened.lookupAll({handle:'reviewuser'})).every(row=>row.module==='logs'));
+ await reopened.putRecord({module:'fans',operationId:crypto.randomUUID(),record:{payload:user}});
+ assert.ok((await reopened.lookupAll({handle:'reviewuser'})).some(row=>row.module==='fans'));
+});
+
+test('confirmed local deletion ignores conflicting historical IDs but keeps other owners and logs',async()=>{
+ const storage=memoryStorage({monitor:{users:[{id:'42',handle:'person',accountId:'owner'},{id:'77',handle:'person',accountId:'other'}]},
+  commentTracking:{users:[{id:'999',handle:'person',ownerAccountId:'other'}]},
+  profileCache:{person:{id:'100',handle:'person'}},autoFollowLogs:[{handle:'person',result:'followed'}]});
+ const service=runtime('local-delete-owner-boundary',storage,memoryDurable());await service.migrate();
+ await assert.rejects(service.handle({op:'deleteLocalAccount',handle:'person',expectedId:'999'}),/所属账号无效/);
+ await service.handle({op:'deleteLocalAccount',handle:'person',ownerId:'owner',expectedId:'999'});
+ const rows=await service.lookupAll({handle:'person'});
+ assert.ok(rows.some(row=>row.accountId==='other'));
+ assert.ok(rows.some(row=>row.payload?.ownerAccountId==='other'));
+ assert.ok(rows.some(row=>row.module==='logs'));
+ assert.equal(rows.some(row=>row.accountId==='owner' && !row.sourceKey.startsWith('derived:')),false);
+});
+
+function corruptReplyFixture() {
+ const user={handle:'person',id:'2110886901939065031',relationship:{following:true,followedBy:false},followedAt:'2026-10-01T00:00:00Z',
+  sources:[{tweetId:'2110863912283537647',replies:[{replyId:'2110886901939065031',text:'keep this comment'}]}]};
+ return {commentTracking:{users:[user]},profileCache:{person:{handle:'person',id:'1762674580253265920'}},
+  followQueueBinding:{activated:true,accountId:'owner'},autoUnfollowState:{accounts:{owner:{used:5,queue:[],reviewItems:[{user:{handle:'person',id:user.id},
+   status:'review',pending:false,code:'AUTO_UNFOLLOW_TARGET_MISMATCH',attempts:3,updatedAt:1}]}}}};
+}
+
+test('version data upgrade repairs sources, derived tracker and review ledger, journals changes and survives restore',async()=>{
+ const original=corruptReplyFixture(), storage=memoryStorage(structuredClone(original)),durable=memoryDurable();
+ const service=runtime('reply-user-upgrade',storage,durable);await service.migrate();
+ for (const key of ['commentTracking','derived:tracker']) {
+  const rows=await service.lookupAll({sourceKey:key,handle:'person'});
+  assert.equal(rows.length,1);assert.equal(rows[0].payload.id,'1762674580253265920');
+ }
+ const comments=(await service.lookupAll({sourceKey:'commentTracking',handle:'person'}))[0].payload;
+ assert.deepEqual(comments.sources,original.commentTracking.users[0].sources);
+ assert.deepEqual(comments.userIdRepair.previousIds,['2110886901939065031']);
+ assert.equal(storage.data.autoUnfollowState.accounts.owner.reviewItems[0].user.id,'1762674580253265920');
+ assert.equal(storage.data.autoUnfollowState.accounts.owner.used,5);
+ assert.equal(storage.data.autoUnfollowState.accounts.owner.reviewItems[0].status,'review');
+ // Immutable archive and legacy storage remain untouched. Live changes go through the journal.
+ assert.deepEqual(storage.data.commentTracking,original.commentTracking);
+ const writes=durable.writes.length;
+ const reopened=runtime('reply-user-upgrade',storage,durable);await reopened.handle({op:'status'});
+ assert.equal(durable.writes.length,writes);
+ const restored=runtime('reply-user-upgrade-restored',storage,durable);await restored.migrate();
+ assert.equal((await restored.lookupAll({sourceKey:'commentTracking',handle:'person'}))[0].payload.id,'1762674580253265920');
+});
+
+test('old ready projection upgrades automatically on access, before returning records to schedulers',async()=>{
+ const fixture=corruptReplyFixture();fixture.commentTracking.users[0].id='1762674580253265920';
+ const storage=memoryStorage(fixture),durable=memoryDurable(),name='old-ready-reply-upgrade';
+ const service=runtime(name,storage,durable);await service.migrate();
+ const row=(await service.lookupAll({sourceKey:'commentTracking',handle:'person'}))[0];
+ await service.patchRecord({module:'comments',accountId:'unassigned',userKey:row.userKey,expectedHandle:'person',operationId:'simulate-old-version',
+  patch:{id:'2110886901939065031',userIdRepair:null}});
+ const projection=createRecordProjection({indexedDB,IDBKeyRange,dbName:name+'-dashboard'});
+ await projection.writeState({replyUserIdRepair:null});
+ const upgraded=runtime(name,storage,durable);
+ const [a,b]=await Promise.all([upgraded.lookupAll({sourceKey:'commentTracking',handle:'person'}),upgraded.handle({op:'status'})]);
+ assert.equal(a[0].payload.id,'1762674580253265920');assert.equal(b.status.cutover,true);
+ assert.equal((await projection.readState()).replyUserIdRepair.status,'done');
+});
+
+test('interrupted ID upgrade resumes from journal and audit without fabricating IDs or losing replies',async()=>{
+ const original=corruptReplyFixture();delete original.profileCache;
+ const storage=memoryStorage(original),durable=memoryDurable(),name='interrupted-reply-upgrade';
+ durable.failIncremental=true;
+ await assert.rejects(runtime(name,storage,durable).migrate(),/incremental backup failed/);
+ durable.failIncremental=false;
+ const reopened=runtime(name,storage,durable);await reopened.migrate();
+ const user=(await reopened.lookupAll({sourceKey:'commentTracking',handle:'person'}))[0].payload;
+ assert.equal(user.id,'');assert.equal(user.sources[0].replies[0].replyId,'2110886901939065031');
+ assert.equal(storage.data.autoUnfollowState.accounts.owner.reviewItems[0].user.id,'');
 });
 
 test('service workers and the runtime use static imports', () => {
@@ -1219,4 +1358,117 @@ test('unfollow history uses descending unfollow time before pagination and searc
  const second=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed'},cursor:first.nextCursor});assert.equal(second.records[0].handle,'old');
  const third=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed'},cursor:second.nextCursor});assert.equal(third.records[0].handle,'missing');assert.equal(third.nextCursor,null);
  const search=await service.query({module:'unreciprocated',limit:1,filter:{tab:'unfollowed',search:'old'}});assert.equal(search.records[0].handle,'old');
+});
+
+
+test('fan retention purges all buckets, journals owner and blocks stale resurrection after rebuild',async()=>{
+ const gone={accountId:'owner',handle:'gone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:100};
+ const retained=[{...gone,handle:'following',id:'43',relationship:{following:true,followedBy:false}},{...gone,handle:'follower',id:'44',relationship:{following:false,followedBy:true}},{...gone,handle:'unknown',id:'45',relationship:{following:null,followedBy:null}},{...gone,accountId:'other',handle:'other',id:'46'}];
+ const storage=memoryStorage({monitor:{users:[gone,...retained],queue:[gone],followingUsers:[gone]}}),durable=memoryDurable();
+ const service=runtime('fan-retention-owner',storage,durable);await service.migrate();
+ const candidates=await service.handle({op:'fanCleanupCandidates',ownerId:'owner'});assert.deepEqual(candidates.candidates.map(c=>c.handle),['gone']);
+ const cleaned=await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone',targetIds:['42']});assert.equal(cleaned.result.deleted,3);
+ assert.equal((await service.lookupAll({sourceKey:'monitor',handle:'gone'})).length,0);
+ assert.equal((await service.fanDirectory({handles:['gone'],accountId:'owner'})).length,0);
+ const plans=durable.writes.map(k=>durable.saved.get(k)).filter(e=>e?.kind==='fanRetention');assert.equal(plans.length,1);assert.equal(plans[0].payload.removedRows.length,3);assert.ok(plans[0].payload.removedRows.every(e=>e.accountId==='owner'));
+ const stale=await service.handle({op:'put',module:'fans',accountId:'owner',sourceKey:'monitor',sourcePath:['monitor','users',0],record:gone,operationId:'stale-gone'});assert.equal(stale.result.skipped,true);
+ const staleBatch=await service.handle({op:'batch',sourceKey:'monitor',changes:[{accountId:'owner',handle:'gone',create:true,patch:gone}]});assert.equal(staleBatch.result.updated,0);assert.equal(staleBatch.result.skipped,1);
+ const rebuilt=runtime('fan-retention-new-db',storage,durable);await rebuilt.migrate();
+ assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'gone'})).length,0);
+ for(const item of retained)assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:item.handle})).length,1);
+ const renewed={...gone,relationship:{following:true,followedBy:false},relationshipVerifiedAt:200};
+ await rebuilt.handle({op:'put',module:'fans',accountId:'owner',sourceKey:'monitor',sourcePath:['monitor','users',9],record:renewed,operationId:'renewed-gone'});
+ assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'gone'})).length,1);
+});
+
+test('fan retention preserves independent comment use and retries orphan cleanup markers',async()=>{
+ const gone={accountId:'owner',handle:'gone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:100};
+ const storage=memoryStorage({monitor:{users:[gone]},commentTracking:{users:[gone]}}),service=runtime('fan-retention-independent',storage,memoryDurable());await service.migrate();
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'});
+ assert.equal((await service.lookupAll({sourceKey:'commentTracking',handle:'gone'})).length,1);
+ assert.ok((await service.handle({op:'fanCleanupCandidates',ownerId:'owner'})).candidates.some(c=>c.handle==='gone'));
+ const retry=await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'});assert.equal(retry.result.scope,'fans');assert.equal(retry.result.deleted,0);
+});
+
+
+test('terminal cleanup rejects identity conflicts and accepts a later verified account recovery',async()=>{
+ const gone={accountId:'owner',handle:'terminal',id:'42',relationship:{following:true,followedBy:true},relationshipVerifiedAt:100};
+ const storage=memoryStorage({monitor:{users:[gone]},'xefProfileAccess:terminal':{status:'suspended',checkedAt:200}}),durable=memoryDurable();
+ const service=runtime('fan-retention-terminal',storage,durable);await service.migrate();
+ const result=await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'terminal'});assert.equal(result.result.scope,'account');assert.equal(result.result.deleted,1);
+ const blocked=await service.putRecord({module:'fans',accountId:'owner',record:gone,operationId:'terminal-stale'});assert.equal(blocked.skipped,true);
+ storage.data['xefProfileAccess:terminal']={status:'ok',checkedAt:300};
+ await service.putRecord({module:'fans',accountId:'owner',record:{...gone,relationshipVerifiedAt:300},operationId:'terminal-recovered'});
+ assert.equal((await service.lookupAll({sourceKey:'monitor',handle:'terminal'})).length,1);
+ const rebuilt=runtime('fan-retention-terminal-rebuild',storage,durable);await rebuilt.migrate();assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'terminal'})).length,1);
+});
+
+
+test('retention cannot delete before its exclusion journal is durable and retries cleanly',async()=>{
+ const gone={accountId:'owner',handle:'gone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:100};
+ const storage=memoryStorage({monitor:{users:[gone]}}),durable=memoryDurable(),service=runtime('fan-retention-backup-failure',storage,durable);await service.migrate();
+ durable.failIncremental=true;await assert.rejects(service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'}),/incremental backup failed/);
+ assert.equal((await service.lookupAll({sourceKey:'monitor',handle:'gone'})).length,1);
+ durable.failIncremental=false;assert.equal((await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'})).result.deleted,1);
+ const rebuilt=runtime('fan-retention-backup-failure-rebuilt',storage,durable);await rebuilt.migrate();assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'gone'})).length,0);
+});
+
+
+test('retention restores the confirmed legacy owner before rejecting unassigned stale writes',async()=>{
+ const gone={handle:'legacygone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:100};
+ const storage=memoryStorage({monitor:{users:[gone]}}),durable=memoryDurable(),service=runtime('fan-retention-legacy-owner',storage,durable);await service.migrate();
+ await service.migrateFanReview({accountId:'owner',includeUnassigned:true,jobs:[]});
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'legacygone'});
+ const rebuilt=runtime('fan-retention-legacy-owner-rebuilt',storage,durable);await rebuilt.migrate();assert.equal(await rebuilt.fanReviewOwner(),'owner');
+ const stale=await rebuilt.putRecord({module:'fans',record:gone,operationId:'legacy-reinsert'});assert.equal(stale.skipped,true);
+ assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'legacygone'})).length,0);
+});
+
+
+test('retention does not regenerate tracking rows from older independent customer facts',async()=>{
+ const gone={accountId:'owner',handle:'gone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:300};
+ const customer={...gone,relationship:{following:true,followedBy:false},relationshipVerifiedAt:200};
+ const name='fan-retention-derived',storage=memoryStorage({monitor:{users:[gone]},mutualNetwork:{users:[customer]}}),durable=memoryDurable(),service=runtime(name,storage,durable);await service.migrate();
+ await service.handle({op:'batch',sourceKey:'mutualNetwork',changes:[{accountId:'owner',handle:'gone',patch:{bio:'meaningful independent customer'}}]});
+ const projection=createRecordProjection({indexedDB,IDBKeyRange,dbName:name+'-dashboard'});await projection.open();
+ const oldTracker=(await projection.rowsByHandleKey('gone')).find(r=>r.sourceKey==='derived:tracker');assert.ok(oldTracker);
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'});
+ assert.equal((await service.lookupAll({sourceKey:'derived:tracker',handle:'gone'})).length,0);
+ assert.equal((await service.lookupAll({sourceKey:'mutualNetwork',handle:'gone'})).length,1);
+ // Simulate an already persisted tracker produced by a previous build.
+ await projection.mutateRow({row:oldTracker,membership:oldTracker.tabs.map(tab=>({accountId:oldTracker.accountId,module:oldTracker.module,userKey:oldTracker.userKey,tab,sortKey:oldTracker.sortKey}))},null);
+ const candidates=await service.handle({op:'fanCleanupCandidates',ownerId:'owner'});assert.equal(candidates.candidates.find(c=>c.handle==='gone').hasRecords,true);
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'});
+ assert.equal((await service.lookupAll({sourceKey:'derived:tracker',handle:'gone'})).length,0);
+ const rebuilt=runtime('fan-retention-derived-rebuilt',storage,durable);await rebuilt.migrate();assert.equal((await rebuilt.lookupAll({sourceKey:'derived:tracker',handle:'gone'})).length,0);
+ await service.handle({op:'batch',sourceKey:'mutualNetwork',changes:[{accountId:'owner',handle:'gone',patch:{relationshipVerifiedAt:400}}]});
+ const renewed=await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'gone'});assert.equal(renewed.result.reason,'relationship-renewed');
+ assert.equal((await service.lookupAll({sourceKey:'derived:tracker',handle:'gone'})).length,1);
+
+});
+
+
+test('late owner-proof migration repairs trackers recreated by older deletion-plan replay',async()=>{
+ const none={handle:'legacygone',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:300},customer={...none,relationship:{following:true,followedBy:false},relationshipVerifiedAt:200};
+ const storage=memoryStorage({monitor:{users:[none]},mutualNetwork:{users:[customer]}}),durable=memoryDurable(),service=runtime('fan-retention-late-proof',storage,durable);await service.migrate();
+ await service.migrateFanReview({accountId:'owner',includeUnassigned:true,jobs:[]});
+ await service.handle({op:'batch',sourceKey:'mutualNetwork',changes:[{accountId:'unassigned',handle:'legacygone',patch:{bio:'independent customer'}}]});
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'legacygone'});
+ const entries=[...durable.saved].filter(([k,v])=>k.includes(':seq:')&&['fanRetentionOwner','fanRetention'].includes(v.kind));
+ const owner=entries.find(([,v])=>v.kind==='fanRetentionOwner'),plan=entries.find(([,v])=>v.kind==='fanRetention');assert.ok(owner);assert.ok(plan);
+ durable.saved.set(owner[0],{...plan[1],seq:owner[1].seq});durable.saved.set(plan[0],{...owner[1],seq:plan[1].seq});
+ const rebuilt=runtime('fan-retention-late-proof-rebuilt',storage,durable);await rebuilt.migrate();
+ assert.equal(await rebuilt.fanReviewOwner(),'owner');assert.equal((await rebuilt.lookupAll({sourceKey:'monitor',handle:'legacygone'})).length,0);
+ assert.equal((await rebuilt.lookupAll({sourceKey:'derived:tracker',handle:'legacygone'})).length,0);
+ assert.equal((await rebuilt.lookupAll({sourceKey:'mutualNetwork',handle:'legacygone'})).length,1);
+});
+
+
+test('no-relationship cleanup does not delete a different stable identity cached under the same handle',async()=>{
+ const gone={accountId:'owner',handle:'reused',id:'42',relationship:{following:false,followedBy:false},relationshipVerifiedAt:300};
+ const storage=memoryStorage({monitor:{users:[gone]},profileCache:{reused:{handle:'reused',id:'43',ownerAccountId:'owner',bio:'new stable identity'}}}),durable=memoryDurable(),service=runtime('fan-retention-new-identity',storage,durable);await service.migrate();
+ await service.handle({op:'cleanupFanRecord',ownerId:'owner',handle:'reused',targetIds:['42']});
+ assert.equal((await service.lookupAll({sourceKey:'monitor',handle:'reused'})).length,0);
+ const profiles=await service.lookupAll({sourceKey:'profileCache',handle:'reused'});assert.equal(profiles.length,1);assert.equal(profiles[0].payload.id,'43');
+ const rebuilt=runtime('fan-retention-new-identity-rebuilt',storage,durable);await rebuilt.migrate();assert.equal((await rebuilt.lookupAll({sourceKey:'profileCache',handle:'reused'}))[0].payload.bio,'new stable identity');
 });

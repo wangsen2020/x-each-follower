@@ -8,6 +8,7 @@ import {defaults,parseTags,makeTagBatch,validateConfig} from '../src/features/mu
 import {createHomeScanner,parseHomeTimeline} from '../src/features/mutual-comments/home-reader.js';
 import {commentPriority} from '../src/features/mutual-comments/priority.js';
 const account={accountId:'123',handle:'me'};
+async function waitForScan(runtime){for(let i=0;i<1000;i++){if(!(await runtime.state()).running.scan)return;await new Promise(r=>setTimeout(r,1));}throw Error('scan did not settle');}
 const post=id=>({postId:id,handle:'friend',text:'欢迎互关，一起交流产品',url:'https://x.com/friend/status/'+id});
 const ranked=(id,following,replies=0)=>({...post(id),ownerId:'123',createdAt:Number(id),tag:'mutual',taggedAt:1,tagBatchId:'proof',status:'ready',following,replyCount:replies,repostCount:0,likeCount:0,bookmarkCount:0});
 
@@ -65,6 +66,7 @@ async function fixture(t){
 }
 test('batch classification persists all labels and never publishes; independent consumer uses existing publisher',async t=>{const f=await fixture(t);await f.runtime.tick('scan');assert.equal(f.calls,1);assert.equal(f.sends,0);assert.equal((await f.store.get('123','111')).tag,'mutual');await f.runtime.tick('comment');assert.equal(f.sends,1);assert.equal(f.scans,1);assert.equal((await f.store.get('123','111')).knowledge.wisdomVersion,2);});
 test('comment scheduler does not scan, classify or consume uncommitted labels',async t=>{const f=await fixture(t);await f.store.addPosts([{...post('111'),ownerId:'123',createdAt:1,tag:'mutual',status:'ready'}]);await f.runtime.tick('comment');assert.equal(f.calls,0);assert.equal(f.scans,0);assert.equal(f.sends,0);});
+test('interaction preference blocks mutual comments before AI generation and publication',async t=>{const f=await fixture(t);await f.store.addPosts([{...post('999'),ownerId:'123',createdAt:1,tag:'mutual',taggedAt:1,tagBatchId:'proof',status:'ready',text:'الله أكبر，欢迎互关'}]);await f.runtime.tick('comment');const row=await f.store.get('123','999');assert.equal(f.calls,0);assert.equal(f.sends,0);assert.equal(row.status,'skipped');assert.match(row.error,/互动偏好跳过/);});
 test('scan deduplicates existing posts and preserves labels and publication history',async t=>{const f=await fixture(t);await f.runtime.tick('scan');await f.runtime.tick('comment');await f.store.updateConfig('123',{nextScanAt:0});await f.runtime.tick('scan');assert.equal(f.calls,2);assert.equal((await f.store.list('123')).length,2);assert.equal((await f.store.get('123','111')).status,'posted');});
 test('negative labels never reach comment generation',async t=>{const f=await fixture(t);f.mode('skip');await f.runtime.tick('scan');await f.runtime.tick('comment');assert.equal(f.calls,1);assert.equal(f.sends,0);});
 test('receipt and frozen batch survive worker restart without new AI task',async t=>{const f=await fixture(t);f.mode('pending');await f.runtime.tick('scan');const batch=(await f.store.batches('123'))[0];f.advance(301000);f.deps.analyze=async(prompt,options)=>{assert.equal(prompt,batch.prompt);assert.equal(options.relayJobId,'local:job');return {ok:false,pending:true};};await f.make().tick('scan');assert.equal((await f.store.batches('123')).length,1);});
@@ -162,4 +164,162 @@ test('reply cache respects owner, author, context, provider, expiry and content 
 test('a resumed AI receipt is not replaced by a matching reply cache',async t=>{
  const f=await fixture(t);await f.store.addPosts([{...ranked('111',false),authorId:'9',taggedAt:1793200000000,status:'generating',relayJobId:'existing',provider:'grok-local',botId:'test',prompt:'existing prompt',knowledge:{text:''}}, {...ranked('112',false),authorId:'9',taggedAt:1793200000000,status:'posted',baseReply:'cached',provider:'grok-local',botId:'test',knowledge:{text:''}}]);
  let resumed=false;f.deps.analyze=async(prompt,o)=>{resumed=o.relayJobId==='existing';return {pending:true,ok:false};};await f.make().tick('comment');assert.equal(resumed,true);assert.equal((await f.store.get('123','111')).replyCache,undefined);
+});
+
+test('classification failures retry at most three times across worker restarts and retain evidence',async t=>{
+ const f=await fixture(t);f.mode('bad');await f.runtime.tick('scan');await f.store.updateConfig('123',{nextScanAt:9999999999999});
+ for(let i=0;i<6;i++){f.advance(301000);await f.make().tick('scan');}
+ assert.equal(f.calls,4);assert.equal((await f.store.get('123','111')).tagAttempts,4);assert.equal((await f.runtime.state()).tagExhausted,2);
+ assert.equal((await f.store.batches('123')).length,4);assert.equal((await f.store.get('123','111')).tagHistory.length,3);
+});
+
+test('offline detection pauses collection and retries only after a successful probe, without spending credits offline',async t=>{
+ const f=await fixture(t);let probes=0,online=false,calls=0;
+ const good=f.deps.analyze;f.deps.validateEngine=async()=>{probes++;if(!online)throw Error('无法连接AI服务');};
+ f.deps.analyze=async(p,o)=>{calls++;if(!online){await o.onJobCreated({id:'local:keep'});return {ok:false,pending:true,blocking:true,reason:'无法连接AI服务'};}assert.equal(o.relayJobId,'local:keep');return good(p,o);};
+ await f.make().tick('scan');const scans=f.scans;
+ for(let i=0;i<4;i++){f.advance(301000);await f.make().tick('scan');}
+ assert.equal(calls,1);assert.equal(f.scans,scans);assert.equal((await f.store.get('123','111')).tagAttempts,1);
+ online=true;f.advance(301000);await f.make().tick('scan');assert.equal(calls,2);assert.equal((await f.store.get('123','111')).tag,'mutual');assert.equal((await f.store.config('123')).tagServiceIssue,null);assert.equal(probes,5);
+});
+
+test('missing legacy receipts leave the old batch and recover tags with a new request instead of polling forever',async t=>{
+ const f=await fixture(t);f.mode('pending');await f.runtime.tick('scan');const old=(await f.store.batches('123'))[0];
+ const good=f.deps.analyze;f.mode('ok');f.deps.analyze=async(p,o)=>o.relayJobId?{ok:false,pending:false,blocking:true,errorCode:'JOB_NOT_FOUND',reason:'会话、任务或接口不存在'}:good(p,o);
+ f.advance(301000);await f.make().tick('scan');assert.equal((await f.store.getBatch(old.id)).status,'failed');
+ f.advance(301000);await f.make().tick('scan');assert.equal((await f.store.get('123','111')).tag,'mutual');assert.notEqual((await f.store.get('123','111')).tagBatchId,old.id);assert.ok(await f.store.getBatch(old.id));
+});
+
+test('manual batch covers all pages in 30-item groups, works with auto collection off and never publishes',async t=>{
+ const f=await fixture(t);await f.store.updateConfig('123',{scanEnabled:false});
+ await f.store.addPosts(Array.from({length:65},(_,i)=>({...post(String(1000+i)),handle:'author'+i,ownerId:'123',tag:i===0?'failed':'pending',tagAttempts:i===0?4:0,createdAt:i,status:'idle'})));
+ await f.store.addPosts([{...ranked('999',true),status:'posted',reply:'existing',publishedPostId:'777'},{...post('555'),ownerId:'456',createdAt:1,tag:'pending',status:'idle'}]);
+ const sizes=[],good=f.deps.analyze;f.deps.analyze=async(p,o)=>{sizes.push(JSON.parse(p.split('帖子数据：')[1]).length);return good(p,o);};
+ const runtime=f.make();await runtime.handle({action:'batchTag'});await waitForScan(runtime);
+ await f.make().tick('scan');await f.make().tick('scan');
+ assert.deepEqual(sizes,[30,30,5]);const state=await runtime.state();assert.equal(state.tagProgress.done,65);assert.equal(state.tagProgress.status,'completed');assert.equal(f.scans,0);assert.equal(f.sends,0);
+ assert.equal((await f.store.get('123','999')).publishedPostId,'777');assert.equal((await f.store.get('456','555')).tag,'pending');assert.equal((await f.store.config('123')).scanEnabled,false);
+});
+
+test('manual pause preserves the raw response and resumes without repeating the AI request',async t=>{
+ const f=await fixture(t);await f.store.updateConfig('123',{scanEnabled:false});await f.store.addPosts([{...post('111'),ownerId:'123',tag:'pending',status:'idle',createdAt:1}]);
+ let release;const gate=new Promise(r=>release=r),good=f.deps.analyze;let calls=0;
+ f.deps.analyze=async(p,o)=>{calls++;await gate;return good(p,o);};const runtime=f.make();await runtime.handle({action:'batchTag'});
+ for(let i=0;i<100&&!calls;i++)await new Promise(r=>setTimeout(r,1));
+ await runtime.handle({action:'pauseTag'});release();await waitForScan(runtime);
+ assert.equal((await f.store.get('123','111')).tag,'tagging');assert.equal((await f.store.batches('123'))[0].status,'raw_saved');
+ await runtime.handle({action:'batchTag'});await waitForScan(runtime);assert.equal(calls,1);assert.equal((await f.store.get('123','111')).tag,'mutual');
+});
+
+test('concurrent alarm ticks cannot reserve or send the same batch twice',async t=>{
+ const f=await fixture(t);await Promise.all([f.runtime.tick('scan'),f.runtime.tick('scan')]);assert.equal(f.calls,1);assert.equal((await f.store.batches('123')).length,1);
+});
+
+test('backlog suppresses new collection and services oldest pending posts first',async t=>{
+ const f=await fixture(t);await f.store.addPosts(Array.from({length:120},(_,i)=>({...post(String(1000+i)),handle:'author'+i,ownerId:'123',tag:'pending',status:'idle',createdAt:i})));
+ await f.runtime.tick('scan');assert.equal(f.scans,0);assert.equal((await f.store.config('123')).collectionDeferred,true);assert.equal((await f.store.get('123','1000')).tag,'mutual');assert.equal((await f.store.get('123','1119')).tag,'pending');
+});
+
+test('repeated transport failures stop after three retries even when probes succeed',async t=>{
+ const f=await fixture(t);let count=0;f.deps.analyze=async(p,o)=>{count++;await o.onJobCreated({id:'local:unreachable'});return {ok:false,pending:true,blocking:true,reason:'AI服务错误（503）'};};
+ await f.make().tick('scan');await f.store.updateConfig('123',{nextScanAt:9999999999999});
+ for(let i=0;i<7;i++){f.advance(301000);await f.make().tick('scan');}
+ assert.equal(count,4);assert.equal((await f.runtime.state()).tagExhausted,2);assert.equal((await f.store.get('123','111')).tag,'failed');
+});
+
+test('manual start rechecks account after connection validation and does not reset another account',async t=>{
+ const f=await fixture(t);await f.store.addPosts([{...post('111'),ownerId:'123',createdAt:1,tag:'failed',tagAttempts:4,status:'idle'}]);
+ let live=account;f.deps.owner=async()=>live;f.deps.validateEngine=async()=>{live={accountId:'456',handle:'other'};};
+ await assert.rejects(f.make().handle({action:'batchTag'}),/账号已变化/);assert.equal((await f.store.get('123','111')).tagAttempts,4);assert.equal((await f.store.config('123')).manualTagRun,undefined);
+});
+
+test('schedule icons independently persist both switches without changing AI settings or other due times',async t=>{
+ const f=await fixture(t);const before=await f.store.config('123');let probes=0;f.deps.validateEngine=async()=>{probes++;};
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'scan',enabled:false});
+ let config=await f.store.config('123');assert.equal(config.scanEnabled,false);assert.equal(config.commentEnabled,true);assert.equal(config.nextCommentAt,before.nextCommentAt);assert.equal(config.scanBotId,before.scanBotId);assert.equal(probes,0);
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'comment',enabled:false});assert.equal((await f.make().state()).config.commentEnabled,false);
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'scan',enabled:true});
+ config=await f.store.config('123');assert.equal(config.scanEnabled,true);assert.equal(config.commentEnabled,false);assert.ok(config.nextScanAt>1793200000000);assert.equal(probes,1);assert.equal(f.calls,0);assert.equal(f.sends,0);
+});
+
+test('schedule shutdown works offline while enabling a missing engine fails without changing saved switches',async t=>{
+ const f=await fixture(t);f.deps.validateEngine=async()=>{throw Error('无法连接AI服务');};
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'comment',enabled:false});
+ await assert.rejects(f.make().handle({action:'setSchedule',ownerId:'123',phase:'comment',enabled:true}),/无法连接/);assert.equal((await f.store.config('123')).commentEnabled,false);
+ await assert.rejects(f.make().handle({action:'setSchedule',ownerId:'456',phase:'scan',enabled:false}),/账号已变化/);
+ await assert.rejects(f.make().handle({action:'setSchedule',ownerId:'123',phase:'other',enabled:false}),/参数/);
+});
+
+test('scan switch pauses and resumes manual tagging, and failed identity verification cannot enable a schedule',async t=>{
+ const f=await fixture(t);await f.store.updateConfig('123',{manualTagRun:{id:'manual',status:'running',total:1,postIds:['111']}});
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'scan',enabled:false});assert.equal((await f.store.config('123')).manualTagRun.status,'paused');assert.equal((await f.runtime.tick('scan')).disabled,true);
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'scan',enabled:true});assert.equal((await f.store.config('123')).manualTagRun.status,'running');
+ await f.make().handle({action:'setSchedule',ownerId:'123',phase:'comment',enabled:false});let live=account;f.deps.owner=async()=>live;f.deps.validateEngine=async()=>{live={accountId:'456',handle:'other'};};
+ await assert.rejects(f.make().handle({action:'setSchedule',ownerId:'123',phase:'comment',enabled:true}),/账号已变化/);assert.equal((await f.store.config('123')).commentEnabled,false);
+});
+
+test('unknown AI classification leaves its old batch and is automatically retried with a new receipt',async t=>{
+ const f=await fixture(t);f.mode('pending');await f.runtime.tick('scan');const old=(await f.store.batches('123'))[0];f.deps.analyze=async()=>({ok:false,pending:true,generationUnknown:true,errorCode:'JOB_UNKNOWN',reason:'AI 任务结果未知'});
+ f.advance(301000);await f.make().tick('scan');assert.equal((await f.store.getBatch(old.id)).status,'failed');
+ f.mode('ok');const good=await fixture(t);f.deps.analyze=good.deps.analyze;f.advance(301000);await f.make().tick('scan');assert.equal((await f.store.get('123','111')).tag,'mutual');assert.ok(await f.store.getBatch(old.id));
+});
+
+test('unknown comment generation retries with a distinct key, preserves the old receipt and never replays a publication',async t=>{
+ const f=await fixture(t);await f.store.addPosts([{...ranked('111',false),status:'generating',relayJobId:'local:old'}]);let calls=0,keys=[];const good=f.deps.analyze;
+ f.deps.analyze=async(p,o)=>{calls++;keys.push(o.requestKey);return calls===1?{ok:false,pending:true,generationUnknown:true,reason:'结果未知'}:good(p,o);};
+ await f.make().tick('comment');let row=await f.store.get('123','111');assert.equal(row.status,'ready');assert.equal(row.aiGenerationRetries,1);assert.equal(row.aiTaskHistory[0].jobId,'local:old');assert.equal(f.sends,0);
+ f.advance(61000);await f.make().tick('comment');row=await f.store.get('123','111');assert.equal(row.status,'posted');assert.equal(f.sends,1);assert.notEqual(keys[0],keys[1]);
+});
+
+test('unknown comment generation has three retries and never resets an existing publication attempt',async t=>{
+ const f=await fixture(t);await f.store.addPosts([{...ranked('111',false),status:'generating',relayJobId:'local:old'}]);let calls=0;f.deps.analyze=async()=>{calls++;return {ok:false,pending:true,generationUnknown:true,reason:'结果未知'};};
+ for(let i=0;i<6;i++){await f.make().tick('comment');f.advance(301000);}assert.equal(calls,4);assert.equal((await f.store.get('123','111')).status,'failed');assert.equal(f.sends,0);
+ await f.store.updatePost({...ranked('111',false),status:'uncertain',publishAttemptedAt:1,relayJobId:'local:old'});await f.make().tick('comment');assert.equal(calls,4);assert.equal((await f.store.get('123','111')).status,'uncertain');
+});
+
+test('successful generation clears historical connection alerts without hiding a newer blocking failure',async t=>{
+ const f=await fixture(t);let health;f.deps.reportHealth=async v=>health=v;
+ await f.store.addPosts([{...ranked('111',true),status:'failed',error:'无法连接AI服务',lastAttemptAt:10},{...ranked('112',true),status:'posted',reply:'saved reply',finishedAt:20}]);
+ await f.make().refreshHealth();assert.equal(health.commentIssue,'');
+ await f.store.updatePost({...ranked('111',true),status:'failed',error:'无法连接AI服务',lastAttemptAt:30});await f.make().refreshHealth();assert.equal(health.commentIssue,'无法连接AI服务');
+});
+
+test('connection retry fails visibly offline and keeps the issue and retry allowance',async t=>{
+ const f=await fixture(t);const issue={reason:'无法连接AI服务',since:1,nextProbeAt:9999999999999};
+ await f.store.updateConfig('123',{scanEnabled:false,tagServiceIssue:issue});
+ await f.store.addPosts([{...ranked('111',false),tag:'failed',tagAttempts:4}]);
+ f.deps.validateEngine=async()=>{throw Error('无法连接AI服务');};
+ await assert.rejects(f.make().handle({action:'retryConnection',ownerId:'123',phase:'scan'}),/无法连接/);
+ assert.deepEqual((await f.store.config('123')).tagServiceIssue,issue);assert.equal((await f.store.get('123','111')).tagAttempts,4);assert.equal(f.calls,0);
+});
+
+test('successful connection retry clears its alert across restarts and preserves disabled schedules and history',async t=>{
+ const f=await fixture(t);let health,probes=0;f.deps.reportHealth=async s=>health=s;f.deps.validateEngine=async()=>{probes++;};
+ await f.store.updateConfig('123',{scanEnabled:false,commentEnabled:false,commentError:'无法连接AI服务',tagServiceIssue:{reason:'无法连接AI服务',since:1}});
+ await f.store.addPosts([{...ranked('111',false),status:'failed',error:'无法连接AI服务',lastAttemptAt:1,relayJobId:'local:old',aiErrorRetries:4}, {...ranked('112',false),status:'uncertain',publishAttemptedAt:1}]);
+ const before=await f.store.list('123');
+ await f.make().handle({action:'retryConnection',ownerId:'123',phase:'comment'});
+ await f.make().refreshHealth();assert.equal(health.commentIssue,'');assert.equal(health.tagIssue,'无法连接AI服务');assert.deepEqual(await f.store.list('123'),before);
+ await f.make().handle({action:'retryConnection',ownerId:'123',phase:'scan'});
+ await f.make().refreshHealth();assert.equal(health.tagIssue,'');const config=await f.store.config('123');assert.equal(config.scanEnabled,false);assert.equal(config.commentEnabled,false);assert.equal(probes,2);assert.equal(f.sends,0);
+ f.advance(10);await f.store.updatePost({...before[0],lastAttemptAt:1793200000010});await f.make().refreshHealth();assert.equal(health.commentIssue,'无法连接AI服务');
+});
+
+test('connection retry resumes an existing waiting batch without discarding its receipt or resetting attempts',async t=>{
+ const f=await fixture(t);f.mode('pending');await f.runtime.tick('scan');const old=(await f.store.batches('123'))[0];
+ await f.store.saveBatch({...old,error:'无法连接AI服务',retryAt:9999999999999});await f.store.updateConfig('123',{tagServiceIssue:{reason:'无法连接AI服务',since:1,nextProbeAt:9999999999999}});
+ f.mode('ok');let receipt;const good=f.deps.analyze;f.deps.analyze=async(p,o)=>{receipt=o.relayJobId;return good(p,o);};
+ const runtime=f.make();await runtime.handle({action:'retryConnection',ownerId:'123',phase:'scan'});await waitForScan(runtime);
+ assert.equal(receipt,old.relayJobId);assert.equal((await f.store.get('123','111')).tag,'mutual');assert.equal((await f.store.get('123','111')).tagAttempts,2);assert.equal(f.sends,0);
+});
+
+test('connection retry rejects account or engine changes and collapses concurrent clicks',async t=>{
+ const f=await fixture(t);let release,probes=0;f.deps.validateEngine=async()=>{probes++;await new Promise(r=>release=r);};
+ await f.store.updateConfig('123',{scanEnabled:false,tagServiceIssue:{reason:'无法连接AI服务',since:1}});
+ const runtime=f.make();await assert.rejects(runtime.handle({action:'retryConnection',ownerId:'456',phase:'scan'}),/账号/);
+ const first=runtime.handle({action:'retryConnection',ownerId:'123',phase:'scan'});while(!release)await new Promise(r=>setTimeout(r,1));
+ await assert.rejects(runtime.handle({action:'retryConnection',ownerId:'123',phase:'scan'}),/正在执行/);
+ await f.store.updateConfig('123',{scanBotId:'changed'});release();await assert.rejects(first,/配置已变化/);assert.equal(probes,1);assert.ok((await f.store.config('123')).tagServiceIssue);
+ f.deps.validateEngine=async()=>{};let live=account;f.deps.owner=async()=>live;f.deps.validateEngine=async()=>{live={accountId:'456',handle:'other'};};
+ await assert.rejects(f.make().handle({action:'retryConnection',ownerId:'123',phase:'scan'}),/账号已变化/);assert.ok((await f.store.config('123')).tagServiceIssue);
 });

@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { useExecutionLogs } from '../../src/entries/panel/composables/useExecutionLogs.js';
 
+test('fan review, verification and schedule tabs query and clear only their indexed category',async()=>{
+ const prior=globalThis.chrome,calls=[];
+ globalThis.chrome={runtime:{sendMessage:async message=>{calls.push(message);return {ok:true,entries:[],total:0};}}};
+ const c=useExecutionLogs();try{
+  await c.open('fans');
+  for(const [tab,scope]of [['review','fanReview'],['verify','fanVerify'],['schedule','fanSchedule']]){
+   await c.setFansSubTab(tab);assert.equal(calls.at(-1).scope,scope);
+   await c.clearLogs();assert.equal(calls.filter(c=>c.cmd==='clearExecutionLogs').at(-1).scope,scope);
+  }
+ }finally{c.close();globalThis.chrome=prior;}
+});
+
 test('queue dialog queries and clears only its own scope, including the legacy entry alias', async () => {
   const previous = globalThis.chrome;
   const calls = [];

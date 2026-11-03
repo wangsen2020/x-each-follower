@@ -163,6 +163,7 @@ test('runtime rejects a late generated comment after timeout before any publish 
   await env.store.saveSettings(env.accountId,{skipRiskContent:false,autoPublish:true});
   const controller=new AbortController();
   const values={followQueueBinding:{accountId:env.accountId,handle:'viewer',activated:true},
+    ['followQueueReviewSettings:'+env.accountId]:{commentEngine:{provider:'codex',botId:'comment-fixture'}},
     profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}]}}};
   const removed=[];
   const api={storage:{local:{get:async key=>({[key]:values[key]}),set:async patch=>Object.assign(values,patch)}},
@@ -171,7 +172,7 @@ test('runtime rejects a late generated comment after timeout before any publish 
       assert.equal(func.name,'readQueueViewerOnPage','no publishing script may run');
       return [{result:'viewer'}];
     }}};
-  const runtime=createFollowQueueRuntime({api,store:env.store,generateComment:async()=>{
+  const runtime=createFollowQueueRuntime({api,store:env.store,fetchProfile:async()=>({status:200,json:{rest_id:'456',core:{screen_name:'done'},relationship_perspectives:{following:true,followed_by:true}}}),generateComment:async()=>{
     controller.abort();
     return {ok:true,reply:'late draft',post:{url:'https://x.com/done/status/789',text:'An original post'}};
   }});
@@ -192,9 +193,9 @@ test('known X cooldown permits the enabled Bot fallback but still pauses an unbo
 
 test('Bot pending keeps source candidates and job ID; retry resumes that ID without publishing',async()=>{
   const env=await setup(async()=>{});await env.store.saveSettings(env.accountId,{skipRiskContent:false,autoPublish:false});
-  const values={followQueueBinding:{accountId:env.accountId,handle:'viewer',activated:true},profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}]}}};
+  const values={followQueueBinding:{accountId:env.accountId,handle:'viewer',activated:true},['followQueueReviewSettings:'+env.accountId]:{commentEngine:{provider:'codex',botId:'comment-fixture'}},profileCache:{done:{bio:'Software development',posts:[{url:'https://x.com/done/status/789',text:'An original post',textComplete:true}]}}};
   const api={storage:{local:{get:async key=>({[key]:values[key]}),set:async patch=>Object.assign(values,patch)}},tabs:{create:async()=>({id:999}),remove:async()=>{}},scripting:{executeScript:async({func})=>{assert.equal(func.name,'readQueueViewerOnPage');return [{result:'viewer'}]}}};
-  let calls=0;const runtime=createFollowQueueRuntime({api,store:env.store,generateComment:async(_h,posts,_name,options)=>{
+  let calls=0;const runtime=createFollowQueueRuntime({api,store:env.store,fetchProfile:async()=>({status:200,json:{rest_id:'456',core:{screen_name:'done'},relationship_perspectives:{following:true,followed_by:true}}}),generateComment:async(_h,posts,_name,options)=>{
     calls++;if(calls===1)return {ok:false,pending:true,channel:'grok-bot',jobId:'relay-original',reason:'waiting'};
     assert.equal(options.relayJobId,'relay-original');assert.equal(posts[0].url,'https://x.com/done/status/789');
     return {ok:true,reply:'Useful draft.',channel:'grok-bot',quality:{passed:true},post:posts[0]};

@@ -1,81 +1,88 @@
 <template>
-  <button id="openSystemSettings" type="button" class="local-data-entry" title="系统设置" aria-label="系统设置" data-tip="系统设置" @click="open">
+  <span class="system-settings-entry"><AiConnectionNotice ref="connectionNotice" @configure="provider=>openLocal({detail:{provider}})" />
+  <button id="openSystemSettings" type="button" class="local-data-entry" :title="t(&quot;系统设置&quot;)" :aria-label="t(&quot;系统设置&quot;)" :data-tip="t(&quot;系统设置&quot;)" @mouseenter="connectionNotice?.show()" @focus="connectionNotice?.show()" @click="open">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
 
   </button>
+  </span>
   <Teleport to="body">
     <dialog v-if="isOpen" id="systemSettingsDrawer" ref="drawer" class="system-settings" role="dialog" aria-modal="true" aria-labelledby="systemSettingsTitle" @cancel.prevent="close" @keydown.esc.stop.prevent="close" @click="backdrop" @keydown.tab="trapFocus">
-      <nav class="system-settings-nav" aria-label="设置分类">
-        <strong>系统设置</strong>
+      <nav class="system-settings-nav" :aria-label="t(&quot;设置分类&quot;)">
+        <strong>{{ t("系统设置") }}</strong>
         <button v-for="tab in settingTabs" :key="tab.key" type="button" :class="{selected:activeSection===tab.key}" :aria-current="activeSection===tab.key?'page':undefined" @click="selectSection(tab.key)">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path :d="tab.icon"/></svg>{{ tab.label }}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path :d="tab.icon"/></svg><span class="system-settings-nav-label">{{ t(tab.label) }}</span>
         </button>
       </nav>
       <div class="system-settings-main">
-      <div class="profile-drawer-head"><strong id="systemSettingsTitle">{{ settingTabs.find(tab=>tab.key===activeSection)?.label }}</strong><PanelCloseButton @click="close" /></div>
+      <div class="profile-drawer-head"><strong id="systemSettingsTitle">{{ t(settingTabs.find(tab=>tab.key===activeSection)?.label) }}</strong><PanelCloseButton @click="close" /></div>
       <div class="profile-drawer-content system-settings-content">
+        <SystemExceptionLogs v-if="activeSection==='exceptions'" />
         <GrokBotSettings v-if="activeSection==='grok-bot'" />
         <GrokLocalSettings v-if="activeSection==='grok-local'" :initial-provider="localProvider" />
         <section v-show="activeSection==='data'" aria-labelledby="localDataTitle">
-          <div class="system-section-heading"><h3 id="localDataTitle">备份概览</h3><button type="button" class="secondary system-icon" title="刷新备份状态" aria-label="刷新备份状态" :disabled="loading" @click="refresh"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
-          <div v-if="loading" class="system-state" role="status">正在读取备份状态…</div>
-          <div v-if="loadError" class="system-error" role="alert">{{ loadError }}</div>
+          <div class="system-section-heading"><h3 id="localDataTitle">{{ t("备份概览") }}</h3><button type="button" class="secondary system-icon" :title="t(&quot;刷新备份状态&quot;)" :aria-label="t(&quot;刷新备份状态&quot;)" :disabled="loading" @click="refresh"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
+          <div v-if="loading" class="system-state" role="status">{{ t("正在读取备份状态…") }}</div>
+          <div v-if="loadError" class="system-error" role="alert">{{ t(loadError) }}</div>
           <dl class="backup-summary" :aria-busy="loading">
-            <div><dt>完整快照</dt><dd id="backupSnapshotCount">{{ status ? `${status.snapshotCount} 份` : '—' }}</dd></div>
-            <div><dt>保留增量 <span class="info-tip" tabindex="0" role="note" data-tip="最早保留快照之后的变更条数，不是账号数，也不包括执行日志。" aria-label="最早保留快照之后的变更条数，不是账号数，也不包括执行日志。">?</span></dt><dd id="backupIncrementalCount">{{ status ? `${status.incrementalCount.toLocaleString()} 条` : '—' }}</dd></div>
-            <div><dt>最近备份</dt><dd id="backupLastTime">{{ status ? date(status.lastBackupAt) : '—' }}</dd></div>
-            <div><dt>恢复校验 <span class="info-tip" tabindex="0" role="note" data-tip="显示最近成功快照的隔离恢复校验结果，不代表此刻重新校验。" aria-label="显示最近成功快照的隔离恢复校验结果，不代表此刻重新校验。">?</span></dt><dd id="backupVerification">{{ verification }}</dd></div>
+            <div><dt>{{ t("完整快照") }}</dt><dd id="backupSnapshotCount">{{ t(status ? `${status.snapshotCount} 份` : '—') }}</dd></div>
+            <div><dt>{{ t("保留增量") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;最早保留快照之后的变更条数，不是账号数，也不包括执行日志。&quot;)" :aria-label="t(&quot;最早保留快照之后的变更条数，不是账号数，也不包括执行日志。&quot;)">?</span></dt><dd id="backupIncrementalCount">{{ t(status ? `${status.incrementalCount.toLocaleString()} 条` : '—') }}</dd></div>
+            <div><dt>{{ t("最近备份") }}</dt><dd id="backupLastTime">{{ t(status ? date(status.lastBackupAt) : '—') }}</dd></div>
+            <div><dt>{{ t("恢复校验") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;显示最近成功快照的隔离恢复校验结果，不代表此刻重新校验。&quot;)" :aria-label="t(&quot;显示最近成功快照的隔离恢复校验结果，不代表此刻重新校验。&quot;)">?</span></dt><dd id="backupVerification">{{ t(verification) }}</dd></div>
           </dl>
-          <p v-if="status?.lastAttempt?.ok === false" class="system-error" role="alert">最近备份失败：{{ status.lastAttempt.error }}</p>
-          <button id="createBackupNow" type="button" class="secondary" :disabled="busy || status?.running" @click="backupNow">{{ busy || status?.running ? '备份与校验中…' : '立即备份并校验' }}</button>
+          <p v-if="status?.lastAttempt?.ok === false" class="system-error" role="alert">{{ t("最近备份失败：") }}{{ t(status.lastAttempt.error) }}</p>
+          <button id="createBackupNow" type="button" class="secondary" :disabled="busy || status?.running" @click="backupNow">{{ t(busy || status?.running ? t("备份与校验中…") : t("立即备份并校验")) }}</button>
         </section>
         <section v-show="activeSection==='backup'" aria-labelledby="backupPolicyTitle">
-          <h3 id="backupPolicyTitle">备份设置</h3>
-          <label class="system-switch"><input id="backupEnabled" v-model="form.enabled" type="checkbox" :disabled="saving">自动快照 <span class="info-tip" tabindex="0" role="note" data-tip="关闭后仍保存业务变更增量，但不定期生成快照和清理旧增量；可手动备份。" aria-label="关闭后仍保存业务变更增量，但不定期生成快照和清理旧增量；可手动备份。">?</span></label>
+          <h3 id="backupPolicyTitle">{{ t("备份设置") }}</h3>
+          <label class="system-switch"><input id="backupEnabled" v-model="form.enabled" type="checkbox" :disabled="saving">{{ t("自动快照") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;关闭后仍保存业务变更增量，但不定期生成快照和清理旧增量；可手动备份。&quot;)" :aria-label="t(&quot;关闭后仍保存业务变更增量，但不定期生成快照和清理旧增量；可手动备份。&quot;)">?</span></label>
           <div v-for="field in fields" :key="field.key" class="system-setting-row">
-            <label :for="`backup-${field.key}`">{{ field.label }}</label>
+            <label :for="`backup-${field.key}`">{{ t(field.label) }}</label>
             <input :id="`backup-${field.key}`" v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :disabled="saving">
-            <span class="info-tip" tabindex="0" role="note" :data-tip="field.tip" :aria-label="field.tip">?</span>
+            <span class="info-tip" tabindex="0" role="note" :data-tip="t(field.tip)" :aria-label="t(field.tip)">?</span>
           </div>
         </section>
         <section v-show="activeSection==='versions'" aria-labelledby="versionHistoryTitle">
-          <div class="system-section-heading"><h3 id="versionHistoryTitle">版本历史</h3><button type="button" class="secondary system-icon" title="刷新版本历史" aria-label="刷新版本历史" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
-          <p class="system-version-current">当前版本 <strong>v{{ APP_VERSION }}</strong></p>
-          <p class="system-state">仅显示本机开始记录后的安装与升级，不推断更早的版本经历。</p>
-          <p v-if="historyLoading" class="system-state" role="status">正在读取版本历史…</p>
-          <p v-if="historyError" class="system-error" role="alert">{{ historyError }}</p>
+          <div class="system-section-heading"><h3 id="versionHistoryTitle">{{ t("版本历史") }}</h3><button type="button" class="secondary system-icon" :title="t(&quot;刷新版本历史&quot;)" :aria-label="t(&quot;刷新版本历史&quot;)" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
+          <p class="system-version-current">{{ t("当前版本") }}&nbsp;<strong>v{{ t(APP_VERSION) }}</strong></p>
+          <p class="system-state">{{ t("仅显示本机开始记录后的安装与升级，不推断更早的版本经历。") }}</p>
+          <p v-if="historyLoading" class="system-state" role="status">{{ t("正在读取版本历史…") }}</p>
+          <p v-if="historyError" class="system-error" role="alert">{{ t(historyError) }}</p>
           <ol v-if="versionData.versions.length" class="system-history-list">
-            <li v-for="entry in versionData.versions" :key="entry.id"><strong>v{{ entry.version }}</strong><span>{{ entry.kind==='update' ? `从 v${entry.previousVersion || '未知版本'} 升级` : '安装或首次记录' }}</span><time :datetime="entry.at">{{ formatTime(entry.at) }}</time></li>
+            <li v-for="entry in versionData.versions" :key="entry.id"><strong>v{{ t(entry.version) }}</strong><span>{{ t(entry.kind==='update' ? `从 v${entry.previousVersion || t("未知版本")} 升级` : t("安装或首次记录")) }}</span><time :datetime="entry.at">{{ t(formatTime(entry.at)) }}</time></li>
           </ol>
-          <p v-else-if="!historyLoading && !historyError" class="system-state">尚无本机安装或升级记录。</p>
+          <p v-else-if="!historyLoading && !historyError" class="system-state">{{ t("尚无本机安装或升级记录。") }}</p>
         </section>
         <section v-show="activeSection==='upgrades'" aria-labelledby="upgradeLogTitle">
-          <div class="system-section-heading"><h3 id="upgradeLogTitle">升级详细日志</h3><button type="button" class="secondary system-icon" title="刷新升级日志" aria-label="刷新升级日志" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
-          <p class="system-state">记录版本变更及本地数据迁移的启动、完成或失败；最近保留 200 条。</p>
-          <p v-if="migrationStatus" class="system-version-current">当前数据状态：{{ migrationStatus.stage==='ready' ? '已就绪' : migrationStatus.stage }}<span v-if="migrationStatus.total"> · {{ migrationStatus.completed }}/{{ migrationStatus.total }} 条</span></p>
-          <p v-if="migrationStatus?.error" class="system-error" role="alert">{{ migrationStatus.error }}</p>
-          <p v-if="historyLoading" class="system-state" role="status">正在读取升级日志…</p>
-          <p v-if="historyError" class="system-error" role="alert">{{ historyError }}</p>
+          <div class="system-section-heading"><h3 id="upgradeLogTitle">{{ t("升级详细日志") }}</h3><button type="button" class="secondary system-icon" :title="t(&quot;刷新升级日志&quot;)" :aria-label="t(&quot;刷新升级日志&quot;)" :disabled="historyLoading" @click="loadVersionHistory"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg></button></div>
+          <p class="system-state">{{ t("记录版本变更及本地数据迁移的启动、完成或失败；最近保留 200 条。") }}</p>
+          <p v-if="migrationStatus" class="system-version-current">{{ t("当前数据状态：") }}{{ t(migrationStatus.stage==='ready' ? t("已就绪") : migrationStatus.stage) }}<span v-if="migrationStatus.total"> · {{ t(migrationStatus.completed) }}/{{ t(migrationStatus.total) }} {{ t("条") }}</span></p>
+          <p v-if="migrationStatus?.error" class="system-error" role="alert">{{ t(migrationStatus.error) }}</p>
+          <p v-if="historyLoading" class="system-state" role="status">{{ t("正在读取升级日志…") }}</p>
+          <p v-if="historyError" class="system-error" role="alert">{{ t(historyError) }}</p>
           <ol v-if="versionData.logs.length" class="system-history-list">
-            <li v-for="entry in versionData.logs" :key="entry.id"><strong>{{ entry.kind==='version' ? (entry.stage==='update' ? '扩展升级' : '扩展安装') : (entry.stage==='started' ? '数据迁移开始' : entry.stage==='failed' ? '数据迁移失败' : entry.stage==='importing' ? '数据迁移进度' : '数据迁移完成') }}</strong><span>v{{ entry.version }}<template v-if="entry.previousVersion"> · 从 v{{ entry.previousVersion }}</template><template v-if="entry.total!==null && entry.total!==undefined"> · {{ entry.completed }}/{{ entry.total }} 条</template></span><time :datetime="entry.at">{{ formatTime(entry.at) }}</time><small v-if="entry.migrationId">任务：{{ entry.migrationId }}</small><small v-if="entry.error" class="system-error">{{ entry.error }}</small></li>
+            <li v-for="entry in versionData.logs" :key="entry.id"><strong>{{ t(entry.kind==='version' ? (entry.stage==='update' ? t("扩展升级") : t("扩展安装")) : (entry.stage==='started' ? t("数据迁移开始") : entry.stage==='failed' ? t("数据迁移失败") : entry.stage==='importing' ? t("数据迁移进度") : t("数据迁移完成"))) }}</strong><span>v{{ t(entry.version) }}<template v-if="entry.previousVersion">{{ t("· 从 v") }}{{ t(entry.previousVersion) }}</template><template v-if="entry.total!==null && entry.total!==undefined"> · {{ t(entry.completed) }}/{{ t(entry.total) }} {{ t("条") }}</template></span><time :datetime="entry.at">{{ t(formatTime(entry.at)) }}</time><small v-if="entry.migrationId">{{ t("任务：") }}{{ t(entry.migrationId) }}</small><small v-if="entry.error" class="system-error">{{ t(entry.error) }}</small></li>
           </ol>
-          <p v-else-if="!historyLoading && !historyError" class="system-state">尚无升级日志；既往未记录的过程无法补造。</p>
+          <p v-else-if="!historyLoading && !historyError" class="system-state">{{ t("尚无升级日志；既往未记录的过程无法补造。") }}</p>
         </section>
         <section v-for="group in preferenceGroups" v-show="activeSection===group.key" :key="group.key">
-<h3>{{ group.label }}</h3><div v-for="field in group.fields" :key="field.key" class="system-setting-row">
-<label :for="`system-${group.key}-${field.key}`">{{ field.label }}</label>
-<PanelSelect v-if="field.options" :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" :disabled="saving"><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></PanelSelect>
+<h3>{{ t(group.label) }}</h3><div v-for="field in group.fields" :key="field.key" class="system-setting-row">
+<label :for="`system-${group.key}-${field.key}`">{{ t(field.label) }}</label>
+<PanelSelect v-if="field.options" :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" :disabled="saving"><option v-for="option in field.options" :key="option.value" :value="option.value">{{ t(option.label) }}</option></PanelSelect>
 <input v-else :id="`system-${group.key}-${field.key}`" v-model.number="preferences[group.key][field.key]" type="number" :min="field.min" :max="field.max" :disabled="saving">
-<span class="info-tip" tabindex="0" role="note" :data-tip="field.tip" :aria-label="field.tip">?</span></div></section>
-<p class="system-state" role="status">{{ message }}</p>
-        <p v-if="error" class="system-error" role="alert">{{ error }}</p>
+<span class="info-tip" tabindex="0" role="note" :data-tip="t(field.tip)" :aria-label="t(field.tip)">?</span></div></section>
+<p class="system-state" role="status">{{ t(message) }}</p>
+        <p v-if="error" class="system-error" role="alert">{{ t(error) }}</p>
       </div>
-      <div v-show="!['data','versions','upgrades','grok-bot','grok-local'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ saving ? '保存中…' : '保存设置' }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">恢复默认</button></div>
+      <div v-show="!['data','versions','upgrades','grok-bot','grok-local','exceptions'].includes(activeSection)" class="system-settings-footer"><button id="saveSystemSettings" type="button" :disabled="saving || !settingsLoaded" @click="save">{{ t(saving ? t("保存中…") : t("保存设置")) }}</button><button type="button" class="secondary" :disabled="saving" @click="resetDefaults">{{ t("恢复默认") }}</button></div>
       </div>
     </dialog>
   </Teleport>
 </template>
 <script setup>
+import AiConnectionNotice from './AiConnectionNotice.vue';
+import SystemExceptionLogs from './SystemExceptionLogs.vue';
+import {t,locale} from '../../../shared/i18n.js';
+
 import PanelSelect from "./PanelSelect.vue";
 import {ref, reactive, computed, nextTick, onUnmounted} from 'vue';
 import {SYSTEM_DEFAULTS, readSystemSettings, saveSystemSettings} from '../../../shared/system-settings.js';
@@ -85,6 +92,7 @@ import GrokBotSettings from './GrokBotSettings.vue';
 import GrokLocalSettings from './GrokLocalSettings.vue';
 import {grokProviderController} from '../composables/useGrokProvider.js';
 import {BACKUP_DEFAULTS, validateBackupSettings} from '../../../features/records/record-snapshots.js';
+const connectionNotice=ref(null);
 const isOpen=ref(false), drawer=ref(null), status=ref(null), loading=ref(false), loadError=ref(''), busy=ref(false), saving=ref(false), settingsLoaded=ref(false), error=ref(''), message=ref('');
 const activeSection=ref('data'),localProvider=ref('grok-local');
 const settingTabs=[{key:'data',label:'本地数据',icon:'M4 4h16v16H4z M4 9h16 M8 13h8 M8 16h5'},{key:'backup',label:'备份设置',icon:'M5 7h14v14H5z M8 7V3h8v4 M8 14h8 M12 10v8'}];
@@ -100,6 +108,7 @@ const preferenceGroups=[
 {key:'checkMinutes',label:'检查间隔（分）',min:1,max:30,tip:'默认每 1 分钟检查。只回收扩展拥有的闲置窗口；前台、忙碌、人工验证及常驻窗口保留。'}]}
 ];
 settingTabs.push(...preferenceGroups.map(group=>({key:group.key,label:{pagination:'列表分页',logs:'执行日志',windows:'临时窗口'}[group.key],icon:{pagination:'M4 5h16 M4 12h16 M4 19h16',logs:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',windows:'M3 4h18v16H3z M3 8h18 M15 12l4 4 M19 12l-4 4'}[group.key]})));
+settingTabs.push({key:'exceptions',label:'异常日志',icon:'M12 3L2 21h20L12 3z M12 9v5 M12 17v1'});
 settingTabs.push({key:'versions',label:'版本历史',icon:'M4 5h16 M4 12h10 M4 19h16 M17 10l3 3-3 3'}, {key:'upgrades',label:'升级日志',icon:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5'});
 settingTabs.splice(2,0,{key:'grok-bot',label:'云端事件',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
 settingTabs.splice(3,0,{key:'grok-local',label:'AI 引擎',icon:'M5 8h14v12H5z M12 4v4 M9 13h1 M14 13h1 M9 17h6'});
@@ -115,8 +124,8 @@ const fields=[
   {key:'checkMinutes',label:'检查间隔（分）',min:5,max:1440,tip:'默认每 60 分钟检查备份条件。保存后更新后台计划；浏览器关闭期间不执行。'}
 ];
 const verification=computed(()=>!status.value?'—':status.value.verification?.verified?`已通过 · ${status.value.verification.rows.toLocaleString()} 条记录`:status.value.snapshotCount?'未记录校验结果':'尚无快照');
-const date=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'尚未备份';
-const formatTime=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—';
+const date=value=>value?new Date(value).toLocaleString(locale.value,{hour12:false}):'尚未备份';
+const formatTime=value=>value?new Date(value).toLocaleString(locale.value,{hour12:false}):'—';
 async function request(op,extra={}){const response=await chrome.runtime.sendMessage({action:'recordData',op,...extra});if(!response?.ok)throw new Error(response?.error||'操作未完成，请重试');return response;}
 let opener, timer, generation=0;
 async function open(){opener=document.activeElement;isOpen.value=true;message.value='';error.value='';await nextTick();if(!isOpen.value||!drawer.value)return;if(!drawer.value.open)drawer.value.showModal();drawer.value.querySelector('button')?.focus();await Promise.all([refresh(),loadSettings()]);}
@@ -137,12 +146,13 @@ document.addEventListener('xfollower:bind-grok-local',openLocal);
 onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot);document.removeEventListener('xfollower:bind-grok-local',openLocal);generation++;historyGeneration++;clearTimeout(timer);});
 </script>
 <style scoped>
+.system-settings-entry{position:relative;display:inline-flex;align-items:center}
 .local-data-entry{display:inline-flex;align-items:center;justify-content:center;flex:0 0 30px;width:30px;min-width:30px;height:30px;padding:0!important;background:transparent!important;border:0!important;color:inherit!important;box-shadow:none!important;position:relative}
 .local-data-entry>svg{flex:0 0 20px;width:20px;height:20px}
 .local-data-entry:hover{background:#ffffff12!important}.local-data-entry::after{content:attr(data-tip);position:absolute;left:40px;bottom:0;white-space:nowrap;background:#18302e;color:white;padding:6px 9px;border-radius:5px;opacity:0;pointer-events:none;font-size:12px}.local-data-entry:hover::after,.local-data-entry:focus-visible::after{opacity:1}
 .system-settings{margin:0;padding:0;color:#18302e;max-width:none;max-height:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(780px,calc(100vw - 40px));height:min(580px,calc(100vh - 40px));display:flex;background:#fff;border:1px solid #dce6de;border-radius:10px;box-shadow:0 16px 60px #18302e33;box-sizing:border-box;z-index:10001;overflow:hidden}
-.system-settings-nav{width:164px;flex-shrink:0;background:#eef3ef;padding:20px 10px;box-sizing:border-box}.system-settings-nav>strong{display:block;font-size:13px;color:#607c70;margin:0 10px 24px}.system-settings-nav button{display:flex;align-items:center;width:100%;height:34px;border:0;background:transparent;color:#24483b;font-size:12px;text-align:left;margin-bottom:6px;padding:0 10px;box-shadow:none}.system-settings-nav button svg{margin-right:10px;flex-shrink:0}.system-settings-nav button.selected{background:#d4e7da;color:#1f604a}
-.system-settings-main{display:flex;flex-direction:column;flex:1;min-width:0}.system-settings .profile-drawer-head{min-height:54px;padding:0 20px}.system-settings-content{flex:1;min-height:0;overflow:auto;padding:10px 20px!important}
+.system-settings-nav{width:164px;flex-shrink:0;background:#eef3ef;padding:20px 10px;box-sizing:border-box}.system-settings-nav>strong{display:block;font-size:13px;color:#607c70;margin:0 10px 24px}.system-settings-nav button{display:flex;align-items:center;width:100%;height:auto;min-height:34px;white-space:normal;overflow-wrap:anywhere;line-height:1.4;border:0;background:transparent;color:#24483b;font-size:12px;text-align:left;margin-bottom:6px;padding:7px 10px;box-shadow:none}.system-settings-nav button svg{margin-right:10px;flex-shrink:0}.system-settings-nav button.selected{background:#d4e7da;color:#1f604a}
+.system-settings-nav-label{min-width:0;white-space:normal;overflow-wrap:anywhere}.system-settings-main{display:flex;flex-direction:column;flex:1;min-width:0}.system-settings .profile-drawer-head{min-height:54px;padding:0 20px}.system-settings-content{flex:1;min-height:0;overflow:auto;padding:10px 20px!important}
 .system-settings::backdrop{background:#0e1c1673;backdrop-filter:blur(1.5px)}.system-settings .info-tip:focus::after{opacity:1}.system-setting-row .info-tip::after{left:auto;right:0;transform:none}.backup-summary .info-tip::after,.system-switch .info-tip::after{left:0;transform:none}
 .system-settings section{margin-bottom:16px}.system-settings h3{font-size:13px;margin:0;padding:8px 0;color:#24594a}.system-section-heading{display:flex;align-items:center;justify-content:space-between}
 .system-icon{width:30px;height:30px;padding:0!important;display:inline-flex;align-items:center;justify-content:center}
@@ -151,6 +161,6 @@ onUnmounted(()=>{document.removeEventListener('xfollower:bind-grok-bot',openBot)
 .system-setting-row{display:flex;align-items:center;min-height:44px;border-bottom:1px solid #e5ede8;font-size:12px}.system-setting-row label{width:120px;text-align:left;margin-right:10px;flex-shrink:0}.system-setting-row input,.system-setting-row select{width:100px;min-width:0;height:30px;box-sizing:border-box;font-size:12px}.system-setting-row .info-tip{margin-left:10px}
 .system-settings-footer{display:flex;padding:10px 12px;border-top:1px solid #dce6de}.system-settings-footer button{flex:1;margin-right:10px;height:30px;font-size:12px}.system-settings-footer button:last-child{margin-right:0}.system-state,.system-error{font-size:12px;line-height:1.6;margin:8px 0;overflow-wrap:anywhere}.system-state{color:#607c70}.system-error{color:#b42318}
 .system-version-current{font-size:12px;color:#24483b;margin:8px 0}.system-version-current strong{font-size:16px}.system-history-list{list-style:none;margin:10px 0;padding:0}.system-history-list li{display:grid;grid-template-columns:minmax(105px,1fr) minmax(120px,2fr) auto;gap:4px 12px;padding:10px 0;border-bottom:1px solid #e5ede8;font-size:12px;line-height:1.5}.system-history-list strong{color:#24594a}.system-history-list time{color:#607c70;white-space:nowrap}.system-history-list small{grid-column:1/-1;overflow-wrap:anywhere;color:#607c70}.system-history-list small.system-error{color:#b42318}
-@media(max-width:560px){.system-settings{width:calc(100vw - 20px);height:calc(100dvh - 20px);flex-direction:column}.system-settings-nav{width:100%;padding:8px 10px;display:flex;overflow-x:auto;flex-shrink:0}.system-settings-nav>strong{display:none}.system-settings-nav button{width:auto;flex-shrink:0;margin:0 10px 0 0}.system-settings-main{min-height:0}.system-settings-content{padding:10px 12px!important}.system-setting-row label{width:120px}.system-setting-row input,.system-setting-row select{width:76px}.system-history-list li{grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}.system-history-list li span{grid-column:1/-1;grid-row:2;overflow-wrap:anywhere}.system-history-list time{grid-column:2;grid-row:1;text-align:right;white-space:normal}}
+@media(max-width:560px){.system-settings{width:calc(100vw - 20px);height:calc(100dvh - 20px);flex-direction:column}.system-settings-nav{width:100%;padding:8px 10px;display:flex;overflow-x:auto;flex-shrink:0}.system-settings-nav>strong{display:none}.system-settings-nav button{width:auto;white-space:nowrap;flex-shrink:0;margin:0 10px 0 0}.system-settings-main{min-height:0}.system-settings-content{padding:10px 12px!important}.system-setting-row label{width:120px}.system-setting-row input,.system-setting-row select{width:76px}.system-history-list li{grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}.system-history-list li span{grid-column:1/-1;grid-row:2;overflow-wrap:anywhere}.system-history-list time{grid-column:2;grid-row:1;text-align:right;white-space:normal}}
 </style>
 

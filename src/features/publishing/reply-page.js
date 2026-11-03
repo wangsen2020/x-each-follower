@@ -1,7 +1,7 @@
 // Chrome serializes this function; all page helpers must remain inside it.
 export async function replyComposerOnPage(owner, sourcePostUrl='', text='', action='inspect', scopeToken='') {
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
-  const viewer=()=>document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').toLowerCase();
+  const viewer=()=>globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase();
   const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();return r.width>0&&r.height>0;};
   const key='__xfReplyComposerScope';
   if(action==='release'){
@@ -129,7 +129,7 @@ export async function replyComposerOnPage(owner, sourcePostUrl='', text='', acti
 export function readReplyPublicationOnPage(owner, sourcePostUrl, text, after=0) {
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim();
   const key=String(owner||'').replace(/^@/,'').toLowerCase();
-  if(!key||document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/','').toLowerCase()!==key)return null;
+  if(!key||globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase()!==key)return null;
   const sourceMatch=String(sourcePostUrl||'').match(/\/([^/]+)\/status\/(\d+)/i)||String(sourcePostUrl||'').match(/\/status\/(\d+)/i);
   const sourceId=sourceMatch?(sourceMatch[2]||sourceMatch[1]):'';
   const sourceHandle=sourceMatch&&sourceMatch[2]?sourceMatch[1].replace(/^@/,'').toLowerCase():'';

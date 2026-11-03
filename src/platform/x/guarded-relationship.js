@@ -6,10 +6,10 @@ import {parseNetworkUsers} from '../../features/relationships/network-api.js';
 export function profileRelationshipOnPage(handle, id, owner, action = 'read') {
   const key = String(handle).toLowerCase();
   if (location.pathname.toLowerCase().replace(/\/$/, '') !== '/' + key) return {ready:false};
-  const viewer = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.replaceAll('/', '').toLowerCase();
-  // A missing navigation link is not evidence of a different signed-in account.
-  // Page-only evidence requires an independently matched viewer and target ID.
+  const viewer = globalThis.__xfAccountSnapshot?.account?.handle?.toLowerCase();
+  // The account module publishes this snapshot; this page never probes login.
   if (viewer && viewer !== String(owner).toLowerCase()) return {ready:false,reason:'登录账号不一致'};
+  if(!viewer&&action!=='read')return {ready:false,reason:'等待账号信息同步'};
   const restricted=[...(document.querySelectorAll?.('[role="alert"],[role="alertdialog"],[role="dialog"],[data-testid="toast"]')||[])].find(e=>
     (!e.getClientRects || e.getClientRects().length>0) && /操作过于频繁|操作過於頻繁|已达到.*关注上限|已達到.*關注上限|暂时无法关注|暫時無法關注|rate limit exceeded|too many requests|unable to follow|temporarily restricted/i.test(e.innerText||''));
   if(restricted)return {ready:false,reason:'X 页面提示操作受限，请稍后再试',code:'X_PAGE_ACTION_RESTRICTED'};
@@ -17,6 +17,9 @@ export function profileRelationshipOnPage(handle, id, owner, action = 'read') {
   const header = root?.querySelector('[data-testid="UserName"]');
   if (!header || !header.innerText.toLowerCase().split(/\s+/).includes('@' + key)) return {ready:false};
   const buttons = [...root.querySelectorAll('button')].filter(e => !e.closest('article,[data-testid="UserCell"]'));
+  // X replaces Follow with an exact user-ID Unblock control on blocked profiles.
+  // Never infer this from bio, posts, recommendations or translated button text.
+  if(viewer===String(owner).toLowerCase() && buttons.some(button=>button.getAttribute('data-testid')===id+'-unblock'))return {ready:false,code:'X_PROFILE_BLOCKED',reason:'当前账号已屏蔽该用户'};
   const actionState = element => {
     const text = String(element.innerText || '').trim();
     const label = String(element.getAttribute('aria-label') || '').trim();
@@ -99,15 +102,15 @@ export async function inspectOrActOnProfile(api, user, owner, action = 'read', {
     const response = await createXNetworkClient(api).profile(tab.id,user.handle);
     if(response.status !== 200){
       if(page.identityVerified && page.ownerVerified)return {...user,relationship:{following:page.following,followedBy:page.followedBy},evidence:{page,source:'profile-page',apiStatus:response.status}};
-      throw profileReadinessError({reason:'主页身份或登录账号尚未核实，未执行操作'});
+      throw profileReadinessError({reason:'主页资料或登录账号尚未核实，未执行操作'});
     }
     const target = parseNetworkUsers(response.json).find(e => e.handle.toLowerCase() === user.handle.toLowerCase());
-    if(!target || String(target.id) !== String(user.id)) throw Object.assign(new Error('目标身份不一致，停止操作'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH'});
+    if(!target || String(target.id) !== String(user.id)) throw Object.assign(new Error('目标账号记录不一致，停止操作'),{code:'AUTO_UNFOLLOW_TARGET_MISMATCH'});
     return {...target,relationship:mergeVerifiedRelationship(target.relationship,page),evidence:{page,api:target.relationship}};
   };
   const inspect=async()=>{try {
     let page;
-    for(let i=0;i<30;i++){page=await readPage('read');if(page?.ready)break;await sleep(500);}
+    for(let i=0;i<30;i++){page=await readPage('read');if(page?.ready || page?.code==='X_PROFILE_BLOCKED')break;await sleep(500);}
     if(!page?.ready) throw profileReadinessError(page);
     const live=await fresh();
     if(action==='read')return live;

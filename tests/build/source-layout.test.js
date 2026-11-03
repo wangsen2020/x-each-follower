@@ -9,7 +9,8 @@ test('all application source and extension metadata stay under src', () => {
   assert.deepEqual(loose, []);
   assert.equal(existsSync(new URL('manifest.json',root)),false);
   for (const [output, source] of Object.entries(RUNTIME_RESOURCES)) {
-    assert.equal(output.includes('/'),false);
+    if(output.startsWith('_locales/'))assert.match(output,/^_locales\/(en|zh_CN|pt_BR|es_419|es|pt_PT|zh_TW)\/messages\.json$/);
+    else assert.equal(output.includes('/'),false);
     assert.ok(source.startsWith('src/') || source === 'THIRD_PARTY_NOTICES.txt');
     assert.ok(existsSync(new URL(source,root)),source);
   }

@@ -602,3 +602,38 @@ test('duplicate round summaries collapse across pages but orphan summaries and f
  const r=await store.query({scope:'unreciprocated',kind:'unfollow',limit:1});assert.equal(r.total,2);assert.equal(r.entries[0].id,'orphan');
  const next=await store.query({scope:'unreciprocated',kind:'unfollow',limit:1,cursor:r.nextCursor});assert.equal(next.entries[0].id,'detail');assert.equal(next.nextCursor,null);
 });
+
+test('fan scan count and pages exclude newer fan queue logs at write time',async()=>{
+ const store=storeFor(legacyStorage(),memoryDurable(),'logs-scan-count');
+ for(let i=0;i<3;i++)await store.append({id:'scan-'+i,scope:'fans',origin:'monitorLogs',at:new Date(1000+i).toISOString()});
+ for(let i=0;i<35;i++)await store.append({id:'queue-'+i,scope:'queue',sources:[{module:'fans'}],at:new Date(2000+i).toISOString(),...(i===0?{origin:'monitorLogs'}:{})});
+ for(const scope of ['fans','monitor']){
+  const first=await store.query({scope,limit:2});assert.equal(first.total,3);assert.deepEqual(first.entries.map(r=>r.id),['scan-2','scan-1']);
+  const next=await store.query({scope,limit:2,cursor:first.nextCursor});assert.deepEqual(next.entries.map(r=>r.id),['scan-0']);assert.equal(next.nextCursor,null);
+ }
+ assert.equal((await store.query({scope:'queueFans'})).total,35);
+});
+
+test('repair previously completed migration without losing queue log bodies or new scan entries',async()=>{
+ const name='logs-repair-scan-index',storage=legacyStorage(),durable=memoryDurable(),store=storeFor(storage,durable,name);
+ await store.append({id:'scan',scope:'fans',at:new Date(1000).toISOString()});
+ for(let i=0;i<35;i++)await store.append({id:'queue-'+i,scope:'queue',sources:[{module:'fans'}],at:new Date(2000+i).toISOString()});
+ const db=await new Promise((resolve,reject)=>{const r=indexedDB.open(name);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+ await new Promise((resolve,reject)=>{const tx=db.transaction(['logs','scopeRows','meta'],'readwrite');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+  tx.objectStore('meta').put({key:'fansQueueDisentangled',done:true});tx.objectStore('meta').delete('fansQueueDisentangledV2');
+  const req=tx.objectStore('logs').openCursor();req.onsuccess=()=>{const c=req.result;if(!c)return;const row=c.value;if(row.scope==='queue'){row.membership.push('fans','monitor');row.scopeSchemaVersion=3;c.update(row);for(const scope of ['fans','monitor'])tx.objectStore('scopeRows').put({scope,at:row.at,id:row.id,logId:row.id});}c.continue();};
+ });db.close();
+ const repaired=storeFor(storage,durable,name);
+ assert.deepEqual((await repaired.query({scope:'fans'})).entries.map(r=>r.id),['scan']);assert.equal((await repaired.query({scope:'fans'})).total,1);
+ assert.equal((await repaired.query({scope:'queueFans'})).total,35);
+ await repaired.append({id:'later',scope:'queue',sources:[{module:'fans'}],at:new Date(3000).toISOString()});
+ assert.equal((await storeFor(storage,durable,name).query({scope:'fans'})).total,1);
+});
+
+test('v3 backup replay drops incorrect scan membership and preserves explicitly cleared queue fan scope',async()=>{
+ const durable=memoryDurable();durable.saved.set('executionLogBackupHead',{n:2});
+ for(let i=1;i<=2;i++)durable.saved.set('executionLogBackupPage:'+i,{op:'put',record:{id:'old-'+i,scope:'queue',sources:[{module:'fans'}],origin:'autoFollowLogs',scopeSchemaVersion:3,at:new Date(i*1000).toISOString(),membership:['autoFollow','queue','fans','monitor',...(i===1?['queueFans']:[])]}});
+ const store=storeFor(legacyStorage(),durable,'logs-replay-v3-scan');
+ assert.equal((await store.query({scope:'fans'})).total,0);assert.equal((await store.query({scope:'queue'})).total,2);
+ assert.deepEqual((await store.query({scope:'queueFans'})).entries.map(r=>r.id),['old-1']);
+});

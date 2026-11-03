@@ -1,29 +1,31 @@
 <template>
   <span class="wisdom-control">
-    <PanelIconButton :icon="Brain" label="智慧" :tip="activeTip" :title="activeTip" @click="openDocument" />
-    <button v-if="pending" type="button" class="secondary wisdom-pending" :disabled="busy" @click="resume">待处理合入</button>
-    <PanelModal ref="documentModal" title="写作智慧 · Markdown Skill">
-      <template #actions><button type="button" class="secondary" @click="openVersions">版本记录</button><button type="button" class="secondary" :disabled="!editText" @click="copy">复制 Markdown</button></template>
-      <p class="wisdom-meta">{{ viewedVersion ? '查看 v'+viewedVersion : '新建智慧' }} · 当前使用 {{ state?.head ? 'v'+state.head.version : '未设置' }}</p>
-      <textarea ref="editor" v-model="editText" class="wisdom-editor" aria-label="智慧Markdown文档" spellcheck="false" placeholder="# 写作智慧&#10;&#10;## 写作目标&#10;如何写出有信息价值、值得互动的帖子…" />
-      <p class="wisdom-meta">{{ editText.length }} / 6000 字符。可复制给其他 AI 细化，再粘贴保存。保存会新增一份智慧，原文档保留。</p>
-      <p v-if="error" class="wisdom-error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-      <template #footer><button type="button" class="secondary" @click="documentModal?.close()">关闭</button><button type="button" :disabled="busy || !editText.trim()" @click="saveDocument">保存并使用</button></template>
+    <PanelIconButton :icon="Brain" :label="t(&quot;智慧&quot;)" :tip="t(activeTip)" :title="t(activeTip)" @click="openDocument" />
+    <button v-if="pending" type="button" class="secondary wisdom-pending" :disabled="busy" @click="resume">{{ t("待处理合入") }}</button>
+    <PanelModal ref="documentModal" :title="t(&quot;写作智慧 · Markdown Skill&quot;)">
+      <template #actions><button type="button" class="secondary" @click="openVersions">{{ t("版本记录") }}</button><button type="button" class="secondary" :disabled="!editText" @click="copy">{{ t("复制 Markdown") }}</button></template>
+      <p class="wisdom-meta">{{ t("\u007b\u007bv0\u007d\u007d · 当前使用 \u007b\u007bv1\u007d\u007d",{v0:viewedVersion?t("查看 v\u007b\u007bv0\u007d\u007d",{v0:viewedVersion}):t("新建智慧"),v1:state?.head?'v'+state.head.version:t("未设置")}) }}</p>
+      <textarea ref="editor" v-model="editText" class="wisdom-editor" :aria-label="t(&quot;智慧Markdown文档&quot;)" spellcheck="false" :placeholder="t(&quot;# 写作智慧\n\n## 写作目标\n如何写出有信息价值、值得互动的帖子…&quot;)" />
+      <p class="wisdom-meta">{{ t("\u007b\u007bv0\u007d\u007d / 6000 字符。可复制给其他 AI 细化，再粘贴保存。保存会新增一份智慧，原文档保留。",{v0:editText.length}) }}</p>
+      <p v-if="error" class="wisdom-error" role="alert">{{ t(error) }}</p><p v-if="notice" role="status">{{ t(notice) }}</p>
+      <template #footer><button type="button" class="secondary" @click="documentModal?.close()">{{ t("关闭") }}</button><button type="button" :disabled="busy || !editText.trim()" @click="saveDocument">{{ t("保存并使用") }}</button></template>
     </PanelModal>
-    <PanelModal ref="versionsModal" title="智慧版本">
-      <template #actions><PanelPager :page="versionPage.page" :page-size="versionPage.pageSize" :total="versionPage.total" :busy="busy" label="智慧版本分页" @page="loadVersions" @size="size=>loadVersions(1,size)" /></template>
-      <p class="wisdom-meta">勾选一份作为当前写作 Skill。切换不改内容，也不新增版本。</p>
-      <div class="version-table-wrap"><table class="version-table"><thead><tr><th>使用</th><th>智慧</th><th>保存时间</th><th>来源</th><th>查看</th></tr></thead><tbody><tr v-for="version in versionPage.items" :key="version.version"><td><input type="radio" name="active-wisdom" :checked="version.version === state?.head?.version" :aria-label="'使用智慧 v'+version.version" :disabled="busy" @change="selectVersion(version.version)"></td><td>v{{ version.version }}</td><td>{{ date(version.createdAt) }}</td><td>{{ version.action==='edit'?'手动修改':version.trigger==='weekly'?'每周合并':'经验合入' }}</td><td><PanelIconButton :icon="Eye" :label="'查看智慧 v'+version.version" @click="viewVersion(version.version)" /></td></tr></tbody></table></div>
-      <p v-if="!versionPage.total">暂无智慧，可先合入经验或新建 Markdown 文档。</p><p v-if="error" class="wisdom-error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
+    <PanelModal ref="versionsModal" :title="t(&quot;智慧版本&quot;)">
+      <template #actions><PanelPager :page="versionPage.page" :page-size="versionPage.pageSize" :total="versionPage.total" :busy="busy" :label="t(&quot;智慧版本分页&quot;)" @page="loadVersions" @size="size=>loadVersions(1,size)" /></template>
+      <p class="wisdom-meta">{{ t("勾选一份作为当前写作 Skill。切换不改内容，也不新增版本。") }}</p>
+      <div class="version-table-wrap"><table class="version-table"><thead><tr><th>{{ t("使用") }}</th><th>{{ t("智慧") }}</th><th>{{ t("保存时间") }}</th><th>{{ t("来源") }}</th><th>{{ t("查看") }}</th></tr></thead><tbody><tr v-for="version in versionPage.items" :key="version.version"><td><input type="radio" name="active-wisdom" :checked="version.version === state?.head?.version" :aria-label="t(&quot;使用智慧 v\u007b\u007bv0\u007d\u007d&quot;,{v0:version.version})" :disabled="busy" @change="selectVersion(version.version)"></td><td>v{{ t(version.version) }}</td><td>{{ t(date(version.createdAt)) }}</td><td>{{ version.action==='edit'?t("手动修改"):version.trigger==='weekly'?t("每周合并"):t("经验合入") }}</td><td><PanelIconButton :icon="Eye" :label="t(&quot;查看智慧 v\u007b\u007bv0\u007d\u007d&quot;,{v0:version.version})" @click="viewVersion(version.version)" /></td></tr></tbody></table></div>
+      <p v-if="!versionPage.total">{{ t("暂无智慧，可先合入经验或新建 Markdown 文档。") }}</p><p v-if="error" class="wisdom-error" role="alert">{{ t(error) }}</p><p v-if="notice" role="status">{{ t(notice) }}</p>
     </PanelModal>
-    <ActionSettingsDrawer ref="previewDrawer" title="合入智慧">
-      <template v-if="draft"><p>基于 {{ draft.baseVersion ? 'v'+draft.baseVersion : '空白智慧' }}，本次合入 {{ draft.selected.length }} 条经验。</p><p v-if="draft.status !== 'ready'" role="status">{{ draft.error || '正在生成合入结果，可稍后查询原任务。' }}</p><template v-else><div class="wisdom-compare"><section><h3>合入前</h3><pre>{{ draft.before?.content || '暂无智慧' }}</pre></section><section><h3>合入后</h3><pre>{{ draft.content }}</pre></section></div><p v-if="draft.conflicts?.length" class="wisdom-error">需核对：{{ draft.conflicts.join('；') }}</p></template><details><summary>本次经验与来源</summary><article v-for="item in draft.selected" :key="item.id" class="wisdom-source"><p>{{ item.statement }}</p><small>{{ item.sources?.length ? [...new Set(item.sources.map(s=>channels[s.channel]||'来源待核实'))].join('、') : item.scope?.sourceChannel==='manual'?'手动录入':'历史来源待核实' }}</small></article></details></template>
-      <p v-if="error" class="wisdom-error" role="alert">{{ error }}</p>
-      <template #footer><button type="button" class="secondary" :disabled="busy" @click="cancel">放弃本次合入</button><button v-if="draft?.status !== 'ready'" type="button" class="secondary" :disabled="busy" @click="resume">查询原任务</button><button v-else type="button" :disabled="busy" @click="commit">保存并使用</button></template>
+    <ActionSettingsDrawer ref="previewDrawer" :title="t(&quot;合入智慧&quot;)">
+      <template v-if="draft"><p>{{ t("基于 \u007b\u007bv0\u007d\u007d，本次合入 \u007b\u007bv1\u007d\u007d 条经验。",{v0:draft.baseVersion?'v'+draft.baseVersion:t("空白智慧"),v1:draft.selected.length}) }}</p><p v-if="draft.status !== 'ready'" role="status">{{ (t(draft.error) || t("正在生成合入结果，可稍后查询原任务。")) }}</p><template v-else><div class="wisdom-compare"><section><h3>{{ t("合入前") }}</h3><pre>{{ draft.before?.content || t("暂无智慧") }}</pre></section><section><h3>{{ t("合入后") }}</h3><pre>{{ draft.content }}</pre></section></div><p v-if="draft.conflicts?.length" class="wisdom-error">{{ t("需核对：\u007b\u007bv0\u007d\u007d",{v0:draft.conflicts.join('；')}) }}</p></template><details><summary>{{ t("本次经验与来源") }}</summary><article v-for="item in draft.selected" :key="item.id" class="wisdom-source"><p>{{ item.statement }}</p><small>{{ item.sources?.length?t([...new Set(item.sources.map(s=>channels[s.channel]||'来源待核实'))].join('、')):item.scope?.sourceChannel==='manual'?t("手动录入"):t("历史来源待核实") }}</small></article></details></template>
+      <p v-if="error" class="wisdom-error" role="alert">{{ t(error) }}</p>
+      <template #footer><button type="button" class="secondary" :disabled="busy" @click="cancel">{{ t("放弃本次合入") }}</button><button v-if="draft?.status !== 'ready'" type="button" class="secondary" :disabled="busy" @click="resume">{{ t("查询原任务") }}</button><button v-else type="button" :disabled="busy" @click="commit">{{ t("保存并使用") }}</button></template>
     </ActionSettingsDrawer>
   </span>
 </template>
 <script setup>
+import {t,locale} from '../../../shared/i18n.js';
+
 import {ref,computed,watch,onBeforeUnmount} from 'vue';
 import {Brain,Eye} from 'lucide';
 import PanelIconButton from './PanelIconButton.vue';
@@ -37,7 +39,7 @@ const editText=ref(''),editBaseVersion=ref(0),viewedVersion=ref(0),versionPage=r
 let sequence=0,versionSequence=0;
 const pending=computed(()=>state.value?.drafts.find(d=>['prepared','submitted','result_saved','ready'].includes(d.status)));
 const activeTip=computed(()=>state.value?.head?'当前使用智慧 v'+state.value.head.version+'，点击查看 Markdown Skill':'尚未选择智慧，点击新建或查看');
-const date=value=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+const date=value=>new Date(value).toLocaleString(locale.value,{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 async function request(action,extra={}){const r=await chrome.runtime.sendMessage({cmd:'knowledgeLearning',action,...extra});if(!r?.ok)throw Error(r?.error||'智慧操作失败');return r;}
 function apply(result){state.value=result;emit('state',result);}
 async function refresh(){const ticket=++sequence,id=props.ownerId;try{const r=await request('wisdomState');if(ticket===sequence&&id===props.ownerId)apply(r);}catch(e){if(ticket===sequence)error.value=e.message;}}

@@ -1,4 +1,6 @@
-import test from 'node:test';
+import test, {beforeEach,afterEach} from 'node:test';
+beforeEach(()=>{globalThis.__xfAccountSnapshot={account:{id:'1',handle:'alice'},status:'ready'};});
+afterEach(()=>{delete globalThis.__xfAccountSnapshot;});
 import assert from 'node:assert/strict';
 import {buildVerificationSelfMessage,operateSelfMessageOnPage,sendVerificationSelfMessage} from '../src/features/grok/verification-self-message.js';
 
@@ -14,10 +16,10 @@ test('verification message identifies the account and desktop action without exp
 test('page sender refuses another account or a conversation with another recipient',()=>{
   const prior={document:globalThis.document,location:globalThis.location};
   try {
-    globalThis.document={querySelector:()=>({getAttribute:()=>'/bob'})};
+    globalThis.__xfAccountSnapshot.account.handle='bob';globalThis.document={querySelector:()=>({getAttribute:()=>'/bob'})};
     globalThis.location={hostname:'x.com',pathname:'/i/chat/123-123'};
     assert.equal(operateSelfMessageOnPage({...identity,action:'send'}).blocked,true);
-    globalThis.document={querySelector:()=>({getAttribute:()=>'/alice'})};
+    globalThis.__xfAccountSnapshot.account.handle='alice';globalThis.document={querySelector:()=>({getAttribute:()=>'/alice'})};
     globalThis.location.pathname='/i/chat/123-456';
     assert.equal(operateSelfMessageOnPage({...identity,action:'send'}).blocked,true);
   } finally {Object.assign(globalThis,prior);}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>操作结果受控验收</title></head>
+<body><div id="mount"></div>
+<script>globalThis.chrome={i18n:{getUILanguage:()=> 'zh-CN'},runtime:{id:'result-fixture'}};</script>
+<script type="module">
+import {createApp,h} from 'vue';
+import Toaster from '/src/entries/panel/components/PanelResultToaster.vue';
+import Monitor from '/src/entries/panel/pages/MonitorSection.vue';
+import {createResultReporter} from '/src/entries/panel/result-notices.js';
+import '/src/entries/panel/styles/panel.css';
+import '/src/entries/panel/styles/admin.css';
+import '/src/entries/panel/styles/brand-layout.css';
+import '/src/entries/panel/styles/select-control.css';
+createApp({render:()=>h('main',{style:'display:block;padding:24px'},[h('button',{id:'outside',onClick:()=>window.__outside=(window.__outside||0)+1},'列表仍可操作'),h(Monitor),h(Toaster)])}).mount('#mount');
+window.__resultFixture={report:createResultReporter()};
+document.querySelector('#monitorSection').hidden=false;
+document.querySelector('#selectionBar').hidden=false;
+document.querySelector('#fanReviewResultFilter').hidden=false;
+document.querySelector('#monitorLoad').hidden=true;
+document.querySelector('#monitorStatus').textContent='本地账号 4,345 个';
+</script></body></html>

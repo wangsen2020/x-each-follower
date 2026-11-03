@@ -11,6 +11,39 @@ function fixture(engine='codex'){
  const client=createAgentRelayClient({engine,repository,fetchImpl,uuid:()=>String(++serial)});
  return {client,repository,requests,jobs,setState:v=>{state=v;},setConfig:v=>{config=v;},get config(){return config;}};
 }
+
+test('shared session admission avoids a per-task sessions probe and original recovery bypasses admission',async()=>{
+ const f=fixture(),calls=[];let admission=0;
+ const client=createAgentRelayClient({engine:'codex',repository:f.repository,uuid:()=> 'central',sessionSource:async()=>{admission++;return [{id:'session-b'}];},fetchImpl:async(url,options)=>{
+  calls.push({url,method:options.method||'GET'});assert.ok(!url.endsWith('/sessions'));
+  return {ok:true,json:async()=>options.method==='POST'?{status:'queued'}:{jobId:'central',status:'completed',result:{text:'done'}}};
+ }});
+ assert.equal((await client.generate('sample',{botId:'session-b'})).ok,true);assert.equal(admission,1);
+ await f.repository.saveJob({id:'local:central',status:'unknown',connection:f.config});
+ assert.equal((await client.resume('local:central')).ok,true);assert.equal(admission,1);assert.equal(calls.filter(c=>c.method==='POST').length,1);
+});
+test('unknown relay jobs retain the actual service error and recover by GET of the original job without POST',async()=>{
+ const f=fixture('grokbot');await f.repository.saveJob({id:'local:existing',connection:f.config,status:'unknown'});
+ let state='unknown';const calls=[];
+ const client=createAgentRelayClient({engine:'grokbot',repository:f.repository,fetchImpl:async(url,options)=>{
+  calls.push({url,method:options.method||'GET'});return {ok:true,json:async()=>({jobId:'existing',status:state,error:'gbot_failed',message:'EnsureSandBox timeout after listAgents 417',result:state==='completed'?{text:'recovered'}:undefined})};
+ }});
+ const waiting=await client.resume('local:existing');assert.equal(waiting.pending,true);assert.equal(waiting.generationUnknown,true);
+ assert.match(waiting.reason,/gbot_failed.*EnsureSandBox timeout/);assert.doesNotMatch(waiting.reason,/请检查原会话/);
+ state='completed';assert.equal((await client.resume('local:existing')).text,'recovered');
+ assert.ok(calls.every(c=>c.method==='GET'&&c.url.endsWith('/grokbot/jobs/existing')));
+});
+
+test('tagging may explicitly budget a complete multi-user input without changing ordinary prompt limits',async()=>{
+ const f=fixture(),prompt='完整多账号公开资料'.repeat(1500);
+ const ordinary=await f.client.generate(prompt);assert.equal(ordinary.ok,false);assert.match(ordinary.reason,/8000/);assert.equal(f.requests.length,0);
+ const tagged=await f.client.generate(prompt,{botId:'session-b',maxPromptChars:120000});assert.equal(tagged.ok,true);
+ assert.equal(JSON.parse(f.requests.find(request=>request.options.method==='POST').options.body).text,prompt);
+ const submitted=f.requests.filter(request=>request.options.method==='POST').length;
+ for(const budget of [120001,0,NaN,1.5])assert.equal((await f.client.generate('x',{maxPromptChars:budget})).ok,false);
+ assert.equal((await f.client.generate('x'.repeat(120001),{maxPromptChars:120000})).ok,false);
+ assert.equal(f.requests.filter(request=>request.options.method==='POST').length,submitted);
+});
 for(const engine of ['grokbot','codex','antigravity'])test(engine+' uses one client with the correct prefix, session and normalized result',async()=>{
  const f=fixture(engine);const result=await f.client.generate('只分析这个样本',{botId:'session-b',onJobCreated:async receipt=>assert.ok(f.jobs.has(receipt.id))});assert.equal(result.text,'完整回复');
  const post=f.requests.find(r=>r.options.method==='POST');assert.equal(post.url,'http://127.0.0.1:8787/'+engine+'/jobs');const body=JSON.parse(post.options.body);assert.equal(body.sessionId,'session-b');assert.equal('bot' in body,false);assert.equal(f.config.bot,'session-a');assert.equal((await f.client.status()).token,undefined);
@@ -60,3 +93,70 @@ test('an unavailable engine provides an actionable message and preserves the con
  const rows=await client.list({baseUrl:'http://127.0.0.1:8787',token:'test',engine:'codex'});
  assert.equal(rows[0].id,'stable');assert.equal(rows[0].name.length,48);assert.ok(!rows[0].name.includes('\n'));
  });
+
+test('404 recovery reports a missing job while offline and authentication errors preserve the original receipt',async()=>{
+ const f=fixture();await f.repository.saveJob({id:'local:old',status:'unknown',connection:f.config});
+ for(const status of [404,401,403,503]){
+  const client=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async()=>({ok:false,status,json:async()=>({})})});
+  const result=await client.resume('local:old');assert.equal(result.blocking,true);assert.equal(result.pending,status!==404);assert.equal(result.errorCode,status===404?'JOB_NOT_FOUND':'HTTP_'+status);assert.equal(f.jobs.get('local:old').status,'unknown');
+ }
+ const offline=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async()=>{throw Error('offline');}});assert.equal((await offline.resume('local:old')).errorCode,'NETWORK');
+});
+
+test('unknown generation is distinct from healthy polling and preserves the original job',async()=>{
+ const f=fixture('grokbot');f.setState('unknown');const initial=await f.client.generate('test');assert.equal(initial.generationUnknown,true);assert.equal(initial.errorCode,'JOB_UNKNOWN');const resumed=await f.client.resume(initial.jobId);assert.equal(resumed.generationUnknown,true);assert.equal(f.requests.filter(r=>r.options.method==='POST').length,1);
+});
+
+test('read-only API self-check retries malformed and transient responses then returns the real result',async()=>{
+ const f=fixture('grokbot');let calls=0;
+ const client=createAgentRelayClient({engine:'grokbot',repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{
+  calls++;if(calls===1)return {ok:true,json:async()=>{throw SyntaxError('truncated');}};
+  if(calls===2)return {ok:false,status:503,json:async()=>{throw SyntaxError('HTML');}};
+  return {ok:true,json:async()=>({sessions:[{id:'session-a',name:'Bot'}]})};
+ }});
+ assert.equal((await client.list(f.config))[0].id,'session-a');assert.equal(calls,3);
+});
+
+test('read self-check has a finite three-retry budget and never retries authentication or missing jobs',async()=>{
+ const f=fixture();await f.repository.saveJob({id:'local:old',connection:f.config});
+ for(const status of [401,403,404,503]){
+  let calls=0;const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{calls++;return {ok:false,status,json:async()=>{throw SyntaxError('HTML');}};}});
+  const result=await client.resume('local:old');assert.equal(calls,status===503?4:1);assert.equal(result.errorCode,status===404?'JOB_NOT_FOUND':'HTTP_'+status);
+ }
+ let calls=0;const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>{calls++;return {ok:true,json:async()=>null};}});
+ assert.equal((await client.resume('local:old')).errorCode,'INVALID_RESPONSE');assert.equal(calls,4);
+});
+
+test('malformed submission response keeps the receipt and queries it later without repeating POST',async()=>{
+ const f=fixture();let posts=0,gets=0;
+ const client=createAgentRelayClient({engine:'codex',repository:f.repository,readRetryDelayMs:0,fetchImpl:async(url,o)=>{
+  if(o.method==='POST'){posts++;return {ok:true,json:async()=>{throw SyntaxError('truncated');}};}
+  gets++;return {ok:true,json:async()=>({jobId:url.split('/').at(-1),status:'completed',result:'recovered'})};
+ }});
+ const first=await client.generate('test',{requestKey:'same'});assert.equal(first.pending,true);assert.equal(first.errorCode,'INVALID_RESPONSE');assert.equal(posts,1);
+ const second=await client.generate('test',{requestKey:'same'});assert.equal(second.text,'recovered');assert.equal(posts,1);assert.equal(gets,1);
+});
+
+test('body timeout is classified as timeout rather than malformed JSON and stays below the MV3 limit',async t=>{
+ const durations=[];t.mock.method(AbortSignal,'timeout',ms=>{durations.push(ms);return AbortSignal.abort();});
+ const f=fixture();await f.repository.saveJob({id:'local:old',connection:f.config});
+ const client=createAgentRelayClient({repository:f.repository,readRetryDelayMs:0,fetchImpl:async()=>({ok:true,json:async()=>{throw Error('aborted');}})});
+ const result=await client.resume('local:old');assert.equal(result.errorCode,'TIMEOUT');assert.match(result.reason,/超时/);assert.deepEqual(durations,[25000,25000,25000,25000]);
+});
+
+
+test('POST 413 is a definite rejection, survives restart, and does not masquerade as pending delivery',async()=>{
+ const f=fixture();let reads=0,posts=0;
+ const client=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async(url,options)=>{
+   if(options.method==='POST'){posts++;return {ok:false,status:413};}reads++;return {ok:true,json:async()=>({jobId:url.split('/').at(-1),status:'completed',result:{text:'ok'}})};
+ }});
+ const result=await client.generate('sample');assert.equal(result.pending,false);assert.equal(result.rejected,true);assert.equal(result.submitted,false);
+ assert.equal(f.jobs.get(result.jobId).status,'rejected');assert.equal(f.jobs.get(result.jobId).delivered,true);
+ assert.match(result.reason,/未进入 AI 会话/);assert.equal((await client.resume(result.jobId)).rejected,true);
+ assert.equal(posts,1);assert.equal(reads,0);
+});
+
+test('a 413 during a receipt lookup cannot turn an accepted POST into a safe-to-resubmit rejection',async()=>{
+ const f=fixture();const client=createAgentRelayClient({engine:'codex',repository:f.repository,fetchImpl:async(url,options)=>options.method==='POST'?{ok:true,json:async()=>({status:'queued'})}:{ok:false,status:413}});
+ const result=await client.generate('sample');assert.equal(result.pending,true);assert.equal(result.rejected,undefined);assert.equal(f.jobs.get(result.jobId).status,'unknown');
+});

@@ -11,7 +11,7 @@ test('blue verification filter distinguishes verified, nonverified and missing e
 
 test('interaction exclusions block the real Arabic case before follow even when follow-back bypass is enabled', () => {
   const settings={minFollowers:0,ratioThreshold:0,skipRiskContent:false,followBackAllowAll:true};
-  for (const text of ['يا الله لك الحمد','赞美归于真主','صاروخ باليستي','انباء اوليه سقوط عدد من المرتزقه أسرى في جبهة كحلان','war in the region','戦争の報道']) {
+  for (const text of ['يا الله لك الحمد','أنا مسلم وأحتفل برمضان','أشارك آيات من القرآن','赞美归于真主','账号介绍安拉与伊斯兰信仰','صاروخ باليستي','انباء اوليه سقوط عدد من المرتزقه أسرى في جبهة كحلان','war in the region','戦争の報道']) {
     const profile={handle:'example',followersText:'200',followingText:'200',posts:[{text}]};
     assert.match(assessQueueProfile(profile,settings,true),/互动偏好跳过/,text);
   }
@@ -40,11 +40,11 @@ test('read-only run check ignores legacy cooldown and still checks account ident
   assert.equal((await check()).blockReason.code,'viewer-unavailable');
 });
 
-test('queue eligibility uses configured ratio instead of the legacy 80 percent veto',()=>{
+test('following rate only changes queue priority and never adds an admission veto',()=>{
   const profile={handle:'example',bio:'分享技术',followersText:'100',followingText:'70'};
   const settings={minFollowers:50,ratioThreshold:.6,onlyRecommended:true};
   assert.equal(assessQueueProfile(profile,settings),'');
-  assert.match(assessQueueProfile(profile,{...settings,ratioThreshold:.8}),/80%/);
+  assert.equal(assessQueueProfile(profile,{...settings,ratioThreshold:.8}),'');
   assert.match(assessQueueProfile({...profile,followersText:''},settings),/未读全/);
   assert.equal(assessQueueProfile(profile,{...settings,ratioThreshold:.8},true),'');
   assert.match(assessQueueProfile({...profile,handle:'houthi_updates'},settings,true),/武装组织/);
@@ -53,7 +53,7 @@ test('queue eligibility uses configured ratio instead of the legacy 80 percent v
 test('removed recommendation switch cannot add a hidden intent veto after explicit thresholds pass',()=>{
   const settings={minFollowers:0,ratioThreshold:.8,onlyRecommended:true,skipRiskContent:false};
   assert.equal(assessQueueProfile({handle:'example',bio:'Software development',followersText:'0',followingText:'0'},settings),'');
-  assert.match(assessQueueProfile({handle:'example',bio:'互关必回',followersText:'100',followingText:'70'},settings),/80%/);
+  assert.equal(assessQueueProfile({handle:'example',bio:'互关必回',followersText:'100',followingText:'70'},settings),'');
 });
 
 test('armed-group profiles are skipped even when optional broad risk filtering is disabled',()=>{
@@ -298,6 +298,19 @@ test('fan inspection updates all stored buckets without reopening skipped jobs o
   assert.equal(resolved.at(-1).followResult.following,false);
 });
 
+test('review relationship inspection freezes target and owner while only updating owned fan rows',async()=>{
+  const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
+  const owned={accountId:'123',userKey:'users/42',sourcePath:['monitor','users','42'],payload:{id:'42',handle:'target'}};
+  const foreign={...owned,accountId:'999',userKey:'foreign/42'};const writes=[];let target='42';
+  const api={storage:{local:{get:async()=>({followQueueBinding:binding}),set:async()=>{}}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
+  const runtime=createFollowQueueRuntime({api,store:{lookup:async()=>null},records:{lookupAll:async({bucket})=>bucket==='users'?[owned,foreign]:[],batch:async patch=>writes.push(patch)},
+    fetchUser:async()=>({id:target,handle:'target',relationshipKnown:true,relationship:{following:false,followedBy:false}}),performFollow:async()=>{throw Error('Never follow during relationship inspection')}});
+  const result=await runtime.handle({cmd:'followQueueInspectFan',handle:'target',expectedTargetUserId:'42'});
+  assert.deepEqual(result.relationship,{following:false,followedBy:false});assert.equal(writes.length,1);assert.equal(writes[0].changes.length,1);
+  assert.equal(writes[0].changes[0].accountId,'123');assert.equal(writes[0].changes[0].expectedTargetUserId,'42');
+  target='99';await assert.rejects(runtime.handle({cmd:'followQueueInspectFan',handle:'target',expectedTargetUserId:'42'}),/目标账号记录不一致/);assert.equal(writes.length,1);
+});
+
 test('record source synchronization ignores conflicting fans and preserves completed jobs across repeated syncs', async () => {
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
   const source={module:'fans',url:'',enabled:true};
@@ -312,7 +325,7 @@ test('record source synchronization ignores conflicting fans and preserves compl
   assert.equal(prior.state,'followed');assert.equal(enqueued,0);assert.equal(resolved,0);
 });
 
-test('fan inspection excludes former followers only for fan-only pending tasks',async()=>{
+test('fan inspection preserves admitted tasks when the other account unfollows',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
   const row={sourcePath:['monitor','queue','target'],payload:{handle:'target',id:'42'}};
   const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:async()=>[{id:1}]},scripting:{executeScript:async()=>[{result:'viewer'}]}};
@@ -321,12 +334,12 @@ test('fan inspection excludes former followers only for fan-only pending tasks',
     records:{lookupAll:async({bucket})=>bucket==='queue'?[row]:[],batch:async()=>{}},
     fetchUser:async()=>({id:'42',relationshipKnown:true,relationship:{following:false,followedBy:false}})});
   await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});
-  assert.equal(resolutions[0].state,'excluded');
+  assert.equal(resolutions.length,0);
   job.sources.push({module:'comments',enabled:true});
-  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});assert.equal(resolutions.length,1);
+  await runtime.handle({cmd:'followQueueInspectFan',handle:'target'});assert.equal(resolutions.length,0);
 });
 
-test('incomplete live relationship clears stale pending labels and holds an unattempted queue job',async()=>{
+test('missing reverse follow state clears fan labels without stopping an admitted job',async()=>{
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{fans:true}};
   const patches=[],resolutions=[];
   const job={id:'job',handle:'target',state:'pending',targetUserId:'42'};
@@ -335,7 +348,7 @@ test('incomplete live relationship clears stale pending labels and holds an unat
     records:{lookupAll:async({bucket})=>bucket==='queue'?[{sourcePath:['monitor','queue','target'],payload:{id:'42'}}]:[],batch:async p=>patches.push(p)},
     fetchUser:async()=>({id:'42',relationshipKnown:false,relationship:{following:false,followedBy:null}})});
   await assert.rejects(runtime.handle({cmd:'followQueueInspectFan',handle:'target'}),/完整关注关系/);
-  assert.equal(resolutions[0].state,'uncertain');assert.equal(patches[0].changes[0].patch.state,'unknown');
+  assert.equal(resolutions.length,0);assert.equal(patches[0].changes[0].patch.state,'unknown');
   assert.deepEqual(patches[0].changes[0].patch.relationship,{following:null,followedBy:null});
 });
 
@@ -429,7 +442,7 @@ test('followQueueEnqueue enqueues single or batch candidates into queue store',a
   const binding={accountId:'123',handle:'viewer',activated:true,sources:{comments:true}};
   const enqueued=[];
   const store={
-    enqueue:async candidate=>{enqueued.push(candidate);return {id:'job_1',...candidate};},
+    enqueue:async candidate=>{enqueued.push(candidate);return {id:'job_1',state:'pending',...candidate};},
     getSettings:async()=>({enabled:true,every:8,jitter:2})
   };
   const api={
@@ -566,4 +579,13 @@ test('manual retry persists selected ids and arms a dedicated alarm without chan
   assert.equal(created[0][0],'x-follow-queue-retry-batch');
   assert.ok(created[0][1].when<=Date.now()+1000);
   await assert.rejects(runtime.handle({cmd:'followQueueRetryBatch',accountId:'other',jobIds:['a']}));
+});
+
+test('queue checks use the account module snapshot without page probes, then obey a confirmed switch',async()=>{
+ const binding={accountId:'123',handle:'viewer',activated:true};let current={id:'123',handle:'viewer'};
+ const api={storage:{local:{get:async()=>({followQueueBinding:binding})}},tabs:{query:()=>assert.fail('account check must not inspect tabs')},scripting:{executeScript:()=>assert.fail('account check must not inspect page')}};
+ const runtime=createFollowQueueRuntime({api,store:{},readAccount:async()=>current});
+ for(let i=0;i<10;i++)assert.equal((await runtime.handle({cmd:'followQueueRunCheck'})).allowed,true);
+ assert.equal((await runtime.handle({cmd:'followQueueIdentity'})).accountId,'123');
+ current={id:'456',handle:'another'};assert.equal((await runtime.handle({cmd:'followQueueRunCheck'})).blockReason.code,'account-state');
 });

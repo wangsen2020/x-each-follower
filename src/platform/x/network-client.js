@@ -1,4 +1,5 @@
 import {assertProfileAvailable,observeProfile,unavailableFromProfileResponse,profileUnavailableError} from './profile-access.js';
+import {admitXAccess,observeXAccess,isAccessDeferred,accessDeferred} from './access-budget.js';
 // Transport owns session mechanics; confirmation, scheduling and retries belong to callers.
 export const X_QUERY_OPERATIONS=Object.freeze(['HomeTimeline','HomeLatestTimeline','UserByScreenName','Followers','BlueVerifiedFollowers','Following','TweetDetail','UserTweets','UserTweetsAndReplies','UserOriginalsTimeline','UserRepliesTimeline','contentPageQuery']);
 const FORMS=Object.freeze({Follow:'friendships/create.json',Unfollow:'friendships/destroy.json',Block:'blocks/create.json',Unblock:'blocks/destroy.json'});
@@ -156,18 +157,23 @@ export function createXNetworkClient(api=globalThis.chrome) {
       if(FORMS[operation]||['DeleteTweet','RemoveFollower'].includes(operation))template=networkTemplates.contentPageQuery||networkTemplates.UserByScreenName||Object.values(networkTemplates).find(t=>t?.headers?.authorization&&t?.headers?.['x-csrf-token']);
       if(!template)return {status:0,json:null,error:`未捕获 ${operation} 模板`,attempted:false};
       const prepared=buildXRequest(operation,template,variables);
+      if(prepared.kind==='query')await admitXAccess(api,{kind:'query',key:operation+':'+String(handle||variables.userId||''),source:'network:'+operation},
+        {deadline:Date.now()+15000,signal:options.signal});
       const [{result:loaded}={}]=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>typeof window.__XEF_GENERATE_TRANSACTION_ID==='function'});
       if(!loaded)await api.scripting.executeScript({target:{tabId},world:'MAIN',files:['transaction-id.bundle.js']});
       dispatched=true;
       const results=await api.scripting.executeScript({target:{tabId},world:'MAIN',func:executeXRequestOnPage,args:[prepared]});
       const response=results?.[0]?.result||{status:0,json:null,error:'X 页面没有返回网络结果',attempted:true};
+      // An already submitted mutation must retain its real receipt/attempted flag.
+      const retryAt=prepared.kind==='query'?await observeXAccess(api,response):await observeXAccess(api,response).catch(()=>null);
+      if(prepared.kind==='query'&&retryAt&&[401,403,429].includes(response.status))throw accessDeferred(retryAt,'X 会话或请求受限，自动采集已暂缓');
       if(handle){const state=unavailableFromProfileResponse(response);if(state){
         // A caller collecting dual evidence must confirm the page before publishing a terminal cache state.
         if(state.status==='ok' || options.returnUnavailable!==true)await observeProfile(api,handle,state,'profile-network');
         if(state.status!=='ok' && options.returnUnavailable!==true)throw profileUnavailableError({...state,handle});
       }}
       return response;
-    }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE')throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
+    }catch(error){if(error.code==='X_PROFILE_UNAVAILABLE'||isAccessDeferred(error))throw error;return {status:0,json:null,error:redactNetworkError(error?.message||error,template?.headers),attempted:dispatched};}
   }
   return {
     query:(tabId,operation,variables,options={})=>X_QUERY_OPERATIONS.includes(operation)?request(tabId,operation,variables,options):Promise.resolve({status:0,json:null,error:'不支持的 X 查询操作',attempted:false}),

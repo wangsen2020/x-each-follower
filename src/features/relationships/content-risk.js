@@ -262,7 +262,7 @@ export function detectContentRisks(text = '', options = {}) {
 }
 
 // 用户的互动范围偏好，与高危内容或对作者身份的判断分开处理。
-const RELIGIOUS_INTERACTION_TERMS = /(?:宗教|教派|信教|不信教|传教|改宗|皈依|穆斯林|伊斯兰|回教|清真|古兰经|可兰经|斋月|开斋节|古尔邦节|逊尼派?|什叶派?|苏菲派?|阿赫迈底亚|伊巴德派?|阿拉维派?|德鲁兹派?|耶兹迪|雅兹迪|巴哈伊|拜火教|祆教|琐罗亚斯德教|基督教|基督徒|天主教|天主教徒|佛教|佛教徒|道教|犹太教|印度教|圣经|佛经|清真寺|教堂|礼拜堂|做礼拜|弥撒|哈利路亚|\b(?:muslim\w*|islam\w*|sunni\w*|shi(?:a|ite)\w*|sufi\w*|mosque\w*|ramadan|qur[ao]n|zoroastrian\w*|bah[aá][’']?i|yazidi\w*|druze|alawite\w*|alevi\w*|ismaili\w*|christian\w*|catholic\w*|buddhis\w*|hindu\w*|judais\w*|religio(?:n|us)\w*|church|scripture|bible|eid\s*(?:al[- ](?:fitr|adha)|mubarak))\b|مسلم|الإسلام|اسلام|مسجد|رمضان|قرآن)/iu;
+const RELIGIOUS_INTERACTION_TERMS = /(?:宗教|教派|信教|不信教|传教|改宗|皈依|信仰|真主|安拉|穆斯林|伊斯兰|回教|清真|古兰经|可兰经|斋月|开斋节|古尔邦节|逊尼派?|什叶派?|苏菲派?|阿赫迈底亚|伊巴德派?|阿拉维派?|德鲁兹派?|耶兹迪|雅兹迪|巴哈伊|拜火教|祆教|琐罗亚斯德教|基督教|基督徒|天主教|天主教徒|佛教|佛教徒|道教|犹太教|印度教|圣经|佛经|清真寺|教堂|礼拜堂|做礼拜|弥撒|哈利路亚|\b(?:muslim\w*|islam\w*|sunni\w*|shi(?:a|ite)\w*|sufi\w*|mosque\w*|ramadan|qur[ao]n|zoroastrian\w*|bah[aá][’']?i|yazidi\w*|druze|alawite\w*|alevi\w*|ismaili\w*|christian\w*|catholic\w*|buddhis\w*|hindu\w*|judais\w*|religio(?:n|us)\w*|church|scripture|bible|eid\s*(?:al[- ](?:fitr|adha)|mubarak))\b|الله|اللهم|والله|بالله|تالله|لله|سبحان\s*الله|الحمد\s*لله|الحمدلله|ما\s*شاء\s*الله|ماشاء\s*الله|إن\s*شاء\s*الله|ان\s*شاء\s*الله|بسم\s*الله|الله\s*أكبر|الله\s*اكبر|لا\s*إله\s*إلا\s*الله|لا\s*اله\s*الا\s*الله|أستغفر\s*الله|استغفر\s*الله|حسبي\s*الله|بارك\s*الله|جزاك\s*الله|يارب|يا\s*رب|رسول\s*الله|النبي|صلى\s*الله\s*عليه\s*وسلم|إسلام|اسلام|إسلامي|اسلامي|إسلامية|اسلامية|مسلم|مسلمة|مسلمين|مسلمات|مسجد|مساجد|رمضان|قرآن|قران|القرآن|القران|قرآني|قراني|صلاة|الصلاة|صلاتي|صلوات|صيام|الصيام|صائم|صائمة|زكاة|الزكاة|الحج|عمرة|العمرة|حجاب|الحجاب|محجبة|محجب|عيد\s+الفطر|عيد\s+الأضحى|عيد\s+الاضحى|سني|سنية|الشيعة|شيعي|شيعية|شيعة|صوفي|صوفية|سلفي|سلفية|مسيحي|مسيحية|المسيحية|كنيسة|الكنيسة|إنجيل|الإنجيل|يهودي|يهودية|اليهودية|توراة|التوراة|هندوسي|هندوسية|الهندوسية|بوذي|بوذية|البوذية|بهائي|البهائية|زرادشتي|الزرادشتية|سيخي|السيخية)/iu;
 // Interaction preference, not a risk label attached to a person's identity.
 const INTERACTION_EXCLUDED_TOPICS = /(?:真主|安拉|战争|战事|战场|战况|交火|空袭|轰炸|炮击|导弹|军事冲突|武装冲突|战俘|阵亡|الله|الحمد\s*لله|الحرب|حرب|قتال|معارك|المعارك|قصف|غارات|صاروخ|صواريخ|بالست[يية]|جبهة|المرتزق|أسرى|مقتل|القوات\s+المسلحة|\b(?:allah|warfare|wars?|warzone|battlefields?|battlefronts?|armed\s+conflicts?|military\s+conflicts?|airstrikes?|bombardments?|ballistic\s+missiles?|combatants?|casualties\s+of\s+war|guerre|guerra|religión|religion|religião)\b|война|войны|боевые действия|ракетный удар|війна|бойові дії|戦争|戦闘|空爆|미사일|전쟁|전투|धर्म|युद्ध)/iu;
 
@@ -278,7 +278,7 @@ export function interactionSkipReason(profile = {}) {
     ...(Array.isArray(profile.tags) ? profile.tags.map(tag => typeof tag === 'string' ? tag : tag?.label || '') : []),
     ...recent.map(post => typeof post === 'string' ? post : post?.text || '')
   ].filter(Boolean).join('\n');
-  const normalized = visibleText.normalize('NFKC').replace(/[\u064b-\u065f\u0670\u0640]/g, '');
+  const normalized = visibleText.normalize('NFKC').replace(/\ufdf2/g, 'الله').replace(/\u0671/g, '\u0627').replace(/[\u064b-\u065f\u0670\u0640\u06d6-\u06ed]/g, '');
   return RELIGIOUS_INTERACTION_TERMS.test(normalized) || INTERACTION_EXCLUDED_TOPICS.test(normalized)
     ? '账号资料或近期帖子涉及宗教或战争冲突相关内容，按互动偏好跳过关注与引用评价'
     : '';

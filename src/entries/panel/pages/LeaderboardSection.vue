@@ -4,7 +4,7 @@
     class="tab-panel leaderboard-panel"
     data-panel="leaderboard"
     :hidden="activeTab !== 'leaderboard'"
-    aria-label="X 榜单"
+    :aria-label="t(&quot;X 榜单&quot;)"
   >
     <!-- Header -->
     <div class="lb-head">
@@ -13,17 +13,17 @@
 
           <span
             class="lb-owner-badge"
-            :title="ownerId ? `当前登录账号 ID: ${ownerId}` : '待识别账号'"
+            :title="ownerId?t(&quot;当前登录账号 ID: \u007b\u007bv0\u007d\u007d&quot;,{v0:ownerId}):t(&quot;待识别账号&quot;)"
           >
-            {{ ownerHandle ? `@${ownerHandle}` : (ownerId ? `账号: ${ownerId}` : '待识别账号') }}
+            {{ ownerHandle?t(`@${ownerHandle}`):ownerId?t("账号: \u007b\u007bv0\u007d\u007d",{v0:ownerId}):t("待识别账号") }}
           </span>
           <span
             class="lb-status-badge"
             :class="scanStatusClass"
-            :title="scanStatusTitle"
+            :title="t(scanStatusTitle)"
           >
             <span class="lb-status-dot" aria-hidden="true"></span>
-            {{ scanStatusLabel }}
+            {{ t(scanStatusLabel) }}
           </span>
         </div>
 
@@ -31,10 +31,10 @@
 
       <!-- Icon-only actions with hover tips in header -->
       <PanelActionBar class="lb-head-icons">
-        <PanelIconButton :icon="RefreshCw" label="扫描快照" :disabled="loading || busy" @click="triggerScan" />
-        <PanelIconButton :icon="Sparkles" label="Grok 日报分析" :disabled="loading || busy || analyzing" @click="triggerAnalyze" />
-        <PanelIconButton :icon="ScrollText" label="优质帖子日报" @click="openReportDrawer" />
-        <PanelIconButton :icon="Settings" class="lb-settings-trigger" label="榜单监控设置" @click="openSettings" />
+        <PanelIconButton :icon="RefreshCw" :label="t(&quot;扫描快照&quot;)" :disabled="loading || busy" @click="triggerScan" />
+        <PanelIconButton :icon="Sparkles" :label="t(&quot;Grok 日报分析&quot;)" :disabled="loading || busy || analyzing" @click="triggerAnalyze" />
+        <PanelIconButton :icon="ScrollText" :label="t(&quot;优质帖子日报&quot;)" @click="openReportDrawer" />
+        <PanelIconButton :icon="Settings" class="lb-settings-trigger" :label="t(&quot;榜单监控设置&quot;)" @click="openSettings" />
       </PanelActionBar>
     </div>
 
@@ -44,25 +44,25 @@
         <input
           v-model="searchQuery"
           type="search"
-          placeholder="搜索昵称或 @handle"
-          aria-label="搜索榜单账号"
+          :placeholder="t(&quot;搜索昵称或 @handle&quot;)"
+          :aria-label="t(&quot;搜索榜单账号&quot;)"
           class="lb-search-input"
         >
       </div>
       <div class="lb-summary-stats">
-        <span>已监控 <b>{{ members.length }}</b> 位作者</span>
-        <span v-if="filteredMembers.length !== members.length">（筛选出 {{ filteredMembers.length }} 位）</span>
+        <span>{{ t("已监控") }}&nbsp;<b>{{ t(members.length) }}</b>&nbsp;{{ t("位作者") }}</span>
+        <span v-if="filteredMembers.length !== members.length">{{ t("（筛选出 \u007b\u007bv0\u007d\u007d 位）",{v0:filteredMembers.length}) }}</span>
       </div>
     </div>
 
     <!-- Alerts -->
     <div v-if="error" class="lb-alert lb-alert-error" role="alert">
-      <span>{{ error }}</span>
-      <button type="button" class="secondary" @click="fetchState">重试</button>
+      <span>{{ t(error) }}</span>
+      <button type="button" class="secondary" @click="fetchState">{{ t("重试") }}</button>
     </div>
     <div v-if="notice" class="lb-alert lb-alert-info" role="status">
-      <span>{{ notice }}</span>
-      <PanelCloseButton label="关闭提示" @click="notice = ''" />
+      <span>{{ t(notice) }}</span>
+      <PanelCloseButton :label="t(&quot;关闭提示&quot;)" @click="notice = ''" />
     </div>
 
     <!-- Table Container -->
@@ -70,16 +70,16 @@
       <table class="lb-table">
         <thead>
           <tr>
-            <th class="th-rank">排名</th>
-            <th class="th-account">作者</th>
+            <th class="th-rank">{{ t("排名") }}</th>
+            <th class="th-account">{{ t("作者") }}</th>
             <th class="th-metric th-sortable th-followers" @click="changeSort('followers')">
               <button
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'followers' }"
-                :aria-label="`粉丝总数，点击${sortKey === 'followers' && sortDir === 'desc' ? '升序' : '降序'}`"
+                :aria-label="t(&quot;粉丝总数，点击\u007b\u007bv0\u007d\u007d&quot;,{v0:sortKey === 'followers' && sortDir === 'desc'?t(&quot;升序&quot;):t(&quot;降序&quot;)})"
               >
-                <span>粉丝</span>
+                <span>{{ t("粉丝") }}</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'followers' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'followers' && sortDir === 'desc'}" />
@@ -91,9 +91,9 @@
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'netFollowers' }"
-                :aria-label="`昨日净增，点击${sortKey === 'netFollowers' && sortDir === 'desc' ? '升序' : '降序'}`"
+                :aria-label="t(&quot;昨日净增，点击\u007b\u007bv0\u007d\u007d&quot;,{v0:sortKey === 'netFollowers' && sortDir === 'desc'?t(&quot;升序&quot;):t(&quot;降序&quot;)})"
               >
-                <span>净增</span>
+                <span>{{ t("净增") }}</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'netFollowers' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'netFollowers' && sortDir === 'desc'}" />
@@ -105,9 +105,9 @@
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'posts' }"
-                :aria-label="`昨日发帖，点击${sortKey === 'posts' && sortDir === 'desc' ? '升序' : '降序'}`"
+                :aria-label="t(&quot;昨日发帖，点击\u007b\u007bv0\u007d\u007d&quot;,{v0:sortKey === 'posts' && sortDir === 'desc'?t(&quot;升序&quot;):t(&quot;降序&quot;)})"
               >
-                <span>发帖</span>
+                <span>{{ t("发帖") }}</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'posts' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'posts' && sortDir === 'desc'}" />
@@ -119,29 +119,29 @@
                 type="button"
                 class="lb-th-sort is-metric"
                 :class="{ 'is-sorted': sortKey === 'replies' }"
-                :aria-label="`昨日评论，点击${sortKey === 'replies' && sortDir === 'desc' ? '升序' : '降序'}`"
+                :aria-label="t(&quot;昨日评论，点击\u007b\u007bv0\u007d\u007d&quot;,{v0:sortKey === 'replies' && sortDir === 'desc'?t(&quot;升序&quot;):t(&quot;降序&quot;)})"
               >
-                <span>评论</span>
+                <span>{{ t("评论") }}</span>
                 <svg class="lb-sort-icon" viewBox="0 0 10 14" aria-hidden="true">
                   <path d="M5 1 9 6H1Z" :class="{'is-active': sortKey === 'replies' && sortDir === 'asc'}" />
                   <path d="m5 13 4-5H1Z" :class="{'is-active': sortKey === 'replies' && sortDir === 'desc'}" />
                 </svg>
               </button>
             </th>
-            <th class="th-metric th-views" title="昨日采集帖子的公开累计浏览量样本合计，非昨日新增曝光">
-              <span>浏览</span>
+            <th class="th-metric th-views" :title="t(&quot;昨日采集帖子的公开累计浏览量样本合计，非昨日新增曝光&quot;)">
+              <span>{{ t("浏览") }}</span>
             </th>
-            <th class="th-metric th-top-post" title="7 天最高单帖公开浏览量">
-              <span>最高帖</span>
+            <th class="th-metric th-top-post" :title="t(&quot;7 天最高单帖公开浏览量&quot;)">
+              <span>{{ t("最高帖") }}</span>
             </th>
-            <th class="th-freshness" title="数据快照采集时间">
-              <span>采集</span>
+            <th class="th-freshness" :title="t(&quot;数据快照采集时间&quot;)">
+              <span>{{ t("采集") }}</span>
             </th>
-            <th class="th-status" title="数据同步与覆盖状态">
-              <span>状态</span>
+            <th class="th-status" :title="t(&quot;数据同步与覆盖状态&quot;)">
+              <span>{{ t("状态") }}</span>
             </th>
             <th class="th-actions">
-              <span>操作</span>
+              <span>{{ t("操作") }}</span>
             </th>
           </tr>
         </thead>
@@ -149,7 +149,7 @@
           <tr v-for="(member, idx) in sortedMembers" :key="member.creatorId || member.handle">
             <!-- Rank -->
             <td class="td-rank">
-              <span class="lb-rank-num" :class="`rank-${idx + 1}`">#{{ idx + 1 }}</span>
+              <span class="lb-rank-num" :class="`rank-${idx + 1}`">#{{ t(idx + 1) }}</span>
             </td>
             <!-- Account -->
             <td class="td-account">
@@ -172,7 +172,7 @@
                     class="lb-name-link"
                     :title="`${member.name || member.handle} (@${member.handle})`"
                   >
-                    <span class="lb-name">{{ member.name || member.handle }}</span>
+                    <span class="lb-name">{{ (member.name || member.handle) }}</span>
                   </a>
                   <span class="lb-handle" :title="`@${member.handle}`">@{{ member.handle }}</span>
                 </div>
@@ -181,7 +181,7 @@
             <!-- Followers Count -->
             <td class="td-metric td-followers">
               <div class="lb-metric-cell">
-                <span class="lb-metric-val">{{ formatNumber(member.followers ?? member.followersCount) }}</span>
+                <span class="lb-metric-val">{{ t(formatNumber(member.followers ?? member.followersCount)) }}</span>
               </div>
             </td>
             <!-- Yesterday Net Growth (Snapshot difference) -->
@@ -192,14 +192,14 @@
                     class="lb-delta-val"
                     :class="getDelta(member) >= 0 ? 'is-positive' : 'is-negative'"
                   >
-                    {{ getDelta(member) >= 0 ? `+${formatNumber(getDelta(member))}` : formatNumber(getDelta(member)) }}
+                    {{ getDelta(member) >= 0?t(`+${formatNumber(getDelta(member))}`):t(formatNumber(getDelta(member))) }}
                   </span>
                 </template>
                 <template v-else-if="member.deltaStatus === 'interval_invalid'">
-                  <span class="lb-badge lb-badge-warning" title="两次快照间隔异常（需在18-30小时之间）">间隔异常</span>
+                  <span class="lb-badge lb-badge-warning" :title="t(&quot;两次快照间隔异常（需在18-30小时之间）&quot;)">{{ t("间隔异常") }}</span>
                 </template>
                 <template v-else>
-                  <span class="lb-badge lb-badge-muted" title="首次入库或日界快照不足，暂不计入日增">基线不足</span>
+                  <span class="lb-badge lb-badge-muted" :title="t(&quot;首次入库或日界快照不足，暂不计入日增&quot;)">{{ t("基线不足") }}</span>
                 </template>
               </div>
             </td>
@@ -207,10 +207,10 @@
             <td class="td-metric td-posts">
               <div class="lb-metric-cell">
                 <template v-if="member.postCount !== null && member.postCount !== undefined">
-                  <span class="lb-metric-val">{{ formatNumber(member.postCount) }}</span>
+                  <span class="lb-metric-val">{{ t(formatNumber(member.postCount)) }}</span>
                 </template>
                 <template v-else-if="member.observedPostCount > 0">
-                  <span class="lb-metric-val" title="抓取未覆盖全天，仅代表已知至少发帖">≥{{ formatNumber(member.observedPostCount) }}</span>
+                  <span class="lb-metric-val" :title="t(&quot;抓取未覆盖全天，仅代表已知至少发帖&quot;)">≥{{ t(formatNumber(member.observedPostCount)) }}</span>
                 </template>
                 <template v-else>
                   <span class="lb-dash">—</span>
@@ -221,10 +221,10 @@
             <td class="td-metric td-replies">
               <div class="lb-metric-cell">
                 <template v-if="member.replyCount !== null && member.replyCount !== undefined">
-                  <span class="lb-metric-val">{{ formatNumber(member.replyCount) }}</span>
+                  <span class="lb-metric-val">{{ t(formatNumber(member.replyCount)) }}</span>
                 </template>
                 <template v-else-if="member.observedReplyCount > 0">
-                  <span class="lb-metric-val" title="抓取未覆盖全天，仅代表已知至少评论">≥{{ formatNumber(member.observedReplyCount) }}</span>
+                  <span class="lb-metric-val" :title="t(&quot;抓取未覆盖全天，仅代表已知至少评论&quot;)">≥{{ t(formatNumber(member.observedReplyCount)) }}</span>
                 </template>
                 <template v-else>
                   <span class="lb-dash">—</span>
@@ -235,10 +235,10 @@
             <td class="td-metric td-views">
               <div class="lb-metric-cell">
                 <template v-if="member.viewsTotal !== null && member.viewsTotal !== undefined">
-                  <span class="lb-metric-val">{{ formatNumber(member.viewsTotal) }}</span>
+                  <span class="lb-metric-val">{{ t(formatNumber(member.viewsTotal)) }}</span>
                 </template>
                 <template v-else>
-                  <span class="lb-dash" title="第三方公开浏览量字段不可用或私有">—</span>
+                  <span class="lb-dash" :title="t(&quot;第三方公开浏览量字段不可用或私有&quot;)">—</span>
                 </template>
               </div>
             </td>
@@ -251,9 +251,9 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="lb-top-metric-link"
-                  :title="`在 X 打开原帖（${formatNumber(getTopPost(member).metrics?.views)} 浏览）`"
+                  :title="t(&quot;在 X 打开原帖（\u007b\u007bv0\u007d\u007d 浏览）&quot;,{v0:formatNumber(getTopPost(member).metrics?.views)})"
                 >
-                  <span class="lb-metric-val">{{ formatNumber(getTopPost(member).metrics?.views) }}</span>
+                  <span class="lb-metric-val">{{ t(formatNumber(getTopPost(member).metrics?.views)) }}</span>
                 </a>
                 <span v-else class="lb-dash">—</span>
               </div>
@@ -261,8 +261,8 @@
             <!-- Freshness -->
             <td class="td-freshness">
               <div class="lb-freshness-cell">
-                <span class="lb-time" :title="formatDate(member.lastCapturedAt || member.updatedAt)">
-                  {{ formatTimeAgo(member.lastCapturedAt || member.updatedAt) }}
+                <span class="lb-time" :title="t(formatDate(member.lastCapturedAt || member.updatedAt))">
+                  {{ t(formatTimeAgo(member.lastCapturedAt || member.updatedAt)) }}
                 </span>
               </div>
             </td>
@@ -272,28 +272,28 @@
                 <span
                   v-if="member.lastError"
                   class="lb-badge lb-badge-danger"
-                  :title="member.lastError"
-                >异常</span>
+                  :title="t(member.lastError)"
+                >{{ t("异常") }}</span>
                 <span
                   v-else-if="member.followersState === 'stale' || member.followersFreshness === 'stale'"
                   class="lb-badge lb-badge-warning"
-                  title="快照已过期，等待下轮采集"
-                >过期</span>
+                  :title="t(&quot;快照已过期，等待下轮采集&quot;)"
+                >{{ t("过期") }}</span>
                 <span
                   v-else-if="member.postCoverage === 'partial'"
                   class="lb-badge lb-badge-warning"
-                  title="部分覆盖：部分帖子或回复未完全分页"
-                >部分</span>
+                  :title="t(&quot;部分覆盖：部分帖子或回复未完全分页&quot;)"
+                >{{ t("部分") }}</span>
                 <span
                   v-else-if="member.postCoverage === 'complete'"
                   class="lb-badge lb-badge-success"
-                  title="快照与帖子已完整同步"
-                >完整</span>
+                  :title="t(&quot;快照与帖子已完整同步&quot;)"
+                >{{ t("完整") }}</span>
                 <span
                   v-else
                   class="lb-badge lb-badge-muted"
-                  title="快照已记录，等待全量同步"
-                >就绪</span>
+                  :title="t(&quot;快照已记录，等待全量同步&quot;)"
+                >{{ t("就绪") }}</span>
               </div>
             </td>
             <!-- Actions -->
@@ -302,9 +302,9 @@
                 <button
                   type="button"
                   class="secondary lb-detail-btn"
-                  :aria-label="'查看 @' + member.handle + ' 详情'"
+                  :aria-label="t(&quot;查看 @{{v0}} 详情&quot;,{v0:member.handle})"
                   @click="openMemberDetails(member)"
-                >详情</button>
+                >{{ t("详情") }}</button>
               </div>
             </td>
           </tr>
@@ -313,79 +313,79 @@
 
       <!-- Empty State -->
       <div v-if="!loading && sortedMembers.length === 0" class="lb-empty-state">
-        <p class="lb-empty-title">{{ searchQuery ? '无匹配作者' : '暂无榜单成员' }}</p>
+        <p class="lb-empty-title">{{ searchQuery?t("无匹配作者"):t("暂无榜单成员") }}</p>
 
       </div>
 
       <!-- Loading State -->
       <div v-if="loading && sortedMembers.length === 0" class="lb-loading-state" role="status">
         <span class="dash-spinner" aria-hidden="true"></span>
-        <span>正在读取 X 榜单数据…</span>
+        <span>{{ t("正在读取 X 榜单数据…") }}</span>
       </div>
     </div>
 
-    <ActionSettingsDrawer ref="settingsDrawer" title="榜单监控设置" @close="settingsError = ''">
+    <ActionSettingsDrawer ref="settingsDrawer" :title="t(&quot;榜单监控设置&quot;)" @close="settingsError = ''">
       <div class="lb-setting-card">
         <div class="lb-setting-row">
-          <label for="lb-auto-monitor">自动监控</label>
-          <button type="button" class="lb-setting-help" aria-label="定时更新作者与帖子数据；关闭后仍可手动扫描。" data-tooltip="定时更新作者与帖子数据；关闭后仍可手动扫描。">?</button>
+          <label for="lb-auto-monitor">{{ t("自动监控") }}</label>
+          <button type="button" class="lb-setting-help" :aria-label="t(&quot;定时更新作者与帖子数据；关闭后仍可手动扫描。&quot;)" data-tooltip="定时更新作者与帖子数据；关闭后仍可手动扫描。">?</button>
           <input id="lb-auto-monitor" v-model="settingsDraft.enabled" type="checkbox" :disabled="savingSettings">
         </div>
         <div class="lb-setting-row">
-          <label for="lb-scan-interval">扫描间隔</label>
-          <button type="button" class="lb-setting-help" aria-label="两次自动扫描的间隔，可设为 15–360 分钟。" data-tooltip="两次自动扫描的间隔，可设为 15–360 分钟。">?</button>
-          <span class="lb-setting-number"><input id="lb-scan-interval" v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings">分钟</span>
+          <label for="lb-scan-interval">{{ t("扫描间隔") }}</label>
+          <button type="button" class="lb-setting-help" :aria-label="t(&quot;两次自动扫描的间隔，可设为 15–360 分钟。&quot;)" data-tooltip="两次自动扫描的间隔，可设为 15–360 分钟。">?</button>
+          <span class="lb-setting-number"><input id="lb-scan-interval" v-model.number="settingsDraft.scanIntervalMinutes" type="number" min="15" max="360" step="1" :disabled="savingSettings">{{ t("分钟") }}</span>
         </div>
         <div class="lb-setting-row">
-          <label for="lb-scan-batch">每轮人数</label>
-          <button type="button" class="lb-setting-help" aria-label="每轮自动扫描 1–50 位作者。" data-tooltip="每轮自动扫描 1–50 位作者。">?</button>
-          <span class="lb-setting-number"><input id="lb-scan-batch" v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="50" step="1" :disabled="savingSettings">位</span>
+          <label for="lb-scan-batch">{{ t("每轮人数") }}</label>
+          <button type="button" class="lb-setting-help" :aria-label="t(&quot;每轮自动扫描 1–50 位作者。&quot;)" data-tooltip="每轮自动扫描 1–50 位作者。">?</button>
+          <span class="lb-setting-number"><input id="lb-scan-batch" v-model.number="settingsDraft.scanBatchSize" type="number" min="1" max="50" step="1" :disabled="savingSettings">{{ t("位") }}</span>
         </div>
         <div class="lb-setting-row">
-          <label for="lb-auto-report">自动日报</label>
-          <button type="button" class="lb-setting-help" aria-label="扫描后生成昨日 Grok 分析。设置仅用于当前账号。" data-tooltip="扫描后生成昨日 Grok 分析。设置仅用于当前账号。">?</button>
+          <label for="lb-auto-report">{{ t("自动日报") }}</label>
+          <button type="button" class="lb-setting-help" :aria-label="t(&quot;扫描后生成昨日 Grok 分析。设置仅用于当前账号。&quot;)" data-tooltip="扫描后生成昨日 Grok 分析。设置仅用于当前账号。">?</button>
           <input id="lb-auto-report" v-model="settingsDraft.autoAnalyze" type="checkbox" :disabled="savingSettings">
         </div>
       </div>
-      <p v-if="settingsError" class="lb-alert lb-alert-error" role="alert">{{ settingsError }}</p>
+      <p v-if="settingsError" class="lb-alert lb-alert-error" role="alert">{{ t(settingsError) }}</p>
       <template #footer>
-        <button type="button" class="secondary" :disabled="savingSettings" @click="settingsDrawer?.close()">取消</button>
-        <button type="button" :disabled="savingSettings" @click="saveSettings">{{ savingSettings ? '保存中…' : '保存配置' }}</button>
+        <button type="button" class="secondary" :disabled="savingSettings" @click="settingsDrawer?.close()">{{ t("取消") }}</button>
+        <button type="button" :disabled="savingSettings" @click="saveSettings">{{ savingSettings?t("保存中…"):t("保存配置") }}</button>
       </template>
     </ActionSettingsDrawer>
 
-    <ActionSettingsDrawer ref="memberDrawer" title="作者详情">
+    <ActionSettingsDrawer ref="memberDrawer" :title="t(&quot;作者详情&quot;)">
       <div v-if="selectedMember" class="lb-member-detail">
-        <h3>{{ selectedMember.name || selectedMember.handle }} <small>@{{ selectedMember.handle }}</small></h3>
+        <h3>{{ (selectedMember.name || selectedMember.handle) }} <small>@{{ selectedMember.handle }}</small></h3>
         <dl>
-          <dt>粉丝总数</dt><dd>{{ formatNumber(selectedMember.followers ?? selectedMember.followersCount) }}</dd>
-          <dt>昨日快照净增</dt><dd>{{ hasValidDelta(selectedMember) ? (getDelta(selectedMember) >= 0 ? `+${formatNumber(getDelta(selectedMember))}` : formatNumber(getDelta(selectedMember))) : (selectedMember.deltaStatus === 'interval_invalid' ? '两次快照间隔异常' : '基线不足') }}</dd>
-          <dt>昨日基线</dt><dd>{{ formatDate(selectedMember.deltaEvidence?.before?.at) }}</dd>
-          <dt>今日基线</dt><dd>{{ formatDate(selectedMember.deltaEvidence?.after?.at) }}</dd>
-          <dt>昨日发帖</dt><dd>{{ selectedMember.postCount == null ? (selectedMember.observedPostCount > 0 ? '至少 ' : '') : '' }}{{ formatNumber(selectedMember.postCount ?? selectedMember.observedPostCount) }}</dd>
-          <dt>昨日评论</dt><dd>{{ selectedMember.replyCount == null ? (selectedMember.observedReplyCount > 0 ? '至少 ' : '') : '' }}{{ formatNumber(selectedMember.replyCount ?? selectedMember.observedReplyCount) }}</dd>
-          <dt>公开浏览样本</dt><dd>{{ formatNumber(selectedMember.viewsTotal) }}（采样时累计值）</dd>
-          <dt>最后采集</dt><dd>{{ formatDate(selectedMember.lastCapturedAt || selectedMember.updatedAt) }}</dd>
-          <dt>同步与覆盖</dt><dd>{{ selectedMember.postCoverage === 'complete' ? '完整同步' : (selectedMember.postCoverage === 'partial' ? '部分覆盖' : '快照已记录') }}</dd>
-          <dt v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">快照状态</dt>
-          <dd v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">快照已过期，等待下轮采集</dd>
+          <dt>{{ t("粉丝总数") }}</dt><dd>{{ t(formatNumber(selectedMember.followers ?? selectedMember.followersCount)) }}</dd>
+          <dt>{{ t("昨日快照净增") }}</dt><dd>{{ hasValidDelta(selectedMember)?getDelta(selectedMember) >= 0?t(`+${formatNumber(getDelta(selectedMember))}`):t(formatNumber(getDelta(selectedMember))):selectedMember.deltaStatus === 'interval_invalid'?t("两次快照间隔异常"):t("基线不足") }}</dd>
+          <dt>{{ t("昨日基线") }}</dt><dd>{{ t(formatDate(selectedMember.deltaEvidence?.before?.at)) }}</dd>
+          <dt>{{ t("今日基线") }}</dt><dd>{{ t(formatDate(selectedMember.deltaEvidence?.after?.at)) }}</dd>
+          <dt>{{ t("昨日发帖") }}</dt><dd>{{ selectedMember.postCount == null?selectedMember.observedPostCount > 0?t("至少 "):'':'' }}{{ t(formatNumber(selectedMember.postCount ?? selectedMember.observedPostCount)) }}</dd>
+          <dt>{{ t("昨日评论") }}</dt><dd>{{ selectedMember.replyCount == null?selectedMember.observedReplyCount > 0?t("至少 "):'':'' }}{{ t(formatNumber(selectedMember.replyCount ?? selectedMember.observedReplyCount)) }}</dd>
+          <dt>{{ t("公开浏览样本") }}</dt><dd>{{ t("\u007b\u007bv0\u007d\u007d（采样时累计值）",{v0:formatNumber(selectedMember.viewsTotal)}) }}</dd>
+          <dt>{{ t("最后采集") }}</dt><dd>{{ t(formatDate(selectedMember.lastCapturedAt || selectedMember.updatedAt)) }}</dd>
+          <dt>{{ t("同步与覆盖") }}</dt><dd>{{ selectedMember.postCoverage === 'complete'?t("完整同步"):selectedMember.postCoverage === 'partial'?t("部分覆盖"):t("快照已记录") }}</dd>
+          <dt v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">{{ t("快照状态") }}</dt>
+          <dd v-if="selectedMember.followersState === 'stale' || selectedMember.followersFreshness === 'stale'">{{ t("快照已过期，等待下轮采集") }}</dd>
         </dl>
-        <p v-if="selectedMember.lastError" class="lb-alert lb-alert-error">{{ selectedMember.lastError }}</p>
-        <h4>7 天最高单帖样本</h4>
+        <p v-if="selectedMember.lastError" class="lb-alert lb-alert-error">{{ t(selectedMember.lastError) }}</p>
+        <h4>{{ t("7 天最高单帖样本") }}</h4>
         <template v-if="getTopPost(selectedMember)">
-          <p>{{ formatNumber(getTopPost(selectedMember).metrics?.views) }} 浏览 · {{ formatDate(getTopPost(selectedMember).createdAt) }}</p>
+          <p>{{ t("\u007b\u007bv0\u007d\u007d 浏览 · \u007b\u007bv1\u007d\u007d",{v0:formatNumber(getTopPost(selectedMember).metrics?.views),v1:formatDate(getTopPost(selectedMember).createdAt)}) }}</p>
           <p class="lb-detail-post">{{ getTopPost(selectedMember).text }}</p>
-          <a :href="getTopPostUrl(selectedMember)" target="_blank" rel="noopener noreferrer">在 X 查看原帖</a>
+          <a :href="getTopPostUrl(selectedMember)" target="_blank" rel="noopener noreferrer">{{ t("在 X 查看原帖") }}</a>
         </template>
-        <p v-else>暂无可用帖子样本</p>
+        <p v-else>{{ t("暂无可用帖子样本") }}</p>
         <div class="lb-detail-actions">
                 <a
                   :href="`https://x.com/${selectedMember.handle}`"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="secondary lb-icon-btn"
-                  title="在 X 打开主页"
-                  aria-label="在 X 打开主页"
+                  :title="t(&quot;在 X 打开主页&quot;)"
+                  :aria-label="t(&quot;在 X 打开主页&quot;)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>
@@ -394,8 +394,8 @@
                 <button
                   type="button"
                   class="secondary lb-icon-btn"
-                  title="查看该作者日报片段"
-                  aria-label="查看该作者日报片段"
+                  :title="t(&quot;查看该作者日报片段&quot;)"
+                  :aria-label="t(&quot;查看该作者日报片段&quot;)"
                   @click="viewAuthorSnippet(selectedMember)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -405,8 +405,8 @@
                 <button
                   type="button"
                   class="secondary lb-icon-btn lb-btn-remove"
-                  title="移出 X 榜单"
-                  aria-label="移出 X 榜单"
+                  :title="t(&quot;移出 X 榜单&quot;)"
+                  :aria-label="t(&quot;移出 X 榜单&quot;)"
                   :disabled="busy"
                   @click="removeMember(selectedMember)"
                 >
@@ -419,14 +419,14 @@
     </ActionSettingsDrawer>
 
     <!-- Daily Report Drawer -->
-    <ActionSettingsDrawer ref="reportDrawer" title="优质帖子日报" @close="activeAuthorFilter = ''">
+    <ActionSettingsDrawer ref="reportDrawer" :title="t(&quot;优质帖子日报&quot;)" @close="activeAuthorFilter = ''">
       <!-- Report Date Tabs / Selector -->
       <div class="lb-report-header">
         <div class="lb-report-dates">
           <label class="lb-date-picker-label">
-            <span>选择日期</span>
-            <PanelSelect v-model="selectedReportDate" aria-label="日报日期" @change="loadSelectedReport">
-              <option v-for="d in availableReportDates" :key="d" :value="d">{{ d }}</option>
+            <span>{{ t("选择日期") }}</span>
+            <PanelSelect v-model="selectedReportDate" :aria-label="t(&quot;日报日期&quot;)" @change="loadSelectedReport">
+              <option v-for="d in availableReportDates" :key="d" :value="d">{{ t(d) }}</option>
             </PanelSelect>
           </label>
         </div>
@@ -434,48 +434,48 @@
           type="button"
           class="secondary lb-analyze-btn"
           :disabled="analyzing || busy || currentReport?.status === 'completed' || selectedReportDate !== new Date(Date.now()+8*3600000-86400000).toISOString().slice(0,10)"
-          title="仅继续处理昨日未完成任务；完整日报不会重跑"
+          :title="t(&quot;仅继续处理昨日未完成任务；完整日报不会重跑&quot;)"
           @click="triggerAnalyze"
         >
-          {{ analyzing ? '处理中…' : currentReport?.status === 'completed' ? '已完成' : currentReport ? '继续分析' : '开始分析' }}
+          {{ analyzing?t("处理中…"):currentReport?.status === 'completed'?t("已完成"):currentReport?t("继续分析"):t("开始分析") }}
         </button>
       </div>
 
       <!-- Report Content -->
       <div v-if="reportLoading" class="lb-report-loading" role="status">
         <span class="dash-spinner" aria-hidden="true"></span>
-        <span>正在读取日报…</span>
+        <span>{{ t("正在读取日报…") }}</span>
       </div>
       <div v-else-if="currentReport" class="lb-report-body">
         <!-- Report Meta Banner -->
         <div class="lb-report-meta-card">
           <div class="lb-report-meta-row">
-            <span class="lb-meta-item"><b>分析日期：</b>{{ currentReport.date || selectedReportDate }}</span>
-            <span class="lb-meta-item"><b>状态：</b></span>
+            <span class="lb-meta-item"><b>{{ t("分析日期：") }}</b>{{ (t(currentReport.date) || t(selectedReportDate)) }}</span>
+            <span class="lb-meta-item"><b>{{ t("状态：") }}</b></span>
             <span
               class="lb-badge"
               :class="reportStatusClass(currentReport.status)"
             >
-              {{ reportStatusLabel(currentReport.status) }}
+              {{ t(reportStatusLabel(currentReport.status)) }}
             </span>
             <span v-if="currentReport.completedAt" class="lb-meta-item">
-              <b>完成时间：</b>{{ formatDate(currentReport.completedAt) }}
+              <b>{{ t("完成时间：") }}</b>{{ t(formatDate(currentReport.completedAt)) }}
             </span>
           </div>
           <div v-if="currentReport.summary" class="lb-overall-summary">
-            <b>跨账号写法观察：</b>
-            <p v-if="typeof currentReport.summary === 'string'">{{ currentReport.summary }}</p>
+            <b>{{ t("跨账号写法观察：") }}</b>
+            <p v-if="typeof currentReport.summary === 'string'">{{ t(currentReport.summary) }}</p>
             <ul v-if="currentReport.summary?.conclusions?.length" class="lb-patterns-list">
               <li v-for="(p, pIdx) in currentReport.summary.conclusions" :key="pIdx">{{ p.text }}</li>
             </ul>
-            <p v-if="currentReport.summary?.limitations">局限：{{ currentReport.summary.limitations }}</p>
+            <p v-if="currentReport.summary?.limitations">{{ t("局限：\u007b\u007bv0\u007d\u007d",{v0:currentReport.summary.limitations}) }}</p>
           </div>
           <p v-if="currentReport.error" class="lb-report-error">
-            {{ currentReport.error }}
+            {{ t(currentReport.error) }}
           </p>
           <div v-if="activeAuthorFilter" class="lb-report-filter-bar">
-            <span>当前筛选作者：@{{ activeAuthorFilter }}</span>
-            <button type="button" class="secondary" @click="activeAuthorFilter = ''">查看全部作者</button>
+            <span>{{ t("当前筛选作者：@\u007b\u007bv0\u007d\u007d",{v0:activeAuthorFilter}) }}</span>
+            <button type="button" class="secondary" @click="activeAuthorFilter = ''">{{ t("查看全部作者") }}</button>
           </div>
         </div>
 
@@ -488,23 +488,20 @@
           >
             <div class="lb-author-card-head">
               <div class="lb-author-info">
-                <span class="lb-author-rank">#{{ aIdx + 1 }}</span>
-                <span class="lb-author-name">{{ author.name || author.handle }}</span>
+                <span class="lb-author-rank">#{{ t(aIdx + 1) }}</span>
+                <span class="lb-author-name">{{ (author.name || author.handle) }}</span>
                 <a
                   :href="`https://x.com/${author.handle}`"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="lb-author-handle"
                 >@{{ author.handle }}</a>
-                <span v-if="author.delta !== undefined && author.delta !== null" class="lb-stat-pill">
-                  昨日涨粉 {{ author.delta >= 0 ? `+${author.delta}` : author.delta }}
+                <span v-if="author.delta !== undefined && author.delta !== null" class="lb-stat-pill">{{ t("昨日涨粉 \u007b\u007bv0\u007d\u007d",{v0:author.delta >= 0?`+${author.delta}`:author.delta}) }}
                 </span>
               </div>
               <div class="lb-author-stats">
-                <span v-if="author.coverage" class="lb-stat-pill">
-                  采样 {{ author.coverage.sampled || 0 }} 帖 (共 {{ author.coverage.postCount || 0 }} 原帖 / {{ author.coverage.replyCount || 0 }} 回复)
-                </span>
-                <span class="lb-stat-pill">已分析 {{ author.analyzedCount }} 帖</span>
+                <span v-if="author.coverage" class="lb-stat-pill">{{ t("采样 \u007b\u007bv0\u007d\u007d 帖 (共 \u007b\u007bv1\u007d\u007d 原帖 / \u007b\u007bv2\u007d\u007d 回复)",{v0:(author.coverage.sampled || 0),v1:(author.coverage.postCount || 0),v2:(author.coverage.replyCount || 0)}) }}</span>
+                <span class="lb-stat-pill">{{ t("已分析 \u007b\u007bv0\u007d\u007d 帖",{v0:author.analyzedCount}) }}</span>
               </div>
             </div>
 
@@ -516,52 +513,52 @@
                 class="lb-post-card"
               >
                 <div class="lb-post-grok-box">
-                  <span class="lb-grok-tag">Grok 亮点提炼</span>
-                  <p class="lb-grok-text">{{ item.highlights || item.reason }}</p>
+                  <span class="lb-grok-tag">{{ t("Grok 亮点提炼") }}</span>
+                  <p class="lb-grok-text">{{ (t(item.highlights) || t(item.reason)) }}</p>
                 </div>
                 <p v-if="item.post?.text" class="lb-post-text">{{ item.post.text }}</p>
                 <div class="lb-post-footer">
                   <div class="lb-post-metrics">
-                    <span v-if="Number.isFinite(item.post?.metrics?.views)">公开浏览 {{ formatNumber(item.post.metrics.views) }}</span>
-                    <span v-if="Number.isFinite(item.post?.metrics?.likes)">点赞 {{ formatNumber(item.post.metrics.likes) }}</span>
-                    <span v-if="Number.isFinite(item.post?.metrics?.reposts)">转帖 {{ formatNumber(item.post.metrics.reposts) }}</span>
-                    <span v-if="Number.isFinite(item.post?.metrics?.replies)">评论 {{ formatNumber(item.post.metrics.replies) }}</span>
+                    <span v-if="Number.isFinite(item.post?.metrics?.views)">{{ t("公开浏览 \u007b\u007bv0\u007d\u007d",{v0:formatNumber(item.post.metrics.views)}) }}</span>
+                    <span v-if="Number.isFinite(item.post?.metrics?.likes)">{{ t("点赞 \u007b\u007bv0\u007d\u007d",{v0:formatNumber(item.post.metrics.likes)}) }}</span>
+                    <span v-if="Number.isFinite(item.post?.metrics?.reposts)">{{ t("转帖 \u007b\u007bv0\u007d\u007d",{v0:formatNumber(item.post.metrics.reposts)}) }}</span>
+                    <span v-if="Number.isFinite(item.post?.metrics?.replies)">{{ t("评论 \u007b\u007bv0\u007d\u007d",{v0:formatNumber(item.post.metrics.replies)}) }}</span>
                   </div>
                   <a
                     :href="item.post?.url || `https://x.com/${author.handle}/status/${item.postId}`"
                     target="_blank"
                     rel="noopener noreferrer"
                     class="lb-post-link"
-                  >
-                    查看原帖 ↗
-                  </a>
+                  >{{ t("查看原帖 ↗") }}</a>
                 </div>
               </div>
             </div>
             <div v-else-if="author.coverage?.error" class="lb-grok-empty">
-              <small>{{ author.coverage.error }}</small>
+              <small>{{ t(author.coverage.error) }}</small>
             </div>
             <div v-else class="lb-grok-empty">
-              <small>该作者昨日未采集到符合标准的优质帖子或仍在排队分析。</small>
+              <small>{{ t("该作者昨日未采集到符合标准的优质帖子或仍在排队分析。") }}</small>
             </div>
           </div>
         </div>
         <div v-else class="lb-empty-report">
-          <p>该日期暂无入选前 10 名的作者数据。</p>
+          <p>{{ t("该日期暂无入选前 10 名的作者数据。") }}</p>
         </div>
       </div>
       <div v-else class="lb-empty-report">
-        <p>暂无该日期的日报数据，请点击上方“触发分析”进行抓取与 Grok 评估。</p>
+        <p>{{ t("暂无该日期的日报数据，请点击上方“触发分析”进行抓取与 Grok 评估。") }}</p>
       </div>
 
       <template #footer>
-        <button type="button" class="secondary" @click="closeReportDrawer">关闭</button>
+        <button type="button" class="secondary" @click="closeReportDrawer">{{ t("关闭") }}</button>
       </template>
     </ActionSettingsDrawer>
   </section>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import PanelSelect from "../components/PanelSelect.vue";
 import PanelActionBar from '../components/PanelActionBar.vue';
 import PanelIconButton from '../components/PanelIconButton.vue';
@@ -870,7 +867,7 @@ async function loadSelectedReport() {
 }
 
 async function removeMember(member) {
-  if (!confirm(`确定将 @${member.handle} 移出 X 榜单？历史快照和日报将保留。`)) return;
+  if (!confirm(t(`确定将 @${member.handle} 移出 X 榜单？历史快照和日报将保留。`))) return;
   busy.value = true;
   try {
     const res = await chrome.runtime.sendMessage({
@@ -934,11 +931,11 @@ function formatTimeAgo(isoOrTs) {
     if (isNaN(diffMs)) return '—';
     const mins = Math.floor(diffMs / 60000);
     if (mins < 1) return '刚刚';
-    if (mins < 60) return `${mins}分钟前`;
+    if (mins < 60) return t('{{v0}}分钟前', { v0: mins });
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}小时前`;
+    if (hours < 24) return t('{{v0}}小时前', { v0: hours });
     const days = Math.floor(hours / 24);
-    return `${days}天前`;
+    return t('{{v0}}天前', { v0: days });
   } catch {
     return '—';
   }

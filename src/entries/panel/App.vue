@@ -13,19 +13,23 @@
     <KnowledgeSection />
     <ProfileDrawer />
     <SettingsDrawer />
+    <FollowReviewSettingsDialog />
     <UnreciprocatedSettingsDrawer />
     <ExecutionLogsModal />
     <InfoTipLayer />
     <CloudflareImageSettings />
+    <PanelResultToaster />
   </div>
 </template>
 
 <script setup>
 import ExecutionLogsModal from './components/ExecutionLogsModal.vue';
+import PanelResultToaster from './components/PanelResultToaster.vue';
 import InfoTipLayer from './components/InfoTipLayer.vue';
 import CloudflareImageSettings from './components/CloudflareImageSettings.vue';
 import ProfileDrawer from './components/ProfileDrawer.vue';
 import SettingsDrawer from './components/SettingsDrawer.vue';
+import FollowReviewSettingsDialog from './components/FollowReviewSettingsDialog.vue';
 import UnreciprocatedSettingsDrawer from './components/UnreciprocatedSettingsDrawer.vue';
 import PanelSidebar from './components/PanelSidebar.vue';
 import PanelHeader from './components/PanelHeader.vue';

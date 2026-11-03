@@ -1,5 +1,6 @@
 import {readXGrokUsageCooldown, checkXGrokUsageLimit} from './grok-usage-limit.js';
 import {routeGrokRequest} from './grok-provider.js';
+import {isLocalAiProvider} from './grok-local.js';
 import {BOT_WAIT_MS} from './grok-bot-relay.js';
 import {finishExperienceUse} from '../knowledge/learning-context.js';
 import {resolveWritingContext} from '../knowledge/writing-context.js';
@@ -19,10 +20,10 @@ export const END = '【引用评价结束】';
 export const SKIP = '【跳过评价】';
 const ACCOUNT_BLOCK_RISKS = new Set(['armed_group', 'terrorism']);
 
-export function quoteCandidates(handle, posts, authorName = '', authorProfile = {}) {
+export function quoteCandidates(handle, posts, authorName = '', authorProfile = {}, {bypassSourceRules = false} = {}) {
   const cleanHandle = String(handle || '').replace(/^@/, '').toLowerCase();
   const recent = (Array.isArray(posts) ? posts : [posts]).filter(post => !post?.isPinned).slice(0, 20);
-  const interactionReason = interactionSkipReason({...authorProfile, handle:cleanHandle, name:authorName || authorProfile.name, posts:recent});
+  const interactionReason = bypassSourceRules ? '' : interactionSkipReason({...authorProfile, handle:cleanHandle, name:authorName || authorProfile.name, posts:recent});
   if (interactionReason) return {candidates:[], blocked:[], blockingRisk:null, interactionReason, inspected:recent.length};
   const candidates = [];
   const seen = new Set();
@@ -33,11 +34,13 @@ export function quoteCandidates(handle, posts, authorName = '', authorProfile = 
     const match = String(post?.url || '').match(/^https:\/\/(?:x\.com|twitter\.com)\/([^/?#]+)\/status\/(\d+)(?:[/?#]|$)/i);
     if (!match || match[1].toLowerCase() !== cleanHandle || seen.has(match[2])) continue;
     seen.add(match[2]);
-    const safety = isPostSafeForComment(post, {handle, name:authorName});
-    if (!safety.safe) {
-      blocked.push(safety);
-      if (!blockingRisk && safety.categories?.some(category => ACCOUNT_BLOCK_RISKS.has(category))) blockingRisk = safety;
-      continue;
+    if (!bypassSourceRules) {
+      const safety = isPostSafeForComment(post, {handle, name:authorName});
+      if (!safety.safe) {
+        blocked.push(safety);
+        if (!blockingRisk && safety.categories?.some(category => ACCOUNT_BLOCK_RISKS.has(category))) blockingRisk = safety;
+        continue;
+      }
     }
     if (text.length < 8) continue;
     candidates.push(post);
@@ -802,8 +805,18 @@ async function askOnX(prompt, nonce, sleep, candidateCount) {
   }
 }
 
-async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,onRelayJobCreated,expectedBot){
-  const result=await routeGrokRequest(()=>askOnX(prompt,nonce,sleep,candidateCount),prompt,{relayJobId,expectedBot,onJobCreated:onRelayJobCreated,requestKey:prompt.split(nonce).join('[任务凭证]')});
+async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,onRelayJobCreated,expectedBot,commentEngine){
+  const engineProvider = String(commentEngine?.provider || '').trim();
+  const engineBotId = String(commentEngine?.botId || '').trim();
+  if (engineProvider && (!isLocalAiProvider(engineProvider) || !engineBotId)) {
+    return {ok:false, reason:'评论引擎未配置有效的独立本地会话'};
+  }
+  const result=await routeGrokRequest(()=>askOnX(prompt,nonce,sleep,candidateCount),prompt,{
+    relayJobId,
+    ...(engineProvider ? {provider:engineProvider, botId:engineBotId, expectedBot:engineBotId} : {expectedBot}),
+    onJobCreated:onRelayJobCreated,
+    requestKey:prompt.split(nonce).join('[任务凭证]')
+  });
   if(!result.ok||result.channel!=='grok-bot')return result;
   const decision=parseGrokQuoteDecision(result.text,candidateCount);
   if(!decision.skipped&&!decision.reply)return {ok:false,channel:'grok-bot',jobId:result.jobId,reason:'Bot 返回的评价格式无效，完整结果已保存在备用任务中'};
@@ -814,11 +827,13 @@ async function askWithBotFallback(prompt,nonce,sleep,candidateCount,relayJobId,o
  * 从最多二十条近期非置顶帖子中按加权互动分选定一条。
  * 成功返回选中的 post、postText、postUrl；跳过返回 {ok:false, skipped:true}。
  */
-export async function requestGrokComment(handle, posts, authorName, { sleep, fix = s => s, askers, relayJobId, onRelayJobCreated, profile = {}, writerAccountId, knowledgePurpose = 'comment', knowledgeSnapshot, qualityFirst = false, lengthMode = 'adaptive', editorialInstructions = '', promptBuilder = buildGrokCommentPrompt, qualityGate = promptBuilder !== buildGrokCommentPrompt }) {
+export async function requestGrokComment(handle, posts, authorName, { sleep, fix = s => s, askers, relayJobId, onRelayJobCreated, profile = {}, writerAccountId, knowledgePurpose = 'comment', knowledgeSnapshot, qualityFirst = false, lengthMode = 'adaptive', editorialInstructions = '', commentEngine = null, bypassSourceRules = false, promptBuilder = buildGrokCommentPrompt, qualityGate = promptBuilder !== buildGrokCommentPrompt }) {
   let pendingRelayJobId=relayJobId;
   let knowledge={text:'',items:[],source:'none',wisdomVersion:null,warning:'',bot:''};
-  askers ||= [(prompt,nonce,sleep,count)=>{const id=pendingRelayJobId;pendingRelayJobId=undefined;return askWithBotFallback(prompt,nonce,sleep,count,id,job=>onRelayJobCreated?.({...job,...(knowledge.items.length?{knowledgeUsed:knowledge.items,knowledgeSnapshot:knowledge}:{})}),knowledge.bot);}];
-  const selected = quoteCandidates(handle, posts, authorName, profile);
+  const customCommentPrompt = String(commentEngine?.prompt || '').trim();
+  const effectiveEditorialInstructions = [editorialInstructions, customCommentPrompt].filter(Boolean).join('\n');
+  askers ||= [(prompt,nonce,sleep,count)=>{const id=pendingRelayJobId;pendingRelayJobId=undefined;return askWithBotFallback(prompt,nonce,sleep,count,id,job=>onRelayJobCreated?.({...job,...(knowledge.items.length?{knowledgeUsed:knowledge.items,knowledgeSnapshot:knowledge}:{}),...(commentEngine?.provider?{commentEngine:{provider:commentEngine.provider,botId:commentEngine.botId || ''}}:{} )}),commentEngine?.botId || knowledge.bot,commentEngine);}];
+  const selected = quoteCandidates(handle, posts, authorName, profile, {bypassSourceRules});
   let {candidates} = selected;
   const {blocked, blockingRisk} = selected;
   const fixedPost = highestScoredPost(candidates);
@@ -859,8 +874,10 @@ export async function requestGrokComment(handle, posts, authorName, { sleep, fix
   const nonce = makeNonce();
   try{knowledge=relayJobId ? (knowledgeSnapshot || knowledge) : {...await resolveWritingContext({ownerId:writerAccountId,purpose:knowledgePurpose,requestId:nonce}),requestId:nonce};}
   catch(error){knowledge={...knowledge,text:'',items:[],source:'none',wisdomVersion:null,warning:'知识读取失败：'+error.message};}
-  const writingContext=knowledge.text;
-  const prompt = promptBuilder({ writingContext, handle: cleanHandle, name: fix(authorName || cleanHandle), posts:candidates, nonce, profile, qualityFirst, lengthMode,editorialInstructions });
+  const writingContext = promptBuilder !== buildGrokCommentPrompt && customCommentPrompt
+    ? [knowledge.text, customCommentPrompt].filter(Boolean).join('\n')
+    : knowledge.text;
+  const prompt = promptBuilder({ writingContext, handle: cleanHandle, name: fix(authorName || cleanHandle), posts:candidates, nonce, profile, qualityFirst, lengthMode, editorialInstructions: effectiveEditorialInstructions });
   const reasons = [];
   for (const ask of qualityFirst ? askers.slice(0,1) : askers) {
     try {
@@ -1032,14 +1049,16 @@ async function postQuoteInWindow(tabId, post, text, publishFn, sleep, options = 
 
 export async function postQuoteOnTab(_tabId, post, text, publishFn, sleep, options = {}) {
   if (tweetWeight(text) > 280) return {ok:false,reason:'引用评价超过 280 加权字符，已阻止发送；保留完整草稿'};
-  const interactionReason = interactionSkipReason({...options.profile, ...post, posts:[post, ...(options.profile?.posts || [])]});
-  if (interactionReason) return {ok:false, skipped:true, reason:interactionReason};
-  if (interactionSkipReason({posts:[{text}]})) {
-    return {ok:false, skipped:true, reason:'生成的引用评价涉及宗教相关内容，按互动偏好跳过发布'};
+  if (!options.bypassSourceRules) {
+    const interactionReason = interactionSkipReason({...options.profile, ...post, posts:[post, ...(options.profile?.posts || [])]});
+    if (interactionReason) return {ok:false, skipped:true, reason:interactionReason};
+    const safety = isPostSafeForComment(post);
+    if (!safety.safe) {
+      return { ok: false, riskBlocked: true, reason: safety.reason || '原帖涉及高风险内容，已被安全门禁拦截发布' };
+    }
   }
-  const safety = isPostSafeForComment(post);
-  if (!safety.safe) {
-    return { ok: false, riskBlocked: true, reason: safety.reason || '原帖涉及高风险内容，已被安全门禁拦截发布' };
+  if (!options.bypassSourceRules && interactionSkipReason({posts:[{text}]})) {
+    return {ok:false, skipped:true, reason:'生成的引用评价涉及宗教相关内容，按互动偏好跳过发布'};
   }
   const replySafety = isPostSafeForComment(text);
   if (!replySafety.safe) {

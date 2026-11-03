@@ -1,3 +1,8 @@
+import {PANEL_RESULT_EVENT,PANEL_RESULT_ACTION_EVENT} from '../src/entries/panel/result-notices.js';
+const taskNotices=[];
+const latestTask=()=>taskNotices.at(-1);
+const taskText=()=>[latestTask()?.title,latestTask()?.note,...latestTask()?.items||[]].join('\n');
+const taskAction=action=>{const n=latestTask();document.dispatchEvent(new CustomEvent(PANEL_RESULT_ACTION_EVENT,{detail:{kind:n.kind,batchId:n.batchId,action}}));};
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {nextTick} from 'vue';
@@ -30,13 +35,13 @@ test('retry refresh prunes stale selections and defers list refresh until the ba
     root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
     jobs=jobs.slice(0,1);await panel.refresh();
     assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
-    root.querySelectorAll('button').find(b=>b.textContent==='批量重试').click();await wait();
+    root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='批量重试').click();await wait();
     const before=reads;await panel.refresh();assert.equal(reads,before);
     assert.equal(root.querySelector('tbody input').checked,true);
     assert.deepEqual(calls[0].jobIds,['a']);
     release();await wait();assert.equal(reads,before+1);
-    assert.match(root.querySelector('.fq-batch-toast').textContent,/暂不可重试/);
-    assert.match(root.querySelector('.fq-batch-countdown').textContent,/3 秒后关闭/);
+    assert.match(taskText(),/暂不可重试/);
+    assert.equal(latestTask().progress.stage,'completed');
   } finally {panel.destroy();}
 });
 
@@ -65,18 +70,19 @@ test('uncertain batch verification is sequential, confirms once and retains fail
   try {
     await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
     root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
-    const start=()=>root.querySelectorAll('button').find(b=>b.textContent==='批量核对').click();
+    const start=()=>root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='批量核对').click();
     start();await wait();assert.equal(calls.length,0);
     confirmed=true;start();await wait();assert.equal(calls.length,1);
-    assert.ok(root.querySelector('.fq-filter-tab').disabled);
-    assert.match(root.querySelector('.fq-batch-feedback').textContent,/已处理 0\/3/);
+    assert.equal(root.querySelector('.fq-filter-tab').disabled,false);
+    assert.ok(root.querySelectorAll('tbody input').every(input=>input.disabled&&input.checked));
+    assert.equal(latestTask().progress.done,0);assert.equal(latestTask().progress.total,3);
     release();await wait();
     assert.deepEqual(calls.map(m=>m.jobId),['a','b','c']);
     assert.deepEqual(delays,[3500,3500]);
     assert.ok(calls.every(m=>m.accountId==='owner'&&m.mode==='check'));
     assert.equal(confirmations,2);
-    assert.match(root.querySelector('.fq-batch-feedback').textContent,/成功 2，失败 1/);
-    assert.match(root.querySelector('.fq-batch-feedback').textContent,/@b：无法读取关系/);
+    assert.equal(latestTask().progress.success,2);assert.equal(latestTask().progress.failed,1);
+    assert.match(taskText(),/@b：无法读取关系/);
     assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
   } finally {panel.destroy();globalThis.confirm=prior;}
 });
@@ -95,12 +101,12 @@ test('uncertain bulk exclude and delete reuse single-item commands and stop afte
     try{
       await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
       root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
-      root.querySelectorAll('button').find(b=>b.textContent===(mode==='delete'?'批量删除':'批量排除')).click();
-      await wait();root.querySelector('[data-batch-stop="true"]').click();release();await wait();
+      root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')===(mode==='delete'?'批量删除':'批量排除')).click();
+      await wait();taskAction('stop');release();await wait();
       assert.equal(calls.length,1);
       assert.equal(calls[0].cmd,mode==='delete'?'followQueueDelete':'followQueueVerify');
       assert.equal(mode==='delete'?calls[0].confirmed:calls[0].mode,mode==='delete'?true:'exclude');
-      assert.match(root.querySelector('.fq-batch-feedback').textContent,/已停止：已处理 1\/2/);
+      assert.equal(latestTask().progress.stage,'paused');assert.equal(latestTask().progress.done,1);assert.equal(latestTask().progress.total,2);
       assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
     }finally{panel.destroy();globalThis.confirm=prior;}
   }
@@ -510,6 +516,7 @@ function setupDOM() {
       docListeners.set(event, docListeners.get(event).filter(l => l !== listener));
     },
     dispatchEvent(event) {
+      if(event.type===PANEL_RESULT_EVENT)taskNotices.push(structuredClone(event.detail));
       const list = docListeners.get(event.type || event) || [];
       for (const fn of list) fn(event);
     }
@@ -897,8 +904,8 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.equal(batchInput.value, '5');
 
   const ratioInput = drawer.querySelector('#fq_ratioThreshold');
-  assert.ok(ratioInput);
-  assert.equal(ratioInput.value, '0.8');
+  assert.equal(ratioInput, null, 'priority ratio must not appear as an admission filter');
+  assert.ok(drawer.querySelector('#fq_review_settings'), 'dedicated role settings entry must be available');
 
   const autoPublishSwitch = drawer.querySelector('#fq_autoPublish');
   assert.ok(autoPublishSwitch);
@@ -907,10 +914,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.ok(followBackSuffix);assert.equal(followBackSuffix.checked,false);
   followBackSuffix.checked=true;followBackSuffix.dispatchEvent({type:'change',target:{checked:true}});
   const fanBypass = drawer.querySelector('#fq_followBackAllowAll');
-  assert.ok(fanBypass);
-  assert.equal(fanBypass.checked, false);
-  fanBypass.checked = true;
-  fanBypass.dispatchEvent({type:'change',target:{checked:true}});
+  assert.equal(fanBypass, null, 'legacy partial bypass cannot be edited as the new all-rule bypass');
   const blueOnly = drawer.querySelector('#fq_blueVerifiedOnly');
   assert.ok(blueOnly);
   assert.equal(blueOnly.checked, false);
@@ -934,7 +938,7 @@ test('settings drawer opens, reflects contract defaults, and saves clamped setti
   assert.equal(savedSettings.batchLimit, 10);
   assert.equal(savedSettings.autoPublish, true);
   assert.equal(savedSettings.followBackSuffixEnabled, true);
-  assert.equal(savedSettings.followBackAllowAll, true);
+  assert.equal(savedSettings.followBackAllowAll, false);
   assert.equal(savedSettings.blueVerifiedOnly, true);
   assert.equal(savedSettings.enabled, false);
   root.querySelector('.fq-header-actions button[aria-label="关注队列设置"]').click();
@@ -2112,7 +2116,7 @@ test('uncertain evaluation checks only and recovered generation is labeled witho
   }finally{panel.destroy()}
 });
 
-test('successful verification shows a three-second toast and refresh does not resurrect it', async()=>{
+test('successful verification stays until manual dismissal and refresh does not republish it', async()=>{
  const root=createMockElement('div');let jobs=[{id:'a',handle:'a',state:'uncertain',sources:[]}];
  const prior=globalThis.confirm;globalThis.confirm=()=>true;
  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
@@ -2123,11 +2127,11 @@ test('successful verification shows a three-second toast and refresh does not re
  try{
   await new Promise(r=>setTimeout(r,20));root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
   root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
-  root.querySelectorAll('button').find(b=>b.textContent==='批量核对').click();await new Promise(r=>setTimeout(r,30));
-  assert.match(root.querySelector('.fq-batch-toast').textContent,/3 秒后关闭/);
-  await new Promise(r=>setTimeout(r,1050));assert.match(root.querySelector('.fq-batch-countdown').textContent,/2 秒后关闭/);
-  await panel.refresh();await new Promise(r=>setTimeout(r,2050));assert.equal(root.querySelector('.fq-batch-feedback'),null);
-  await panel.refresh();assert.equal(root.querySelector('.fq-batch-feedback'),null);
+  root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='批量核对').click();await new Promise(r=>setTimeout(r,30));
+  const completed=latestTask(),count=taskNotices.length;assert.equal(completed.progress.stage,'completed');
+  await new Promise(r=>setTimeout(r,3100));await panel.refresh();assert.equal(taskNotices.length,count);
+  taskAction('close');await panel.refresh();assert.equal(taskNotices.length,count);
+
  }finally{panel.destroy();globalThis.confirm=prior;}
 });
 
@@ -2144,15 +2148,36 @@ test('retry selection submits one scoped batch and reports queued rather than fo
   try {
     await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='等待重试').click();
     root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
-    root.querySelectorAll('button').find(b=>b.textContent==='批量重试').click();await wait();
+    root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='批量重试').click();await wait();
     assert.deepEqual(calls,[{cmd:'followQueueRetryBatch',accountId:'owner',jobIds:['a','b']}]);
-    assert.match(root.querySelector('.fq-batch-feedback').textContent,/已加入优先重试 1 项，未加入 1 项/);
-    assert.match(root.querySelector('.fq-batch-feedback').textContent,/@beta：已有操作记录/);
+    assert.match(taskText(),/已加入优先重试 1 项，未加入 1 项/);
+    assert.match(taskText(),/@beta：已有操作记录/);
     assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
   } finally {panel.destroy();}
 });
 
-test('switching filter clears batch timer, dismisses toast, and resets row selection', async () => {
+test('changing to a mixed-state view derives the header checkbox from the frozen running batch',async()=>{
+  const root=createMockElement('div'),prior=globalThis.confirm;globalThis.confirm=()=>true;let release;
+  const jobs=[{id:'a',handle:'alpha',state:'uncertain',sources:[]},{id:'b',handle:'beta',state:'pending',sources:[]}];
+  const panel=mountFollowQueuePanel(root,{accountId:'owner',request:async m=>{
+    if(m.cmd==='followQueueSettings')return {ok:true,settings:DEFAULT_SETTINGS};
+    if(m.cmd==='followQueueList')return {ok:true,jobs};
+    if(m.cmd==='followQueueVerify')return new Promise(resolve=>release=()=>resolve({ok:true}));return {ok:true};
+  }});
+  const wait=()=>new Promise(r=>setTimeout(r,20));
+  try{
+    await wait();root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='待核实').click();
+    root.querySelector('thead input').dispatchEvent({type:'change',target:{checked:true}});
+    root.querySelectorAll('button').find(b=>b.getAttribute('aria-label')==='批量核对').click();await wait();
+    root.querySelectorAll('.fq-filter-tab').find(b=>b.textContent==='全部状态').click();
+    const header=root.querySelector('thead input');assert.equal(header.checked,false);assert.equal(header.indeterminate,true);assert.equal(header.disabled,true);
+    const rows=root.querySelectorAll('tbody input');assert.deepEqual(rows.map(i=>i.checked),[true,false]);assert.ok(rows.every(i=>i.disabled));
+    assert.match(root.querySelector('.fq-selection-info').textContent,/已选 1 项/);
+    release();await wait();
+  }finally{panel.destroy();globalThis.confirm=prior;}
+});
+
+test('switching filter keeps the manual-dismissal result card and resets row selection', async () => {
   const root = createMockElement('div');
   let jobs = [
     {id: 'a', handle: 'alpha', state: 'uncertain', sources: []},
@@ -2171,14 +2196,14 @@ test('switching filter clears batch timer, dismisses toast, and resets row selec
     root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '待核实').click();
     await wait();
     root.querySelector('thead input').dispatchEvent({type: 'change', target: {checked: true}});
-    root.querySelectorAll('button').find(b => b.textContent === '批量核对').click();
+    root.querySelectorAll('button').find(b => b.getAttribute('aria-label') === '批量核对').click();
     await wait();
-    assert.ok(root.querySelector('.fq-batch-toast'), 'toast is shown after full success');
+    const completed=latestTask();assert.equal(completed.progress.stage,'completed');
 
     // Switch filter tab
     root.querySelectorAll('.fq-filter-tab').find(b => b.textContent === '等待重试').click();
     await wait();
-    assert.equal(root.querySelector('.fq-batch-feedback'), null, 'toast dismissed on filter switch');
+    assert.equal(latestTask().id,completed.id,'result remains inspectable across filter changes');
 
     // Select row in retry tab
     root.querySelector('thead input').dispatchEvent({type: 'change', target: {checked: true}});
@@ -2194,7 +2219,7 @@ test('switching filter clears batch timer, dismisses toast, and resets row selec
   }
 });
 
-test('triggering next action clears existing batch toast and timer', async () => {
+test('starting another action preserves the previous completed result for manual dismissal', async () => {
   const root = createMockElement('div');
   let jobs = [
     {id: 'a', handle: 'alpha', state: 'uncertain', sources: []},
@@ -2214,15 +2239,15 @@ test('triggering next action clears existing batch toast and timer', async () =>
     await wait();
     // Select only item a
     root.querySelectorAll('tbody input')[0].dispatchEvent({type: 'change', target: {checked: true}});
-    root.querySelectorAll('button').find(b => b.textContent === '批量核对').click();
+    root.querySelectorAll('button').find(b => b.getAttribute('aria-label') === '批量核对').click();
     await wait();
-    assert.ok(root.querySelector('.fq-batch-toast'), 'toast is displayed');
+    const completed=latestTask();assert.equal(completed.progress.stage,'completed');
 
     // Trigger single verify on remaining item b as next action
     const singleVerifyBtn = root.querySelectorAll('button').find(b => b.getAttribute('aria-label') === '核对关系');
     assert.ok(singleVerifyBtn, 'single verification control must exist');
     singleVerifyBtn.click();
-    assert.equal(root.querySelector('.fq-batch-toast'), null, 'toast cleared when next action starts');
+    assert.equal(latestTask().id,completed.id,'starting a row action does not dismiss a completed result');
   } finally {
     panel.destroy();
     globalThis.confirm = prior;

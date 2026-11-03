@@ -1,7 +1,7 @@
 import {createXNetworkClient} from '../../platform/x/network-client.js';
 
 export function readHomeSession() {
-  return {viewer:document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute('href')?.split('/')[1]||'',home:location.pathname==='/home',native:window.__xefNativeHome||null};
+  return {viewer:globalThis.__xfAccountSnapshot?.account?.handle||'',home:location.pathname==='/home',native:window.__xefNativeHome||null};
 }
 
 // Only top-level items: a quoted tweet or advertisement is not a candidate.

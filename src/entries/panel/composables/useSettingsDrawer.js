@@ -1,9 +1,10 @@
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import {awaitSettingsResponse} from '../settings-response.js';
 
 /**
  * Composable for managing 粉丝跟进 · 定时检测与自动回关设置抽屉
  */
-export function useSettingsDrawer() {
+export function useSettingsDrawer({timeoutMs=8000}={}) {
   const isOpen = ref(false);
   const enabled = ref(false);
   const every = ref(10);
@@ -16,12 +17,16 @@ export function useSettingsDrawer() {
   const checkpointAt = ref('');
   const lastSummary = ref('尚未执行检测');
   const saving = ref(false);
+  const reloading=ref(false);
   const running = ref(false);
   const errorMessage = ref('');
   const successMessage = ref('');
 
   let saveHandler = null;
   let runHandler = null;
+  let reloadHandler=null;
+  let saveRevision=0;
+  watch([enabled,every,jitter,followerBatch,followingBatch,autoEnqueue,filterDanger],()=>{successMessage.value='';},{flush:'sync'});
 
   function setSaveHandler(fn) {
     saveHandler = fn;
@@ -29,6 +34,14 @@ export function useSettingsDrawer() {
 
   function setRunHandler(fn) {
     runHandler = fn;
+  }
+  function setReloadHandler(fn){reloadHandler=fn;}
+  async function reload(){
+    if(saving.value||reloading.value||!reloadHandler)return false;
+    reloading.value=true;
+    try{const config=await awaitSettingsResponse(reloadHandler,{timeoutMs});open(config);successMessage.value='已重新读取当前设置';return true;}
+    catch(error){errorMessage.value=error.message;return false;}
+    finally{reloading.value=false;}
   }
 
   function open(currentConfig = {}) {
@@ -93,6 +106,8 @@ export function useSettingsDrawer() {
   }
 
   async function save() {
+    if(saving.value||reloading.value)return false;
+    const revision=++saveRevision;
     errorMessage.value = '';
     successMessage.value = '';
     let validatedConfig;
@@ -106,17 +121,17 @@ export function useSettingsDrawer() {
     if (saveHandler) {
       saving.value = true;
       try {
-        await saveHandler(validatedConfig);
-        successMessage.value = '配置已保存';
-        setTimeout(() => {
-          if (successMessage.value === '配置已保存') successMessage.value = '';
-        }, 2000);
+        await awaitSettingsResponse(()=>saveHandler(validatedConfig),{timeoutMs,message:'保存响应超时，状态待确认。输入已保留，请重新读取设置后确认。'});
+        if(revision!==saveRevision)return false;
+        let unchanged=false;
+        try{unchanged=JSON.stringify(validate())===JSON.stringify(validatedConfig);}catch{}
+        successMessage.value = unchanged?'配置已保存':'配置已保存，当前修改尚未保存';
         return true;
       } catch (err) {
-        errorMessage.value = err.message || '保存失败';
+        if(revision===saveRevision)errorMessage.value = err.message || '保存失败';
         return false;
       } finally {
-        saving.value = false;
+        if(revision===saveRevision)saving.value = false;
       }
     }
     return true;
@@ -162,6 +177,7 @@ export function useSettingsDrawer() {
     checkpointDisplayText,
     checkpointTimeText,
     saving,
+    reloading,
     running,
     errorMessage,
     successMessage,
@@ -169,9 +185,11 @@ export function useSettingsDrawer() {
     close,
     validate,
     save,
+    reload,
     triggerRunNow,
     openLogs,
     setSaveHandler,
+    setReloadHandler,
     setRunHandler
   };
 }

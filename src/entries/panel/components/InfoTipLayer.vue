@@ -5,8 +5,10 @@
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { positionInfoTip } from '../tooltip-position.js';
+import { positionInfoTip, positionDialogInfoTip } from '../tooltip-position.js';
 
 const container=ref('body');
 const visible = ref(false);
@@ -37,8 +39,16 @@ function place() {
   const anchor = active.getBoundingClientRect();
   if (!anchor.width || !anchor.height) { hide(); return; }
   const bubbleRect = bubble.value.getBoundingClientRect();
-  const result = positionInfoTip(anchor, bubbleRect, { width: window.innerWidth, height: window.innerHeight });
-  bubbleStyle.value = { left: `${result.left}px`, top: `${result.top}px`, width: `${result.width}px` };
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  const dialog = active.closest('dialog[open]');
+  if (dialog) {
+    const rect = dialog.getBoundingClientRect();
+    const result = positionDialogInfoTip(anchor, bubbleRect, {left:rect.left,top:rect.top,clientLeft:dialog.clientLeft,clientTop:dialog.clientTop,clientWidth:dialog.clientWidth,clientHeight:dialog.clientHeight,scrollLeft:dialog.scrollLeft,scrollTop:dialog.scrollTop}, viewport);
+    bubbleStyle.value = {position:'absolute',left:`${result.left}px`,top:`${result.top}px`,width:`${result.width}px`,maxHeight:`${result.maxHeight}px`};
+  } else {
+    const result = positionInfoTip(anchor, bubbleRect, viewport);
+    bubbleStyle.value = {position:'fixed',left:`${result.left}px`,top:`${result.top}px`,width:`${result.width}px`};
+  }
 }
 
 async function show(target) {
@@ -56,6 +66,9 @@ async function show(target) {
   container.value=tip.closest('dialog[open]') || 'body';
   content.value = message;
   visible.value = true;
+  // Measure each message at its natural width, rather than inheriting the
+  // previous tooltip's fixed position width.
+  bubbleStyle.value = {left:'8px',top:'8px',width:'max-content'};
   const current = ++sequence;
   await nextTick();
   if (current === sequence) place();
@@ -113,8 +126,8 @@ body.info-tip-layer-active .info-tip::after { content: none; }
   position: fixed;
   z-index: 10000;
   box-sizing: border-box;
-  width: 280px;
-  max-width: calc(100vw - 16px);
+  width: max-content;
+  max-width: min(280px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow-wrap: anywhere;
   overflow-y: auto;

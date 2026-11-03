@@ -1,87 +1,89 @@
 <template>
-  <section id="unreciprocatedSection" class="tab-panel unreciprocated-panel" data-panel="unreciprocated" aria-label="回关监控" :hidden="activeTab !== 'unreciprocated'">
+  <section id="unreciprocatedSection" class="tab-panel unreciprocated-panel" data-panel="unreciprocated" :aria-label="t(&quot;回关监控&quot;)" :hidden="activeTab !== 'unreciprocated'">
     <div class="unreciprocated-head">
       <div class="unreciprocated-head-left">
-        <button id="checkUnreciprocatedBtn" class="primary" title="对比最新粉丝关系并刷新所有主动关注账号的回关状态">重新比对</button>
-        <button id="batchUnfollowUnreciprocatedBtn" class="secondary danger-btn" disabled title="批量取消关注已勾选的未回关账号">批量取关</button>
-        <button id="unfollowAllOverdueBtn" class="secondary danger-btn" title="选择所有超过设定天数仍未回关的账号">选择超时账号</button>
+        <button id="checkUnreciprocatedBtn" class="primary" :title="t(&quot;对比最新粉丝关系并刷新所有主动关注账号的回关状态&quot;)">{{ t("重新比对") }}</button>
+        <button id="batchUnfollowUnreciprocatedBtn" class="secondary danger-btn" disabled :title="t(&quot;批量取消关注已勾选的未回关账号&quot;)">{{ t("批量取关") }}</button>
+        <button id="unfollowAllOverdueBtn" class="secondary danger-btn" :title="t(&quot;选择所有超过设定天数仍未回关的账号&quot;)">{{ t("选择超时账号") }}</button>
       </div>
       <PanelActionBar class="module-header-actions">
-        <PanelIconButton id="openUnreciprocatedSettingsDrawer" :icon="Settings" label="回关监控设置" tip="回关监控与定时取关设置" />
-        <PanelIconButton id="openUnreciprocatedLogs" :icon="ScrollText" label="执行日志" />
+        <PanelIconButton id="openUnreciprocatedSettingsDrawer" :icon="Settings" :label="t(&quot;回关监控设置&quot;)" :tip="t(&quot;回关监控与定时取关设置&quot;)" />
+        <PanelIconButton id="openUnreciprocatedLogs" :icon="ScrollText" :label="t(&quot;执行日志&quot;)" />
       </PanelActionBar>
     </div>
     <div class="mutual-subbar unreciprocated-subbar">
       <div class="subbar-left">
-        <div class="follower-tabs unreciprocated-tabs" role="tablist" aria-label="回关状态筛选">
-          <button class="follower-tab unreciprocated-tab active" data-unreciprocated-tab="unreciprocated" role="tab" aria-selected="true">未回关 <span id="tabUnreciprocatedCount">0</span></button>
-          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="mutual" role="tab" aria-selected="false">已互关 <span id="tabMutualCount">0</span></button>
-          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="unfollowed" role="tab" aria-selected="false">已取关 <span id="tabUnfollowedCount">0</span></button>
-          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="all" role="tab" aria-selected="false">全部 <span id="tabAllCount">0</span></button>
-          <span class="info-tip" tabindex="0" role="note" data-tip="未回关：我们关注对方但对方目前未关注我们；已互关：双方已形成互相关注；已取关：本地记录的取关账号及时间；全部：当前主动关注的全部账号，不含已取关。" aria-label="回关状态说明">?</span>
+        <div class="follower-tabs unreciprocated-tabs" role="tablist" :aria-label="t(&quot;回关状态筛选&quot;)">
+          <button class="follower-tab unreciprocated-tab active" data-unreciprocated-tab="unreciprocated" role="tab" aria-selected="true">{{ t("未回关") }}<span id="tabUnreciprocatedCount">0</span></button>
+          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="mutual" role="tab" aria-selected="false">{{ t("已互关") }}<span id="tabMutualCount">0</span></button>
+          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="unfollowed" role="tab" aria-selected="false">{{ t("已取关") }}<span id="tabUnfollowedCount">0</span></button>
+          <button class="follower-tab unreciprocated-tab" data-unreciprocated-tab="all" role="tab" aria-selected="false">{{ t("全部") }}<span id="tabAllCount">0</span></button>
+          <span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;未回关：我们关注对方但对方目前未关注我们；已互关：双方已形成互相关注；已取关：本地记录的取关账号及时间；全部：当前主动关注的全部账号，不含已取关。&quot;)" :aria-label="t(&quot;回关状态说明&quot;)">?</span>
         </div>
-        <PanelSelect id="unreciprocatedOverdueFilter" class="unreciprocated-filter-select" title="期限状态筛选" aria-label="期限状态筛选">
-          <option value="all">全部期限</option>
-          <option value="overdue">已超时</option>
-          <option value="within">未超时</option>
-          <option value="unknown">时间未知</option>
+        <PanelSelect id="unreciprocatedOverdueFilter" class="unreciprocated-filter-select" :title="t(&quot;期限状态筛选&quot;)" :aria-label="t(&quot;期限状态筛选&quot;)">
+          <option value="all">{{ t("全部期限") }}</option>
+          <option value="overdue">{{ t("已超时") }}</option>
+          <option value="within">{{ t("未超时") }}</option>
+          <option value="unknown">{{ t("时间未知") }}</option>
         </PanelSelect>
-        <PanelSelect id="unreciprocatedAvailabilityFilter" class="unreciprocated-filter-select" title="账号状态筛选" aria-label="账号状态筛选">
-          <option value="all">全部账号</option>
-          <option value="unavailable">账号不可用</option>
-          <option value="not_found">账号不存在</option>
-          <option value="suspended">已封禁</option>
-          <option value="ok">账号正常</option>
-          <option value="unknown">待确认</option>
+        <PanelSelect id="unreciprocatedAvailabilityFilter" class="unreciprocated-filter-select" :title="t(&quot;账号状态筛选&quot;)" :aria-label="t(&quot;账号状态筛选&quot;)">
+          <option value="all">{{ t("全部账号") }}</option>
+          <option value="unavailable">{{ t("账号不可用") }}</option>
+          <option value="not_found">{{ t("账号不存在") }}</option>
+          <option value="suspended">{{ t("已封禁") }}</option>
+          <option value="ok">{{ t("账号正常") }}</option>
+          <option value="unknown">{{ t("待确认") }}</option>
         </PanelSelect>
         <div class="search-wrap unreciprocated-search-wrap">
-          <input id="unreciprocatedSearch" type="search" placeholder="搜索账号、名称或简介" autocomplete="off">
-          <button id="unreciprocatedSearchBtn" type="button" class="secondary search-btn">搜索</button>
+          <input id="unreciprocatedSearch" type="search" :placeholder="t(&quot;搜索账号、名称或简介&quot;)" autocomplete="off">
+          <button id="unreciprocatedSearchBtn" type="button" class="secondary search-btn">{{ t("搜索") }}</button>
         </div>
       </div>
       <PanelPagination id="unreciprocatedPagination" select-id="unreciprocatedPageSize" summary-id="unreciprocatedPageSummary" prev-id="unreciprocatedPrevPage" next-id="unreciprocatedNextPage" :default-size="50" initial-summary="第 1 / 1 页" icon-buttons />
     </div>
-    <div id="unreciprocatedLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">正在加载回关监控…</span></div>
-    <div id="unreciprocatedLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">加载失败</span><button type="button" class="secondary dash-retry" data-load-retry="unreciprocated">重试</button></div>
+    <div id="unreciprocatedLoad" class="dash-load" role="status" aria-live="polite" aria-busy="true"><span class="dash-spinner" aria-hidden="true"></span><span class="dash-load-text">{{ t("正在加载回关监控…") }}</span></div>
+    <div id="unreciprocatedLoadError" class="dash-load dash-load-error" role="alert" hidden><span class="dash-load-text">{{ t("加载失败") }}</span><button type="button" class="secondary dash-retry" data-load-retry="unreciprocated">{{ t("重试") }}</button></div>
     <AutoUnfollowStatus />
     <p id="unreciprocatedStatus" class="monitor-status" role="status" aria-live="polite"></p>
     <div class="table-wrap unreciprocated-table-wrap">
       <table class="mutual-table unreciprocated-table">
         <thead>
           <tr>
-            <th class="th-check"><input id="unreciprocatedSelectAll" type="checkbox" title="全选 / 取消全选当前页" aria-label="全选当前页"></th>
+            <th class="th-check"><input id="unreciprocatedSelectAll" type="checkbox" :title="t(&quot;全选 / 取消全选当前页&quot;)" :aria-label="t(&quot;全选当前页&quot;)"></th>
             <th class="th-account">
-              <span>账号与简介</span>
-              <span class="selected-count-badge">已选 <b id="unreciprocatedSelectedCount">0</b> / <span id="unreciprocatedTotalVisibleCount">0</span></span>
+              <span>{{ t("账号与简介") }}</span>
+              <span class="selected-count-badge">{{ t("已选") }}&nbsp;<b id="unreciprocatedSelectedCount">0</b> / <span id="unreciprocatedTotalVisibleCount">0</span></span>
             </th>
-            <th class="th-record" style="width:180px;">关注时间 <span class="info-tip" tabindex="0" role="note" data-tip="显示我们主动关注对方的时间及距今已等待的天数。" aria-label="等待时长说明">?</span></th>
-            <th class="th-relation" style="width:110px;">回关状态</th>
-            <th class="th-deadline" style="width:100px;">期限状态</th>
-            <th class="th-count">粉丝</th>
-            <th class="th-count">关注</th>
-            <th class="th-actions" style="width:210px;">操作</th>
+            <th class="th-record" style="width:180px;">{{ t("关注时间") }}<span class="info-tip" tabindex="0" role="note" :data-tip="t(&quot;显示我们主动关注对方的时间及距今已等待的天数。&quot;)" :aria-label="t(&quot;等待时长说明&quot;)">?</span></th>
+            <th class="th-relation" style="width:110px;">{{ t("回关状态") }}</th>
+            <th class="th-deadline" style="width:100px;">{{ t("期限状态") }}</th>
+            <th class="th-count">{{ t("粉丝") }}</th>
+            <th class="th-count">{{ t("关注") }}</th>
+            <th class="th-actions" style="width:210px;">{{ t("操作") }}</th>
           </tr>
         </thead>
         <tbody id="unreciprocatedResults"></tbody>
       </table>
-      <p id="unreciprocatedEmpty" class="comment-empty" hidden><strong>暂无记录</strong><span></span></p>
+      <p id="unreciprocatedEmpty" class="comment-empty" hidden><strong>{{ t("暂无记录") }}</strong><span></span></p>
     </div>
     <div id="unreciprocatedGreetingMask" class="greeting-dialog-mask" hidden></div>
     <div id="unreciprocatedGreetingDialog" class="greeting-dialog" role="dialog" aria-modal="true" aria-labelledby="unreciprocatedGreetingTitle" hidden>
-      <strong id="unreciprocatedGreetingTitle">快捷私信</strong>
+      <strong id="unreciprocatedGreetingTitle">{{ t("快捷私信") }}</strong>
       <p id="unreciprocatedGreetingRecipient"></p>
-      <label for="unreciprocatedGreetingDraft">私信正文</label>
+      <label for="unreciprocatedGreetingDraft">{{ t("私信正文") }}</label>
       <textarea id="unreciprocatedGreetingDraft" rows="4" maxlength="1000"></textarea>
       <p id="unreciprocatedGreetingStatus" role="status" aria-live="polite"></p>
       <div class="greeting-dialog-actions">
-        <button id="unreciprocatedGreetingCancel" type="button" class="secondary">取消</button>
-        <button id="unreciprocatedGreetingSend" type="button">确认发送</button>
+        <button id="unreciprocatedGreetingCancel" type="button" class="secondary">{{ t("取消") }}</button>
+        <button id="unreciprocatedGreetingSend" type="button">{{ t("确认发送") }}</button>
       </div>
     </div>
   </section>
 </template>
 
 <script setup>
+import {t} from '../../../shared/i18n.js';
+
 import PanelSelect from "../components/PanelSelect.vue";
 import AutoUnfollowStatus from '../components/AutoUnfollowStatus.vue';
 import PanelActionBar from '../components/PanelActionBar.vue';

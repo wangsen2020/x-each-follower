@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>系统异常日志 · 隔离验收</title>
+<link rel="stylesheet" href="/src/entries/panel/styles/panel.css"><link rel="stylesheet" href="/src/entries/panel/styles/admin.css"><link rel="stylesheet" href="/src/entries/panel/styles/brand-layout.css"><link rel="stylesheet" href="/src/entries/panel/styles/select-control.css">
+<style>body{display:block;padding:24px;background:#f4f7f5}button{cursor:pointer}#preview-tools{display:flex;gap:12px;flex-wrap:wrap}</style>
+<div id="preview-tools"><button id="seed">载入验收记录</button><button id="failure">读取失败</button><button id="recover">恢复读取</button><button id="slow">延迟读取</button></div><div id="app"></div>
+<script type="module">
+import {createApp} from 'vue';
+const data={};const local={get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(key=>[key,data[key]])),set:async patch=>Object.assign(data,patch),remove:async keys=>{for(const key of [keys].flat())delete data[key];}};
+globalThis.chrome={i18n:{getUILanguage:()=>new URLSearchParams(location.search).get('lang')||'zh-CN'},runtime:{id:'preview',getURL:p=>'/'+p,sendMessage:async()=>({ok:true,result:{snapshotCount:0,incrementalCount:0},settings:{enabled:false,retain:3,incrementalLimit:1000,maxAgeHours:24,checkMinutes:60}})},storage:{local,onChanged:{addListener(){},removeListener(){}}}};
+const {default:Settings}=await import('/src/entries/panel/components/SystemSettingsDialog.vue');
+const {systemExceptionStore,installExceptionCapture}=await import('/src/shared/system-exceptions.js');
+installExceptionCapture({source:'panel'});
+const {default:InfoTipLayer}=await import('/src/entries/panel/components/InfoTipLayer.vue');
+createApp(InfoTipLayer).mount(document.body.appendChild(document.createElement('div')));
+const app=createApp(Settings);app.mount('#app');
+const store=systemExceptionStore(),list=store.list.bind(store);let delayResolve;
+document.querySelector('#seed').onclick=async()=>{await store.clear();for(let i=0;i<35;i++)await store.append({message:i===0?'自动入队结果待确认 · 长错误可读性检查 '+('很长的异常内容用于检查滚动与换行。'.repeat(25)):`验收记录 ${i}：${i%2?'Receiving end does not exist.':'message channel closed'}`,source:['background','panel','content'][i%3],level:i%2?'warning':'error',stack:'Error: communication failure\n    at fanAutoEnqueue (chrome-extension://test/assets/panel.js:4:53568)\n    at async scheduledScan (chrome-extension://test/assets/panel.js:6:42)',kind:'acceptance',at:Date.now()-i*1000});};
+document.querySelector('#failure').onclick=()=>{store.list=async()=>{throw Error('验收：数据库暂不可用');};};
+document.querySelector('#recover').onclick=()=>{store.list=list;delayResolve?.();};
+document.querySelector('#slow').onclick=()=>{store.list=async()=>{await new Promise(resolve=>delayResolve=resolve);return list();};};
+globalThis.exceptionAcceptance={store,app};
+</script></html>

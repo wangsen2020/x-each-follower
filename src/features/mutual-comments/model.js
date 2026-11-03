@@ -3,7 +3,7 @@ import {tweetWeight} from '../grok/grok-comment.js';
 import {QUOTE_TAG_DEFAULTS,normalizeQuoteTags,validateQuoteTags} from '../grok/quote-tags.js';
 export const MUTUAL_SCAN_ALARM='xef-mutual-scan';
 export const MUTUAL_COMMENT_ALARM='xef-mutual-comment';
-export const defaults=ownerId=>({ownerId,...normalizeQuoteTags(QUOTE_TAG_DEFAULTS),followBackSuffixEnabled:false,scanEnabled:false,scanProvider:'',scanBotId:'',scanIntervalMinutes:60,scanIntervalMaxMinutes:90,scrollRounds:5,batchSize:10,nextScanAt:0,commentEnabled:false,commentProvider:'',commentBotId:'',commentIntervalMinutes:60,commentIntervalMaxMinutes:90,perRun:3,dailyLimit:30,nextCommentAt:0});
+export const defaults=ownerId=>({ownerId,...normalizeQuoteTags(QUOTE_TAG_DEFAULTS),followBackSuffixEnabled:false,mutualCommentOnce:false,scanEnabled:false,scanProvider:'',scanBotId:'',scanIntervalMinutes:60,scanIntervalMaxMinutes:90,scrollRounds:5,batchSize:10,nextScanAt:0,commentEnabled:false,commentProvider:'',commentBotId:'',commentIntervalMinutes:60,commentIntervalMaxMinutes:90,perRun:3,dailyLimit:30,nextCommentAt:0});
 export function validateConfig(input,ownerId){
   const result={...defaults(ownerId)};
   for(const phase of ['scan','comment']){
@@ -14,7 +14,7 @@ export function validateConfig(input,ownerId){
   for(const [key,min,max] of [['scanIntervalMinutes',1,1440],['scanIntervalMaxMinutes',1,1440],['commentIntervalMaxMinutes',1,1440],['commentIntervalMinutes',1,1440],['scrollRounds',0,30],['batchSize',1,100],['perRun',1,10],['dailyLimit',1,1000]])if(!Number.isInteger(input[key])||input[key]<min||input[key]>max)throw Error(({scanIntervalMinutes:'采集最短间隔',scanIntervalMaxMinutes:'采集最长间隔',commentIntervalMinutes:'评论最短间隔',commentIntervalMaxMinutes:'评论最长间隔',scrollRounds:'加载更多次数',batchSize:'每批打标帖子数',perRun:'每轮评论上限',dailyLimit:'每日评论上限'}[key]||key)+'须为 '+min+'～'+max+' 的整数');
   for(const phase of ['scan','comment'])if(input[phase+'IntervalMaxMinutes']<=input[phase+'IntervalMinutes'])throw Error('最长间隔必须大于最短间隔');
   for(const key of Object.keys(result))if(!['ownerId','nextScanAt','nextCommentAt'].includes(key))result[key]=input[key];
-  Object.assign(result,normalizeQuoteTags(input),{followBackSuffixEnabled:input.followBackSuffixEnabled===true});validateQuoteTags(result);
+  Object.assign(result,normalizeQuoteTags(input),{followBackSuffixEnabled:input.followBackSuffixEnabled===true,mutualCommentOnce:input.mutualCommentOnce===true});validateQuoteTags(result);
   return result;
 }
 export const beijingDay=at=>new Date(at+8*3600000).toISOString().slice(0,10);

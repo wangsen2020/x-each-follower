@@ -39,7 +39,7 @@ async function runtimeFixture({allowAll=true,followedBy=true,following=false,fol
  if(priorIntent)await store.resolveJob({accountId:'1',id:job.id,state:'pending',followResult:{followerRemoval:{attemptedAt:1}}});
  const data={followQueueBinding:{accountId:'1',handle:'owner',activated:true,sources:{fans:true}},monitor:{users:[]}},calls=[];
  const api={storage:{local:{get:async key=>typeof key==='string'?{[key]:data[key]}:key?Object.fromEntries(key.map(k=>[k,data[k]])):data,set:async patch=>Object.assign(data,patch)}},
-  alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},tabs:{query:async()=>[{id:1}],create:async()=>({id:2}),remove:async()=>{}},
+  alarms:{clear:async()=>{},create:async()=>{},getAll:async()=>[]},tabs:{query:async()=>[{id:1}],create:async()=>({id:2,url:'https://x.com/target'}),get:async()=>({id:2,url:'https://x.com/target'}),remove:async()=>{}},
   scripting:{executeScript:async({func})=>[{result:func.name==='readProfileBundle'?{name:'Target',handle:'target',status:'ok',followersText:followers,followingText:'320',posts:[],relationship:{following,followedBy}}:'owner'}]}};
  const runtime=createFollowQueueRuntime({api,store,wait:async()=>{},
   fetchProfile:async()=>({status:200,json:{data:{user:{result:{rest_id:'2',legacy:{screen_name:'target',name:'Target',followers_count:followers===''?null:Number(followers),friends_count:320,following,followed_by:followedBy}}}}}}),
@@ -48,9 +48,12 @@ async function runtimeFixture({allowAll=true,followedBy=true,following=false,fol
  return {runtime,store,job,calls};
 }
 test('actual queue executor removes a confirmed excessive follower before posts and never calls follow',async()=>{
- const f=await runtimeFixture();await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);const job=await f.store.get(f.job.id);assert.equal(job.state,'excluded');assert.equal(job.followResult.followerRemoval.removed,true);
+ const f=await runtimeFixture();await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);const job=await f.store.get(f.job.id);assert.equal(job.state,'skipped');assert.equal(job.followResult.followerRemoval.removed,true);
 });
-for(const options of [{allowAll:false},{followedBy:false}])test('ordinary candidates or disabled allowance never authorize follower removal '+JSON.stringify(options),async()=>{
+test('legacy allowance does not control the mandatory abnormal-ratio filter',async()=>{
+ const f=await runtimeFixture({allowAll:false});await f.runtime.run(true);assert.deepEqual(f.calls,['remove']);
+});
+for(const options of [{followedBy:false}])test('nonfollowers never authorize an actual follower removal '+JSON.stringify(options),async()=>{
  const f=await runtimeFixture(options);await f.runtime.run(true);assert.ok(!f.calls.includes('remove'));
 });
 test('missing counts and ambiguous removal are held without following',async()=>{
