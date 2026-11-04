@@ -1,45 +1,48 @@
-# XFollower · 粉丝跟进 · v4.33.0
+# XFollower · 粉丝跟进 · 4.33.0
 
-面向 X.com 的本地浏览器扩展，统一管理粉丝审核、关注队列、回关监控、首页跟评和写作知识库。数据保存在当前浏览器的扩展数据库中。
+<div align="right">
+  <a href="./README.md">简体中文</a> ·
+  <a href="./README.en.md">English</a> ·
+  <a href="./README.pt-BR.md">Português (Brasil)</a> ·
+  <a href="./README.es-419.md">Español (Latinoamérica)</a>
+</div>
 
-[下载 4.33.0](https://github.com/wangsen2020/x-each-follower/releases/tag/4.33.0) · [最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest) · [文档索引](./docs/文档时间顺序编号对照表_wangsen.md)
+XFollower 是面向 X.com 的本地浏览器扩展，用于管理粉丝审核、关注队列、回关监控、首页跟评、帖子追踪和写作知识库。数据保存在当前浏览器的扩展数据库中。
 
-## 本次整合
+## 下载
 
-- 粉丝扫描取得简介后进行关键词初筛及 AI 审核；通过进入待回关和关注队列，不通过进入独立自动移除队列，资料不足进入核实与帖子补采。
-- 待审核、待核实支持默认开启的独立定时调度，可调整周期、每轮数量与 AI 批次范围。补采缓存最多 10 条近期帖子，队列共享访问预算和限流退避。
-- 移除规则增加“拦截擦边”“拦截空号”，默认关闭。空号指没有简介且没有帖子；请求失败或访问受限不等同于空号。
-- 账号 ID 和 AI 连接状态由统一模块维护。AI 正常检测间隔为 5 分钟，异常重试间隔为 1 分钟；设置图标提示异常、倒计时与重试。未知 AI 任务按原任务编号查询，不自动重复提交。
-- 粉丝渠道通过前置审核后直接进入关注执行；统一记录审核、核实、调度、关注及移除结果。多语言互动偏好过滤覆盖关注与首页跟评入口。
-- 取关历史独立保存，升级自动从明确的成功记录恢复可找回的历史；纠正有证据的评论 ID 与用户 ID 混用数据。无关系账号清理不再删除取关历史。
-- 包含 4.8.2 正式版以来的首页标签恢复、重复作者跳过、任务标签页回收、四语言界面及 XZoom 拆分。图片缩放由独立 XZoom 扩展提供。
+当前公开下载版本：**4.33.0**。
 
-## 安装与升级
+- [下载 XFollower 4.33.0 ZIP](https://github.com/wangsen2020/x-each-follower/releases/download/4.33.0/XFollower-4.33.0.zip)
+- [SHA256 校验文件](https://github.com/wangsen2020/x-each-follower/releases/download/4.33.0/SHA256SUMS.txt)
+- [查看全部 GitHub Releases](https://github.com/wangsen2020/x-each-follower/releases/latest)
 
-1. 下载发行页的 ZIP，解压到固定目录；该目录根部应直接包含 manifest.json。
-2. 在 Chrome 扩展管理页开启开发者模式，选择“加载已解压的扩展程序”并选中上述目录。
-3. 从旧版本升级时保留当前扩展及浏览器配置文件，先在系统设置中备份本地数据，等待正在执行的任务结束，再更新同一目录并重新加载。不要卸载后重装来代替升级。
-4. 初次打开等待本地数据升级完成，再检查账号、队列及定时调度设置。自动修复只恢复有可靠证据的数据，已清除且没有成功日志的数据无法凭空补回。
+公开仓库现在作为产品介绍、发行下载和教程入口使用，源码与研发构建已迁移到独立的私有仓库。历史 Release、标签和下载资产保持不变；GitHub 为历史标签生成的 Source ZIP/TAR 可能仍包含当时的源代码，这些历史归档没有被重写。
 
-系统设置位于侧栏账号旁的齿轮图标。AI 引擎页配置 AgentRelay 服务连接；粉丝初审、队列打标、评论可分别绑定独立会话。填写服务根地址，不添加引擎路径。连接 Token 仅保存在本机。Grok 网页、云端事件与 AgentRelay 通道按各自配置使用。
+## 安装
 
-## 开发与验证
+1. 下载 ZIP 并解压到固定目录，目录根部应直接包含 `manifest.json`。
+2. 在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”。
+3. 选择解压后的目录并完成加载。升级前先备份浏览器配置和本地扩展数据，不要卸载扩展来代替升级。
 
-需要支持本仓库依赖的 Node.js 22.22 或更新版本和 npm。
+## 教程
 
-~~~powershell
-npm ci
-npm test
-npm run check
-npm run build
-npm run test:build
-npm run build:check
-~~~
+- [XFollower 使用教程索引](./docs/使用指南/使用说明.md)
+- [安装与初次使用](./docs/使用指南/01-安装与初次使用.md)
+- [粉丝管理与回关](./docs/使用指南/02-粉丝管理与回关.md)
+- [关注队列](./docs/使用指南/08-关注队列.md)
+- [近期功能图解](./docs/使用指南/61.%20近期功能图解教程_20261027_0919_wangsen.md)
+- [Grok Bot 本地接入](./docs/使用指南/84.%20Grok-Bot本地接入图解与分步引导_20261028_1534_wangsen.md)
 
-源码位于 src/，Chrome 只加载构建后的 dist/。版本通过 npm run version:set -- X.Y.Z 同步。开发使用 Git Flow feature，发行使用 release start/finish。
+教程中的截图和步骤保留在 `docs/`，可直接在 GitHub 上阅读。公开仓库没有已核实的独立官网或博客地址，因此这里仅提供 GitHub 官方入口，避免引导到未经确认的 URL。
 
-## 权限与边界
+## 功能范围
 
-扩展使用 scripting、storage、alarms、notifications、tabs、windows、clipboardWrite，以及 X/Twitter/Grok 域名访问权限。AgentRelay、本机服务和 Cloudflare 等连接按需申请额外主机权限。自动关注、移除、回复和采集受用户配置、服务可用性及平台限流影响；连通检测不能保证每一条 AI 任务成功。
+- 粉丝列表、筛选、AI 初审、回关和关注队列
+- 互关追踪、评论追踪、首页跟评和多语言互动偏好
+- 帖子追踪、X 榜单、日报和本地写作知识库
+- 本地 AgentRelay、Grok Bot Bridge 等按需连接
+- 简体中文、英语、巴西葡萄牙语和拉丁美洲西班牙语界面
 
-界面支持英语、简体中文、巴西葡语和拉美西语，跟随浏览器语言；用户帖子、简介、输入和 AI 输出保留原文。GitHub Release 不等同于 Chrome 商店提交。
+自动关注、移除、回复和采集都受用户配置、服务可用性与 X 平台限流影响。GitHub Release 不等同于 Chrome Web Store 提交。
+
