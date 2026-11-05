@@ -1,4 +1,4 @@
-# XFollower · 粉丝跟进 · 4.48.1
+# XFollower · 粉丝跟进 · 4.48.2
 
 <div align="right">
   <a href="./README.md">简体中文</a> ·
@@ -11,15 +11,15 @@ XFollower 是面向 X.com 的本地浏览器扩展，用于管理粉丝审核、
 
 ## 下载
 
-当前公开下载版本：**4.48.1**。
+当前公开下载版本：**4.48.2**。
 
-- [下载 XFollower 4.48.1 ZIP](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/XFollower-4.48.1.zip)
-- [SHA256 校验文件](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/SHA256SUMS.txt)
+- [下载 XFollower 4.48.2 ZIP](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/XFollower-4.48.2.zip)
+- [SHA256 校验文件](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/SHA256SUMS.txt)
 - [查看全部 GitHub Releases](https://github.com/wangsen2020/x-each-follower/releases/latest)
 
 公开仓库现在作为产品介绍、发行下载和教程入口使用，源码与研发构建已迁移到独立的私有仓库。历史 Release、标签和下载资产保持不变；GitHub 为历史标签生成的 Source ZIP/TAR 可能仍包含当时的源代码，这些历史归档没有被重写。
 
-## 4.48.1 更新
+## 4.48.2 更新
 
 - 首页新增互关评论、评论提取成果，区分首页自动提取和手动提取；重复用户保留首次渠道。
 - 首页跟评增加打标与评论日志，进度、倒计时和结果集中到右下角浮窗，全选批量操作置于列表左侧。

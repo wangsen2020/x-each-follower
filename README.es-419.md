@@ -1,4 +1,4 @@
-# XFollower · Gestión de seguidores · 4.48.1
+# XFollower · Gestión de seguidores · 4.48.2
 
 <div align="right">
   <a href="./README.md">简体中文</a> ·
@@ -11,20 +11,20 @@ XFollower es una extensión local para el navegador, diseñada para X.com. Ayuda
 
 ## Descarga
 
-La descarga pública actual es la **4.48.1**.
+La descarga pública actual es la **4.48.2**.
 
-- [Descargar el ZIP de XFollower 4.48.1](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/XFollower-4.48.1.zip)
-- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/SHA256SUMS.txt)
+- [Descargar el ZIP de XFollower 4.48.2](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/XFollower-4.48.2.zip)
+- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/SHA256SUMS.txt)
 - [Ver todos los Releases de GitHub](https://github.com/wangsen2020/x-each-follower/releases/latest)
 
 Este repositorio público ahora es la entrada del producto, las descargas y los tutoriales. El código fuente y las compilaciones de desarrollo se mantienen en un repositorio privado separado. Se conservaron los Releases, las etiquetas y los archivos de descarga existentes. Los archivos Source ZIP/TAR que GitHub genera para etiquetas históricas todavía pueden contener el código de esos commits; esos archivos históricos no se reescribieron.
 
-## Novedades de 4.48.1
+## Novedades de 4.48.2
 
-- El panel inicial muestra comentarios de seguimiento mutuo confirmados y usuarios extraídos, separados entre extracción automática de inicio y extracción manual. Los usuarios repetidos conservan el primer canal.
-- Los registros de etiquetado y comentarios, el progreso, la cuenta regresiva y los resultados aparecen en tarjetas flotantes. Las acciones por lote se ubican a la izquierda, debajo de los filtros.
-- Corrige la programación detenida, los tiempos de espera en perfiles protegidos y las pestañas de tareas repetidas. Los errores explícitos del motor de IA crean una nueva solicitud; los resultados desconocidos se recuperan con el ID original.
-- Los comentarios con errores recuperables tienen reintentos limitados. Después de tres verificaciones sin evidencia de publicación, el flujo configurado genera y envía un nuevo comentario.
+- El progreso, los resultados y las acciones de recuperación de las respuestas de inicio aparecen en el diálogo de registros de comentarios. Al cerrarlo o presionar Esc, permanece oculto durante las actualizaciones.
+- Al pasar el cursor o enfocar el ícono de registros, se muestra la cuenta regresiva en tiempo real y la hora del próximo comentario. Si la hora pasó sin ejecutarse, el estado indica que espera la programación.
+- Mejora la identificación de textos de oración en las preferencias de interacción. Las revisiones de IA manuales y automáticas aplican las reglas locales existentes antes del envío a la IA y usan la cola de procesamiento existente cuando hay coincidencia.
+- Conserva la recuperación de la programación y los reintentos limitados de 4.48.1. Después de tres verificaciones sin evidencia de publicación, el flujo configurado genera y envía un nuevo comentario.
 
 ## Instalación
 
