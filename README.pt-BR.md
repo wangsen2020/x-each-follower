@@ -1,4 +1,4 @@
-# XFollower · Gestão de seguidores · 4.48.1
+# XFollower · Gestão de seguidores · 4.48.2
 
 <div align="right">
   <a href="./README.md">简体中文</a> ·
@@ -11,20 +11,20 @@ O XFollower é uma extensão local para o navegador, voltada ao X.com. Ela ajuda
 
 ## Download
 
-A versão pública disponível atualmente é a **4.48.1**.
+A versão pública disponível atualmente é a **4.48.2**.
 
-- [Baixar o ZIP do XFollower 4.48.1](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/XFollower-4.48.1.zip)
-- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/SHA256SUMS.txt)
+- [Baixar o ZIP do XFollower 4.48.2](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/XFollower-4.48.2.zip)
+- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.2/SHA256SUMS.txt)
 - [Ver todos os Releases no GitHub](https://github.com/wangsen2020/x-each-follower/releases/latest)
 
 Este repositório público agora é a entrada do produto, dos downloads e dos tutoriais. O código-fonte e os builds de desenvolvimento são mantidos em um repositório privado separado. Os Releases, tags e arquivos de download existentes foram preservados. Os Source ZIP/TAR gerados pelo GitHub para tags históricas ainda podem conter o código daquela época; esses arquivos históricos não foram reescritos.
 
-## Novidades da versão 4.48.1
+## Novidades da versão 4.48.2
 
-- O painel inicial mostra comentários de seguimento mútuo confirmados e usuários extraídos, separados entre extração automática do início e extração manual. Usuários repetidos mantêm o primeiro canal.
-- Logs de marcação e comentários, progresso, contagem regressiva e resultados ficam em cartões flutuantes. As ações em lote aparecem à esquerda, abaixo dos filtros.
-- Corrige agendamento travado, tempo limite em perfis protegidos e abas de tarefa repetidas. Erros explícitos do mecanismo de IA iniciam uma nova solicitação; resultados desconhecidos são recuperados pelo ID original.
-- Falhas recuperáveis de comentários têm novas tentativas limitadas. Após três verificações sem evidência da publicação, o fluxo configurado gera e envia um novo comentário.
+- O progresso, os resultados e as ações de recuperação das respostas do início ficam no diálogo de registros de comentários. Fechar ou pressionar Esc mantém o diálogo oculto durante as atualizações.
+- Ao passar o mouse ou focar o ícone de registros, aparecem a contagem regressiva em tempo real e o horário do próximo comentário. Quando o horário passou sem execução, o estado indica espera pelo agendamento.
+- Melhora a identificação de textos de oração nas preferências de interação. Revisões de IA manuais e automáticas aplicam as regras locais existentes antes do envio à IA e usam a fila de processamento existente quando há correspondência.
+- Mantém a recuperação do agendamento e as tentativas limitadas da versão 4.48.1. Após três verificações sem evidência da publicação, o fluxo configurado gera e envia um novo comentário.
 
 ## Instalação
 
