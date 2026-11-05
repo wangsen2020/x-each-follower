@@ -1,4 +1,4 @@
-# XFollower · Gestão de seguidores · 4.33.0
+# XFollower · Gestão de seguidores · 4.48.1
 
 <div align="right">
   <a href="./README.md">简体中文</a> ·
@@ -11,13 +11,20 @@ O XFollower é uma extensão local para o navegador, voltada ao X.com. Ela ajuda
 
 ## Download
 
-A versão pública disponível atualmente é a **4.33.0**.
+A versão pública disponível atualmente é a **4.48.1**.
 
-- [Baixar o ZIP do XFollower 4.33.0](https://github.com/wangsen2020/x-each-follower/releases/download/4.33.0/XFollower-4.33.0.zip)
-- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.33.0/SHA256SUMS.txt)
+- [Baixar o ZIP do XFollower 4.48.1](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/XFollower-4.48.1.zip)
+- [Checksums SHA256](https://github.com/wangsen2020/x-each-follower/releases/download/4.48.1/SHA256SUMS.txt)
 - [Ver todos os Releases no GitHub](https://github.com/wangsen2020/x-each-follower/releases/latest)
 
 Este repositório público agora é a entrada do produto, dos downloads e dos tutoriais. O código-fonte e os builds de desenvolvimento são mantidos em um repositório privado separado. Os Releases, tags e arquivos de download existentes foram preservados. Os Source ZIP/TAR gerados pelo GitHub para tags históricas ainda podem conter o código daquela época; esses arquivos históricos não foram reescritos.
+
+## Novidades da versão 4.48.1
+
+- O painel inicial mostra comentários de seguimento mútuo confirmados e usuários extraídos, separados entre extração automática do início e extração manual. Usuários repetidos mantêm o primeiro canal.
+- Logs de marcação e comentários, progresso, contagem regressiva e resultados ficam em cartões flutuantes. As ações em lote aparecem à esquerda, abaixo dos filtros.
+- Corrige agendamento travado, tempo limite em perfis protegidos e abas de tarefa repetidas. Erros explícitos do mecanismo de IA iniciam uma nova solicitação; resultados desconhecidos são recuperados pelo ID original.
+- Falhas recuperáveis de comentários têm novas tentativas limitadas. Após três verificações sem evidência da publicação, o fluxo configurado gera e envia um novo comentário.
 
 ## Instalação
 
@@ -45,4 +52,3 @@ As imagens e etapas permanecem em `docs/` e podem ser lidas diretamente no GitHu
 - Interface em chinês simplificado, inglês, português do Brasil e espanhol latino-americano
 
 Ações de seguir, remover, responder e coletar dependem das configurações do usuário, da disponibilidade dos serviços e dos limites do X. Um GitHub Release não é uma publicação na Chrome Web Store.
-
