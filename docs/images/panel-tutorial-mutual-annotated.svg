@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="225" viewBox="0 0 1600 225" role="img" aria-labelledby="title desc">
+  <title id="title">互关追踪的开始按钮</title>
+  <desc id="desc">红圈标出输入锚点账号后开始追踪的按钮。</desc>
+  <image href="panel-tutorial-mutual.png" x="0" y="0" width="1600" height="225" />
+  <ellipse cx="891" cy="98" rx="47" ry="21" fill="none" stroke="#e4432f" stroke-width="4" />
+  <rect x="980" y="76" width="285" height="38" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="994" y="101" fill="#d73320" font-family="Arial, sans-serif" font-size="17" font-weight="700">输入锚点后点击开始追踪</text>
+  <path d="M980 96 L944 96" fill="none" stroke="#e4432f" stroke-width="4" />
+  <path d="M951 89 L940 96 L951 103" fill="none" stroke="#e4432f" stroke-width="4" />
+</svg>

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.zip
+artifacts/
+.DS_Store
+.idea/
+scratch/

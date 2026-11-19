@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="980" viewBox="0 0 600 980" role="img" aria-labelledby="title desc">
+  <title id="title">互关追踪定时设置抽屉</title>
+  <desc id="desc">红圈标出定时执行周期输入框。</desc>
+  <image href="panel-tutorial-mutual-settings.png" x="160" y="0" width="420" height="980" />
+  <ellipse cx="364" cy="119" rx="188" ry="23" fill="none" stroke="#e4432f" stroke-width="4" />
+  <rect x="5" y="70" width="145" height="58" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="15" y="94" fill="#d73320" font-family="Arial, sans-serif" font-size="15" font-weight="700">设置自动运行</text>
+  <text x="15" y="114" fill="#d73320" font-family="Arial, sans-serif" font-size="15" font-weight="700">周期与随机浮动</text>
+  <path d="M150 104 L178 118" fill="none" stroke="#e4432f" stroke-width="4" />
+  <path d="M165 117 L180 120 L174 106" fill="none" stroke="#e4432f" stroke-width="4" />
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="195" viewBox="0 0 1600 195" role="img" aria-labelledby="title desc">
+  <title id="title">粉丝管理中的状态筛选</title>
+  <desc id="desc">通过红圈标出已关注、待回关和未互关筛选标签。</desc>
+  <image href="panel-tutorial-home.png" x="0" y="0" width="1600" height="195" />
+  <ellipse cx="405" cy="87" rx="132" ry="24" fill="none" stroke="#e4432f" stroke-width="4" />
+  <rect x="590" y="68" width="250" height="36" rx="7" fill="#fff" stroke="#e4432f" stroke-width="2" />
+  <text x="605" y="92" fill="#d73320" font-family="Arial, sans-serif" font-size="17" font-weight="700">切换粉丝状态筛选</text>
+  <path d="M590 87 L542 87" fill="none" stroke="#e4432f" stroke-width="4" />
+  <path d="M550 80 L539 87 L550 94" fill="none" stroke="#e4432f" stroke-width="4" />
+</svg>

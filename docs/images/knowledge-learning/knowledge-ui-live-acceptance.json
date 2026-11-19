@@ -1,0 +1,40 @@
+[
+  {
+    "version": "3.11.2",
+    "width": 1280,
+    "labelDirection": "row",
+    "gap": 10,
+    "centers": [
+      392,
+      392,
+      392,
+      392,
+      392,
+      392
+    ],
+    "dialog": {
+      "left": 220,
+      "right": 1060
+    },
+    "overflow": false
+  },
+  {
+    "version": "3.11.2",
+    "width": 390,
+    "labelDirection": "row",
+    "gap": 10,
+    "centers": [
+      412,
+      412,
+      412,
+      412,
+      412,
+      412
+    ],
+    "dialog": {
+      "left": 10,
+      "right": 380
+    },
+    "overflow": false
+  }
+]

@@ -1,0 +1,3 @@
+interface:
+  display_name: "AgentRelay 主控与主动回执"
+  short_description: "在异构 AI 现有会话间派单，完成后主动直达回传并驱动下一步协作"
