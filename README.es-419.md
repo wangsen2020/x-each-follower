@@ -1,86 +1,76 @@
-# XFollower
+# XFollower · Gestión de seguidores y respuestas mutuas en X
 
 [简体中文](README.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Español (Latinoamérica)](README.es-419.md)
 
-**v5.3.1 · Chrome / Edge MV3 · Sitio Oficial: [GoodExts](https://goodexts.com) ([Página de XFollower y Código Diario](https://goodexts.com/es/xfollower))**
+**Versión actual: 5.7.11 · Chrome / Edge MV3 · [Producto y código diario](https://goodexts.com/es/xfollower)**
 
-XFollower es una extensión para Chrome / Edge creada por [GoodExts](https://goodexts.com) para que creadores y desarrolladores en X (Twitter) ejecuten un ciclo completo de crecimiento: seguimiento mutuo con cuentas ancla, respuestas inteligentes con IA en el timeline, extracción de comentaristas, priorización de follow-back, revisión de 7 días y base de conocimiento. Desde la versión **v5.3.0 / v5.3.1**, el código fuente de la extensión se mantiene en un repositorio privado y las versiones se distribuyen como paquetes ZIP ofuscados de código cerrado; este repositorio público conserva **lanzamientos oficiales, README en 4 idiomas, tutoriales con capturas reales y skills públicas de integración IA**.
+XFollower ayuda a encontrar publicaciones de seguimiento mutuo, revisar seguidores y relaciones, administrar una cola de perfiles y analizar resultados. La búsqueda por hashtags permite descubrir candidatos sin depender del inicio personalizado.
 
-## Descarga e Instalación Rápida (v5.3.1)
+Este repositorio público ofrece paquetes de instalación, documentación en cuatro idiomas, tutoriales y skills de integración con IA. El código actual se mantiene por separado en un repositorio privado. Los paquetes usan empaquetado y compresión normales, **sin ofuscación de JavaScript**. Instala el archivo de la versión indicado abajo; el repositorio y los archivos Source code generados por GitHub no son el paquete actual de la extensión.
 
-- **Descargar ZIP**: [XFollower-5.3.1.zip](https://github.com/wangsen2020/x-each-follower/releases/download/5.3.1/XFollower-5.3.1.zip) · [SHA256SUMS.txt](https://github.com/wangsen2020/x-each-follower/releases/download/5.3.1/SHA256SUMS.txt) · [Notas de versión 5.3.1](https://github.com/wangsen2020/x-each-follower/releases/tag/5.3.1) · [Últimos lanzamientos](https://github.com/wangsen2020/x-each-follower/releases/latest)
-- **SHA-256**: `cead6d7310d3460f2581be658c0e85b84d29517ff5eda29df6d29249432aefd9`
-- **ID Fijo de la Extensión (Compilación Release)**: `colllpngfoieccfbgljaklpgiphpiebj`
+## Descarga e instalación
 
-### Instalación en 3 pasos en Chrome / Edge
+- [Descargar XFollower-5.7.11.zip](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/XFollower-5.7.11.zip)
+- [SHA256SUMS.txt](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/SHA256SUMS.txt) · [Notas de la versión](https://github.com/wangsen2020/x-each-follower/releases/tag/5.7.11) · [Versión más reciente](https://github.com/wangsen2020/x-each-follower/releases/latest)
+- SHA-256: `6b836af5980aa2ad149f6f29389bccb9a24972c464d9d0ec72615a1369c86901`
+- [Chrome Web Store](https://chromewebstore.google.com/detail/dbokihddfeclflabcnjggminlkdfjfjf): la revisión de la tienda es independiente de GitHub. Consulta la tienda para ver qué versión está disponible.
 
-1. Descarga y descomprime `XFollower-5.3.1.zip` en una carpeta permanente (no la cargues desde dentro del archivo comprimido ni borres la carpeta luego de instalar).
-2. Abre `chrome://extensions` (o `edge://extensions`) y activa el **Modo de desarrollador** en la esquina superior derecha.
-3. Haz clic en **Cargar extensión sin empaquetar**, elige la carpeta que contiene directamente `manifest.json` e inicia sesión en X en el mismo perfil del navegador antes de abrir el panel.
+1. **Extrae todo el ZIP en una carpeta permanente** que contenga `manifest.json` directamente.
+2. Abre `chrome://extensions` (`edge://extensions` en Edge) y activa el modo de desarrollador.
+3. Elige Cargar extensión sin empaquetar y selecciona esa carpeta. Inicia sesión en x.com en el mismo perfil del navegador y abre XFollower desde la barra de herramientas.
 
-![Modo de desarrollador y Cargar sin empaquetar en Chrome](docs/images/tutorial-5.3.0/00-install.png)
+Para actualizar una instalación manual, reemplaza los archivos en la carpeta original y pulsa Recargar en la tarjeta de la extensión. Conserva la carpeta y la instalación sin borrar los datos. Las instalaciones de la tienda se actualizan desde ella. Se conservan registros, ajustes, borradores y comprobantes de las tareas originales.
 
-## Prueba Persistente de 3 Días y Código Gratuito Diario
+## Flujo de cinco pasos
 
-- **3 Días de Prueba Sin Código**: Las cuentas de X nuevas disfrutan automáticamente de 3 días de prueba persistente ligada a su ID numérico de X, sin necesidad de ingresar código.
-- **Reclamar Código Gratuito de 24 Horas**: Al finalizar la prueba, busca en Google la siguiente frase clave o entra directamente en el sitio oficial (con autocompletado y activación en un clic mediante `goodexts-bridge`):
-  - Palabra clave de búsqueda: `free xfollower activation code`
-  - Enlace directo oficial: [Reclamar gratis en GoodExts](https://goodexts.com/es/xfollower)
+1. **Respuestas mutuas** es la página inicial. Configura hashtags, idioma e intervalo y activa la recopilación. Una pestaña de búsqueda dedicada en la ventana de notificaciones, nueva o reutilizada, alterna hashtags y las búsquedas Top / Latest.
+2. **Extracción opcional desde un perfil de referencia** conserva la antigua página de seguimiento mutuo y sus registros. Usa un perfil de tu sector para añadir candidatos desde sus seguidores y cuentas seguidas.
+3. **Revisión de seguidores y notificaciones** permite detectar nuevos seguidores, comprobar relaciones y completar los perfiles.
+4. **Cola de perfiles** reúne candidatos de las fuentes habilitadas, aplica la revisión y verifica la relación actual antes de seguir o interactuar según los ajustes.
+5. **Monitoreo de seguimiento de vuelta** permite revisar resultados, cuentas protegidas y casos vencidos. Los ajustes nuevos usan un plazo predeterminado de 7 días.
 
-## Ciclo de Crecimiento en 5 Pasos y 11 Módulos
+La recopilación no llama a la IA. Clasificación, respuestas y seguimiento tienen controles separados. Empieza por recopilar y clasificar, revisa los resultados y activa las demás acciones cuando lo necesites. Puedes agregar o quitar individualmente hashtags predeterminados y propios, hasta 20; son independientes de los hashtags añadidos a las respuestas publicadas.
 
-La versión **v5.3.0 / v5.3.1** reorganizó los 11 accesos laterales siguiendo el flujo de trabajo diario e incluye un **tour interactivo de 5 pasos (Driver.js)** y una guía visual integrada:
+![Ajustes reales de 5.7.11: hashtags, idioma e intervalo](docs/images/release-5.7.11/mutual-search-es.png)
 
-| Orden | Módulo | Función principal | Peso base |
-| --- | --- | --- | ---: |
-| 1 | **Resumen (`home`)** | Panel general, estado de prueba/licencia y accesos a los 5 pasos | — |
-| 2 | **Seguimiento Mutuo (`candidates`)** — Paso 1 / 5 | Elige una cuenta ancla del sector (`@usuario`) y revisa candidatos | 80 |
-| 3 | **Respuestas en Inicio (`mutualComments`)** — Paso 2 / 5 | Redacta respuestas con X Grok y captura comentaristas en publicaciones mutuas | 180 |
-| 4 | **Descubrimiento en Comentarios (`comments`)** — Paso 2 / 5 | Extrae comentaristas de publicaciones específicas conservando su origen | 90 |
-| 5 | **Revisión de Seguidores (`monitor`)** — Paso 3 / 5 | Sincroniza seguidores y aprueba cuentas pendientes de follow-back | 200 |
-| 6 | **Monitor de Notificaciones (`notificationMonitor`)** — Paso 3 / 5 | Captura nuevos seguidores desde notificaciones de X para verificarlos | — |
-| 7 | **Cola de Seguimiento (`followQueue`)** — Paso 4 / 5 | Revisa las 4 fuentes ordenadas por peso y filtros antes de seguir | Según fuente |
-| 8 | **Monitor de Follow-Back (`unreciprocated`)** — Paso 5 / 5 | Plazo predeterminado de **7 días** para revisar cuentas no recíprocas con lista segura | — |
-| 9 | **Seguimiento de Posts (`postTracking`)** | Analiza el rendimiento, comentarios nuevos e ideas de contenido propio | — |
-| 10 | **Ranking X (`leaderboard`)** | Guarda creadores referentes, snapshots y temas destacados del nicho | — |
-| 11 | **Base de Conocimiento (`knowledge`)** | Almacena aprendizajes, ejemplos y notas reutilizables para respuestas IA | — |
+## Las 11 secciones
 
-## Vista Previa de Interfaz (v5.3.0 / v5.3.1)
-
-| Resumen y Barra Lateral de 11 Módulos | Tour Interactivo de 5 Pasos |
+| Sección | Función |
 | --- | --- |
-| ![Resumen y barra lateral](docs/images/tutorial-5.3.0/01-overview.png) | ![Bienvenida tour de 5 pasos](docs/images/tutorial-5.3.0/08-tour-intro.png) |
+| Inicio | Resultados, ejecución y asuntos por verificar |
+| Respuestas mutuas | Buscar publicaciones, clasificar intención y responder o recopilar candidatos |
+| Extracción por referencia | Candidatos desde seguidores y cuentas seguidas de un perfil relevante |
+| Extracción de comentarios | Recopilar comentaristas de una publicación conservando su origen |
+| Revisión de seguidores | Revisar seguidores, cuentas seguidas y devoluciones pendientes |
+| Monitoreo de notificaciones | Detectar nuevos eventos de seguimiento en X |
+| Cola de perfiles | Revisar candidatos y ejecutar las acciones configuradas |
+| Monitoreo de seguimiento de vuelta | Revisar devoluciones, cuentas protegidas y plazos vencidos |
+| Seguimiento de publicaciones | Rendimiento y nuevas respuestas |
+| Ranking X | Historial de crecimiento de las cuentas guardadas |
+| Base de conocimiento | Guardar experiencias y notas para generar contenido |
 
-| Paso 1 — Cuenta Ancla y Candidatos | Paso 2 — Respuestas en Timeline y Captura |
-| --- | --- |
-| ![Seguimiento Mutuo](docs/images/tutorial-5.3.0/03-anchor.png) | ![Respuestas en Inicio](docs/images/tutorial-5.3.0/04-home-replies.png) |
+Se conservan las prioridades: seguidores pendientes de devolución 200, comentaristas de publicaciones mutuas 180, extracción común de comentarios 90, candidatos por referencia y autores de publicaciones mutuas 80. Entrar a la cola no implica seguir de inmediato.
 
-| Paso 3 — Pendientes de Follow-Back | Paso 4 — Cola Unificada por Peso |
-| --- | --- |
-| ![Revisión de Seguidores](docs/images/tutorial-5.3.0/05-fan-review.png) | ![Cola de Seguimiento](docs/images/tutorial-5.3.0/06-follow-queue.png) |
+## Cambios de 5.7.11
 
-| Paso 5 — Plazo Predeterminado de 7 Días | Análisis Avanzado de Publicaciones |
-| --- | --- |
-| ![Plazo de 7 días](docs/images/tutorial-5.3.0/07-seven-days.png) | ![Seguimiento de Posts](docs/images/tutorial-5.3.0/09-content-review.png) |
+- Respuestas mutuas abre primero; la extracción por referencia sigue siendo opcional. El recorrido y los tutoriales siguen ese orden.
+- Los errores aparecen dentro de su módulo, accesibles mediante el indicador rojo lateral, sin una franja sobre las demás páginas.
+- Las rutas hash permiten que las notificaciones reutilicen el panel y abran la sección correcta. Los enlaces directos de la cola cargan sus datos.
+- Las respuestas directas usan pestañas de tarea en segundo plano que se cierran al terminar. La recuperación limitada de la página de búsqueda conserva los resultados guardados.
 
-## Motores IA: X Grok Integrado + Skills AgentRelay
+## Prueba, códigos diarios e IA
 
-| X Grok Integrado (Predeterminado) | Opciones Locales con AgentRelay |
-| --- | --- |
-| ![Configuración X Grok](docs/images/tutorial-5.3.0/02-grok.png) | ![Opciones AgentRelay locales](docs/images/tutorial-5.3.0/02-agentrelay-options.png) |
+Cada cuenta X recibe una **prueba de 72 horas** al conectarse por primera vez. Después, consigue en [GoodExts](https://goodexts.com/es/xfollower) un código diario gratuito válido durante **24 horas**, o introduce un código mensual, trimestral o semestral en la autorización de cuenta.
 
-- **Predeterminado sin configuración (X Grok)**: El etiquetado de perfiles y los borradores de respuestas utilizan **X Grok** de serie mediante tu sesión activa en X, sin instalar servidores ni copiar tokens.
-- **Modo Avanzado con AgentRelay**: Para trabajar con **Codex**, **Antigravity CLI** o **WorkBuddy** locales, instala [AgentRelay Releases](https://github.com/wangsen2020/agentrelay-releases/releases/latest). Con la configuración loopback local por defecto (`127.0.0.1:8787`), las versiones compatibles se conectan automáticamente sin token manual.
+Usa X Grok integrado cuando esté disponible. Para motores locales, conecta [AgentRelay](https://github.com/wangsen2020/agentrelay-releases/releases/latest) desde los ajustes y elige motor y conversación por separado para clasificación y respuestas. La disponibilidad depende del inicio de sesión en X, del servicio y de la configuración del motor.
 
-### Skills Públicas de Integración IA
+- [agentrelay-integration](agentrelay-integration/SKILL.md): integración y recuperación con los comprobantes de la tarea original.
+- [agentrelay-session-bridge](agentrelay-session-bridge/SKILL.md): delegación entre sesiones y entrega de resultados.
 
-| Carpeta | Propósito | Documentación |
-| --- | --- | --- |
-| `agentrelay-integration` | Integración general `/jobs`, deduplicación y recuperación segura de tareas para clientes y extensiones | [SKILL.md](agentrelay-integration/SKILL.md) |
-| `agentrelay-session-bridge` | Puente directo entre sesiones y motores locales (Codex / Antigravity / DeepSeek Harness / WorkBuddy) | [SKILL.md](agentrelay-session-bridge/SKILL.md) |
+## Guías y soporte
 
-## Enlaces Oficiales y Tutoriales
+- [Sitio oficial](https://goodexts.com/es) · [Producto](https://goodexts.com/es/xfollower) · [Guía actual de cinco pasos](https://goodexts.com/es/blog/xfollower-growth-loop)
+- [Reportar un problema](https://github.com/wangsen2020/x-each-follower/issues) · [Registro de validación](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/RELEASE-ACCEPTANCE.md)
+- Los archivos antiguos de `docs/` son referencias históricas. Para el flujo actual, usa este README, el sitio y los tutoriales de la extensión.
 
-- [Sitio Oficial GoodExts](https://goodexts.com) · [Página de Producto y Código Diario](https://goodexts.com/es/xfollower) · [Artículo Ciclo en 5 Pasos](https://goodexts.com/es/blog/xfollower-growth-loop)
-- [Guía Ilustrada de 5 Pasos (zh-CN)](docs/使用指南/200.%20XFollower五步上手图文教程与截图清单_20261119_1553_wangsen.md) · [Artículo Operativo de 5 Pasos (zh-CN / EN)](docs/使用指南/202.%20XFollower五步运营专栏文章中英文稿_20261119_1553_wangsen.md)
-- [Índice Completo de Documentación](docs/使用指南/使用说明.md) · [Estrategia de Seguridad y Límites en X](docs/使用指南/35.%20X账号防封策略_20261025_2154_wangsen.md)
+Los registros se guardan en el navegador. Las funciones activadas pueden enviar solicitudes a X/Grok o a un servicio configurado; la activación puede usar el identificador de tu cuenta X. Seguir y publicar dependen de las reglas de X, de la sesión, de la red y de los límites de la interfaz. XFollower es independiente de X Corp.

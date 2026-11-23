@@ -1,101 +1,76 @@
-# XFollower
+# XFollower · X 粉丝管理与互关跟评
 
 [简体中文](README.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Español (Latinoamérica)](README.es-419.md)
 
-**v5.3.1 · Chrome / Edge MV3 · 官网：[GoodExts](https://goodexts.com)（[XFollower 产品页与每日领码](https://goodexts.com/zh/xfollower)）**
+**当前发行版：5.7.11 · Chrome / Edge MV3 · [GoodExts 产品页与每日领码](https://goodexts.com/zh/xfollower)**
 
-XFollower 是面向 X（Twitter）创作者与独立开发者的粉丝跟进、互关追踪、智能跟评与内容复盘浏览器扩展，由 [GoodExts 官网](https://goodexts.com) 出品。自 **5.3.0 / 5.3.1** 起，项目源码已迁入私有仓库独立维护，扩展以闭源混淆 Release 包形式分发；本公开仓库长期保留 **闭源发行版下载、四语说明、图文教程、实机截图与公开 AI 接入 Skill**。
+XFollower 帮助你发现互关帖子、审查新增粉丝和关注关系、管理关注队列，并复盘帖子表现。互关候选通过标签搜索采集，不依赖个性化首页推荐。
 
-## 下载与快速安装（v5.3.1）
+本公开仓库提供安装包、四语说明、教程与 AI 接入 Skills；新版开发源码在独立私有仓库维护。当前安装包采用常规打包压缩，**不做 JavaScript 混淆**。请使用下方发行附件安装，仓库文件和 GitHub 自动生成的 Source code 压缩包不是新版扩展安装包。
 
-- **安装包下载**：[XFollower-5.3.1.zip](https://github.com/wangsen2020/x-each-follower/releases/download/5.3.1/XFollower-5.3.1.zip) · [SHA256SUMS.txt](https://github.com/wangsen2020/x-each-follower/releases/download/5.3.1/SHA256SUMS.txt) · [Release 5.3.1 发行说明](https://github.com/wangsen2020/x-each-follower/releases/tag/5.3.1) · [全部版本](https://github.com/wangsen2020/x-each-follower/releases/latest)
-- **SHA-256**：`cead6d7310d3460f2581be658c0e85b84d29517ff5eda29df6d29249432aefd9`
-- **固定扩展 ID（闭源 Release 构建）**：`colllpngfoieccfbgljaklpgiphpiebj`
+## 下载与安装
 
-### Chrome / Edge 3 步加载安装
+- [下载 XFollower-5.7.11.zip](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/XFollower-5.7.11.zip)
+- [SHA256SUMS.txt](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/SHA256SUMS.txt) · [5.7.11 发行说明](https://github.com/wangsen2020/x-each-follower/releases/tag/5.7.11) · [最新发行版](https://github.com/wangsen2020/x-each-follower/releases/latest)
+- SHA-256：`6b836af5980aa2ad149f6f29389bccb9a24972c464d9d0ec72615a1369c86901`
+- [Chrome 商店](https://chromewebstore.google.com/detail/dbokihddfeclflabcnjggminlkdfjfjf)：商店审核与 GitHub 发行独立进行，实际可安装版本以商店页面为准。
 
-1. 下载并完整解压 `XFollower-5.3.1.zip` 到固定目录（切勿直接从压缩包内运行，安装后不要删除该目录）。
-2. 在 Chrome 地址栏打开 `chrome://extensions`（Edge 打开 `edge://extensions`），打开右上角 **开发者模式**。
-3. 点击 **加载已解压的扩展程序**，选择直接包含 `manifest.json` 的目录；在同一浏览器配置文件中登录 X 后打开扩展面板即可开始。
+1. 将 ZIP **完整解压到固定目录**，确认该目录直接包含 `manifest.json`。
+2. 打开 `chrome://extensions`（Edge 使用 `edge://extensions`），开启“开发者模式”。
+3. 点击“加载已解压的扩展程序”，选择上述目录。在同一浏览器配置中登录 x.com，再从工具栏打开 XFollower。
 
-![Chrome 开发者模式与加载已解压扩展入口](docs/images/tutorial-5.3.0/00-install.png)
+已有手动安装用户：在原加载目录替换文件，然后点击扩展卡片的“重新加载”；保留原目录，不删除扩展或清空数据。商店安装用户等待商店更新。升级沿用已有记录、配置、草稿和原任务凭据。
 
-## 3 天持久化试用与每日免费激活码
+## 从互关跟评开始的 5 步流程
 
-- **前 3 天免码试用**：新接入的 X 账号自动开启 **3 天持久化试用**，以不可变数字 User ID 与本地时间/服务端校验锚点为凭据，免填激活码。
-- **每日免费领码**：试用结束后，可在 Google 搜索以下关键词，或前往官网免费领取 1 天激活码（按 X 账号数字 ID 签名绑定，支持跨官网一键回填激活）：
-  - 搜索关键词：`free xfollower activation code`
-  - 官网直达：[前往 GoodExts 官网领取每日免费激活码](https://goodexts.com/zh/xfollower)
+1. **互关跟评**：默认打开此页。编辑采集标签、语言和时间间隔，开启采集；扩展会创建或复用通知常驻窗口，在专属标签页轮换搜索并切换“热门 / 最新”。
+2. **按需锚点提取**：原“互关追踪”已改名，功能和数据保留。需要更多候选时，再输入同领域账号，合并其关注与粉丝。
+3. **粉丝跟进与通知监控**：发现新增粉丝、核对待回关关系，补充候选资料。
+4. **关注队列**：统一审查各来源候选，执行前核验当前关系；按配置执行关注及可选互动。
+5. **回关监控**：按复核期限查看是否回关，保护保留名单，按需处理超时账号；新设置默认期限为 7 天。
 
-## 五步 X 涨粉主线与新版 11 项工作区
+采集不调用 AI。打标、评论生成和关注分别控制；可以先只开启采集和打标，确认结果后再按需启用后续动作。默认采集标签和自定义标签都可逐项添加、移除，最多保留 20 个；它们与发布评论时追加的标签独立保存。
 
-v5.3.0 / v5.3.1 重排左侧栏并内置 **Driver.js 五步交互式引导** 与完整图文教程页，按实际运营闭环编排 11 个核心入口：
+![5.7.11 互关跟评设置：采集标签、语言与间隔](docs/images/release-5.7.11/mutual-search-zh.png)
 
-| 导航顺序 | 模块 | 定位与核心动作 | 基础权重 |
-| --- | --- | --- | ---: |
-| 1 | **首页** | 总览统计、3 天试用 / 激活码状态与 5 步入口 | — |
-| 2 | **互关追踪**（第 1 / 5 步） | 选定同领域同行锚点（如复制 `@` 用户名），预览候选列表 | 80 |
-| 3 | **首页跟评**（第 2 / 5 步） | 刷首页帖时 AI 起草引用/回复，开启「评论取粉」提取互关帖评论者 | 180 |
-| 4 | **评论提取**（第 2 / 5 步） | 从指定单帖提取评论用户，保留帖子来源并人工筛选 | 90 |
-| 5 | **粉丝跟进**（第 3 / 5 步） | 同步个人粉丝与关注，核对「待回关」关系并放行至队列 | 200 |
-| 6 | **通知监控**（第 3 / 5 步） | 捕获 X 通知里的新关注事件，联动回到「粉丝跟进」核验 | — |
-| 7 | **关注队列**（第 4 / 5 步） | 四路候选按权重优先级统一审查、过滤门槛并有序关注 | 按来源权重 |
-| 8 | **回关监控**（第 5 / 5 步） | 设定默认 **7 天** 复核期限，区分保留名单与逾期未回关账号 | — |
-| 9 | **帖子追踪** | 持续观察原创帖子数据表现、新评论与长尾主题机会 | — |
-| 10 | **X 榜单** | 收藏同行与标杆创作者，追踪快照增长与爆款模式 | — |
-| 11 | **知识库** | 沉淀个人观点、实测案例与表达规范，供 AI 跟评引用 | — |
+## 11 个栏目各做什么
 
-## 实机界面预览（5.3.0 / 5.3.1）
-
-### 总览与交互式五步新手引导
-| 总览与 11 项新版侧栏 | 五步引导欢迎页与第一步提示 |
+| 栏目 | 用途 |
 | --- | --- |
-| ![总览与新版侧栏](docs/images/tutorial-5.3.0/01-overview.png) | ![五步引导欢迎页](docs/images/tutorial-5.3.0/08-tour-intro.png) |
+| 首页 | 查看成果、执行情况和需要核实的事项 |
+| 互关跟评 | 搜索互关帖、判断意愿、按配置跟评与提取候选 |
+| 锚点提取 | 从同领域账号的关注和粉丝中补充候选 |
+| 评论提取 | 从指定帖子的评论中采集用户，保留来源 |
+| 粉丝跟进 | 核对粉丝、关注与待回关关系 |
+| 通知监控 | 从 X 通知中持续发现新增关注事件 |
+| 关注队列 | 汇合候选并执行审查、关注与可选互动 |
+| 回关监控 | 复核回关情况、保留名单与超时账号 |
+| 帖子追踪 | 查看帖子表现及新增评论 |
+| X 榜单 | 追踪收藏账号的增长快照 |
+| 知识库 | 保存复盘与写作经验，供内容生成参考 |
 
-| 第 1 步引导浮层 | X 个人主页 `@用户名` 复制位置示例 |
-| --- | --- |
-| ![第 1 步引导浮层](docs/images/tutorial-5.3.0/08-tour.png) | ![X 主页用户名复制位置示例](docs/images/tutorial-5.3.0/03-x-profile-handle.png) |
+既有来源优先级保留：待回关粉丝 200、互关帖评论用户 180、普通评论提取 90、锚点及互关帖作者候选 80。入队不等于立即关注，关注前仍按设置审查。
 
-### 互关锚点、首页跟评、粉丝复核与队列闭环
-| 1. 互关追踪锚点与候选 | 2. 首页跟评设置与评论取粉 |
-| --- | --- |
-| ![互关追踪](docs/images/tutorial-5.3.0/03-anchor.png) | ![首页跟评](docs/images/tutorial-5.3.0/04-home-replies.png) |
+## 5.7.11 的主要变化
 
-| 3. 粉丝跟进（待回关） | 4. 关注队列来源与权重筛选 |
-| --- | --- |
-| ![粉丝跟进](docs/images/tutorial-5.3.0/05-fan-review.png) | ![关注队列](docs/images/tutorial-5.3.0/06-follow-queue.png) |
+- 互关跟评成为默认入口；锚点提取作为可选来源保留，五步引导与四语教程同步。
+- 互关跟评错误只在本栏目展示，侧栏红色图标可打开详情，不占用其他栏目顶部。
+- 通知使用 hash 精准定位并复用已打开的面板；直接打开关注队列也会加载数据。
+- 直接评论使用独立后台任务标签，完成后关闭；搜索页切换时的短暂 frame 失效有界恢复，保留已采集结果。
 
-| 5. 回关监控（默认 7 天期限） | 进阶内容工作台（帖子追踪） |
-| --- | --- |
-| ![回关监控 7 天默认期限](docs/images/tutorial-5.3.0/07-seven-days.png) | ![帖子追踪](docs/images/tutorial-5.3.0/09-content-review.png) |
+## 试用、每日码与 AI 接入
 
-## AI 引擎接入：默认内置 X Grok + AgentRelay 公开 Skills
+每个 X 账号首次接入提供 **72 小时试用**。试用后可在 [GoodExts](https://goodexts.com/zh/xfollower) 免费领取有效期 **24 小时**的每日激活码，或在“账号授权”中使用月度、季度、半年码。
 
-| 默认内置 X Grok 引擎 | 本机 AgentRelay 多引擎列表 |
-| --- | --- |
-| ![默认 X Grok 设置](docs/images/tutorial-5.3.0/02-grok.png) | ![AgentRelay 本机引擎列表](docs/images/tutorial-5.3.0/02-agentrelay-options.png) |
+按账号可用性使用内置 X Grok；需要本机引擎时，在设置中连接 [AgentRelay](https://github.com/wangsen2020/agentrelay-releases/releases/latest)，为打标与评论分别选择引擎和会话。实际可用性取决于 X 登录、本地服务与引擎配置。
 
-- **默认免配置（X Grok）**：安装后默认使用内置 **X Grok** 完成账号画像打标、首页跟评与引用草拟；同一浏览器配置已登录可用 Grok 的 X 账号即可直接使用，无需配置本地 AI 客户端。
-- **进阶本机大模型（AgentRelay）**：如需改用本机 **Codex**、**Antigravity** 或 **WorkBuddy**，请下载并启动 [AgentRelay 最新版本](https://github.com/wangsen2020/agentrelay-releases/releases/latest)。保持本机默认回环（`127.0.0.1:8787`）配置时，XFollower 自动免填 Token 连接（`ALLOW_INSECURE` 严格限定为真实回环连接）。
+- [agentrelay-integration](agentrelay-integration/SKILL.md)：接入与任务凭据恢复参考。
+- [agentrelay-session-bridge](agentrelay-session-bridge/SKILL.md)：跨会话派单与主动回执参考。
 
-### 本仓库保留的 AI 接入 Skills
+## 教程与支持
 
-| Skill 目录 | 用途说明 | 入口文档 |
-| --- | --- | --- |
-| `agentrelay-integration` | 浏览器扩展 / 本地客户端通过 `/jobs` 接口接入 AgentRelay，含健康检查、幂等去重与未知结果按原任务恢复 | [SKILL.md](agentrelay-integration/SKILL.md) |
-| `agentrelay-session-bridge` | 通过本机 AgentRelay 实现跨项目/跨引擎（Codex / Antigravity / DeepSeek Harness / WorkBuddy）活动轮次直达引导与异步回执 | [SKILL.md](agentrelay-session-bridge/SKILL.md) |
+- [四语官网](https://goodexts.com) · [中文产品页](https://goodexts.com/zh/xfollower) · [最新五步图文教程](https://goodexts.com/zh/blog/xfollower-growth-loop)
+- [问题反馈](https://github.com/wangsen2020/x-each-follower/issues) · [本版验收记录](https://github.com/wangsen2020/x-each-follower/releases/download/5.7.11/RELEASE-ACCEPTANCE.md)
+- 仓库中旧版 `docs/` 保留为历史资料；当前入口、版本和操作以本页、官网及扩展内教程为准。
 
-将所需 Skill 文件夹整体复制到本地代理目录（如 Windows 下 `%USERPROFILE%\.codex\skills\` 或 `~/.codex/skills/`），保留其中的 `scripts/` 与 `references/` 目录，在 Node.js 22+ 环境下即可配合本地 AgentRelay 使用（附带的 `agentrelay-integration/scripts/self-test.mjs` 可离线自测契约逻辑）。
-
-## 教程与官网入口
-
-- [五步上手图文教程与截图清单](docs/使用指南/200.%20XFollower五步上手图文教程与截图清单_20261119_1553_wangsen.md)
-- [五步 X 运营循环实战专栏（中英文）](docs/使用指南/202.%20XFollower五步运营专栏文章中英文稿_20261119_1553_wangsen.md)
-- [完整文档索引与各模块专项手册](docs/使用指南/使用说明.md)
-- [X 账号防封与频率控制策略](docs/使用指南/35.%20X账号防封策略_20261025_2154_wangsen.md)
-- [GoodExts 官网首页](https://goodexts.com) · [XFollower 产品页与每日领码](https://goodexts.com/zh/xfollower) · [五步增长循环中文博客](https://goodexts.com/zh/blog/xfollower-growth-loop)
-
-## 使用边界说明
-
-- 扩展的采集、关注、引用跟评与逾期复核能力受实际浏览器登录会话、用户本地设定及 X 平台接口限流影响。
-- 本公开仓库用于版本分发、四语入门引导与 AI Skill 协作说明；GitHub Release ZIP 面向已解压加载安装，不等同于 Chrome Web Store 审核上架包。
+工作记录保存在浏览器中；按启用功能，请求可能发送至 X/Grok 或配置的服务，激活可能使用 X 账号标识。关注和发帖受 X 平台规则、登录、网络及接口限制影响。XFollower 与 X Corp. 无隶属关系。
